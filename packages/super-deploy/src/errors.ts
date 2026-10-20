@@ -1,6 +1,7 @@
 // Typed errors thrown by the programmatic API. Every error the library throws
 // on purpose is a SuperDeployError; `code` is stable and meant for programs,
 // `message` is one line meant for people (the CLI prints it after "Error: ").
+import type { OverwriteQuestion } from "./questions.ts";
 
 export type ErrorCode =
   | "project-not-found"
@@ -17,7 +18,9 @@ export type ErrorCode =
   | "sql-file-failed"
   | "rehearsal-mismatch"
   | "migration-integrity"
-  | "validation-failed";
+  | "validation-failed"
+  | "no-migration"
+  | "overwrite-not-acknowledged";
 
 export class SuperDeployError extends Error {
   readonly code: ErrorCode;
@@ -283,5 +286,35 @@ export class ValidationFailedError extends SuperDeployError {
     );
     this.problems = problems;
     this.strict = strict;
+  }
+}
+
+/** The command needs a finalized migration and there is none. */
+export class NoMigrationError extends SuperDeployError {
+  constructor(action: string) {
+    super("no-migration", `There is no finalized migration to ${action}`);
+  }
+}
+
+/**
+ * A command would discard work and was not allowed to: nobody could be asked
+ * and `acknowledgeOverwrite` wasn't set, or the question was answered no.
+ * Nothing was changed.
+ */
+export class OverwriteNotAcknowledgedError extends SuperDeployError {
+  readonly question: OverwriteQuestion;
+  /** True when the question was asked and answered no. */
+  readonly declined: boolean;
+
+  constructor(question: OverwriteQuestion, declined: boolean) {
+    const what = question.paths.join(", ");
+    super(
+      "overwrite-not-acknowledged",
+      declined
+        ? `Nothing changed: ${question.command} was not confirmed`
+        : `${question.command} would delete or overwrite ${what}; pass --acknowledge-overwrite to go ahead without a terminal`,
+    );
+    this.question = question;
+    this.declined = declined;
   }
 }

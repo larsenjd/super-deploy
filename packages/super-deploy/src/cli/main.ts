@@ -4,6 +4,7 @@
 // and closed output (141).
 import { relative } from "node:path";
 import { loadProject, type Project } from "../project.ts";
+import type { Question } from "../questions.ts";
 import { toolVersion } from "../version.ts";
 import { commands } from "./definitions.ts";
 import { commandHelp, usage } from "./help.ts";
@@ -13,6 +14,8 @@ export interface CliIo {
   readonly cwd: string;
   readonly stdout: { write(text: string): unknown };
   readonly stderr: { write(text: string): unknown };
+  /** Asks a yes/no question at the terminal; absent without one (or in CI). */
+  readonly confirm?: ((question: Question) => Promise<boolean>) | undefined;
 }
 
 export const exitCodes = { success: 0, failure: 1, usage: 2 } as const;
@@ -53,6 +56,7 @@ export async function runCli(
           warn: (line) => io.stderr.write(`${line}\n`),
           displayPath: (path) =>
             relative(io.cwd, path).split("\\").join("/") || ".",
+          confirm: io.confirm,
         });
         await project.close();
         return exitCodes.success;
