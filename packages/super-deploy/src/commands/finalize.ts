@@ -4,7 +4,7 @@
 // migration's next Recovery (store/migrations.ts) instead.
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
-import { pgDeltaDiffer } from "../differ/pg-delta.ts";
+import { differ } from "../differ/index.ts";
 import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import {
@@ -131,7 +131,7 @@ export async function finalize(
 
   const metadata: MigrationMetadata = {
     tool: { name: "super-deploy", version: toolVersion },
-    differ: { name: pgDeltaDiffer.name, version: pgDeltaDiffer.version },
+    differ: { name: differ.name, version: differ.version },
     parser: { name: parserName, version: parserVersion },
     rehearsalServer: { version: rehearsed.serverVersion },
     overrides: rehearsed.overrides.map(inMigration),

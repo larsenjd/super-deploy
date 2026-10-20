@@ -4,8 +4,7 @@
 // built in another (the finalized migrations replayed, then the draft's seed
 // data and pre-migration script); the differ compares the two.
 import { posix } from "node:path";
-import { pgDeltaDiffer } from "../differ/pg-delta.ts";
-import type { PlannedStatement } from "../differ/types.ts";
+import { differ, type PlannedStatement } from "../differ/index.ts";
 import { DraftNameRequiredError, RecoveryDraftError } from "../errors.ts";
 import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
@@ -165,7 +164,7 @@ export async function draft(
             [...migrations, ...beforeSchemaChange],
             config.managedSchema,
           );
-          const statements = await pgDeltaDiffer.diff(source, desired);
+          const statements = await differ.diff(source, desired);
           return {
             planned: statements,
             toCover: await scriptCoverage(

@@ -39,7 +39,7 @@ import {
   resolveTarget,
   targetDatabaseRequest,
 } from "../deploy/target.ts";
-import { pgDeltaDiffer } from "../differ/pg-delta.ts";
+import { differ } from "../differ/index.ts";
 import {
   AdoptConflictError,
   AdoptUnsupportedError,
@@ -220,7 +220,7 @@ async function readTarget(
       request,
       async (empty) => {
         await ensureManagedSchema(empty, config.managedSchema);
-        return pgDeltaDiffer.diff(empty, session);
+        return differ.diff(empty, session);
       },
     );
     const files = await adoptedDesiredSchema(

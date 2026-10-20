@@ -8,17 +8,16 @@
 //      the same pinned settings)
 //   3. require the result to match the newest migration's desired-schema
 //      snapshot, loaded into a second throwaway database with the same
-//      request (pg-delta and our catalog comparison, as in draft rehearsals)
+//      request (rehearsal/same-structure.ts, as in draft rehearsals)
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
-import { pgDeltaDiffer } from "../differ/pg-delta.ts";
-import { DriftError, RehearsalMismatchError } from "../errors.ts";
+import { DriftError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import type { ParsedStatement } from "../sql-analysis/index.ts";
-import { catalogDifferences } from "../verification/catalog.ts";
 import { driftBetween } from "../verification/drift.ts";
 import { type ReplayUnit, replay } from "./replay.ts";
 import { withReplica } from "./replica.ts";
+import { requireSameStructure } from "./same-structure.ts";
 import { loadDesiredSchema, withThrowawayDatabase } from "./throwaway.ts";
 
 export interface DeploymentRehearsalInput {
@@ -77,19 +76,12 @@ export async function rehearseDeployment(
               managedSchema,
               externalSchemas,
             );
-            const differences = [
-              ...(await pgDeltaDiffer.diff(replica, desired)).map(
-                (statement) => `pg-delta: ${statement.sql}`,
-              ),
-              ...(
-                await catalogDifferences(replica, desired, managedSchema)
-              ).map((line) => `catalog: ${line}`),
-            ];
-            if (differences.length > 0) {
-              throw new RehearsalMismatchError(differences, {
-                subject: `The deployment rehearsal does not match the desired-schema snapshot of ${snapshot.folder}`,
-              });
-            }
+            await requireSameStructure(
+              replica,
+              desired,
+              managedSchema,
+              `The deployment rehearsal does not match the desired-schema snapshot of ${snapshot.folder}`,
+            );
           },
         );
       }
