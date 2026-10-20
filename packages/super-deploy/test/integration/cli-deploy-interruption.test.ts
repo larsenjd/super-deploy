@@ -128,6 +128,7 @@ describe.each([
     expect(result.exitCode).toBe(exitCode);
     expect(result.stdout).toBe("");
     expect(result.stderr.trim().split("\n")).toEqual([
+      expect.stringContaining("is a superuser"),
       expect.stringContaining(`Interrupted by ${signal}`),
     ]);
     // Well before the stalled statement's 60 s.
