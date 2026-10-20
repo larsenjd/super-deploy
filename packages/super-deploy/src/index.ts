@@ -16,6 +16,11 @@ export type {
   ThrowawayDatabase,
 } from "./adapters/types.ts";
 export {
+  type DiscardDraftOptions,
+  type DiscardDraftResult,
+  discardDraft,
+} from "./commands/discard-draft.ts";
+export {
   type DraftOptions,
   type DraftResult,
   draft,
@@ -26,6 +31,16 @@ export {
   type MigrationMetadata,
 } from "./commands/finalize.ts";
 export { type RehearseResult, rehearse } from "./commands/rehearse.ts";
+export {
+  type RestoreSchemaOptions,
+  type RestoreSchemaResult,
+  restoreSchema,
+} from "./commands/restore-schema.ts";
+export {
+  type UnfinalizeOptions,
+  type UnfinalizeResult,
+  unfinalize,
+} from "./commands/unfinalize.ts";
 export {
   type ValidateOptions,
   type ValidationReport,
@@ -52,6 +67,8 @@ export {
   InvalidEncodingError,
   MigrationIntegrityError,
   NoDraftError,
+  NoMigrationError,
+  OverwriteNotAcknowledgedError,
   ProjectNotFoundError,
   RehearsalMismatchError,
   type RuleViolation,
@@ -68,6 +85,12 @@ export {
   loadProject,
   type Project,
 } from "./project.ts";
+export type {
+  Confirm,
+  OverwriteOptions,
+  OverwriteQuestion,
+  Question,
+} from "./questions.ts";
 export { maxDraftNameLength, normaliseDraftName } from "./store/draft-name.ts";
 export type { ProjectPaths } from "./store/layout.ts";
 export { toolVersion } from "./version.ts";

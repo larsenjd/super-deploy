@@ -2,12 +2,21 @@
 // flags, parse.ts) and the interactive menu (menu.ts). Each command's `run`
 // calls the exported API function and prints its result. To add a command,
 // define it here and append it to `commands`.
+import { join } from "node:path";
+import { discardDraft } from "../commands/discard-draft.ts";
 import { draft } from "../commands/draft.ts";
 import { finalize } from "../commands/finalize.ts";
 import { rehearse } from "../commands/rehearse.ts";
+import { restoreSchema } from "../commands/restore-schema.ts";
+import { unfinalize } from "../commands/unfinalize.ts";
 import { validate } from "../commands/validate.ts";
-import { ValidationFailedError, type ValidationProblem } from "../errors.ts";
+import {
+  OverwriteNotAcknowledgedError,
+  ValidationFailedError,
+  type ValidationProblem,
+} from "../errors.ts";
 import type { Project } from "../project.ts";
+import type { OverwriteOptions, Question } from "../questions.ts";
 import { readDraft } from "../store/draft.ts";
 
 export type CommandGroup =
@@ -232,6 +241,140 @@ const validateCommand: CommandDefinition = {
   },
 };
 
+const acknowledgeOverwriteOption: FlagOption = {
+  name: "acknowledge-overwrite",
+  kind: "flag",
+  acknowledgement: true,
+  description:
+    "Go ahead without asking when work would be deleted or overwritten (required without a terminal)",
+};
+
+/**
+ * The API's overwrite options: the flag, and the terminal's yes/no question
+ * (listing what would be lost) as the confirm callback.
+ */
+function overwriteOptions(
+  values: OptionValues,
+  context: CommandContext,
+): OverwriteOptions {
+  const { confirm } = context;
+  return {
+    acknowledgeOverwrite: values["acknowledge-overwrite"] === true,
+    ...(confirm === undefined
+      ? {}
+      : {
+          confirm: (question: Question) =>
+            confirm(
+              [
+                question.message,
+                ...question.paths.map((path) => `  ${path}`),
+              ].join("\n"),
+            ),
+        }),
+  };
+}
+
+/**
+ * Runs an overwriting command; answering no at the terminal is not a failure:
+ * it prints a result line and nothing changes (exit 0).
+ */
+async function unlessDeclined<T>(
+  context: CommandContext,
+  run: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof OverwriteNotAcknowledgedError && error.declined) {
+      context.result("Nothing changed");
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+/** One result line per desired-schema file written or deleted (paths are project-relative). */
+function reportRestore(
+  project: Project,
+  result: { restored: readonly string[]; deleted: readonly string[] },
+  context: CommandContext,
+): void {
+  const show = (path: string) => context.displayPath(join(project.root, path));
+  for (const path of result.restored) {
+    context.result(`Restored ${show(path)}`);
+  }
+  for (const path of result.deleted) {
+    context.result(`Deleted ${show(path)}`);
+  }
+}
+
+const unfinalizeCommand: CommandDefinition = {
+  name: "unfinalize",
+  group: "Author",
+  summary:
+    "Move the newest migration back into the draft and restore its desired-schema snapshot",
+  options: [acknowledgeOverwriteOption],
+  async run(project, values, context) {
+    const result = await unlessDeclined(context, () =>
+      unfinalize(project, overwriteOptions(values, context)),
+    );
+    if (result === undefined) {
+      return;
+    }
+    context.result(
+      `Moved migration ${result.folder} back into draft ${result.name} in ${context.displayPath(result.draftPath)}`,
+    );
+    reportRestore(project, result, context);
+  },
+};
+
+const restoreSchemaCommand: CommandDefinition = {
+  name: "restore-schema",
+  group: "Author",
+  summary:
+    "Reset the desired schema to the newest migration's snapshot and delete any draft",
+  options: [acknowledgeOverwriteOption],
+  async run(project, values, context) {
+    const result = await unlessDeclined(context, () =>
+      restoreSchema(project, overwriteOptions(values, context)),
+    );
+    if (result === undefined) {
+      return;
+    }
+    const changed =
+      result.restored.length > 0 ||
+      result.deleted.length > 0 ||
+      result.discardedDraft !== undefined;
+    context.result(
+      changed
+        ? `Reset the desired schema to migration ${result.migration}'s snapshot`
+        : `The desired schema already matches migration ${result.migration}'s snapshot`,
+    );
+    if (result.discardedDraft !== undefined) {
+      context.result(`Discarded draft ${result.discardedDraft}`);
+    }
+    reportRestore(project, result, context);
+  },
+};
+
+const discardDraftCommand: CommandDefinition = {
+  name: "discard-draft",
+  group: "Author",
+  summary: "Delete the draft, leaving the desired schema alone",
+  options: [acknowledgeOverwriteOption],
+  async run(project, values, context) {
+    const result = await unlessDeclined(context, () =>
+      discardDraft(project, overwriteOptions(values, context)),
+    );
+    if (result === undefined) {
+      return;
+    }
+    context.result(
+      `Discarded draft ${result.name ?? "(unnamed)"} (${context.displayPath(result.path)})`,
+    );
+  },
+};
+
 function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
@@ -240,5 +383,8 @@ export const commands: readonly CommandDefinition[] = [
   draftCommand,
   rehearseCommand,
   finalizeCommand,
+  unfinalizeCommand,
+  restoreSchemaCommand,
+  discardDraftCommand,
   validateCommand,
 ];
