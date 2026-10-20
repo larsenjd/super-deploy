@@ -5,6 +5,7 @@
 import { join } from "node:path";
 import { deploy } from "../commands/deploy.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
+import { disposable } from "../commands/disposable.ts";
 import { draft } from "../commands/draft.ts";
 import { finalize } from "../commands/finalize.ts";
 import { rehearse } from "../commands/rehearse.ts";
@@ -426,6 +427,36 @@ const statusCommand: CommandDefinition = {
   },
 };
 
+const disposableCommand: CommandDefinition = {
+  name: "disposable",
+  group: "Disposable",
+  summary:
+    "Flag the target as disposable (or not) in its own history schema; asks you to type YES",
+  options: [
+    targetOption,
+    {
+      name: "set",
+      kind: "choice",
+      choices: ["yes", "no"],
+      description:
+        "yes to make the target disposable, no to make it not disposable",
+      required: true,
+    },
+  ],
+  async run(project, values, context) {
+    const result = await disposable(project, {
+      target: String(values.target),
+      set: values.set === "yes",
+    });
+    const what = result.disposable ? "disposable" : "not disposable";
+    context.result(
+      result.changed
+        ? `Target ${result.target} is now ${what}`
+        : `Target ${result.target} is already ${what}: nothing changed`,
+    );
+  },
+};
+
 function describeAttempt(attempt: AttemptRecord): string {
   const range =
     attempt.fromMigration === undefined
@@ -451,4 +482,5 @@ export const commands: readonly CommandDefinition[] = [
   validateCommand,
   deployCommand,
   statusCommand,
+  disposableCommand,
 ];
