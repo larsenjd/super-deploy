@@ -5,6 +5,15 @@ import type { ParsedStatement, SqlFile } from "./parse.ts";
 import { checkRules, type RuleContext } from "./rules.ts";
 
 export { denylistReason } from "./denylist.ts";
+export {
+  analyseMigration,
+  type DeployTimeFile,
+  type DeployTimeKind,
+  type DeployTimeOptions,
+  type IdentityColumns,
+  identityColumnsOf,
+  type MigrationAnalysis,
+} from "./deploy-time.ts";
 export { isAlreadyInstalled } from "./desired-schema-rules.ts";
 export {
   alternativeOrder,
@@ -14,6 +23,12 @@ export {
 } from "./ordering.ts";
 export { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 export { externalSchemasBoundAtCreate } from "./routine-bodies.ts";
+export {
+  type RuleCategory,
+  type RuleDefinition,
+  ruleCatalogue,
+  ruleDefinition,
+} from "./rule-catalogue.ts";
 export { checkRules, type FileKind, type RuleContext } from "./rules.ts";
 
 /**
