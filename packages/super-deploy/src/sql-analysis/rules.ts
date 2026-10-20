@@ -2,62 +2,41 @@
 // allowed is refused, so unfamiliar or newer syntax never slips through.
 //
 // The desired-schema rules live in desired-schema-rules.ts (ticket 08). The
-// deploy-time kinds allow nothing yet, so they fail closed (ticket 06).
+// deploy-time kinds (schema change, pre- and post-migration scripts, seed
+// data) are checked by deploy-time.ts (ticket 06), which also analyses a
+// migration's files together (analyseMigration).
 import type { RuleViolation } from "../errors.ts";
 import {
-  desiredSchemaFindings,
-  statementName,
-} from "./desired-schema-rules.ts";
-import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
-import type { RuleContext, RuleFinding } from "./rule-types.ts";
+  analyseMigration,
+  type DeployTimeKind,
+  type DeployTimeOptions,
+} from "./deploy-time.ts";
+import { desiredSchemaFindings } from "./desired-schema-rules.ts";
+import { parseSqlFile, type SqlFile } from "./parse.ts";
+import type { RuleContext } from "./rule-types.ts";
 
 export type { RuleContext, RuleFinding } from "./rule-types.ts";
 
-export type FileKind =
-  | "desired-schema"
-  | "schema-change"
-  | "pre-migration"
-  | "post-migration"
-  | "seed-data";
-
-type DeployTimeKind = Exclude<FileKind, "desired-schema">;
-
-const kindNames: Record<DeployTimeKind, string> = {
-  "schema-change": "a schema change",
-  "pre-migration": "a pre-migration script",
-  "post-migration": "a post-migration script",
-  "seed-data": "seed data",
-};
-
-type Rule = (
-  statement: ParsedStatement,
-) => { rule: string; message: string } | undefined;
-
-const deployTimeStatements =
-  (kind: DeployTimeKind): Rule =>
-  (statement) => ({
-    rule: "deploy-time-statement",
-    message: `${statementName(statement.nodeType)} is not allowed in ${kindNames[kind]}`,
-  });
-
-const deployTimeRules: Record<DeployTimeKind, readonly Rule[]> = {
-  "schema-change": [deployTimeStatements("schema-change")],
-  "pre-migration": [deployTimeStatements("pre-migration")],
-  "post-migration": [deployTimeStatements("post-migration")],
-  "seed-data": [deployTimeStatements("seed-data")],
-};
+export type FileKind = "desired-schema" | DeployTimeKind;
 
 const defaultContext: RuleContext = {
   managedSchema: "public",
   externalSchemas: [],
 };
 
-/** Every rule violation in one file of the given kind, in file order. */
+/**
+ * Every rule violation in one file of the given kind, in file order.
+ * `identityColumns` matters for deploy-time kinds only.
+ */
 export async function checkRules(
   file: SqlFile,
   kind: FileKind,
-  context: Partial<RuleContext> = {},
+  context: Partial<RuleContext> & DeployTimeOptions = {},
 ): Promise<RuleViolation[]> {
+  if (kind !== "desired-schema") {
+    const analysis = await analyseMigration([{ ...file, kind }], context);
+    return [...analysis.violations];
+  }
   const parsed = await parseSqlFile(file);
   if (!parsed.ok) {
     return [parsed.violation];
@@ -68,11 +47,10 @@ export async function checkRules(
   };
   const violations: RuleViolation[] = [];
   for (const statement of parsed.statements) {
-    const findings: RuleFinding[] =
-      kind === "desired-schema"
-        ? desiredSchemaFindings(statement, resolved)
-        : deployTimeRules[kind].flatMap((rule) => rule(statement) ?? []);
-    for (const { line, ...found } of findings) {
+    for (const { line, ...found } of desiredSchemaFindings(
+      statement,
+      resolved,
+    )) {
       violations.push({
         file: statement.file,
         line: line ?? statement.line,

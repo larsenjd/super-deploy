@@ -11,6 +11,7 @@ import { type DraftMetadata, readDraft } from "../store/draft.ts";
 import type { HashedFile } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import type { FinalizedMigration } from "../store/migrations.ts";
+import { newestSnapshot, refuseRuleViolations } from "./check-rules.ts";
 
 export interface RehearseResult {
   /** The draft's name. */
@@ -58,7 +59,16 @@ export async function rehearseCurrentDraft(
     },
   );
   const units = await readMigrationUnits(root, migrations);
-  units.push(await readReplayUnit(root, paths.draft, `draft ${draft.name}`));
+  const draftUnit = await readReplayUnit(
+    root,
+    paths.draft,
+    `draft ${draft.name}`,
+  );
+  await refuseRuleViolations(draftUnit, {
+    managedSchema: project.config.managedSchema,
+    schemas: [await newestSnapshot(root, migrations), statements],
+  });
+  units.push(draftUnit);
   const { serverVersion } = await rehearseDraft(project, statements, units);
   return { draft, migrations, desiredSchema, serverVersion };
 }

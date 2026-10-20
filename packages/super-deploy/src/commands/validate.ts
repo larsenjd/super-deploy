@@ -1,6 +1,7 @@
 // `validate [--strict]`: database-free checks for the pre-commit hook.
 // Errors: the migrations index, folder names and numbering, content hashes
-// and the hash chain. Warnings: an unfinalized draft, and desired-schema
+// and the hash chain; rule violations in the desired schema, in every
+// finalized migration's deploy-time files and in the draft's. Warnings: an unfinalized draft, and desired-schema
 // changes not yet drafted. `strict` turns warnings into failures.
 //
 // Read-only state: git does not store it, so a fresh checkout has writable
@@ -10,20 +11,28 @@
 import { join } from "node:path";
 import {
   InvalidEncodingError,
+  type RuleViolation,
+  SqlRuleViolationError,
   ValidationFailedError,
   type ValidationProblem,
 } from "../errors.ts";
 import type { Project } from "../project.ts";
-import { readDesiredSchemaFiles } from "../store/desired-schema.ts";
+import { readReplayUnit } from "../rehearsal/replay.ts";
+import { analyseDesiredSchema, type SqlFile } from "../sql-analysis/index.ts";
+import {
+  readDesiredSchema,
+  readDesiredSchemaFiles,
+} from "../store/desired-schema.ts";
 import { readDraft } from "../store/draft.ts";
 import { desiredSchemaHash } from "../store/hashing.ts";
-import { checkMigrations } from "../store/integrity.ts";
+import { checkMigrations, type IntegrityReport } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
   makeReadOnly,
   snapshotFolderName,
   writableFiles,
 } from "../store/migrations.ts";
+import { checkReplayUnit } from "./check-rules.ts";
 
 export interface ValidateOptions {
   /** Fail on warnings too (the pre-commit hook uses this). */
@@ -110,6 +119,8 @@ export async function validate(
     });
   }
 
+  problems.push(...(await ruleProblems(project, draft?.name, integrity)));
+
   if (problems.some((p) => p.severity === "error" || strict)) {
     throw new ValidationFailedError(problems, strict);
   }
@@ -131,4 +142,83 @@ export async function validate(
     problems,
     readOnlyRestored,
   };
+}
+
+/**
+ * Rule violations as errors: every finalized migration's deploy-time files
+ * (only when the migrations verify, so the files are the ones finalized), the
+ * desired schema, and the draft's files.
+ */
+async function ruleProblems(
+  project: Project,
+  draftName: string | undefined,
+  integrity: IntegrityReport,
+): Promise<ValidationProblem[]> {
+  const { root, paths, config } = project;
+  const violations: RuleViolation[] = [];
+  const problems: ValidationProblem[] = [];
+  try {
+    const snapshot = (path: string) =>
+      readDesiredSchema(root, join(path, snapshotFolderName));
+    let previous: SqlFile[] = [];
+    if (integrity.problems.length === 0) {
+      for (const migration of integrity.migrations) {
+        const own = await snapshot(migration.path);
+        violations.push(
+          ...(await checkReplayUnit(
+            await readReplayUnit(root, migration.path, migration.folder),
+            { managedSchema: config.managedSchema, schemas: [previous, own] },
+          )),
+        );
+        previous = own;
+      }
+    }
+    const desired = await readDesiredSchema(root, paths.desiredSchema);
+    try {
+      await analyseDesiredSchema(desired, {
+        managedSchema: config.managedSchema,
+        externalSchemas: config.externalSchemas,
+      });
+    } catch (error) {
+      if (!(error instanceof SqlRuleViolationError)) {
+        throw error;
+      }
+      violations.push(...error.violations);
+    }
+    if (draftName !== undefined) {
+      violations.push(
+        ...(await checkReplayUnit(
+          await readReplayUnit(root, paths.draft, `draft ${draftName}`),
+          {
+            managedSchema: config.managedSchema,
+            schemas: [previous, desired],
+          },
+        )),
+      );
+    }
+  } catch (error) {
+    if (!(error instanceof InvalidEncodingError)) {
+      throw error;
+    }
+    // The desired-schema check above already reports this file's encoding.
+    if (!error.file.startsWith(projectRelative(root, paths.desiredSchema))) {
+      problems.push({
+        severity: "error",
+        code: "invalid-encoding",
+        message: error.message,
+        path: error.file,
+      });
+    }
+  }
+  for (const violation of violations) {
+    problems.push({
+      severity: "error",
+      code: "sql-rule-violation",
+      message: `${violation.file}:${violation.line}: ${violation.message} [${violation.rule}]`,
+      path: violation.file,
+      line: violation.line,
+      rule: violation.rule,
+    });
+  }
+  return problems;
 }
