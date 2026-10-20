@@ -4,7 +4,12 @@
 import { NoDraftError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { rehearseDraft } from "../rehearsal/rehearse-draft.ts";
-import { readMigrationUnits, readReplayUnit } from "../rehearsal/replay.ts";
+import { readMigrationUnits } from "../rehearsal/replay.ts";
+import {
+  readSeededUnit,
+  seededFiles,
+  seededUnits,
+} from "../rehearsal/seed-data.ts";
 import {
   analyseDesiredSchema,
   type DestructiveStatement,
@@ -83,20 +88,18 @@ export async function rehearseCurrentDraft(
     },
   );
   const units = await readMigrationUnits(root, migrations);
-  const draftUnit = await readReplayUnit(
-    root,
-    paths.draft,
-    `draft ${draft.name}`,
-  );
+  // The draft's seed data loads just before its pre-migration script; the
+  // finalized migrations' seed data is never loaded.
+  const seeded = await readSeededUnit(root, paths.draft, `draft ${draft.name}`);
   const previous = await newestSnapshot(root, migrations);
-  const analysis = await refuseRuleViolations(draftUnit, {
+  const analysis = await refuseRuleViolations(seededFiles(seeded), {
     managedSchema: project.config.managedSchema,
     externalSchemas: project.config.externalSchemas,
     schemas: [previous, statements],
     previous,
   });
   await beforeRehearsal?.(draft, analysis);
-  units.push(draftUnit);
+  units.push(...seededUnits(seeded));
   const { serverVersion } = await rehearseDraft(project, statements, units);
   return {
     draft,

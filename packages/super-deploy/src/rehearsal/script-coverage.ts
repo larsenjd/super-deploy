@@ -2,9 +2,9 @@
 // a generated schema change that lose or reject existing data unless a
 // pre-migration script handles it first. Found by reading the schema change's
 // syntax trees, then counting the affected rows in `draft`'s starting point
-// (the finalized migrations replayed plus the pre-migration script; ticket 15
-// adds the draft's seed data there), so the count reflects the rehearsal
-// data, not any target's. Tables and columns the migration creates are
+// (the finalized migrations replayed, then the draft's seed data and
+// pre-migration script), so the count reflects the rehearsal data, not any
+// target's. Tables and columns the migration creates are
 // exempt: they hold no data yet.
 //
 // Advisory only: `draft` reports these and carries on. Acknowledging data

@@ -41,6 +41,11 @@ example by reading a connection string from an environment variable.
 
 ## Seed data
 
+Seed data goes in `data-model/draft/seed-data.sql`: `INSERT` statements with
+column lists that reproduce a target's problem data. The draft's rehearsals
+load it just before the pre-migration script, so they prove the scripts
+handle it; it is never loaded once the migration is finalized.
+
 Seed data must be synthetic or anonymised. It is committed to git with its
 migration and kept forever as an audit record, so never copy production data
 into it.
