@@ -4,6 +4,7 @@
   "description": "Root of the prototype spike branches. Prototypes are throwaway; see prototype-*/.",
   "scripts": {
     "prototype:pg-delta": "pnpm --dir prototype-pg-delta install --frozen-lockfile && pnpm --dir prototype-pg-delta start",
-    "prototype:schema-ordering": "pnpm --dir prototype-schema-ordering install --frozen-lockfile && pnpm --dir prototype-schema-ordering start"
+    "prototype:schema-ordering": "pnpm --dir prototype-schema-ordering install --frozen-lockfile && pnpm --dir prototype-schema-ordering start",
+    "prototype:pg-topo-pg18": "pnpm --dir prototype-schema-ordering install --frozen-lockfile && pnpm --dir prototype-pg-topo-pg18 install --frozen-lockfile && pnpm --dir prototype-pg-topo-pg18/pg18-override install --frozen-lockfile && pnpm --dir prototype-pg-topo-pg18 start"
   }
 }

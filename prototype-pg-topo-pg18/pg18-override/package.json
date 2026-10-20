@@ -1,0 +1,9 @@
+{
+  "name": "prototype-pg-topo-pg18-override",
+  "private": true,
+  "type": "module",
+  "description": "THROWAWAY: the SAME @supabase/pg-topo@1.0.0-alpha.8, with its parser dependencies forced to the PG18 lines via pnpm overrides. An experiment; upstream does not ship this.",
+  "dependencies": {
+    "@supabase/pg-topo": "1.0.0-alpha.8"
+  }
+}

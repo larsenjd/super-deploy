@@ -1,0 +1,5 @@
+allowBuilds:
+  '@launchql/protobufjs': false
+overrides:
+  plpgsql-parser: 18.5.14
+  '@pgsql/traverse': 18.7.14

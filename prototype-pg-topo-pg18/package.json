@@ -1,0 +1,17 @@
+{
+  "name": "prototype-pg-topo-pg18",
+  "private": true,
+  "type": "module",
+  "description": "THROWAWAY spike: does @supabase/pg-topo support PostgreSQL 18? Not production code.",
+  "scripts": {
+    "start": "node src/main.ts"
+  },
+  "dependencies": {
+    "@pgsql/types": "18.0.0",
+    "@supabase/pg-delta": "1.0.0-alpha.59",
+    "@supabase/pg-topo": "1.0.0-alpha.8",
+    "embedded-postgres": "18.4.0-beta.17",
+    "libpg-query": "18.1.5",
+    "pg": "8.23.1"
+  }
+}

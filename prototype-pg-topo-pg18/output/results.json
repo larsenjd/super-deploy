@@ -1,0 +1,2640 @@
+{
+  "server": "PostgreSQL 18.4 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 7.5.0-3ubuntu1~18.04) 7.5.0, 64-bit",
+  "variants": [
+    {
+      "name": "stock alpha.8",
+      "parser": "plpgsql-parser@0.5.16 -> @libpg-query/parser@17.6.10, @pgsql/traverse@17.2.6"
+    },
+    {
+      "name": "alpha.8 + PG18 overrides",
+      "parser": "plpgsql-parser@18.5.14 -> libpg-query@18.1.5, @pgsql/traverse@18.7.14 (forced)"
+    }
+  ],
+  "matrix": [
+    {
+      "id": "C01",
+      "title": "tables, PK, UNIQUE, inline FK (to PK and to UNIQUE)",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table parent (id int primary key, code text not null unique);",
+          "create table child (id int primary key, parent_id int not null referen"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table parent (id int primary key, code text not null unique);",
+          "create table child (id int primary key, parent_id int not null referen"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C02",
+      "title": "circular FK closed with ALTER TABLE ... ADD CONSTRAINT",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table a (id int primary key, b_id int);",
+          "create table b (id int primary key, a_id int references a (id));",
+          "alter table a add constraint a_b_fk foreign key (b_id) references b (i"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table a (id int primary key, b_id int);",
+          "create table b (id int primary key, a_id int references a (id));",
+          "alter table a add constraint a_b_fk foreign key (b_id) references b (i"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C03",
+      "title": "CHECK calling a user function, named UNIQUE, EXCLUDE using gist",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create function is_positive(x int) returns boolean language sql immuta",
+          "create table booking (id int primary key, n int constraint booking_n_c"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create function is_positive(x int) returns boolean language sql immuta",
+          "create table booking (id int primary key, n int constraint booking_n_c"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C04a",
+      "title": "NOT NULL: plain and named column constraint (pre-PG18 syntax)",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table nn1 (a int not null, b int constraint nn1_b_nn not null);",
+          "create view nn1_v as select a, b from nn1;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table nn1 (a int not null, b int constraint nn1_b_nn not null);",
+          "create view nn1_v as select a, b from nn1;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C04b",
+      "title": "NOT NULL as a named TABLE constraint: CONSTRAINT x NOT NULL col (PG18)",
+      "v1": "supported",
+      "pg18": true,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "PARSE_ERROR",
+        "ordered": 1,
+        "of": 2,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:nn2:'.",
+          "PARSE_ERROR: syntax error at or near \"not\""
+        ],
+        "load": "skipped: 1 statement(s) missing from ordered output",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create view nn2_v as select a from nn2;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table nn2 (a int, constraint nn2_a_nn not null a);",
+          "create view nn2_v as select a from nn2;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C04c",
+      "title": "NOT NULL via ALTER TABLE ... ADD CONSTRAINT x NOT NULL col (PG18)",
+      "v1": "supported",
+      "pg18": true,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "PARSE_ERROR",
+        "ordered": 2,
+        "of": 3,
+        "diagnostics": [
+          "PARSE_ERROR: syntax error at or near \"not\""
+        ],
+        "load": "skipped: 1 statement(s) missing from ordered output",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table nn3 (a int);",
+          "comment on constraint nn3_a_nn on nn3 is 'named not null';"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: relation \"nn3\" does not exist",
+          "random-valid(seed 1): <input:0>#0: relation \"nn3\" does not exist",
+          "random-valid(seed 2): <input:0>#0: constraint \"nn3_a_nn\" for table \"nn3\" does not exist",
+          "random-valid(seed 3): <input:0>#0: relation \"nn3\" does not exist"
+        ],
+        "order": [
+          "create table nn3 (a int);",
+          "alter table nn3 add constraint nn3_a_nn not null a;",
+          "comment on constraint nn3_a_nn on nn3 is 'named not null';"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C05",
+      "title": "STORED generated column calling a user function",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create function dbl(x int) returns int language sql immutable return x",
+          "create table g (a int, b int generated always as (dbl(a)) stored);"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create function dbl(x int) returns int language sql immutable return x",
+          "create table g (a int, b int generated always as (dbl(a)) stored);"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C06a",
+      "title": "VIRTUAL generated column (PG18), view on it",
+      "v1": "refused",
+      "pg18": true,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "PARSE_ERROR",
+        "ordered": 1,
+        "of": 2,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:gv:'.",
+          "PARSE_ERROR: syntax error at or near \"virtual\""
+        ],
+        "load": "skipped: 1 statement(s) missing from ordered output",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create view gv_v as select b from gv;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table gv (a int, b int generated always as (a * 2) virtual);",
+          "create view gv_v as select b from gv;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C06b",
+      "title": "generated column with no STORED/VIRTUAL keyword (PG18 default = VIRTUAL)",
+      "v1": "refused",
+      "pg18": true,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "PARSE_ERROR",
+        "ordered": 1,
+        "of": 2,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:gd:'.",
+          "PARSE_ERROR: syntax error at or near \")\""
+        ],
+        "load": "skipped: 1 statement(s) missing from ordered output",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create view gd_v as select b from gd;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table gd (a int, b int generated always as (a + 1));",
+          "create view gd_v as select b from gd;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C07",
+      "title": "identity columns (ALWAYS / BY DEFAULT with options)",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table ident (id bigint generated always as identity primary key",
+          "create view ident_v as select id, x from ident;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table ident (id bigint generated always as identity primary key",
+          "create view ident_v as select id, x from ident;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C08",
+      "title": "indexes: unique expression index with user function + partial predicate; INCLUDE",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table ix (id int, email text, active boolean);",
+          "create function norm(t text) returns text language sql immutable retur",
+          "create index ix_id_idx on ix (id) include (email);",
+          "create unique index ix_email_uidx on ix (norm(email)) where active;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table ix (id int, email text, active boolean);",
+          "create function norm(t text) returns text language sql immutable retur",
+          "create index ix_id_idx on ix (id) include (email);",
+          "create unique index ix_email_uidx on ix (norm(email)) where active;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C09",
+      "title": "view chain, security_invoker view, materialized view + index on it",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 5,
+        "of": 5,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table base (id int primary key, v int);",
+          "create view v1 as select id, v from base;",
+          "create view v2 with (security_invoker = true) as select id, v * 2 as v",
+          "create materialized view mv as select id, v2 from v2;",
+          "create unique index mv_id_uidx on mv (id);"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 5,
+        "of": 5,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table base (id int primary key, v int);",
+          "create view v1 as select id, v from base;",
+          "create view v2 with (security_invoker = true) as select id, v * 2 as v",
+          "create materialized view mv as select id, v2 from v2;",
+          "create unique index mv_id_uidx on mv (id);"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C10a",
+      "title": "LANGUAGE sql string body reading a TABLE, unqualified (binds at CREATE: check_function_bodies)",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: relation \"acct\" does not exist",
+          "random-valid(seed 1): <input:0>#0: relation \"acct\" does not exist",
+          "random-valid(seed 3): <input:0>#0: relation \"acct\" does not exist"
+        ],
+        "order": [
+          "create table acct (id int primary key, bal numeric);",
+          "create function total_bal() returns numeric language sql stable as $$ "
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: relation \"acct\" does not exist",
+          "random-valid(seed 1): <input:0>#0: relation \"acct\" does not exist",
+          "random-valid(seed 3): <input:0>#0: relation \"acct\" does not exist"
+        ],
+        "order": [
+          "create table acct (id int primary key, bal numeric);",
+          "create function total_bal() returns numeric language sql stable as $$ "
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C10b",
+      "title": "LANGUAGE sql string body reading a VIEW, unqualified",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "LOAD FAILED",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "load": "<input:0>#0: relation \"acct2_v\" does not exist",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: relation \"acct2_v\" does not exist",
+          "random-valid(seed 1): <input:0>#0: relation \"acct2_v\" does not exist",
+          "random-valid(seed 2): <input:0>#0: relation \"acct2_v\" does not exist",
+          "random-valid(seed 3): <input:0>#0: relation \"acct2_v\" does not exist"
+        ],
+        "order": [
+          "create table acct2 (id int primary key, bal numeric);",
+          "create function acct2_total() returns numeric language sql stable as $",
+          "create view acct2_v as select id, bal from acct2;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "LOAD FAILED",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "load": "<input:0>#0: relation \"acct2_v\" does not exist",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: relation \"acct2_v\" does not exist",
+          "random-valid(seed 1): <input:0>#0: relation \"acct2_v\" does not exist",
+          "random-valid(seed 2): <input:0>#0: relation \"acct2_v\" does not exist",
+          "random-valid(seed 3): <input:0>#0: relation \"acct2_v\" does not exist"
+        ],
+        "order": [
+          "create table acct2 (id int primary key, bal numeric);",
+          "create function acct2_total() returns numeric language sql stable as $",
+          "create view acct2_v as select id, bal from acct2;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C10c",
+      "title": "LANGUAGE sql string body reading a VIEW, schema-qualified (public.)",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table acct3 (id int primary key, bal numeric);",
+          "create view acct3_v as select id, bal from acct3;",
+          "create function acct3_total() returns numeric language sql stable as $"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table acct3 (id int primary key, bal numeric);",
+          "create view acct3_v as select id, bal from acct3;",
+          "create function acct3_total() returns numeric language sql stable as $"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C11",
+      "title": "BEGIN ATOMIC body reading a view; RETURN body calling a function",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "LOAD FAILED",
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [],
+        "load": "<input:0>#0: function acct4_count() does not exist",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:1>#0: relation \"acct4_v\" does not exist",
+          "random-valid(seed 1): <input:1>#0: relation \"acct4_v\" does not exist",
+          "random-valid(seed 2): <input:0>#0: function acct4_count() does not exist"
+        ],
+        "order": [
+          "create table acct4 (id int primary key, bal numeric);",
+          "create function acct4_count_plus() returns bigint language sql return ",
+          "create function acct4_count() returns bigint language sql begin atomic",
+          "create view acct4_v as select id, bal from acct4;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "LOAD FAILED",
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [],
+        "load": "<input:0>#0: function acct4_count() does not exist",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:1>#0: relation \"acct4_v\" does not exist",
+          "random-valid(seed 1): <input:1>#0: relation \"acct4_v\" does not exist",
+          "random-valid(seed 2): <input:0>#0: function acct4_count() does not exist"
+        ],
+        "order": [
+          "create table acct4 (id int primary key, bal numeric);",
+          "create function acct4_count_plus() returns bigint language sql return ",
+          "create function acct4_count() returns bigint language sql begin atomic",
+          "create view acct4_v as select id, bal from acct4;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C12",
+      "title": "SETOF rowtype, RETURNS TABLE, default argument calling a function",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "LOAD FAILED",
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [],
+        "load": "<input:1>#0: function base_price() does not exist",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: relation \"item\" does not exist",
+          "random-valid(seed 3): <input:1>#0: function base_price() does not exist"
+        ],
+        "order": [
+          "create table item (id int, price numeric);",
+          "create function item_summary() returns table (n bigint, s numeric) lan",
+          "create function items_over(p numeric default base_price()) returns set",
+          "create function base_price() returns numeric language sql immutable re"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "LOAD FAILED",
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [],
+        "load": "<input:1>#0: function base_price() does not exist",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: relation \"item\" does not exist",
+          "random-valid(seed 3): <input:1>#0: function base_price() does not exist"
+        ],
+        "order": [
+          "create table item (id int, price numeric);",
+          "create function item_summary() returns table (n bigint, s numeric) lan",
+          "create function items_over(p numeric default base_price()) returns set",
+          "create function base_price() returns numeric language sql immutable re"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C13",
+      "title": "procedures: BEGIN ATOMIC (binds) and PL/pgSQL (late-bound)",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:1>#0: relation \"item2\" does not exist"
+        ],
+        "order": [
+          "create table item2 (id int, price numeric);",
+          "create procedure bump_all() language plpgsql as $$ begin update item2 ",
+          "create procedure bump(p_id int) language sql begin atomic update item2"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:1>#0: relation \"item2\" does not exist"
+        ],
+        "order": [
+          "create table item2 (id int, price numeric);",
+          "create procedure bump_all() language plpgsql as $$ begin update item2 ",
+          "create procedure bump(p_id int) language sql begin atomic update item2"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C14",
+      "title": "PL/pgSQL trigger function + trigger with WHEN calling a SQL function",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "random-valid(seed 1): <input:0>#0: function changed(text, text) does not exist",
+          "random-valid(seed 3): <input:0>#0: function changed(text, text) does not exist"
+        ],
+        "order": [
+          "create table doc (id int, body text, updated_at timestamptz);",
+          "create function changed(a text, b text) returns boolean language sql i",
+          "create function touch() returns trigger language plpgsql as $$ begin n",
+          "create trigger doc_touch before update on doc for each row when (chang"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "random-valid(seed 1): <input:0>#0: function changed(text, text) does not exist",
+          "random-valid(seed 3): <input:0>#0: function changed(text, text) does not exist"
+        ],
+        "order": [
+          "create table doc (id int, body text, updated_at timestamptz);",
+          "create function changed(a text, b text) returns boolean language sql i",
+          "create function touch() returns trigger language plpgsql as $$ begin n",
+          "create trigger doc_touch before update on doc for each row when (chang"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C15",
+      "title": "domains (check calling a function, domain over domain), composite type with domain attribute, arrays, composite arg",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "LOAD FAILED",
+        "ordered": 6,
+        "of": 6,
+        "diagnostics": [],
+        "load": "<input:2>#0: type \"work_email\" does not exist",
+        "edgesOnlyFailures": [
+          "random-valid(seed 2): <input:2>#0: type \"work_email\" does not exist"
+        ],
+        "order": [
+          "create type contact as (name text, mail work_email);",
+          "create function contact_name(c contact) returns text language sql immu",
+          "create function valid_email(t text) returns boolean language sql immut",
+          "create domain email as text check (valid_email(value));",
+          "create domain work_email as email check (value like '%.com');",
+          "create table person (id int, c contact, cs contact[], e email);"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "LOAD FAILED",
+        "ordered": 6,
+        "of": 6,
+        "diagnostics": [],
+        "load": "<input:2>#0: type \"work_email\" does not exist",
+        "edgesOnlyFailures": [
+          "random-valid(seed 2): <input:2>#0: type \"work_email\" does not exist"
+        ],
+        "order": [
+          "create type contact as (name text, mail work_email);",
+          "create function contact_name(c contact) returns text language sql immu",
+          "create function valid_email(t text) returns boolean language sql immut",
+          "create domain email as text check (valid_email(value));",
+          "create domain work_email as email check (value like '%.com');",
+          "create table person (id int, c contact, cs contact[], e email);"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C16",
+      "title": "RLS enable/force, policies with function call and subquery, TO role",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 7,
+        "of": 7,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:4>#0: relation \"member\" does not exist",
+          "random-valid(seed 1): <input:4>#0: relation \"member\" does not exist",
+          "random-valid(seed 2): <input:4>#0: relation \"member\" does not exist",
+          "random-valid(seed 3): <input:4>#0: relation \"member\" does not exist"
+        ],
+        "order": [
+          "create table team (id int primary key, owner text);",
+          "create table member (team_id int references team (id), usr text);",
+          "alter table team force row level security;",
+          "alter table team enable row level security;",
+          "create function is_member(t int) returns boolean language sql stable a",
+          "create policy team_write on team for insert to prototype_writer with c",
+          "create policy team_read on team for select to prototype_reader using ("
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 7,
+        "of": 7,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:4>#0: relation \"member\" does not exist",
+          "random-valid(seed 1): <input:4>#0: relation \"member\" does not exist",
+          "random-valid(seed 2): <input:4>#0: relation \"member\" does not exist",
+          "random-valid(seed 3): <input:4>#0: relation \"member\" does not exist"
+        ],
+        "order": [
+          "create table team (id int primary key, owner text);",
+          "create table member (team_id int references team (id), usr text);",
+          "alter table team force row level security;",
+          "alter table team enable row level security;",
+          "create function is_member(t int) returns boolean language sql stable a",
+          "create policy team_write on team for insert to prototype_writer with c",
+          "create policy team_read on team for select to prototype_reader using ("
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C17",
+      "title": "COMMENT ON every supported kind",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 24,
+        "of": 24,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:6>#0: relation \"cm\" does not exist",
+          "random-valid(seed 1): <input:6>#0: relation \"cm\" does not exist",
+          "random-valid(seed 2): <input:2>#0: type \"cm_type\" does not exist",
+          "random-valid(seed 3): <input:11>#0: relation \"cm\" does not exist"
+        ],
+        "order": [
+          "create type cm_type as (a int);",
+          "create domain cm_dom as int check (value > 0);",
+          "create table cm (id int constraint cm_pk primary key, a cm_dom);",
+          "create function cm_trg() returns trigger language plpgsql as $$ begin ",
+          "create function cm_fn(x int) returns int language sql immutable return",
+          "create procedure cm_proc() language sql begin atomic select 1; end;",
+          "create view cm_v as select id from cm;",
+          "create materialized view cm_mv as select id from cm;",
+          "create index cm_a_idx on cm (a);",
+          "create trigger cm_t before insert on cm for each row execute function ",
+          "create policy cm_p on cm using (true);",
+          "comment on column cm_v.id is 'view column';",
+          "comment on domain cm_dom is 'd';",
+          "comment on view cm_v is 'v';",
+          "comment on column cm.a is 'c';",
+          "comment on table cm is 't';",
+          "comment on type cm_type is 'ty';",
+          "comment on policy cm_p on cm is 'pol';",
+          "comment on trigger cm_t on cm is 'tr';",
+          "comment on index cm_a_idx is 'i';",
+          "comment on constraint cm_pk on cm is 'pk';",
+          "comment on procedure cm_proc() is 'p';",
+          "comment on function cm_fn(int) is 'f';",
+          "comment on materialized view cm_mv is 'mv';"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 24,
+        "of": 24,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:6>#0: relation \"cm\" does not exist",
+          "random-valid(seed 1): <input:6>#0: relation \"cm\" does not exist",
+          "random-valid(seed 2): <input:2>#0: type \"cm_type\" does not exist",
+          "random-valid(seed 3): <input:11>#0: relation \"cm\" does not exist"
+        ],
+        "order": [
+          "create type cm_type as (a int);",
+          "create domain cm_dom as int check (value > 0);",
+          "create table cm (id int constraint cm_pk primary key, a cm_dom);",
+          "create function cm_trg() returns trigger language plpgsql as $$ begin ",
+          "create function cm_fn(x int) returns int language sql immutable return",
+          "create procedure cm_proc() language sql begin atomic select 1; end;",
+          "create view cm_v as select id from cm;",
+          "create materialized view cm_mv as select id from cm;",
+          "create index cm_a_idx on cm (a);",
+          "create trigger cm_t before insert on cm for each row execute function ",
+          "create policy cm_p on cm using (true);",
+          "comment on column cm_v.id is 'view column';",
+          "comment on domain cm_dom is 'd';",
+          "comment on view cm_v is 'v';",
+          "comment on column cm.a is 'c';",
+          "comment on table cm is 't';",
+          "comment on type cm_type is 'ty';",
+          "comment on policy cm_p on cm is 'pol';",
+          "comment on trigger cm_t on cm is 'tr';",
+          "comment on index cm_a_idx is 'i';",
+          "comment on constraint cm_pk on cm is 'pk';",
+          "comment on procedure cm_proc() is 'p';",
+          "comment on function cm_fn(int) is 'f';",
+          "comment on materialized view cm_mv is 'mv';"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C18",
+      "title": "GRANT on table, columns, view, function, procedure, type, domain, identity sequence",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 14,
+        "of": 14,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'sequence:public:gr_id_seq:'."
+        ],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: relation \"gr_id_seq\" does not exist",
+          "random-valid(seed 1): <input:0>#0: relation \"gr_id_seq\" does not exist",
+          "random-valid(seed 2): <input:0>#0: relation \"gr_id_seq\" does not exist"
+        ],
+        "order": [
+          "create type gr_type as (a int);",
+          "create domain gr_dom as int;",
+          "create table gr (id int generated always as identity primary key, secr",
+          "create function gr_fn() returns int language sql immutable return 1;",
+          "create procedure gr_proc() language sql begin atomic select 1; end;",
+          "create view gr_v as select id, pub from gr;",
+          "grant usage on sequence gr_id_seq to prototype_writer;",
+          "grant usage on domain gr_dom to prototype_reader;",
+          "grant usage on type gr_type to prototype_reader;",
+          "grant execute on procedure gr_proc() to prototype_writer;",
+          "grant execute on function gr_fn() to prototype_reader;",
+          "grant select on gr_v to prototype_reader;",
+          "grant select (id, pub), update (pub) on gr to prototype_writer;",
+          "grant select on gr to prototype_reader;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 14,
+        "of": 14,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'sequence:public:gr_id_seq:'."
+        ],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: relation \"gr_id_seq\" does not exist",
+          "random-valid(seed 1): <input:0>#0: relation \"gr_id_seq\" does not exist",
+          "random-valid(seed 2): <input:0>#0: relation \"gr_id_seq\" does not exist"
+        ],
+        "order": [
+          "create type gr_type as (a int);",
+          "create domain gr_dom as int;",
+          "create table gr (id int generated always as identity primary key, secr",
+          "create function gr_fn() returns int language sql immutable return 1;",
+          "create procedure gr_proc() language sql begin atomic select 1; end;",
+          "create view gr_v as select id, pub from gr;",
+          "grant usage on sequence gr_id_seq to prototype_writer;",
+          "grant usage on domain gr_dom to prototype_reader;",
+          "grant usage on type gr_type to prototype_reader;",
+          "grant execute on procedure gr_proc() to prototype_writer;",
+          "grant execute on function gr_fn() to prototype_reader;",
+          "grant select on gr_v to prototype_reader;",
+          "grant select (id, pub), update (pub) on gr to prototype_writer;",
+          "grant select on gr to prototype_reader;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C19",
+      "title": "CREATE EXTENSION plpgsql + a PL/pgSQL function",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create extension if not exists plpgsql;",
+          "create function pl_one() returns int language plpgsql as $$ begin retu"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create extension if not exists plpgsql;",
+          "create function pl_one() returns int language plpgsql as $$ begin retu"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C20a",
+      "title": "temporal PRIMARY KEY ... WITHOUT OVERLAPS (PG18), ranges only (no btree_gist)",
+      "v1": "unclear",
+      "pg18": true,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "PARSE_ERROR",
+        "ordered": 1,
+        "of": 2,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:room:'.",
+          "PARSE_ERROR: syntax error at or near \"without\""
+        ],
+        "load": "skipped: 1 statement(s) missing from ordered output",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create view room_v as select id from room;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table room (id int4range, during tstzrange, constraint room_pk ",
+          "create view room_v as select id from room;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C20b",
+      "title": "temporal FK ... PERIOD (PG18) to a WITHOUT OVERLAPS key",
+      "v1": "unclear",
+      "pg18": true,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "PARSE_ERROR",
+        "ordered": 0,
+        "of": 2,
+        "diagnostics": [
+          "PARSE_ERROR: syntax error at or near \"during\"",
+          "PARSE_ERROR: syntax error at or near \"without\""
+        ],
+        "load": "skipped: 2 statement(s) missing from ordered output",
+        "edgesOnlyFailures": [],
+        "order": []
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table room2 (id int4range, during tstzrange, constraint room2_p",
+          "create table stay (room_id int4range, during tstzrange, constraint sta"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C20c",
+      "title": "temporal UNIQUE ... WITHOUT OVERLAPS (PG18)",
+      "v1": "unclear",
+      "pg18": true,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "PARSE_ERROR",
+        "ordered": 1,
+        "of": 2,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:slot:'.",
+          "PARSE_ERROR: syntax error at or near \"without\""
+        ],
+        "load": "skipped: 1 statement(s) missing from ordered output",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create view slot_v as select k from slot;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table slot (k int4range, during daterange, constraint slot_uq u",
+          "create view slot_v as select k from slot;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C21",
+      "title": "NOT ENFORCED CHECK and FK (PG18)",
+      "v1": "refused",
+      "pg18": true,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "PARSE_ERROR",
+        "ordered": 1,
+        "of": 2,
+        "diagnostics": [
+          "PARSE_ERROR: syntax error at or near \"enforced\""
+        ],
+        "load": "skipped: 1 statement(s) missing from ordered output",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table ne_parent (id int primary key);"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table ne_parent (id int primary key);",
+          "create table ne (id int, p int, constraint ne_chk check (id > 0) not e"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C22a",
+      "title": "RETURNING old/new in a BEGIN ATOMIC body (PG18)",
+      "v1": "supported",
+      "pg18": true,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: relation \"ctr\" does not exist",
+          "random-valid(seed 1): <input:0>#0: relation \"ctr\" does not exist",
+          "random-valid(seed 3): <input:0>#0: relation \"ctr\" does not exist"
+        ],
+        "order": [
+          "create table ctr (id int primary key, n int);",
+          "create function bump_ctr(p int) returns table (old_n int, new_n int) l"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: relation \"ctr\" does not exist",
+          "random-valid(seed 1): <input:0>#0: relation \"ctr\" does not exist",
+          "random-valid(seed 3): <input:0>#0: relation \"ctr\" does not exist"
+        ],
+        "order": [
+          "create table ctr (id int primary key, n int);",
+          "create function bump_ctr(p int) returns table (old_n int, new_n int) l"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C22b",
+      "title": "RETURNING WITH (OLD AS o, NEW AS nw) in a LANGUAGE sql string body (PG18)",
+      "v1": "supported",
+      "pg18": true,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: relation \"ctr2\" does not exist",
+          "random-valid(seed 1): <input:0>#0: relation \"ctr2\" does not exist",
+          "random-valid(seed 3): <input:0>#0: relation \"ctr2\" does not exist"
+        ],
+        "order": [
+          "create table ctr2 (id int primary key, n int);",
+          "create function bump_ctr2(p int) returns table (old_n int, new_n int) "
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: relation \"ctr2\" does not exist",
+          "random-valid(seed 1): <input:0>#0: relation \"ctr2\" does not exist",
+          "random-valid(seed 3): <input:0>#0: relation \"ctr2\" does not exist"
+        ],
+        "order": [
+          "create table ctr2 (id int primary key, n int);",
+          "create function bump_ctr2(p int) returns table (old_n int, new_n int) "
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C23",
+      "title": "uuidv7() default and casefold() check (PG18 built-ins)",
+      "v1": "supported",
+      "pg18": true,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:casefold:(unknown)'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:uuidv7:()'."
+        ],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table ev (id uuid default uuidv7() primary key, name text check",
+          "create view ev_v as select id, name from ev;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:casefold:(unknown)'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:uuidv7:()'."
+        ],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table ev (id uuid default uuidv7() primary key, name text check",
+          "create view ev_v as select id, name from ev;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C24",
+      "title": "NOT NULL ... NO INHERIT (PG18) and CHECK ... NO INHERIT",
+      "v1": "unclear",
+      "pg18": true,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "PARSE_ERROR",
+        "ordered": 1,
+        "of": 2,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:ni:'.",
+          "PARSE_ERROR: syntax error at or near \"no\""
+        ],
+        "load": "skipped: 1 statement(s) missing from ordered output",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create view ni_v as select a, b from ni;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 2,
+        "of": 2,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table ni (a int not null no inherit, b int, constraint ni_b_chk",
+          "create view ni_v as select a, b from ni;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C25",
+      "title": "regclass literal in a default; %TYPE in a function signature",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "LOAD FAILED",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'type:rc:n:'."
+        ],
+        "load": "<input:0>#0: relation \"rc\" does not exist",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:1>#0: relation \"rc\" does not exist",
+          "random-valid(seed 1): <input:0>#0: relation \"rc\" does not exist",
+          "random-valid(seed 2): <input:0>#0: relation \"rc\" does not exist",
+          "random-valid(seed 3): <input:0>#0: relation \"rc\" does not exist"
+        ],
+        "order": [
+          "create table rc2 (id int, src regclass default 'rc'::regclass);",
+          "create table rc (id int primary key, n text);",
+          "create function rc_name(x rc.n%type) returns text language sql immutab"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "LOAD FAILED",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'type:rc:n:'."
+        ],
+        "load": "<input:0>#0: relation \"rc\" does not exist",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:1>#0: relation \"rc\" does not exist",
+          "random-valid(seed 1): <input:0>#0: relation \"rc\" does not exist",
+          "random-valid(seed 2): <input:0>#0: relation \"rc\" does not exist",
+          "random-valid(seed 3): <input:0>#0: relation \"rc\" does not exist"
+        ],
+        "order": [
+          "create table rc2 (id int, src regclass default 'rc'::regclass);",
+          "create table rc (id int primary key, n text);",
+          "create function rc_name(x rc.n%type) returns text language sql immutab"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    },
+    {
+      "id": "C26",
+      "title": "functional notation: c.fn means fn(c) in a view",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: column c.order_count does not exist",
+          "random-valid(seed 1): <input:0>#0: column c.order_count does not exist",
+          "random-valid(seed 3): <input:0>#0: column c.order_count does not exist"
+        ],
+        "order": [
+          "create table cust (id int primary key);",
+          "create function order_count(c cust) returns bigint language sql stable",
+          "create view cust_v as select c.id, c.order_count from cust c;"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): <input:0>#0: column c.order_count does not exist",
+          "random-valid(seed 1): <input:0>#0: column c.order_count does not exist",
+          "random-valid(seed 3): <input:0>#0: column c.order_count does not exist"
+        ],
+        "order": [
+          "create table cust (id int primary key);",
+          "create function order_count(c cust) returns bigint language sql stable",
+          "create view cust_v as select c.id, c.order_count from cust c;"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": [
+          "\"reverse-ignore-priority\": view cust_v: column c.order_count does not exist",
+          "{\"seed\":1}: view cust_v: column c.order_count does not exist",
+          "{\"seed\":2}: view cust_v: column c.order_count does not exist",
+          "{\"seed\":3}: view cust_v: column c.order_count does not exist"
+        ]
+      }
+    },
+    {
+      "id": "C27",
+      "title": "view with a CTE named like a real table",
+      "v1": "supported",
+      "pg18": false,
+      "reference": "ok",
+      "stock alpha.8": {
+        "status": "OK",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table other (id int);",
+          "create table src (id int);",
+          "create view cte_v as with other as (select id from src) select id from"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "status": "OK",
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "load": "ok",
+        "edgesOnlyFailures": [],
+        "order": [
+          "create table other (id int);",
+          "create table src (id int);",
+          "create view cte_v as with other as (select id from src) select id from"
+        ]
+      },
+      "poc": {
+        "status": "OK",
+        "edgesOnlyFailures": []
+      }
+    }
+  ],
+  "fixtures": [
+    {
+      "fixture": "q35-shuffled",
+      "poc": "ok",
+      "pocOrder": [
+        "type address",
+        "domain money_amount",
+        "table admins",
+        "table customers",
+        "table orders",
+        "function customer_total(int4)",
+        "function is_admin()",
+        "function touch_updated_at()",
+        "view order_totals",
+        "view big_customers",
+        "constraint customers.customers_last_order_fk",
+        "index orders_customer_idx",
+        "trigger orders.orders_touch",
+        "policy orders.orders_visible",
+        "rls orders AT_EnableRowSecurity",
+        "grant table orders",
+        "comment table orders"
+      ],
+      "stock alpha.8": {
+        "ordered": 13,
+        "of": 17,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:count:()'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:sum:(unknown)'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'constraint:public:orders:(id)'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'.",
+          "PARSE_ERROR: syntax error at or near \"virtual\""
+        ],
+        "status": "LOAD FAILED: a_policies.sql#0: relation \"orders\" does not exist",
+        "edgesOnlyFailures": [],
+        "renamed": "n/a",
+        "order": [
+          "h_types.sql#1",
+          "h_types.sql#0",
+          "g_customers.sql#0",
+          "i_admins.sql#0",
+          "a_policies.sql#0",
+          "e_constraints/customers_last_order_fk.sql#0",
+          "d_functions.sql#0",
+          "d_functions.sql#1",
+          "d_functions.sql#2",
+          "b_views.sql#0",
+          "b_views.sql#1",
+          "c_triggers.sql#0",
+          "a_policies.sql#1"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "ordered": 17,
+        "of": 17,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:count:()'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:sum:(unknown)'."
+        ],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): d_functions.sql#2: relation \"orders\" does not exist",
+          "random-valid(seed 1): d_functions.sql#2: relation \"orders\" does not exist",
+          "random-valid(seed 2): d_functions.sql#1: relation \"admins\" does not exist",
+          "random-valid(seed 3): d_functions.sql#2: relation \"orders\" does not exist"
+        ],
+        "renamed": "ORDER CHANGED, same catalog",
+        "order": [
+          "h_types.sql#1",
+          "h_types.sql#0",
+          "g_customers.sql#0",
+          "f_orders.sql#0",
+          "i_admins.sql#0",
+          "a_policies.sql#0",
+          "e_constraints/customers_last_order_fk.sql#0",
+          "d_functions.sql#0",
+          "d_functions.sql#1",
+          "d_functions.sql#2",
+          "b_views.sql#0",
+          "b_views.sql#1",
+          "f_orders.sql#1",
+          "c_triggers.sql#0",
+          "a_policies.sql#1",
+          "f_orders.sql#3",
+          "f_orders.sql#2"
+        ]
+      }
+    },
+    {
+      "fixture": "q35-overload-binding",
+      "poc": "ok",
+      "pocOrder": [
+        "function pick(int4)",
+        "function pick(numeric)",
+        "view which_pick"
+      ],
+      "stock alpha.8": {
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [],
+        "renamed": "ORDER CHANGED, same catalog",
+        "order": [
+          "a_pick_numeric.sql#0",
+          "c_pick_integer.sql#0",
+          "b_view.sql#0"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [],
+        "renamed": "ORDER CHANGED, same catalog",
+        "order": [
+          "a_pick_numeric.sql#0",
+          "c_pick_integer.sql#0",
+          "b_view.sql#0"
+        ]
+      }
+    },
+    {
+      "fixture": "overloads",
+      "poc": "ok",
+      "pocOrder": [
+        "function fmt(int4)",
+        "function fmt(numeric)",
+        "table fmt_defaults",
+        "function length(text)",
+        "function pick(int4)",
+        "function pick(numeric)",
+        "function uses_fmt()",
+        "view which_len",
+        "view which_pick"
+      ],
+      "stock alpha.8": {
+        "ordered": 9,
+        "of": 9,
+        "diagnostics": [],
+        "status": "loads, DIFFERENT catalog from PoC (4 lines)",
+        "diff": [
+          "- depends: function uses_fmt() -> function fmt(integer) [n]",
+          "- routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt(2) AS fmt;\nEND\n",
+          "+ depends: function uses_fmt() -> function fmt(numeric) [n]",
+          "+ routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt((2)::numeric) AS fmt;\nEND\n"
+        ],
+        "edgesOnlyFailures": [
+          "random-valid(seed 1): different catalog: - depends: function uses_fmt() -> function fmt(integer) [n] | - routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt(2) AS fmt;\nEND\n",
+          "random-valid(seed 3): b_views.sql#2: function fmt(integer) does not exist"
+        ],
+        "renamed": "ORDER CHANGED, DIFFERENT catalog (- depends: function uses_fmt() -> function fmt(numeric) [n] | - routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt((2)::numeric) AS fmt;)",
+        "order": [
+          "a_pick_numeric.sql#0",
+          "a_pick_numeric.sql#1",
+          "b_views.sql#2",
+          "c_more_overloads.sql#0",
+          "c_more_overloads.sql#1",
+          "b_views.sql#3",
+          "c_more_overloads.sql#2",
+          "b_views.sql#0",
+          "b_views.sql#1"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "ordered": 9,
+        "of": 9,
+        "diagnostics": [],
+        "status": "loads, DIFFERENT catalog from PoC (4 lines)",
+        "diff": [
+          "- depends: function uses_fmt() -> function fmt(integer) [n]",
+          "- routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt(2) AS fmt;\nEND\n",
+          "+ depends: function uses_fmt() -> function fmt(numeric) [n]",
+          "+ routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt((2)::numeric) AS fmt;\nEND\n"
+        ],
+        "edgesOnlyFailures": [
+          "random-valid(seed 1): different catalog: - depends: function uses_fmt() -> function fmt(integer) [n] | - routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt(2) AS fmt;\nEND\n",
+          "random-valid(seed 3): b_views.sql#2: function fmt(integer) does not exist"
+        ],
+        "renamed": "ORDER CHANGED, DIFFERENT catalog (- depends: function uses_fmt() -> function fmt(numeric) [n] | - routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt((2)::numeric) AS fmt;)",
+        "order": [
+          "a_pick_numeric.sql#0",
+          "a_pick_numeric.sql#1",
+          "b_views.sql#2",
+          "c_more_overloads.sql#0",
+          "c_more_overloads.sql#1",
+          "b_views.sql#3",
+          "c_more_overloads.sql#2",
+          "b_views.sql#0",
+          "b_views.sql#1"
+        ]
+      }
+    },
+    {
+      "fixture": "overload-ambiguous",
+      "poc": "refused/failed",
+      "pocOrder": [
+        "function fmt(int8)",
+        "function fmt(numeric)",
+        "table fmt_defaults"
+      ],
+      "stock alpha.8": {
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:fmt:(int4)'."
+        ],
+        "status": "LOAD FAILED: b_table.sql#0: function fmt(integer) does not exist",
+        "edgesOnlyFailures": [],
+        "renamed": "ORDER CHANGED, load: 02_b_table.sql#0: function fmt(integer) does not exist",
+        "order": [
+          "b_table.sql#0",
+          "a_fmt_numeric.sql#0",
+          "c_fmt_bigint.sql#0"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:fmt:(int4)'."
+        ],
+        "status": "LOAD FAILED: b_table.sql#0: function fmt(integer) does not exist",
+        "edgesOnlyFailures": [],
+        "renamed": "ORDER CHANGED, load: 02_b_table.sql#0: function fmt(integer) does not exist",
+        "order": [
+          "b_table.sql#0",
+          "a_fmt_numeric.sql#0",
+          "c_fmt_bigint.sql#0"
+        ]
+      }
+    },
+    {
+      "fixture": "extraction-gap",
+      "poc": "ok",
+      "pocOrder": [
+        "table customers",
+        "function name_of(customers.name)",
+        "function order_count(customers)",
+        "view customer_stats"
+      ],
+      "stock alpha.8": {
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): b_functions.sql#1: relation \"customers\" does not exist",
+          "random-valid(seed 1): b_functions.sql#1: relation \"customers\" does not exist",
+          "random-valid(seed 3): b_functions.sql#1: relation \"customers\" does not exist"
+        ],
+        "renamed": "same statement order, same catalog",
+        "order": [
+          "c_customers.sql#0",
+          "b_functions.sql#0",
+          "b_functions.sql#1",
+          "a_view.sql#0"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): b_functions.sql#1: relation \"customers\" does not exist",
+          "random-valid(seed 1): b_functions.sql#1: relation \"customers\" does not exist",
+          "random-valid(seed 3): b_functions.sql#1: relation \"customers\" does not exist"
+        ],
+        "renamed": "same statement order, same catalog",
+        "order": [
+          "c_customers.sql#0",
+          "b_functions.sql#0",
+          "b_functions.sql#1",
+          "a_view.sql#0"
+        ]
+      }
+    },
+    {
+      "fixture": "domain-composite",
+      "poc": "ok",
+      "pocOrder": [
+        "type pair",
+        "domain pos_int",
+        "domain pos_pair",
+        "table points",
+        "function make_pair(pos_int,pos_int)",
+        "function pair_sum(pos_pair)",
+        "view point_sums",
+        "comment column points.p",
+        "comment domain pos_pair"
+      ],
+      "stock alpha.8": {
+        "ordered": 9,
+        "of": 9,
+        "diagnostics": [],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): d_domains.sql#2: type \"pos_pair\" does not exist",
+          "random-valid(seed 1): c_tables.sql#1: relation \"points\" does not exist",
+          "random-valid(seed 2): c_tables.sql#1: relation \"points\" does not exist",
+          "random-valid(seed 3): d_domains.sql#2: type \"pos_pair\" does not exist"
+        ],
+        "renamed": "ORDER CHANGED, same catalog",
+        "order": [
+          "e_types.sql#0",
+          "d_domains.sql#0",
+          "d_domains.sql#1",
+          "c_tables.sql#0",
+          "b_functions.sql#0",
+          "b_functions.sql#1",
+          "a_views.sql#0",
+          "c_tables.sql#1",
+          "d_domains.sql#2"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "ordered": 9,
+        "of": 9,
+        "diagnostics": [],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): d_domains.sql#2: type \"pos_pair\" does not exist",
+          "random-valid(seed 1): c_tables.sql#1: relation \"points\" does not exist",
+          "random-valid(seed 2): c_tables.sql#1: relation \"points\" does not exist",
+          "random-valid(seed 3): d_domains.sql#2: type \"pos_pair\" does not exist"
+        ],
+        "renamed": "ORDER CHANGED, same catalog",
+        "order": [
+          "e_types.sql#0",
+          "d_domains.sql#0",
+          "d_domains.sql#1",
+          "c_tables.sql#0",
+          "b_functions.sql#0",
+          "b_functions.sql#1",
+          "a_views.sql#0",
+          "c_tables.sql#1",
+          "d_domains.sql#2"
+        ]
+      }
+    },
+    {
+      "fixture": "view-chain",
+      "poc": "ok",
+      "pocOrder": [
+        "table base",
+        "table items",
+        "function double_it(int8)",
+        "view v1",
+        "view v2",
+        "view v3",
+        "matview mv",
+        "index mv_k_idx"
+      ],
+      "stock alpha.8": {
+        "ordered": 8,
+        "of": 8,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:sum:(unknown)'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:count:()'."
+        ],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [],
+        "renamed": "ORDER CHANGED, same catalog",
+        "order": [
+          "e_items.sql#0",
+          "z_base.sql#0",
+          "d_functions.sql#0",
+          "c_v1.sql#0",
+          "b_v2.sql#0",
+          "a_v3.sql#0",
+          "a_v3.sql#1",
+          "a_v3.sql#2"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "ordered": 8,
+        "of": 8,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:sum:(unknown)'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:count:()'."
+        ],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [],
+        "renamed": "ORDER CHANGED, same catalog",
+        "order": [
+          "e_items.sql#0",
+          "z_base.sql#0",
+          "d_functions.sql#0",
+          "c_v1.sql#0",
+          "b_v2.sql#0",
+          "a_v3.sql#0",
+          "a_v3.sql#1",
+          "a_v3.sql#2"
+        ]
+      }
+    },
+    {
+      "fixture": "sql-functions",
+      "poc": "ok",
+      "pocOrder": [
+        "table accounts",
+        "table not_yet_created",
+        "function account_balance(int4)",
+        "function accounts_count()",
+        "function default_amount()",
+        "table ledger",
+        "function late_bound()",
+        "function ledger_oid()",
+        "function owner_ok(text)",
+        "procedure credit(int4,numeric)",
+        "constraint accounts.accounts_cap",
+        "constraint accounts.accounts_owner_known"
+      ],
+      "stock alpha.8": {
+        "ordered": 12,
+        "of": 12,
+        "diagnostics": [],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): b_functions.sql#5: relation \"accounts\" does not exist",
+          "random-valid(seed 1): b_functions.sql#6: relation \"ledger\" does not exist",
+          "random-valid(seed 2): b_functions.sql#6: relation \"ledger\" does not exist",
+          "random-valid(seed 3): b_functions.sql#6: relation \"ledger\" does not exist"
+        ],
+        "renamed": "ORDER CHANGED, same catalog",
+        "order": [
+          "d_accounts.sql#0",
+          "z_late.sql#0",
+          "b_functions.sql#0",
+          "a_ledger.sql#0",
+          "b_functions.sql#1",
+          "b_functions.sql#2",
+          "c_constraints.sql#0",
+          "b_functions.sql#3",
+          "c_constraints.sql#1",
+          "b_functions.sql#4",
+          "b_functions.sql#6",
+          "b_functions.sql#5"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "ordered": 12,
+        "of": 12,
+        "diagnostics": [],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): b_functions.sql#5: relation \"accounts\" does not exist",
+          "random-valid(seed 1): b_functions.sql#6: relation \"ledger\" does not exist",
+          "random-valid(seed 2): b_functions.sql#6: relation \"ledger\" does not exist",
+          "random-valid(seed 3): b_functions.sql#6: relation \"ledger\" does not exist"
+        ],
+        "renamed": "ORDER CHANGED, same catalog",
+        "order": [
+          "d_accounts.sql#0",
+          "z_late.sql#0",
+          "b_functions.sql#0",
+          "a_ledger.sql#0",
+          "b_functions.sql#1",
+          "b_functions.sql#2",
+          "c_constraints.sql#0",
+          "b_functions.sql#3",
+          "c_constraints.sql#1",
+          "b_functions.sql#4",
+          "b_functions.sql#6",
+          "b_functions.sql#5"
+        ]
+      }
+    },
+    {
+      "fixture": "triggers-policies",
+      "poc": "ok",
+      "pocOrder": [
+        "table doc_audit",
+        "table editors",
+        "table teams",
+        "table docs",
+        "function audit_doc()",
+        "function is_editor(text)",
+        "function should_audit(text)",
+        "trigger docs.docs_audit",
+        "policy docs.docs_owner",
+        "policy docs.docs_team",
+        "rls docs AT_EnableRowSecurity",
+        "rls docs AT_ForceRowSecurity",
+        "grant function is_editor",
+        "grant table docs",
+        "grant table docs",
+        "grant table teams",
+        "revoke function should_audit",
+        "comment column docs.title",
+        "comment function is_editor",
+        "comment index docs_pkey",
+        "comment policy docs.docs_owner",
+        "comment tabconstraint docs.docs_title_len",
+        "comment trigger docs.docs_audit"
+      ],
+      "stock alpha.8": {
+        "ordered": 23,
+        "of": 23,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'index:public:docs_pkey:'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:length:(unknown)'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:now:()'."
+        ],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): c_grants_comments.sql#10: relation \"docs_pkey\" does not exist",
+          "random-valid(seed 1): c_grants_comments.sql#10: relation \"docs_pkey\" does not exist",
+          "random-valid(seed 2): d_functions.sql#0: relation \"editors\" does not exist",
+          "random-valid(seed 3): c_grants_comments.sql#5: relation \"docs\" does not exist"
+        ],
+        "renamed": "ORDER CHANGED, same catalog",
+        "order": [
+          "e_tables.sql#1",
+          "f_teams.sql#0",
+          "e_tables.sql#0",
+          "f_teams.sql#1",
+          "a_policies.sql#0",
+          "a_policies.sql#1",
+          "d_functions.sql#0",
+          "d_functions.sql#1",
+          "d_functions.sql#2",
+          "b_triggers.sql#0",
+          "a_policies.sql#2",
+          "a_policies.sql#3",
+          "c_grants_comments.sql#5",
+          "c_grants_comments.sql#6",
+          "c_grants_comments.sql#7",
+          "c_grants_comments.sql#8",
+          "c_grants_comments.sql#9",
+          "c_grants_comments.sql#10",
+          "c_grants_comments.sql#0",
+          "c_grants_comments.sql#1",
+          "c_grants_comments.sql#2",
+          "c_grants_comments.sql#3",
+          "c_grants_comments.sql#4"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "ordered": 23,
+        "of": 23,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'index:public:docs_pkey:'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:length:(unknown)'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:now:()'."
+        ],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): c_grants_comments.sql#10: relation \"docs_pkey\" does not exist",
+          "random-valid(seed 1): c_grants_comments.sql#10: relation \"docs_pkey\" does not exist",
+          "random-valid(seed 2): d_functions.sql#0: relation \"editors\" does not exist",
+          "random-valid(seed 3): c_grants_comments.sql#5: relation \"docs\" does not exist"
+        ],
+        "renamed": "ORDER CHANGED, same catalog",
+        "order": [
+          "e_tables.sql#1",
+          "f_teams.sql#0",
+          "e_tables.sql#0",
+          "f_teams.sql#1",
+          "a_policies.sql#0",
+          "a_policies.sql#1",
+          "d_functions.sql#0",
+          "d_functions.sql#1",
+          "d_functions.sql#2",
+          "b_triggers.sql#0",
+          "a_policies.sql#2",
+          "a_policies.sql#3",
+          "c_grants_comments.sql#5",
+          "c_grants_comments.sql#6",
+          "c_grants_comments.sql#7",
+          "c_grants_comments.sql#8",
+          "c_grants_comments.sql#9",
+          "c_grants_comments.sql#10",
+          "c_grants_comments.sql#0",
+          "c_grants_comments.sql#1",
+          "c_grants_comments.sql#2",
+          "c_grants_comments.sql#3",
+          "c_grants_comments.sql#4"
+        ]
+      }
+    },
+    {
+      "fixture": "fk-index-choice",
+      "poc": "ok",
+      "pocOrder": [
+        "table node",
+        "table leaf",
+        "table parent",
+        "constraint node.node_best_leaf_fk",
+        "constraint parent.parent_code_key",
+        "index parent_code_uidx",
+        "table child"
+      ],
+      "stock alpha.8": {
+        "ordered": 7,
+        "of": 7,
+        "diagnostics": [
+          "DUPLICATE_PRODUCER: Multiple statements provide 'constraint:public:parent:(code)'. This statement: create unique index parent_code_uidx on parent (code);",
+          "DUPLICATE_PRODUCER: Multiple statements provide 'constraint:public:parent:(code)'. This statement: alter table parent add constraint parent_code_key unique (code);"
+        ],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): different catalog: - depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n] | - fkIndex: child.child_parent_code_fkey uses index parent_code_key",
+          "random-valid(seed 1): different catalog: - depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n] | - fkIndex: child.child_parent_code_fkey uses index parent_code_key",
+          "random-valid(seed 2): different catalog: - depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n] | - fkIndex: child.child_parent_code_fkey uses index parent_code_key",
+          "random-valid(seed 3): different catalog: - depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n] | - fkIndex: child.child_parent_code_fkey uses index parent_code_key"
+        ],
+        "renamed": "ORDER CHANGED, same catalog",
+        "order": [
+          "d_parent.sql#0",
+          "e_tree.sql#2",
+          "e_tree.sql#1",
+          "c_unique_constraint.sql#0",
+          "e_tree.sql#0",
+          "b_unique_index.sql#0",
+          "a_child.sql#0"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "ordered": 7,
+        "of": 7,
+        "diagnostics": [
+          "DUPLICATE_PRODUCER: Multiple statements provide 'constraint:public:parent:(code)'. This statement: create unique index parent_code_uidx on parent (code);",
+          "DUPLICATE_PRODUCER: Multiple statements provide 'constraint:public:parent:(code)'. This statement: alter table parent add constraint parent_code_key unique (code);"
+        ],
+        "status": "loads, SAME catalog as PoC",
+        "diff": [],
+        "edgesOnlyFailures": [
+          "reverse (latest ready first): different catalog: - depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n] | - fkIndex: child.child_parent_code_fkey uses index parent_code_key",
+          "random-valid(seed 1): different catalog: - depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n] | - fkIndex: child.child_parent_code_fkey uses index parent_code_key",
+          "random-valid(seed 2): different catalog: - depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n] | - fkIndex: child.child_parent_code_fkey uses index parent_code_key",
+          "random-valid(seed 3): different catalog: - depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n] | - fkIndex: child.child_parent_code_fkey uses index parent_code_key"
+        ],
+        "renamed": "ORDER CHANGED, same catalog",
+        "order": [
+          "d_parent.sql#0",
+          "e_tree.sql#2",
+          "e_tree.sql#1",
+          "c_unique_constraint.sql#0",
+          "e_tree.sql#0",
+          "b_unique_index.sql#0",
+          "a_child.sql#0"
+        ]
+      }
+    },
+    {
+      "fixture": "unnamed-index",
+      "poc": "ok",
+      "pocOrder": [
+        "table t",
+        "index (unnamed) on t",
+        "index (unnamed) on t"
+      ],
+      "stock alpha.8": {
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "status": "loads, DIFFERENT catalog from PoC (4 lines)",
+        "diff": [
+          "- index: CREATE INDEX t_a_idx ON public.t USING btree (a)",
+          "- index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0)",
+          "+ index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0)",
+          "+ index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)"
+        ],
+        "edgesOnlyFailures": [
+          "random-valid(seed 2): different catalog: - index: CREATE INDEX t_a_idx ON public.t USING btree (a) | - index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0)"
+        ],
+        "renamed": "ORDER CHANGED, DIFFERENT catalog (- index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0) | - index: CREATE INDEX t_a_idx1 ON public.t USING btree (a))",
+        "order": [
+          "c_table.sql#0",
+          "a_partial.sql#0",
+          "b_plain.sql#0"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "ordered": 3,
+        "of": 3,
+        "diagnostics": [],
+        "status": "loads, DIFFERENT catalog from PoC (4 lines)",
+        "diff": [
+          "- index: CREATE INDEX t_a_idx ON public.t USING btree (a)",
+          "- index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0)",
+          "+ index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0)",
+          "+ index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)"
+        ],
+        "edgesOnlyFailures": [
+          "random-valid(seed 2): different catalog: - index: CREATE INDEX t_a_idx ON public.t USING btree (a) | - index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0)"
+        ],
+        "renamed": "ORDER CHANGED, DIFFERENT catalog (- index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0) | - index: CREATE INDEX t_a_idx1 ON public.t USING btree (a))",
+        "order": [
+          "c_table.sql#0",
+          "a_partial.sql#0",
+          "b_plain.sql#0"
+        ]
+      }
+    },
+    {
+      "fixture": "cycle-error",
+      "poc": "refused/failed",
+      "pocOrder": [],
+      "stock alpha.8": {
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [
+          "CYCLE_DETECTED: Dependency cycle detected across 2 statements."
+        ],
+        "status": "LOAD FAILED: b.sql#2: relation \"notes\" does not exist",
+        "edgesOnlyFailures": [],
+        "renamed": "ORDER CHANGED, load: 01_b.sql#2: relation \"notes\" does not exist",
+        "order": [
+          "b.sql#2",
+          "b.sql#1",
+          "a.sql#0",
+          "b.sql#0"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [
+          "CYCLE_DETECTED: Dependency cycle detected across 2 statements."
+        ],
+        "status": "LOAD FAILED: b.sql#2: relation \"notes\" does not exist",
+        "edgesOnlyFailures": [],
+        "renamed": "ORDER CHANGED, load: 01_b.sql#2: relation \"notes\" does not exist",
+        "order": [
+          "b.sql#2",
+          "b.sql#1",
+          "a.sql#0",
+          "b.sql#0"
+        ]
+      }
+    },
+    {
+      "fixture": "unresolved",
+      "poc": "refused/failed",
+      "pocOrder": [
+        "table orders",
+        "function late()",
+        "function total()",
+        "view order_ids"
+      ],
+      "stock alpha.8": {
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'type:public:moneyamount:'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:ordrs:'."
+        ],
+        "status": "LOAD FAILED: a.sql#0: type \"moneyamount\" does not exist",
+        "edgesOnlyFailures": [],
+        "renamed": "same statement order, load: 01_a.sql#0: type \"moneyamount\" does not exist",
+        "order": [
+          "a.sql#0",
+          "a.sql#2",
+          "a.sql#3",
+          "a.sql#1"
+        ]
+      },
+      "alpha.8 + PG18 overrides": {
+        "ordered": 4,
+        "of": 4,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'type:public:moneyamount:'.",
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:ordrs:'."
+        ],
+        "status": "LOAD FAILED: a.sql#0: type \"moneyamount\" does not exist",
+        "edgesOnlyFailures": [],
+        "renamed": "same statement order, load: 01_a.sql#0: type \"moneyamount\" does not exist",
+        "order": [
+          "a.sql#0",
+          "a.sql#2",
+          "a.sql#3",
+          "a.sql#1"
+        ]
+      }
+    }
+  ],
+  "locale": [
+    {
+      "variant": "stock alpha.8",
+      "lang": "en_US.UTF-8",
+      "icu": "en-US",
+      "order": [
+        "t.sql",
+        "a.sql",
+        "ä.sql",
+        "B.sql",
+        "z.sql"
+      ],
+      "indexes": "t_a_idx=(2) where (a > 0), t_a_idx1=(2), t_id_a_idx=(1 2) where (id > 0), t_id_a_idx1=(1 2)"
+    },
+    {
+      "variant": "stock alpha.8",
+      "lang": "sv_SE.UTF-8",
+      "icu": "sv-SE",
+      "order": [
+        "t.sql",
+        "a.sql",
+        "B.sql",
+        "z.sql",
+        "ä.sql"
+      ],
+      "indexes": "t_a_idx=(2), t_a_idx1=(2) where (a > 0), t_id_a_idx=(1 2) where (id > 0), t_id_a_idx1=(1 2)"
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "lang": "en_US.UTF-8",
+      "icu": "en-US",
+      "order": [
+        "t.sql",
+        "a.sql",
+        "ä.sql",
+        "B.sql",
+        "z.sql"
+      ],
+      "indexes": "t_a_idx=(2) where (a > 0), t_a_idx1=(2), t_id_a_idx=(1 2) where (id > 0), t_id_a_idx1=(1 2)"
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "lang": "sv_SE.UTF-8",
+      "icu": "sv-SE",
+      "order": [
+        "t.sql",
+        "a.sql",
+        "B.sql",
+        "z.sql",
+        "ä.sql"
+      ],
+      "indexes": "t_a_idx=(2), t_a_idx1=(2) where (a > 0), t_id_a_idx=(1 2) where (id > 0), t_id_a_idx1=(1 2)"
+    }
+  ],
+  "unresolved": [
+    {
+      "variant": "stock alpha.8",
+      "where": "C04b",
+      "message": "No producer found for 'table:public:nn2:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "C06a",
+      "message": "No producer found for 'table:public:gv:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "C06b",
+      "message": "No producer found for 'table:public:gd:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "C18",
+      "message": "No producer found for 'sequence:public:gr_id_seq:'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "C18",
+      "message": "No producer found for 'sequence:public:gr_id_seq:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "C20a",
+      "message": "No producer found for 'table:public:room:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "C20c",
+      "message": "No producer found for 'table:public:slot:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "C23",
+      "message": "No producer found for 'function:public:casefold:(unknown)'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "C23",
+      "message": "No producer found for 'function:public:uuidv7:()'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "C23",
+      "message": "No producer found for 'function:public:casefold:(unknown)'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "C23",
+      "message": "No producer found for 'function:public:uuidv7:()'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "C24",
+      "message": "No producer found for 'table:public:ni:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "C25",
+      "message": "No producer found for 'type:rc:n:'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "C25",
+      "message": "No producer found for 'type:rc:n:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "q35-shuffled",
+      "message": "No producer found for 'table:public:orders:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "q35-shuffled",
+      "message": "No producer found for 'table:public:orders:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "q35-shuffled",
+      "message": "No producer found for 'function:public:count:()'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "q35-shuffled",
+      "message": "No producer found for 'function:public:sum:(unknown)'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "q35-shuffled",
+      "message": "No producer found for 'table:public:orders:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "q35-shuffled",
+      "message": "No producer found for 'table:public:orders:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "q35-shuffled",
+      "message": "No producer found for 'constraint:public:orders:(id)'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "q35-shuffled",
+      "message": "No producer found for 'table:public:orders:'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "q35-shuffled",
+      "message": "No producer found for 'function:public:count:()'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "q35-shuffled",
+      "message": "No producer found for 'function:public:sum:(unknown)'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "overload-ambiguous",
+      "message": "No producer found for 'function:public:fmt:(int4)'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "overload-ambiguous",
+      "message": "No producer found for 'function:public:fmt:(int4)'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "view-chain",
+      "message": "No producer found for 'function:public:sum:(unknown)'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "view-chain",
+      "message": "No producer found for 'function:public:count:()'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "view-chain",
+      "message": "No producer found for 'function:public:sum:(unknown)'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "view-chain",
+      "message": "No producer found for 'function:public:count:()'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "triggers-policies",
+      "message": "No producer found for 'index:public:docs_pkey:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "triggers-policies",
+      "message": "No producer found for 'function:public:length:(unknown)'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "triggers-policies",
+      "message": "No producer found for 'function:public:now:()'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "triggers-policies",
+      "message": "No producer found for 'index:public:docs_pkey:'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "triggers-policies",
+      "message": "No producer found for 'function:public:length:(unknown)'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "triggers-policies",
+      "message": "No producer found for 'function:public:now:()'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "unresolved",
+      "message": "No producer found for 'type:public:moneyamount:'."
+    },
+    {
+      "variant": "stock alpha.8",
+      "where": "unresolved",
+      "message": "No producer found for 'table:public:ordrs:'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "unresolved",
+      "message": "No producer found for 'type:public:moneyamount:'."
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "where": "unresolved",
+      "message": "No producer found for 'table:public:ordrs:'."
+    }
+  ],
+  "annotations": [
+    {
+      "variant": "stock alpha.8",
+      "ordered": [
+        {
+          "i": 1,
+          "phase": "bootstrap",
+          "sql": "-- pg-topo:phase bootstrap\n-- OVERRIDE DANGEROUS COMMAND: needs dynamic SQL\ncreate function ann_fn() returns int language plpgsql as $$ begin execute 'select 1'; return 1; end $$;"
+        },
+        {
+          "i": 0,
+          "phase": "data_structures",
+          "sql": "-- header comment of the file\ncreate table ann_t (id int);"
+        },
+        {
+          "i": 2,
+          "phase": "post_data",
+          "sql": "-- pg-topo:depends_on public.ann_zzz_missing\ncreate view ann_v as select id from ann_t;"
+        }
+      ],
+      "diagnostics": [
+        "UNRESOLVED_DEPENDENCY"
+      ]
+    },
+    {
+      "variant": "alpha.8 + PG18 overrides",
+      "ordered": [
+        {
+          "i": 0,
+          "phase": "data_structures",
+          "sql": "create table ann_t (id int);"
+        },
+        {
+          "i": 1,
+          "phase": "routines",
+          "sql": "create function ann_fn() returns int language plpgsql as $$ begin execute 'select 1'; return 1; end $$;"
+        },
+        {
+          "i": 2,
+          "phase": "post_data",
+          "sql": "create view ann_v as select id from ann_t;"
+        }
+      ],
+      "diagnostics": []
+    }
+  ],
+  "requiresProbes": {
+    "stock alpha.8": {
+      "create type public.contact as (name text, mail public.work_email);": "(nothing)",
+      "create table rc2 (id int, src regclass default 'public.rc'::regclass);": "(nothing)",
+      "create function plq() returns int language plpgsql as $$ declare n int": "table:public.pt, function:public.helper(int4)",
+      "create function sqlq() returns bigint language sql as $$ select count(": "table:public.pt",
+      "create function sqlq_unqualified() returns bigint language sql as $$ s": "(nothing)",
+      "create function f1() returns bigint language sql begin atomic select c": "(nothing)",
+      "create function f2() returns bigint language sql return public.f1() + ": "(nothing)",
+      "create function f3(p numeric default public.base_price()) returns int ": "(nothing)",
+      "create function rc_name(x public.rc.n%type) returns text language sql ": "type:rc.n",
+      "create view vv as select c.id, c.order_count from public.cust c;": "table:public.cust",
+      "create trigger tr before update on public.doc for each row when (publi": "table:public.doc, function:public.touch",
+      "comment on constraint cm_pk on public.cm is 'pk';": "(nothing)"
+    },
+    "alpha.8 + PG18 overrides": {
+      "create type public.contact as (name text, mail public.work_email);": "(nothing)",
+      "create table rc2 (id int, src regclass default 'public.rc'::regclass);": "(nothing)",
+      "create function plq() returns int language plpgsql as $$ declare n int": "(nothing)",
+      "create function sqlq() returns bigint language sql as $$ select count(": "table:public.pt",
+      "create function sqlq_unqualified() returns bigint language sql as $$ s": "(nothing)",
+      "create function f1() returns bigint language sql begin atomic select c": "(nothing)",
+      "create function f2() returns bigint language sql return public.f1() + ": "(nothing)",
+      "create function f3(p numeric default public.base_price()) returns int ": "(nothing)",
+      "create function rc_name(x public.rc.n%type) returns text language sql ": "type:rc.n",
+      "create view vv as select c.id, c.order_count from public.cust c;": "table:public.cust",
+      "create trigger tr before update on public.doc for each row when (publi": "table:public.doc, function:public.touch",
+      "comment on constraint cm_pk on public.cm is 'pk';": "(nothing)"
+    }
+  }
+}
