@@ -1,7 +1,8 @@
 // `draft`: generate the draft's schema change from the newest migration to
 // the desired schema. The desired schema is loaded into one throwaway
 // database and read back from the catalogs (ADR-0003); the starting point is
-// built in another; the differ compares the two.
+// built in another (the finalized migrations replayed, then the draft's
+// pre-migration script); the differ compares the two.
 import { posix } from "node:path";
 import { pgDeltaDiffer } from "../differ/pg-delta.ts";
 import type { PlannedStatement } from "../differ/types.ts";
@@ -10,10 +11,15 @@ import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { checkOrderIndependence } from "../rehearsal/order-independence.ts";
 import {
+  type ReplayUnit,
   readMigrationUnits,
   readReplayUnit,
   replay,
 } from "../rehearsal/replay.ts";
+import {
+  type ScriptCoverage,
+  scriptCoverage,
+} from "../rehearsal/script-coverage.ts";
 import {
   draftDatabaseRequest,
   ensureManagedSchema,
@@ -26,7 +32,10 @@ import { readDraft, writeDraft } from "../store/draft.ts";
 import { normaliseDraftName } from "../store/draft-name.ts";
 import { desiredSchemaHash } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
-import { schemaChangeFileName } from "../store/migrations.ts";
+import {
+  preMigrationFileName,
+  schemaChangeFileName,
+} from "../store/migrations.ts";
 import {
   type MigrationRuleContext,
   newestSnapshot,
@@ -52,6 +61,12 @@ export interface DraftResult {
   readonly schemaChangePath: string;
   /** The generated statements, in order. */
   readonly statements: readonly PlannedStatement[];
+  /**
+   * What the scripts still need to cover: generated statements that lose or
+   * reject existing data (e.g. a dropped column on a table with data), with
+   * the affected rows in the rehearsal data. Advisory; empty when none.
+   */
+  readonly toCover: readonly ScriptCoverage[];
 }
 
 export async function draft(
@@ -83,20 +98,24 @@ export async function draft(
   };
   // The draft's hand-written scripts are checked before anything runs them;
   // the schema change is regenerated below and checked once written.
-  if (existing !== undefined) {
-    const scripts = await readReplayUnit(project.root, paths.draft, name);
-    await refuseRuleViolations(
-      {
-        ...scripts,
-        files: scripts.files.filter(
-          ({ file }) => posix.basename(file) !== schemaChangeFileName,
-        ),
-      },
-      rules,
-    );
-  }
+  const draftUnit = await readReplayUnit(project.root, paths.draft, name);
+  const scripts: ReplayUnit = {
+    ...draftUnit,
+    files: draftUnit.files.filter(
+      ({ file }) => posix.basename(file) !== schemaChangeFileName,
+    ),
+  };
+  await refuseRuleViolations(scripts, rules);
+  // What runs before the schema change on the diff's starting point: the
+  // pre-migration script (ticket 15 puts the draft's seed data first).
+  const beforeSchemaChange: ReplayUnit = {
+    ...scripts,
+    files: scripts.files.filter(
+      ({ file }) => posix.basename(file) === preMigrationFileName,
+    ),
+  };
 
-  const planned = await withThrowawayDatabase(
+  const { planned, toCover } = await withThrowawayDatabase(
     config.rehearsal,
     draftDatabaseRequest,
     async (desired) => {
@@ -117,11 +136,24 @@ export async function draft(
         config.rehearsal,
         draftDatabaseRequest,
         async (source) => {
-          // The starting point: every finalized migration replayed. Ticket 07
-          // then runs the draft's pre-migration script.
+          // The starting point: every finalized migration, then the draft's
+          // pre-migration script, in one transaction as a deployment runs
+          // them. Renames and backfills done there are not regenerated.
           await ensureManagedSchema(source, config.managedSchema);
-          await replay(source, migrations, config.managedSchema);
-          return pgDeltaDiffer.diff(source, desired);
+          await replay(
+            source,
+            [...migrations, beforeSchemaChange],
+            config.managedSchema,
+          );
+          const statements = await pgDeltaDiffer.diff(source, desired);
+          return {
+            planned: statements,
+            toCover: await scriptCoverage(
+              source,
+              statements,
+              config.managedSchema,
+            ),
+          };
         },
       );
     },
@@ -148,6 +180,7 @@ export async function draft(
         : undefined,
     schemaChangePath: paths.draftSchemaChange,
     statements: planned,
+    toCover,
   };
 }
 

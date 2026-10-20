@@ -221,6 +221,9 @@ const draftCommand: CommandDefinition = {
         ? `Renamed draft ${result.renamedFrom} to ${result.name}`
         : `Regenerated draft ${result.name}`;
     context.result(`${what}: ${count} in ${where}`);
+    for (const item of result.toCover) {
+      context.warn(`warning: ${item.message}`);
+    }
   },
 };
 

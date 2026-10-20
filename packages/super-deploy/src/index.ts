@@ -134,6 +134,10 @@ export type {
   OverwriteQuestion,
   Question,
 } from "./questions.ts";
+export type {
+  ScriptCoverage,
+  ScriptCoverageKind,
+} from "./rehearsal/script-coverage.ts";
 export { maxDraftNameLength, normaliseDraftName } from "./store/draft-name.ts";
 export type { ProjectPaths } from "./store/layout.ts";
 export { toolVersion } from "./version.ts";
