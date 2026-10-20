@@ -2,7 +2,11 @@
 // on purpose is a SuperDeployError; `code` is stable and meant for programs,
 // `message` is one line meant for people (the CLI prints it after "Error: ").
 import type { HistoryMismatch, PreflightFindings } from "./deploy/preflight.ts";
-import type { DestructiveQuestion, OverwriteQuestion } from "./questions.ts";
+import type {
+  DestructiveQuestion,
+  OverrideNeeded,
+  OverwriteQuestion,
+} from "./questions.ts";
 import type { DriftedObject } from "./verification/drift.ts";
 
 export type ErrorCode =
@@ -977,19 +981,34 @@ export class AdoptUnsupportedError extends SuperDeployError {
   readonly target: string;
   /** Every one found; never empty. */
   readonly objects: readonly UnsupportedObject[];
+  /**
+   * With an override-reason callback: the objects that break only risk
+   * rules, whose reasons will be asked once nothing else is refused (they
+   * aren't in `objects`). Empty without the callback.
+   */
+  readonly overridesNeeded: readonly OverrideNeeded[];
 
-  constructor(target: string, objects: readonly UnsupportedObject[]) {
+  constructor(
+    target: string,
+    objects: readonly UnsupportedObject[],
+    overridesNeeded: readonly OverrideNeeded[] = [],
+  ) {
     const shown = objects
       .slice(0, 5)
       .map((o) => o.object)
       .join("; ");
     const more = objects.length > 5 ? `; and ${objects.length - 5} more` : "";
+    const later =
+      overridesNeeded.length === 0
+        ? ""
+        : `. Once nothing else is refused, an override reason will be asked for ${overridesNeeded.map((needed) => needed.object).join(", ")}`;
     super(
       "adopt-unsupported",
-      `Cannot adopt target ${target}: its managed schema has ${objects.length} thing${objects.length === 1 ? "" : "s"} V1 doesn't support: ${shown}${more}. Nothing was written; change the target first, then adopt again`,
+      `Cannot adopt target ${target}: its managed schema has ${objects.length} thing${objects.length === 1 ? "" : "s"} V1 doesn't support: ${shown}${more}. Nothing was written; change the target first, then adopt again${later}`,
     );
     this.target = target;
     this.objects = objects;
+    this.overridesNeeded = overridesNeeded;
   }
 }
 

@@ -7,7 +7,10 @@ import {
   DestructiveNotAcknowledgedError,
   OverwriteNotAcknowledgedError,
 } from "./errors.ts";
+import type { OverrideNeeded } from "./sql-analysis/adoption-overrides.ts";
 import type { DestructiveStatement } from "./sql-analysis/destructive.ts";
+
+export type { OverrideNeeded };
 
 /** Asked before a command overwrites or deletes work (`--acknowledge-overwrite` skips it). */
 export interface OverwriteQuestion {
@@ -36,29 +39,13 @@ export interface DestructiveQuestion {
 /** Every yes/no question a command can ask. */
 export type Question = OverwriteQuestion | DestructiveQuestion;
 
-/** Something `init --adopt` can only write with an override marker. */
-export interface OverrideNeeded {
-  /** What it is, e.g. `function load_staging(text)`. */
-  readonly object: string;
-  /** The risk rules it breaks, sorted, e.g. `plpgsql-dynamic-sql`. */
-  readonly rules: readonly string[];
-  /** Each rule's refusal, in the rules' words. */
-  readonly findings: readonly {
-    readonly rule: string;
-    readonly message: string;
-  }[];
-  /** The desired-schema file the marker goes in (project-relative). */
-  readonly file: string;
-}
-
 /**
  * Asked by `init --adopt` once nothing else is refused, for each object in
  * `needed` in turn (this one is `needed[index]`): the reason written into
- * its override marker (`-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`).
+ * its override marker (`-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`). Not a
+ * yes/no Question: it is answered with text.
  */
 export interface OverrideReasonQuestion extends OverrideNeeded {
-  readonly kind: "override-reason";
-  readonly command: "init --adopt";
   readonly target: string;
   /** One line for people, ending in a question mark. */
   readonly message: string;

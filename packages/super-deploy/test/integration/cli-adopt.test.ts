@@ -102,7 +102,7 @@ describe("init --adopt", () => {
       "    plpgsql-dynamic-sql: EXECUTE (dynamic SQL) is not allowed",
     );
     expect(result.stderr).toContain(
-      "In a terminal, adoption asks for an override reason for each function that breaks only risk rules, and writes its override marker\n",
+      "In a terminal, adoption asks for an override reason for each object that breaks only risk rules, and writes its override marker\n",
     );
     expect(dir.exists("data-model/desired-schema")).toBe(false);
   });
@@ -149,6 +149,27 @@ describe.skipIf(process.platform === "win32")(
       expect(validated.stdout).toContain(
         "override: data-model/desired-schema/routines.sql:",
       );
+    });
+
+    test("while anything else is refused, says which functions it will ask a reason for once that is fixed", async () => {
+      const dir = await projectAdopting(
+        `${loader} create type mood as enum ('sad');`,
+      );
+      const terminal = spawnTerminal(["init", "--adopt", "prod"], {
+        cwd: dir.root,
+      });
+
+      await terminal.waitFor("Nothing was written");
+      expect(await terminal.exited).toBe(1);
+      const screen = terminal.screen.replace(/\s+/g, " ");
+      expect(screen).toContain(
+        "Target prod has 1 thing V1 doesn't support: CREATE TYPE",
+      );
+      expect(screen).toContain(
+        "Once nothing else is refused, adoption will ask an override reason for 1 object that breaks only risk rules: function load_staging(text)",
+      );
+      expect(screen).not.toContain("Reason to override");
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
     });
 
     test("an empty reason cancels the adoption, writing nothing", async () => {

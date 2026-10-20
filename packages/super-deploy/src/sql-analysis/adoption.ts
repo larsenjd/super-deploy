@@ -15,14 +15,15 @@
 //   setup, which the catalog comparison counts as the owner's), and REVOKEs
 //   from roles other than PUBLIC: the differ emits them before each GRANT,
 //   and on a new object they change nothing.
-//
-// The managed schema's own grants are kept, and a REVOKE ALL of PUBLIC's
-// default privileges is written with the privilege it takes away, as the
-// rules require (`REVOKE EXECUTE ON FUNCTION`, `REVOKE USAGE ON TYPE`).
 // - for objects a desired schema can never create and the catalog check
 //   reports itself (aggregates, operators, rules, statistics objects,
 //   extensions, publications...; verification/catalog.ts `other`), so each
 //   is listed once with its reason (`unsupportedCatalogObject`).
+//
+// The managed schema's own grants are kept, and a REVOKE ALL of PUBLIC's
+// default privileges is written with the privilege it takes away, as the
+// rules require (`REVOKE EXECUTE ON FUNCTION`, `REVOKE USAGE ON TYPE`).
+import { grantees, publicDefaults, schemaNames } from "./grants.ts";
 import { parseSqlFile } from "./parse.ts";
 import {
   defElemString,
@@ -117,9 +118,9 @@ export interface AdoptionOptions {
   readonly header: readonly string[];
   /**
    * Roles whose privileges on the managed schema are target setup, not the
-   * desired schema's: its owner and the deploy role. Default none.
+   * desired schema's: its owner and the deploy role.
    */
-  readonly schemaRoles?: readonly string[];
+  readonly schemaRoles: readonly string[];
 }
 
 /**
@@ -154,7 +155,7 @@ export async function adoptedDesiredSchema(
 /** The file a generated statement goes to, or undefined to leave it out. */
 async function fileFor(
   sql: string,
-  { managedSchema, schemaRoles = [] }: AdoptionOptions,
+  { managedSchema, schemaRoles }: AdoptionOptions,
 ): Promise<string | undefined> {
   const parsed = await parseSqlFile({ path: "generated.sql", text: sql });
   const [statement] = parsed.ok ? parsed.statements : [];
@@ -174,17 +175,12 @@ async function fileFor(
     return undefined;
   }
   if (type === "GrantStmt") {
-    const grantees = list(node.grantees).map((grantee) => {
-      const role = unwrap(grantee, "RoleSpec") ?? {};
-      return role.roletype === "ROLESPEC_PUBLIC" ? null : role.rolename;
-    });
+    const roles = grantees(node);
     if (
       node.is_grant === true
         ? node.objtype === "OBJECT_SCHEMA" &&
-          grantees.every(
-            (role) => typeof role === "string" && schemaRoles.includes(role),
-          )
-        : !grantees.includes(null)
+          roles.every((role) => role !== null && schemaRoles.includes(role))
+        : !roles.includes(null)
     ) {
       return undefined;
     }
@@ -192,10 +188,7 @@ async function fileFor(
       node.objtype === "OBJECT_SCHEMA" &&
       node.targtype === "ACL_TARGET_OBJECT"
     ) {
-      const schemas = list(node.objects).map(
-        (object) => unwrap(object, "String")?.sval,
-      );
-      return schemas.every((schema) => schema === managedSchema)
+      return schemaNames(node).every((schema) => schema === managedSchema)
         ? fileOf[type]
         : undefined;
     }
@@ -207,16 +200,6 @@ async function fileFor(
   return fileOf[type] ?? otherFile;
 }
 
-/** PUBLIC's default privilege on each object type the differ revokes ALL of. */
-const publicDefaults: Readonly<Record<string, string>> = {
-  FUNCTION: "EXECUTE",
-  PROCEDURE: "EXECUTE",
-  ROUTINE: "EXECUTE",
-  TYPE: "USAGE",
-  DOMAIN: "USAGE",
-  SCHEMA: "USAGE",
-};
-
 function desiredText(sql: string): string {
   const text = sql
     .trim()
@@ -224,7 +207,7 @@ function desiredText(sql: string): string {
     .replace(
       /^REVOKE\s+ALL\s+ON\s+(FUNCTION|PROCEDURE|ROUTINE|TYPE|DOMAIN|SCHEMA)\s(?=[\s\S]*\sFROM\s+PUBLIC;?$)/i,
       (_all, kind: string) =>
-        `REVOKE ${publicDefaults[kind.toUpperCase()]} ON ${kind} `,
+        `REVOKE ${publicDefaults[`OBJECT_${kind.toUpperCase()}`]?.toUpperCase()} ON ${kind} `,
     );
   return text.endsWith(";") ? text : `${text};`;
 }

@@ -11,6 +11,13 @@
 // - `plpgsql-dynamic-sql`, `plpgsql-transaction-control`: PL/pgSQL bodies.
 
 import { denylistFindings } from "./denylist.ts";
+import {
+  grantees,
+  privilegeNames,
+  publicDefaults,
+  schemaGrantBeyondUsage,
+  schemaNames,
+} from "./grants.ts";
 import type { ParsedStatement } from "./parse.ts";
 import { plpgsqlFindings, sqlBodyFindings } from "./routine-bodies.ts";
 import type { RuleContext, RuleFinding } from "./rule-types.ts";
@@ -555,19 +562,6 @@ const grantTypes = new Set([
   "OBJECT_DOMAIN",
 ]);
 
-/**
- * PostgreSQL's default privileges for PUBLIC on the objects a desired schema
- * defines, the only ones it may revoke. Tables, views and sequences have
- * none. The public schema's default USAGE is handled in `checkRevoke`.
- */
-const publicDefaults: Readonly<Record<string, string>> = {
-  OBJECT_FUNCTION: "execute",
-  OBJECT_PROCEDURE: "execute",
-  OBJECT_ROUTINE: "execute",
-  OBJECT_TYPE: "usage",
-  OBJECT_DOMAIN: "usage",
-};
-
 const objectTypePlurals: Readonly<Record<string, string>> = {
   OBJECT_FUNCTION: "functions",
   OBJECT_PROCEDURE: "procedures",
@@ -612,16 +606,13 @@ function checkGrant(
   if (node.is_grant !== true) {
     return checkRevoke(node, context);
   }
-  if (node.objtype === "OBJECT_SCHEMA") {
-    const privileges = privilegeNames(node);
-    const other = privileges.find((privilege) => privilege !== "usage");
-    if (privileges.length === 0 || other !== undefined) {
-      return [
-        notAllowed(
-          `GRANT ${(other ?? "all").toUpperCase()} ON SCHEMA is not allowed in the desired schema: grant only USAGE on the managed schema; objects are created by the deploy role`,
-        ),
-      ];
-    }
+  const beyondUsage = schemaGrantBeyondUsage(node);
+  if (beyondUsage !== undefined) {
+    return [
+      notAllowed(
+        `GRANT ${beyondUsage.toUpperCase()} ON SCHEMA is not allowed in the desired schema: grant only USAGE on the managed schema; objects are created by the deploy role`,
+      ),
+    ];
   }
   return [];
 }
@@ -633,14 +624,7 @@ function checkGrant(
  * one of its own GRANTs.
  */
 function checkRevoke(node: Json, context: RuleContext): RuleFinding[] {
-  const others = list(node.grantees)
-    .map((grantee) => unwrap(grantee, "RoleSpec") ?? {})
-    .filter((role) => role.roletype !== "ROLESPEC_PUBLIC")
-    .map((role) =>
-      typeof role.rolename === "string"
-        ? role.rolename
-        : String(role.roletype).replace("ROLESPEC_", ""),
-    );
+  const others = grantees(node).filter((role) => role !== null);
   if (others.length > 0) {
     return [
       notAllowed(
@@ -665,16 +649,14 @@ function checkRevoke(node: Json, context: RuleContext): RuleFinding[] {
   const objtype = String(node.objtype);
   const privileges = privilegeNames(node);
   const expected =
-    objtype === "OBJECT_SCHEMA"
-      ? context.managedSchema === "public"
-        ? "usage"
-        : undefined
+    objtype === "OBJECT_SCHEMA" && context.managedSchema !== "public"
+      ? undefined
       : publicDefaults[objtype];
+  const what =
+    objtype === "OBJECT_SCHEMA"
+      ? `schema ${context.managedSchema}`
+      : (objectTypePlurals[objtype] ?? objectTypeKeyword(objtype));
   if (expected === undefined) {
-    const what =
-      objtype === "OBJECT_SCHEMA"
-        ? `schema ${context.managedSchema}`
-        : (objectTypePlurals[objtype] ?? objectTypeKeyword(objtype));
     return [
       notAllowed(
         `PUBLIC has no privileges on ${what} by default, so there is nothing to revoke: the desired schema declares what is granted, so remove the GRANT instead`,
@@ -690,10 +672,6 @@ function checkRevoke(node: Json, context: RuleContext): RuleFinding[] {
   }
   const other = privileges.find((privilege) => privilege !== expected);
   if (other !== undefined) {
-    const what =
-      objtype === "OBJECT_SCHEMA"
-        ? `schema ${context.managedSchema}`
-        : (objectTypePlurals[objtype] ?? objectTypeKeyword(objtype));
     return [
       notAllowed(
         `PUBLIC has no ${other.toUpperCase()} privilege on ${what} by default: revoke ${expected.toUpperCase()}, its only default privilege`,
@@ -701,20 +679,6 @@ function checkRevoke(node: Json, context: RuleContext): RuleFinding[] {
     ];
   }
   return [];
-}
-
-/** The privileges a GRANT or REVOKE names, lowercase; empty for ALL. */
-function privilegeNames(node: Json): string[] {
-  return list(node.privileges).map((privilege) =>
-    String(unwrap(privilege, "AccessPriv")?.priv_name ?? "all"),
-  );
-}
-
-/** The schemas a GRANT or REVOKE ON SCHEMA names. */
-function schemaNames(node: Json): string[] {
-  return list(node.objects).map((object) =>
-    String(unwrap(object, "String")?.sval ?? ""),
-  );
 }
 
 function checkExtension(node: Json): RuleFinding[] {

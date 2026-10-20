@@ -37,9 +37,9 @@ import type {
   Question,
 } from "../questions.ts";
 import {
+  isOverridable,
   type LockWarning,
   type Override,
-  ruleDefinition,
 } from "../sql-analysis/index.ts";
 import { readDraft } from "../store/draft.ts";
 import {
@@ -288,12 +288,16 @@ const initCommand: DirectoryCommandDefinition = {
           }
           if (
             context.ask === undefined &&
-            error.objects.some(
-              (item) => ruleDefinition(item.rule)?.overridable === true,
-            )
+            error.objects.some((item) => isOverridable(item.rule))
           ) {
             context.warn(
-              "In a terminal, adoption asks for an override reason for each function that breaks only risk rules, and writes its override marker",
+              "In a terminal, adoption asks for an override reason for each object that breaks only risk rules, and writes its override marker",
+            );
+          }
+          const { overridesNeeded } = error;
+          if (overridesNeeded.length > 0) {
+            context.warn(
+              `Once nothing else is refused, adoption will ask an override reason for ${plural(overridesNeeded.length, "object")} that break${overridesNeeded.length === 1 ? "s" : ""} only risk rules: ${overridesNeeded.map((needed) => needed.object).join(", ")}`,
             );
           }
         } else if (error instanceof MarkMismatchError) {

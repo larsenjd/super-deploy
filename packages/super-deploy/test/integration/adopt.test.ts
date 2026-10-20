@@ -201,8 +201,7 @@ describe("adopt", () => {
       });
 
       expect(
-        asked.map(({ kind, target, object, rules, index }) => ({
-          kind,
+        asked.map(({ target, object, rules, index }) => ({
           target,
           object,
           rules,
@@ -210,14 +209,12 @@ describe("adopt", () => {
         })),
       ).toEqual([
         {
-          kind: "override-reason",
           target: "prod",
           object: "function load_staging(text)",
           rules: ["plpgsql-dynamic-sql"],
           index: 0,
         },
         {
-          kind: "override-reason",
           target: "prod",
           object: "function ping()",
           rules: ["denylisted-call"],
@@ -305,7 +302,7 @@ describe("adopt", () => {
     }
   });
 
-  test("asks no reason while anything else is refused, and never uses one for it", async () => {
+  test("asks no reason while anything else is refused, never uses one for it, and says which it will ask for", async () => {
     const { project } = await adoptableProject(`${loaders}
       create type mood as enum ('sad', 'happy');
       create procedure batch() language plpgsql
@@ -341,6 +338,25 @@ describe("adopt", () => {
       );
       expect(objects).toHaveLength(3);
       expect(asked).toBe(0);
+      expect(
+        (error as AdoptUnsupportedError).overridesNeeded.map(
+          ({ object, rules, file }) => ({ object, rules, file }),
+        ),
+      ).toEqual([
+        {
+          object: "function load_staging(text)",
+          rules: ["plpgsql-dynamic-sql"],
+          file: "data-model/desired-schema/routines.sql",
+        },
+        {
+          object: "function ping()",
+          rules: ["denylisted-call"],
+          file: "data-model/desired-schema/routines.sql",
+        },
+      ]);
+      expect((error as AdoptUnsupportedError).message).toMatch(
+        /\. Once nothing else is refused, an override reason will be asked for function load_staging\(text\), function ping\(\)$/,
+      );
     } finally {
       await project.close();
     }

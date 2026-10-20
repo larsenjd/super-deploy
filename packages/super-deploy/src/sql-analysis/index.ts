@@ -12,6 +12,7 @@ export {
 } from "./adoption.ts";
 export {
   type OverrideCandidate,
+  type OverrideNeeded,
   oneLine,
   overrideCandidates,
   withOverrideMarkers,
@@ -46,6 +47,7 @@ export {
 } from "./ordering.ts";
 export {
   carryOverrides,
+  isOverridable,
   type Override,
   overrideObject,
 } from "./overrides.ts";

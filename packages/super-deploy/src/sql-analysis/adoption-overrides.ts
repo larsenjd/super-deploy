@@ -2,25 +2,30 @@
 // desired-schema statements only an override marker stands between and
 // adoption, and writing the markers into the generated files once a person
 // has given a reason for each.
-import type { RuleViolation } from "../errors.ts";
-import { markerPrefix, overrideObject } from "./overrides.ts";
+import { isOverridable, markerPrefix, overrideObject } from "./overrides.ts";
 import { parseSqlFile, type SqlFile } from "./parse.ts";
-import { ruleDefinition } from "./rule-catalogue.ts";
 import type { RuleContext } from "./rule-types.ts";
 import { analyseFile } from "./rules.ts";
 
-/** A statement whose every rule violation an override marker would accept. */
-export interface OverrideCandidate {
-  /** The file's path, as given. */
+/** Something `init --adopt` can only write with an override marker. */
+export interface OverrideNeeded {
+  /** What it is, e.g. `function load_staging(text)`. */
+  readonly object: string;
+  /** The risk rules it breaks, sorted, e.g. `plpgsql-dynamic-sql`. */
+  readonly rules: readonly string[];
+  /** Each rule's refusal, in the rules' words, in file order. */
+  readonly findings: readonly {
+    readonly rule: string;
+    readonly message: string;
+  }[];
+  /** The desired-schema file the marker goes in (its path as given). */
   readonly file: string;
+}
+
+/** A statement whose every rule violation an override marker would accept. */
+export interface OverrideCandidate extends OverrideNeeded {
   /** 1-based line of the statement's first token: the marker goes above it. */
   readonly line: number;
-  /** What the statement creates, e.g. `function load_staging(text)`. */
-  readonly object: string;
-  /** The risk rules it breaks, sorted. */
-  readonly rules: readonly string[];
-  /** The violations themselves, in file order. */
-  readonly violations: readonly RuleViolation[];
 }
 
 /**
@@ -43,18 +48,19 @@ export async function overrideCandidates(
       const own = violations.filter(
         (violation) => violation.statement === statement.text,
       );
-      if (
-        own.length > 0 &&
-        own.every(
-          (violation) => ruleDefinition(violation.rule)?.overridable === true,
-        )
-      ) {
+      if (own.length > 0 && own.every(({ rule }) => isOverridable(rule))) {
+        const findings = new Map(
+          own.map(({ rule, message }) => [
+            `${rule}\0${message}`,
+            { rule, message },
+          ]),
+        );
         candidates.push({
           file: file.path,
           line: statement.line,
           object: overrideObject(statement, context.managedSchema),
-          rules: [...new Set(own.map((violation) => violation.rule))].sort(),
-          violations: own,
+          rules: [...new Set(own.map(({ rule }) => rule))].sort(),
+          findings: [...findings.values()],
         });
       }
     }

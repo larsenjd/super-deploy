@@ -43,14 +43,15 @@ desired schema and migration `00001-adopt`, which is recorded on that target
 as already deployed. If the database holds anything super-deploy doesn't
 support, nothing is written and every such object is listed.
 
-Functions that use dynamic SQL (`EXECUTE`) or call a built-in whose effects
-escape the transaction (such as `pg_notify`) need an override marker in the
-desired schema. Once nothing else is refused, adoption run in a terminal
-lists them and asks for a reason for each: the reason reviewers will read in
-`-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`, which adoption writes on the
-line before the function. An empty answer cancels the adoption, writing
-nothing. Without a terminal (in CI, for example) adoption refuses them like
-anything else it doesn't support. `finalize` and `validate` show these
+Functions (or other statements) that use dynamic SQL (`EXECUTE`) or call a
+built-in whose effects escape the transaction (such as `pg_notify`) need an
+override marker in the desired schema. Once nothing else is refused,
+adoption run in a terminal lists them and asks for a reason for each: the
+reason reviewers will read in `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`,
+which adoption writes on the line before the statement. Until then, its
+refusal names them, so you know which reasons it will ask for. An empty
+answer cancels the adoption, writing nothing. Without a terminal (in CI, for
+example) adoption refuses them like anything else it doesn't support. `finalize` and `validate` show these
 overrides like any other.
 
 ## Permissions
@@ -85,7 +86,10 @@ grant execute on function archive_order(bigint) to app_writer;
 Grants are part of the schema: a grant or revoke made by hand on a target,
 including on the managed schema itself, is drift, and `deploy` refuses until
 it is undone (`status` lists it). `rebuild` leaves the managed schema's grants
-exactly as the migrations declare.
+exactly as the migrations declare. It can only revoke grants the deploy role
+may revoke: if an administrator owns the managed schema and granted it to
+other roles by hand, `rebuild` fails without changing anything, naming each
+such grant, until the owner revokes them.
 
 ### What each target needs set up outside super-deploy
 
@@ -101,7 +105,8 @@ exactly as the migrations declare.
   schema, if the target lacks it). It should own the managed schema; if an
   administrator owns it instead, grant the deploy role
   `usage, create on schema app ... with grant option` (the grant option lets
-  it grant `USAGE` on the schema). These privileges aren't drift. For
+  it grant `USAGE` on the schema). These privileges, and the owner's, aren't
+  drift, and `rebuild` and `init --adopt` leave them alone. For
   `public`, deploy as the database's owner, who owns `public` by default.
 - **Grants on external schemas and their objects** (`externalSchemas` in
   `super-deploy.config.ts`). A `SECURITY DEFINER` function runs as the deploy

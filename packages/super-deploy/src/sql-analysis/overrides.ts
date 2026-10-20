@@ -77,7 +77,7 @@ export function scanMarkers(
     (statement) => statement.offset + Buffer.byteLength(statement.text),
   );
   /** The statement a comment on its own line directly before it applies to. */
-  const target = (start: number, line: number): number | undefined => {
+  const markedStatement = (start: number, line: number): number | undefined => {
     const next = statements.findIndex((statement) => statement.offset > start);
     const inside = statements.some(
       (statement, index) =>
@@ -99,7 +99,7 @@ export function scanMarkers(
     const line = lineAtByte(bytes, comment.start);
     if (!lookalike.test(comment.text)) {
       const next = comment.text.startsWith(oldFormPrefix)
-        ? target(comment.start, line)
+        ? markedStatement(comment.start, line)
         : undefined;
       if (next !== undefined) {
         oldForms.add(next);
@@ -127,7 +127,7 @@ export function scanMarkers(
       );
       continue;
     }
-    const next = target(comment.start, line);
+    const next = markedStatement(comment.start, line);
     if (next === undefined || markers.has(next)) {
       violation(
         "override-misplaced",
@@ -144,6 +144,11 @@ const overridableRules = ruleCatalogue
   .filter((rule) => rule.overridable)
   .map((rule) => rule.id)
   .join(", ");
+
+/** Whether an override marker accepts a violation of `rule` (a risk rule). */
+export function isOverridable(rule: string): boolean {
+  return ruleDefinition(rule)?.overridable === true;
+}
 
 /**
  * Applies a statement's marker to the statement's violations: risk-rule
@@ -165,7 +170,7 @@ export function applyMarker(
     }
     return {
       violations: violations.map((violation) =>
-        ruleDefinition(violation.rule)?.overridable === true
+        isOverridable(violation.rule)
           ? {
               ...violation,
               message: `${violation.message}. Hint: the override marker is now ${exactForm}`,
@@ -174,8 +179,8 @@ export function applyMarker(
       ),
     };
   }
-  const overridden = violations.filter(
-    (violation) => ruleDefinition(violation.rule)?.overridable === true,
+  const overridden = violations.filter((violation) =>
+    isOverridable(violation.rule),
   );
   const standing = violations.filter(
     (violation) => !overridden.includes(violation),
@@ -232,9 +237,9 @@ export function overrideObject(
     const schema = managedSchema.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return identity.replace(new RegExp(`(^|[\\s(,])${schema}\\.`, "g"), "$1");
   }
-  const target = relation(body.relation);
+  const relationName = relation(body.relation);
   const name = statementName(statement.nodeType);
-  return target === undefined ? name : `${name} ${target}`;
+  return relationName === undefined ? name : `${name} ${relationName}`;
 }
 
 /**
@@ -267,9 +272,7 @@ export async function carryOverrides(
       override !== undefined &&
       (
         await analyseMigration([{ ...file, kind: "schema-change" }], options)
-      ).violations.some(
-        (violation) => ruleDefinition(violation.rule)?.overridable === true,
-      );
+      ).violations.some((violation) => isOverridable(violation.rule));
     carried.push(needed ? `${markerPrefix} ${override.reason}\n${sql}` : sql);
   }
   return carried;

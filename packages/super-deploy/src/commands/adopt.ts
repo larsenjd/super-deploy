@@ -26,6 +26,7 @@
 //      else is refused, and the target's connection is closed, a reason is
 //      asked for each. It goes into an override marker above the statement
 //      (an empty answer cancels). Without the callback they are refused.
+//      With it, a refusal of anything else names them as `overridesNeeded`.
 //   3. Write the files, then the ordinary `draft` (named `adopt`) and
 //      `finalize`, which rehearse migration 1 against the desired schema.
 //   4. Under the target lock, `markNextPending` (deploy/mark.ts) runs mark's
@@ -57,7 +58,7 @@ import {
 } from "../errors.ts";
 import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
-import type { AskOverrideReason, OverrideNeeded } from "../questions.ts";
+import type { AskOverrideReason } from "../questions.ts";
 import {
   ensureManagedSchema,
   loadDesiredSchema,
@@ -69,9 +70,11 @@ import {
   catalogObjectFinding,
   desiredSchemaAnalysis,
   type OverrideCandidate,
+  type OverrideNeeded,
   oneLine,
   overrideCandidates,
   type ParsedStatement,
+  type RuleContext,
   type SqlFile,
   withOverrideMarkers,
 } from "../sql-analysis/index.ts";
@@ -91,6 +94,7 @@ import {
   driftBetween,
   targetTimeouts,
 } from "../verification/drift.ts";
+import { schemaSetupRoles } from "../verification/schema-setup.ts";
 import { draft } from "./draft.ts";
 import { finalize } from "./finalize.ts";
 
@@ -138,11 +142,9 @@ export async function adopt(
 ): Promise<AdoptResult> {
   const target = resolveTarget(project, options.target);
   await requireEmptyProject(project, target.name);
-  const read = await readTarget(
-    project,
-    target,
-    options.overrideReason !== undefined,
-  );
+  const read = await readTarget(project, target, {
+    withOverrides: options.overrideReason !== undefined,
+  });
   const reasons =
     options.overrideReason === undefined
       ? []
@@ -227,16 +229,21 @@ async function requireEmptyProject(
 /**
  * Steps 1 and 2: the desired-schema files for the target's managed schema,
  * without override markers, or AdoptUnsupportedError. Only reads the
- * target. With `markable`, the statements that break only risk rules are
- * checked as if marked and returned as `candidates` (in file order), else
- * refused.
+ * target. `withOverrides`: the statements that break only risk rules are
+ * checked as if marked and returned as `candidates` (in file order), and an
+ * AdoptUnsupportedError lists them as `overridesNeeded`; otherwise they are
+ * refused like anything else.
  */
 async function readTarget(
   project: Project,
   target: ResolvedTarget,
-  markable: boolean,
+  { withOverrides }: { withOverrides: boolean },
 ): Promise<{ files: AdoptedFile[]; candidates: OverrideCandidate[] }> {
   const { config } = project;
+  const context: RuleContext = {
+    managedSchema: config.managedSchema,
+    externalSchemas: config.externalSchemas,
+  };
   const session = await connectTarget(target);
   try {
     const recorded = await readRecordedMigrations(
@@ -286,24 +293,18 @@ async function readTarget(
         const { rule, message } = catalogObjectFinding(fact);
         return { object: fact.object, rule, reason: message };
       });
-    const candidates = markable
-      ? await overrideCandidates(sqlFiles(project, files), {
-          managedSchema: config.managedSchema,
-          externalSchemas: config.externalSchemas,
-        })
+    const candidates = withOverrides
+      ? await overrideCandidates(sqlFiles(project, files), context)
       : [];
+    const needed = overridesNeeded(candidates);
     const analysed = await analyse(
       project,
-      markOverrides(
-        project,
-        files,
-        candidates,
-        candidates.map(() => "asked once nothing else is refused"),
-      ),
+      withCheckingMarkers(project, files, candidates),
+      context,
     );
     unsupported.push(...analysed.unsupported);
     if (unsupported.length > 0) {
-      throw new AdoptUnsupportedError(target.name, unsupported);
+      throw new AdoptUnsupportedError(target.name, unsupported, needed);
     }
 
     const differences = await withThrowawayDatabase(
@@ -329,6 +330,7 @@ async function readTarget(
           rule: "not-reproduced",
           reason: `${notReproduced[drifted.change]}: ${drifted.differences.join("; ")}`,
         })),
+        needed,
       );
     }
     return { files, candidates };
@@ -339,15 +341,18 @@ async function readTarget(
 
 /**
  * The managed schema's owner and the deploy role: their privileges on the
- * schema are target setup, not the desired schema's (verification/catalog.ts).
+ * schema are target setup, not the desired schema's (schema-setup.ts).
  */
 async function schemaRoles(
   session: Session,
   managedSchema: string,
 ): Promise<string[]> {
+  const owner =
+    "(SELECT nspowner FROM pg_catalog.pg_namespace WHERE nspname = $1)";
   const { rows } = await session.query<{ role: string }>(
-    `SELECT current_user AS role
-     UNION SELECT pg_catalog.pg_get_userbyid(nspowner) FROM pg_catalog.pg_namespace WHERE nspname = $1`,
+    `SELECT pg_catalog.pg_get_userbyid(oid) AS role
+       FROM (${schemaSetupRoles(owner)}) roles(oid)
+      WHERE oid IS NOT NULL`,
     [managedSchema],
   );
   return rows.map((row) => row.role);
@@ -360,25 +365,10 @@ async function askReasons(
   candidates: readonly OverrideCandidate[],
   ask: AskOverrideReason,
 ): Promise<string[]> {
-  const needed: OverrideNeeded[] = candidates.map((candidate) => ({
-    object: candidate.object,
-    rules: candidate.rules,
-    findings: candidate.violations
-      .map(({ rule, message }) => ({ rule, message }))
-      .filter(
-        (finding, at, all) =>
-          all.findIndex(
-            (other) =>
-              other.rule === finding.rule && other.message === finding.message,
-          ) === at,
-      ),
-    file: candidate.file,
-  }));
+  const needed = overridesNeeded(candidates);
   const reasons: string[] = [];
   for (const [index, item] of needed.entries()) {
     const answer = await ask({
-      kind: "override-reason",
-      command: "init --adopt",
       target,
       ...item,
       message: `Reason to override ${item.rules.join(", ")} for ${item.object}?`,
@@ -393,6 +383,38 @@ async function askReasons(
     reasons.push(reason);
   }
   return reasons;
+}
+
+/** The candidates as their callers see them: without where markers go. */
+function overridesNeeded(
+  candidates: readonly OverrideCandidate[],
+): OverrideNeeded[] {
+  return candidates.map(({ object, rules, findings, file }) => ({
+    object,
+    rules,
+    findings,
+    file,
+  }));
+}
+
+/**
+ * The files with a marker above each candidate whose reason says it is only
+ * there for the checks: they treat the candidates as marked before any
+ * reason is asked. These files are never written.
+ */
+function withCheckingMarkers(
+  project: Project,
+  files: readonly AdoptedFile[],
+  candidates: readonly OverrideCandidate[],
+): AdoptedFile[] {
+  return markOverrides(
+    project,
+    files,
+    candidates,
+    candidates.map(
+      () => "checking only: the reason is asked once nothing else is refused",
+    ),
+  );
 }
 
 /** The files with a marker above each candidate (`reasons` in the same order). */
@@ -439,18 +461,15 @@ const notReproduced: Readonly<Record<DriftChange, string>> = {
 async function analyse(
   project: Project,
   files: readonly AdoptedFile[],
+  context: RuleContext,
 ): Promise<{
   statements: readonly ParsedStatement[];
   unsupported: UnsupportedObject[];
 }> {
-  const { config } = project;
   try {
     const { statements } = await desiredSchemaAnalysis(
       sqlFiles(project, files),
-      {
-        managedSchema: config.managedSchema,
-        externalSchemas: config.externalSchemas,
-      },
+      context,
     );
     return { statements, unsupported: [] };
   } catch (error) {

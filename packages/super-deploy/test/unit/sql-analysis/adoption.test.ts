@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import { adoptedDesiredSchema } from "../../../src/sql-analysis/index.ts";
 
-const options = { managedSchema: "app", header: ["Adopted."] };
+const options = { managedSchema: "app", header: ["Adopted."], schemaRoles: [] };
 
 async function kept(statements: string[]): Promise<Record<string, string>> {
   const files = await adoptedDesiredSchema(statements, options);
