@@ -71,6 +71,10 @@ export type {
   AttemptRecord,
   RecordedMigration,
 } from "./deploy/history.ts";
+export type {
+  HistoryMismatch,
+  PreflightFindings,
+} from "./deploy/preflight.ts";
 export type { PlannedStatement } from "./differ/types.ts";
 export {
   AdapterError,
@@ -89,6 +93,7 @@ export {
   NoMigrationError,
   OrderDependenceError,
   OverwriteNotAcknowledgedError,
+  PreflightFailedError,
   ProjectNotFoundError,
   RehearsalMismatchError,
   type RuleViolation,

@@ -434,7 +434,10 @@ const deployCommand: CommandDefinition = {
     "Rehearse every pending migration, then apply them all to the target in one transaction",
   options: [targetOption],
   async run(project, values, context) {
-    const result = await deploy(project, { target: String(values.target) });
+    const result = await deploy(project, {
+      target: String(values.target),
+      onWarning: (warning) => context.warn(`warning: ${warning}`),
+    });
     context.result(
       result.deployed.length === 0
         ? `Target ${result.target} is up to date: nothing to deploy`
@@ -450,9 +453,26 @@ const statusCommand: CommandDefinition = {
   options: [targetOption],
   async run(project, values, context) {
     const report = await status(project, { target: String(values.target) });
+    const { preflight } = report;
+    for (const warning of preflight.warnings) {
+      context.warn(`warning: ${warning}`);
+    }
     context.result(
       `Target ${report.target}${report.disposable ? " (disposable)" : ""}: ${plural(report.recorded.length, "migration")} recorded, ${report.pending.length} pending`,
     );
+    const refusals = [
+      ...preflight.missingRoles.map((role) => `role "${role}" does not exist`),
+      ...preflight.missingExternalSchemas.map(
+        (schema) => `external schema "${schema}" does not exist`,
+      ),
+      ...preflight.historyMismatches.map((mismatch) => mismatch.message),
+    ];
+    if (refusals.length > 0) {
+      context.result("Deploy would refuse:");
+      for (const refusal of refusals) {
+        context.result(`  ${refusal}`);
+      }
+    }
     if (report.pending.length > 0) {
       context.result("Pending:");
       for (const migration of report.pending) {

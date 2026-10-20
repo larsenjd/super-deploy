@@ -1,6 +1,7 @@
 // Typed errors thrown by the programmatic API. Every error the library throws
 // on purpose is a SuperDeployError; `code` is stable and meant for programs,
 // `message` is one line meant for people (the CLI prints it after "Error: ").
+import type { PreflightFindings } from "./deploy/preflight.ts";
 import type { OverwriteQuestion } from "./questions.ts";
 
 export type ErrorCode =
@@ -25,6 +26,7 @@ export type ErrorCode =
   | "target-locked"
   | "no-migration"
   | "overwrite-not-acknowledged"
+  | "preflight-failed"
   | "init-conflict";
 
 export class SuperDeployError extends Error {
@@ -299,13 +301,16 @@ export interface ValidationProblem {
    * Stable identifier: `index-invalid`, `invalid-folder-name`,
    * `unexpected-entry`, `migration-missing`, `migration-unindexed`,
    * `migration-renamed`, `numbering-gap`, `invalid-encoding`,
-   * `content-hash-mismatch`, `chain-hash-mismatch` (errors);
+   * `content-hash-mismatch`, `chain-hash-mismatch`, `sql-rule-violation` (errors);
    * `unfinalized-draft`, `undrafted-changes` (warnings).
    */
   readonly code: string;
   readonly message: string;
   /** Project-relative path with forward slashes, when the problem has one. */
   readonly path?: string;
+  /** For `sql-rule-violation`: the 1-based line and the rule id. */
+  readonly line?: number;
+  readonly rule?: string;
 }
 
 function summarise(problems: readonly ValidationProblem[]): string {
@@ -443,5 +448,36 @@ export class TargetLockedError extends SuperDeployError {
     );
     this.target = target;
     this.holder = holder;
+  }
+}
+
+/**
+ * The deploy pre-flight refused the target: a role the deployment grants to
+ * or a declared external schema is missing, or its recorded history doesn't
+ * match the repo. Nothing was rehearsed or changed; the attempt is logged as
+ * failed.
+ */
+export class PreflightFailedError extends SuperDeployError {
+  readonly target: string;
+  readonly findings: PreflightFindings;
+
+  constructor(target: string, findings: PreflightFindings) {
+    const roles = findings.missingRoles.map(
+      (role) =>
+        `role "${role}" does not exist (the desired schema grants to it; create it on the target)`,
+    );
+    const schemas = findings.missingExternalSchemas.map(
+      (schema) =>
+        `external schema "${schema}" does not exist (it is declared in externalSchemas)`,
+    );
+    const history = findings.historyMismatches.map(
+      (mismatch) => mismatch.message,
+    );
+    super(
+      "preflight-failed",
+      `Target ${target} failed the deploy pre-flight checks: ${[...roles, ...schemas, ...history].join("; ")}`,
+    );
+    this.target = target;
+    this.findings = findings;
   }
 }

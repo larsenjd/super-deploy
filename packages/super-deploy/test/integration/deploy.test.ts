@@ -372,26 +372,21 @@ describe("deploy", () => {
   });
 
   test("pins search path, time zone, date and interval styles and the target's timeouts inside the transaction", async () => {
-    const { dir, project, database } = await deployProject(
+    // The adapter reads the settings on the deploy session right after the
+    // schema change runs (deploy-time rules keep DML out of schema changes,
+    // so the schema change cannot record them itself).
+    const { project, database } = await deployProject(
       server,
       {
         "settings.sql":
           "create table deploy_settings (name text primary key, value text not null);\n",
       },
-      { target: 'lockTimeout: "2s", statementTimeout: "1min",' },
+      {
+        target: 'lockTimeout: "2s", statementTimeout: "1min",',
+        adapter: settingsRecordingAdapter,
+      },
     );
     await draft(project, { name: "record settings" });
-    // The schema change records the settings it ran under (unqualified, so
-    // it also relies on the pinned search path).
-    const schemaChange = "data-model/draft/schema-change.sql";
-    await dir.write(
-      schemaChange,
-      `${await dir.read(schemaChange)}
-INSERT INTO deploy_settings (name, value)
-  SELECT name, current_setting(name) FROM pg_catalog.pg_settings
-   WHERE name IN ('search_path', 'TimeZone', 'DateStyle', 'IntervalStyle', 'lock_timeout', 'statement_timeout');
-`,
-    );
     await finalize(project);
     // Server defaults that the pinned settings must override.
     await server.query(`create database ${database}`);
@@ -404,20 +399,16 @@ INSERT INTO deploy_settings (name, value)
 
     await deploy(project, { target: "dev" });
 
-    expect(
-      await server.query(
-        "select name, value from public.deploy_settings order by name",
-        [],
-        database,
-      ),
-    ).toEqual([
-      { name: "DateStyle", value: "ISO, YMD" },
-      { name: "IntervalStyle", value: "postgres" },
-      { name: "TimeZone", value: "UTC" },
-      { name: "lock_timeout", value: "2s" },
-      { name: "search_path", value: "public, pg_catalog" },
-      { name: "statement_timeout", value: "1min" },
-    ]);
+    expect((globalThis as { deploySettings?: unknown }).deploySettings).toEqual(
+      [
+        { name: "DateStyle", value: "ISO, YMD" },
+        { name: "IntervalStyle", value: "postgres" },
+        { name: "TimeZone", value: "UTC" },
+        { name: "lock_timeout", value: "2s" },
+        { name: "search_path", value: "public, pg_catalog" },
+        { name: "statement_timeout", value: "1min" },
+      ],
+    );
   });
 
   test("rehearses on a throwaway database matching the target's encoding, locale and collation provider, and drops it", async () => {
@@ -489,6 +480,26 @@ INSERT INTO deploy_settings (name, value)
     ).toEqual([{ outcome: "failed" }]);
   });
 });
+
+/** A `dev` adapter that stores the deploy session's settings in `globalThis.deploySettings` after the batch creating deploy_settings. */
+const settingsRecordingAdapter = `{
+  async connect() {
+    const session = await real.connect();
+    return {
+      ...session,
+      async execute(sql) {
+        const results = await session.execute(sql);
+        if (sql.includes('"deploy_settings"')) {
+          const { rows } = await session.query(
+            "select name, current_setting(name) as value from pg_catalog.pg_settings where name in ('search_path', 'TimeZone', 'DateStyle', 'IntervalStyle', 'lock_timeout', 'statement_timeout') order by name",
+          );
+          globalThis.deploySettings = rows;
+        }
+        return results;
+      },
+    };
+  },
+}`;
 
 /** A `dev` adapter whose deploy transaction waits at its COMMIT while `globalThis.deployBeforeCommit` is set. */
 const pausingAdapter = `{
@@ -740,6 +751,12 @@ describe("status", () => {
       ],
       attempts: [],
       disposable: false,
+      preflight: {
+        missingRoles: [],
+        missingExternalSchemas: [],
+        historyMismatches: [],
+        warnings: [expect.stringContaining("is a superuser")],
+      },
     });
     expect(
       await server.query(

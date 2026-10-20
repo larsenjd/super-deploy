@@ -1,0 +1,2 @@
+-- generated column stored -> virtual / alter
+-- ok=false
