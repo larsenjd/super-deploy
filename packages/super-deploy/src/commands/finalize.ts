@@ -5,7 +5,7 @@
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { differ } from "../differ/index.ts";
-import { SuperDeployError } from "../errors.ts";
+import { MigrationLimitError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import {
   acknowledgeDestructive,
@@ -217,10 +217,7 @@ async function finalizedPlace(
   if (migration === undefined) {
     const number = rehearsed.migrations.length + 1;
     if (number > maxMigrationNumber) {
-      throw new SuperDeployError(
-        "migration-integrity",
-        `Migration numbers stop at ${maxMigrationNumber}`,
-      );
+      throw new MigrationLimitError(maxMigrationNumber);
     }
     const folder = migrationFolderName(number, rehearsed.draft.name);
     return {

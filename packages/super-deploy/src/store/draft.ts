@@ -8,7 +8,7 @@
 // schema-change.sql is a copy of migration N's, never regenerated, and its
 // scripts and seed data become the next Recovery of migration N at finalize.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { SuperDeployError } from "../errors.ts";
+import { InvalidDraftError } from "../errors.ts";
 import { normaliseDraftName } from "./draft-name.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";
 
@@ -42,9 +42,9 @@ export async function readDraft(
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    throw new SuperDeployError(
-      "invalid-config",
-      `${file} is not valid JSON (${(error as Error).message})`,
+    throw new InvalidDraftError(
+      file,
+      `is not valid JSON (${(error as Error).message})`,
       { cause: error },
     );
   }
@@ -54,7 +54,7 @@ export async function readDraft(
     !("name" in parsed) ||
     typeof parsed.name !== "string"
   ) {
-    throw new SuperDeployError("invalid-config", `${file} has no "name"`);
+    throw new InvalidDraftError(file, 'has no "name"');
   }
   const hash =
     "desiredSchemaHash" in parsed &&
@@ -70,9 +70,9 @@ export async function readDraft(
       recoveryOf > 0
     )
   ) {
-    throw new SuperDeployError(
-      "invalid-config",
-      `${file} has a "recoveryOf" that is not a migration number`,
+    throw new InvalidDraftError(
+      file,
+      'has a "recoveryOf" that is not a migration number',
     );
   }
   return {

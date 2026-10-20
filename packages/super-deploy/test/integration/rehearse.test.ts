@@ -1,6 +1,7 @@
 import {
   draft,
   finalize,
+  InvalidDraftError,
   loadProject,
   NoDraftError,
   RehearsalMismatchError,
@@ -150,6 +151,22 @@ describe("rehearse", () => {
     const project = await loadProject({ cwd: dir.root });
 
     await expect(rehearse(project)).rejects.toBeInstanceOf(NoDraftError);
+  });
+
+  test("refuses a draft.json it can't read, naming the file", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: { "data-model/draft/draft.json": "{" },
+    });
+    const project = await loadProject({ cwd: dir.root });
+
+    const error = await rehearse(project).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(InvalidDraftError);
+    expect(error).toMatchObject({
+      code: "invalid-draft",
+      file: "data-model/draft/draft.json",
+    });
   });
 });
 

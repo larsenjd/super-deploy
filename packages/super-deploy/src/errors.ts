@@ -1,5 +1,6 @@
 // Typed errors thrown by the programmatic API. Every error the library throws
-// on purpose is a SuperDeployError; `code` is stable and meant for programs,
+// on purpose is a SuperDeployError subclass that declares its own `code`;
+// the code is stable and meant for programs,
 // `message` is one line meant for people (the CLI prints it after "Error: ").
 import type { HistoryMismatch, PreflightFindings } from "./deploy/preflight.ts";
 import type {
@@ -9,70 +10,39 @@ import type {
 } from "./questions.ts";
 import type { DriftedObject } from "./verification/drift.ts";
 
-export type ErrorCode =
-  | "project-not-found"
-  | "invalid-config"
-  | "invalid-draft-name"
-  | "draft-name-required"
-  | "sql-rule-violation"
-  | "desired-schema-load-failed"
-  | "order-dependent-desired-schema"
-  | "unsupported-server"
-  | "adapter-failed"
-  | "differ-failed"
-  | "interrupted"
-  | "invalid-encoding"
-  | "no-draft"
-  | "sql-file-failed"
-  | "rehearsal-mismatch"
-  | "migration-integrity"
-  | "validation-failed"
-  | "unknown-target"
-  | "target-locked"
-  | "commit-outcome-unknown"
-  | "no-migration"
-  | "overwrite-not-acknowledged"
-  | "destructive-not-acknowledged"
-  | "preflight-failed"
-  | "terminal-required"
-  | "not-confirmed"
-  | "target-changed"
-  | "init-conflict"
-  | "target-drifted"
-  | "unknown-recorded-migration"
-  | "nothing-to-mark"
-  | "history-mismatch"
-  | "mark-mismatch"
-  | "adopt-conflict"
-  | "adopt-unsupported"
-  | "adopt-cancelled"
-  | "target-not-disposable"
-  | "target-behind"
-  | "recovery-base-mismatch"
-  | "unknown-migration"
-  | "wipe-failed"
-  | "draft-exists"
-  | "recovery-draft"
-  | "recovery-schema-change-edited"
-  | "no-recovery";
+/**
+ * Every stable `code`: computed from the error classes the package exports,
+ * so a new error adds its code by declaring it on its class. An error whose
+ * class isn't exported from index.ts fails to compile here.
+ */
+export type ErrorCode = {
+  [Name in Exported]: Api[Name] extends abstract new (
+    ...args: never[]
+  ) => { readonly code: infer Code extends string }
+    ? Code
+    : never;
+}[Exported];
 
-export class SuperDeployError extends Error {
-  readonly code: ErrorCode;
+type Api = typeof import("./index.ts");
+// The base class is left out by name: its code is this type.
+type Exported = Exclude<keyof Api, "SuperDeployError">;
 
-  constructor(code: ErrorCode, message: string, options?: ErrorOptions) {
+export abstract class SuperDeployError extends Error {
+  abstract readonly code: ErrorCode;
+
+  constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = new.target.name;
-    this.code = code;
   }
 }
 
 /** No super-deploy.config.ts in the working directory or any parent. */
 export class ProjectNotFoundError extends SuperDeployError {
+  readonly code = "project-not-found";
   readonly searchedFrom: string;
 
   constructor(searchedFrom: string) {
     super(
-      "project-not-found",
       `No super-deploy.config.ts found in ${searchedFrom} or any parent directory`,
     );
     this.searchedFrom = searchedFrom;
@@ -81,13 +51,13 @@ export class ProjectNotFoundError extends SuperDeployError {
 
 /** `init` would overwrite existing files; nothing was written. */
 export class InitConflictError extends SuperDeployError {
+  readonly code = "init-conflict";
   readonly directory: string;
   /** Paths relative to `directory`, sorted. */
   readonly paths: readonly string[];
 
   constructor(directory: string, paths: readonly string[]) {
     super(
-      "init-conflict",
       `Cannot initialise a project in ${directory}: it already has ${paths.join(", ")}`,
     );
     this.directory = directory;
@@ -97,23 +67,24 @@ export class InitConflictError extends SuperDeployError {
 
 /** The config file failed to load or a setting is invalid. */
 export class ConfigError extends SuperDeployError {
+  readonly code = "invalid-config";
   /** Dotted path of the offending setting, e.g. `targets.dev.lockTimeout`. */
   readonly setting: string | undefined;
 
   constructor(message: string, setting?: string, options?: ErrorOptions) {
-    super("invalid-config", message, options);
+    super(message, options);
     this.setting = setting;
   }
 }
 
 export class InvalidDraftNameError extends SuperDeployError {
+  readonly code = "invalid-draft-name";
   readonly input: string;
   /** The input after trimming, lowercasing and collapsing spaces. */
   readonly normalised: string;
 
   constructor(input: string, normalised: string, reason: string) {
     super(
-      "invalid-draft-name",
       `Invalid draft name ${JSON.stringify(input)} (normalised: ${JSON.stringify(normalised)}): ${reason}`,
     );
     this.input = input;
@@ -122,9 +93,10 @@ export class InvalidDraftNameError extends SuperDeployError {
 }
 
 export class DraftNameRequiredError extends SuperDeployError {
+  readonly code = "draft-name-required";
+
   constructor() {
     super(
-      "draft-name-required",
       "There is no draft yet, so a name is required to create one (--name)",
     );
   }
@@ -143,6 +115,7 @@ export interface RuleViolation {
 }
 
 export class SqlRuleViolationError extends SuperDeployError {
+  readonly code = "sql-rule-violation";
   readonly violations: readonly RuleViolation[];
 
   constructor(violations: readonly RuleViolation[]) {
@@ -152,13 +125,14 @@ export class SqlRuleViolationError extends SuperDeployError {
       : "";
     const more =
       violations.length > 1 ? ` (and ${violations.length - 1} more)` : "";
-    super("sql-rule-violation", `${where}${more}`);
+    super(`${where}${more}`);
     this.violations = violations;
   }
 }
 
 /** PostgreSQL refused a desired-schema statement while loading it into a throwaway database. */
 export class DesiredSchemaLoadError extends SuperDeployError {
+  readonly code = "desired-schema-load-failed";
   readonly file: string;
   readonly line: number;
   /** PostgreSQL's own message. */
@@ -174,7 +148,6 @@ export class DesiredSchemaLoadError extends SuperDeployError {
   ) {
     const hint = options?.hint;
     super(
-      "desired-schema-load-failed",
       `${file}:${line}: PostgreSQL refused the desired schema: ${detail}${hint === undefined ? "" : `. Hint: ${hint}`}`,
       options,
     );
@@ -190,6 +163,7 @@ export class DesiredSchemaLoadError extends SuperDeployError {
  * statements load in another valid order (the order-independence check).
  */
 export class OrderDependenceError extends SuperDeployError {
+  readonly code = "order-dependent-desired-schema";
   /** The objects whose catalog entries differ, e.g. `view which_pick`, sorted. */
   readonly objects: readonly string[];
   /**
@@ -207,7 +181,6 @@ export class OrderDependenceError extends SuperDeployError {
     options?: ErrorOptions,
   ) {
     super(
-      "order-dependent-desired-schema",
       failure === undefined
         ? `The desired schema depends on load order: loaded in another valid order, it gives a different catalog for ${listed(objects)}`
         : `The desired schema depends on load order: it loads in one valid order but not in another, where ${failure.file}:${failure.line} fails: ${failure.detail}. super-deploy may not see a reference this statement makes; please report it`,
@@ -231,11 +204,11 @@ function listedDrift(objects: readonly DriftedObject[]): string {
 
 /** An adapter connected to a server that isn't PostgreSQL 18. */
 export class UnsupportedServerError extends SuperDeployError {
+  readonly code = "unsupported-server";
   readonly serverVersion: string;
 
   constructor(source: string, serverVersion: string) {
     super(
-      "unsupported-server",
       `${source} is PostgreSQL ${serverVersion}, but super-deploy requires PostgreSQL 18`,
     );
     this.serverVersion = serverVersion;
@@ -244,25 +217,29 @@ export class UnsupportedServerError extends SuperDeployError {
 
 /** An adapter failed to provide a database or connection. */
 export class AdapterError extends SuperDeployError {
+  readonly code = "adapter-failed";
+
   constructor(message: string, options?: ErrorOptions) {
-    super("adapter-failed", message, options);
+    super(message, options);
   }
 }
 
 export class DifferError extends SuperDeployError {
+  readonly code = "differ-failed";
+
   constructor(message: string, options?: ErrorOptions) {
-    super("differ-failed", message, options);
+    super(message, options);
   }
 }
 
 /** A file that is hashed (finalized migrations, the draft, the desired schema) isn't UTF-8 without a BOM. */
 export class InvalidEncodingError extends SuperDeployError {
+  readonly code = "invalid-encoding";
   /** Project-relative path with forward slashes. */
   readonly file: string;
 
   constructor(file: string, reason: string, options?: ErrorOptions) {
     super(
-      "invalid-encoding",
       `${file} ${reason}; save it as UTF-8 without a byte-order mark`,
       options,
     );
@@ -272,13 +249,28 @@ export class InvalidEncodingError extends SuperDeployError {
 
 /** The command needs a draft and there is none. */
 export class NoDraftError extends SuperDeployError {
+  readonly code = "no-draft";
+
   constructor(action: string) {
-    super("no-draft", `There is no draft to ${action}; run draft first`);
+    super(`There is no draft to ${action}; run draft first`);
+  }
+}
+
+/** draft.json can't be read as a draft's metadata. */
+export class InvalidDraftError extends SuperDeployError {
+  readonly code = "invalid-draft";
+  /** Project-relative path of draft.json. */
+  readonly file: string;
+
+  constructor(file: string, problem: string, options?: ErrorOptions) {
+    super(`${file} ${problem}`, options);
+    this.file = file;
   }
 }
 
 /** PostgreSQL refused a deploy-time SQL file while a rehearsal replayed it. */
 export class SqlFileFailedError extends SuperDeployError {
+  readonly code = "sql-file-failed";
   /** Project-relative path with forward slashes. */
   readonly file: string;
   /** 1-based line of the error, when PostgreSQL reported a position. */
@@ -293,7 +285,6 @@ export class SqlFileFailedError extends SuperDeployError {
     options?: ErrorOptions,
   ) {
     super(
-      "sql-file-failed",
       `${file}${line === undefined ? "" : `:${line}`}: PostgreSQL refused it: ${detail}`,
       options,
     );
@@ -312,6 +303,7 @@ export class SqlFileFailedError extends SuperDeployError {
  * rehearsal>` / `catalog: + <line only in the desired schema>`.
  */
 export class RehearsalMismatchError extends SuperDeployError {
+  readonly code = "rehearsal-mismatch";
   readonly differences: readonly string[];
 
   /**
@@ -326,7 +318,6 @@ export class RehearsalMismatchError extends SuperDeployError {
     const more =
       differences.length > 1 ? ` (and ${differences.length - 1} more)` : "";
     super(
-      "rehearsal-mismatch",
       `${options.subject ?? "The rehearsal does not match the desired schema; run draft again"}. First difference: ${first ?? ""}${more}`,
     );
     this.differences = differences;
@@ -363,19 +354,29 @@ function summarise(problems: readonly ValidationProblem[]): string {
 
 /** The finalized migrations failed their integrity check, so nothing builds on them. */
 export class MigrationIntegrityError extends SuperDeployError {
+  readonly code = "migration-integrity";
   readonly problems: readonly ValidationProblem[];
 
   constructor(problems: readonly ValidationProblem[]) {
-    super(
-      "migration-integrity",
-      `The finalized migrations failed validation: ${summarise(problems)}`,
-    );
+    super(`The finalized migrations failed validation: ${summarise(problems)}`);
     this.problems = problems;
+  }
+}
+
+/** Finalizing would number a migration past the last number folders allow. */
+export class MigrationLimitError extends SuperDeployError {
+  readonly code = "migration-limit";
+  readonly limit: number;
+
+  constructor(limit: number) {
+    super(`Migration numbers stop at ${limit}`);
+    this.limit = limit;
   }
 }
 
 /** `validate` found errors, or warnings under `--strict`. */
 export class ValidationFailedError extends SuperDeployError {
+  readonly code = "validation-failed";
   /** Every finding, errors and warnings, in report order. */
   readonly problems: readonly ValidationProblem[];
   readonly strict: boolean;
@@ -391,10 +392,7 @@ export class ValidationFailedError extends SuperDeployError {
     ]
       .filter((part) => part !== "")
       .join(", ");
-    super(
-      "validation-failed",
-      `Validation failed with ${counts}: ${summarise(problems)}`,
-    );
+    super(`Validation failed with ${counts}: ${summarise(problems)}`);
     this.problems = problems;
     this.strict = strict;
   }
@@ -402,12 +400,12 @@ export class ValidationFailedError extends SuperDeployError {
 
 /** One draft at a time: the command would create one while another exists. Nothing was changed. */
 export class DraftExistsError extends SuperDeployError {
+  readonly code = "draft-exists";
   /** The existing draft's name, if its draft.json is readable. */
   readonly draft: string | undefined;
 
   constructor(action: string, draft: string | undefined) {
     super(
-      "draft-exists",
       `Cannot ${action} while draft ${draft ?? "(unnamed)"} exists: finalize it or run discard-draft first`,
     );
     this.draft = draft;
@@ -419,12 +417,12 @@ export class DraftExistsError extends SuperDeployError {
  * is never regenerated, and the command would regenerate it.
  */
 export class RecoveryDraftError extends SuperDeployError {
+  readonly code = "recovery-draft";
   /** The migration the Recovery draft recovers. */
   readonly migration: number;
 
   constructor(migration: number) {
     super(
-      "recovery-draft",
       `The draft is a Recovery of migration ${migration}: its schema change is migration ${migration}'s and is never regenerated. Edit its scripts and seed data, then rehearse or finalize it (or discard-draft)`,
     );
     this.migration = migration;
@@ -433,12 +431,12 @@ export class RecoveryDraftError extends SuperDeployError {
 
 /** A Recovery draft's schema-change.sql is no longer a copy of its migration's. */
 export class RecoverySchemaChangeEditedError extends SuperDeployError {
+  readonly code = "recovery-schema-change-edited";
   /** Project-relative path of the draft's schema change. */
   readonly file: string;
 
   constructor(file: string, migration: string) {
     super(
-      "recovery-schema-change-edited",
       `${file} must stay an exact copy of ${migration}'s schema change: a Recovery replaces only the scripts and seed data`,
     );
     this.file = file;
@@ -447,18 +445,19 @@ export class RecoverySchemaChangeEditedError extends SuperDeployError {
 
 /** `unfinalize` was asked for a migration's newest Recovery and it has none. */
 export class NoRecoveryError extends SuperDeployError {
+  readonly code = "no-recovery";
+
   constructor(migration: string) {
-    super(
-      "no-recovery",
-      `Migration ${migration} has no Recovery to unfinalize`,
-    );
+    super(`Migration ${migration} has no Recovery to unfinalize`);
   }
 }
 
 /** The command needs a finalized migration and there is none. */
 export class NoMigrationError extends SuperDeployError {
+  readonly code = "no-migration";
+
   constructor(action: string) {
-    super("no-migration", `There is no finalized migration to ${action}`);
+    super(`There is no finalized migration to ${action}`);
   }
 }
 
@@ -468,13 +467,13 @@ export class NoMigrationError extends SuperDeployError {
  * Nothing was changed.
  */
 export class OverwriteNotAcknowledgedError extends SuperDeployError {
+  readonly code = "overwrite-not-acknowledged";
   readonly question: OverwriteQuestion;
   /** True when the question was asked and answered no. */
   readonly declined: boolean;
 
   constructor(question: OverwriteQuestion, declined: boolean) {
     super(
-      "overwrite-not-acknowledged",
       declined
         ? `${question.message} Answered no: nothing changed`
         : `${question.message} Refused without a terminal: pass --acknowledge-overwrite to delete or overwrite ${question.paths.join(", ")}`,
@@ -490,6 +489,7 @@ export class OverwriteNotAcknowledgedError extends SuperDeployError {
  * missing or answered no. Nothing was changed.
  */
 export class DestructiveNotAcknowledgedError extends SuperDeployError {
+  readonly code = "destructive-not-acknowledged";
   readonly question: DestructiveQuestion;
   /** True when the question was asked and answered no. */
   readonly declined: boolean;
@@ -499,7 +499,6 @@ export class DestructiveNotAcknowledgedError extends SuperDeployError {
       .map((s) => `${s.file}:${s.line}: ${s.message}`)
       .join("; ");
     super(
-      "destructive-not-acknowledged",
       declined
         ? `${question.message} Answered no: nothing changed`
         : `${question.message} ${statements}. Refused without a terminal: pass --acknowledge-destructive to finalize it anyway`,
@@ -515,20 +514,22 @@ export class DestructiveNotAcknowledgedError extends SuperDeployError {
  * time this is thrown; `cause` is the signal's abort reason.
  */
 export class InterruptedError extends SuperDeployError {
+  readonly code = "interrupted";
+
   constructor(options?: ErrorOptions) {
-    super("interrupted", "Interrupted", options);
+    super("Interrupted", options);
   }
 }
 
 /** A command named a target that isn't in the config. */
 export class UnknownTargetError extends SuperDeployError {
+  readonly code = "unknown-target";
   readonly target: string;
   /** The targets the config does define. */
   readonly known: readonly string[];
 
   constructor(target: string, known: readonly string[]) {
     super(
-      "unknown-target",
       `There is no target ${JSON.stringify(target)} in super-deploy.config.ts (${known.length === 0 ? "no targets are defined" : `targets: ${known.join(", ")}`})`,
     );
     this.target = target;
@@ -553,6 +554,7 @@ export interface LockHolder {
 
 /** Another command holds the target's lock (deploy, mark, rebuild, deploy-draft, disposable). */
 export class TargetLockedError extends SuperDeployError {
+  readonly code = "target-locked";
   readonly target: string;
   readonly holder: LockHolder;
 
@@ -565,7 +567,6 @@ export class TargetLockedError extends SuperDeployError {
           ? `another session (server process ${pid})`
           : "another session";
     super(
-      "target-locked",
       `Target ${target} is locked by ${who}; try again when it has finished`,
     );
     this.target = target;
@@ -580,6 +581,7 @@ export class TargetLockedError extends SuperDeployError {
  * failed.
  */
 export class PreflightFailedError extends SuperDeployError {
+  readonly code = "preflight-failed";
   readonly target: string;
   readonly findings: PreflightFindings;
 
@@ -596,7 +598,6 @@ export class PreflightFailedError extends SuperDeployError {
       (mismatch) => mismatch.message,
     );
     super(
-      "preflight-failed",
       `Target ${target} failed the deploy pre-flight checks: ${[...roles, ...schemas, ...history].join("; ")}`,
     );
     this.target = target;
@@ -612,12 +613,12 @@ export type GuardedCommand = "disposable" | "deploy-draft" | "rebuild" | "mark";
  * Nothing was read from or written to the target.
  */
 export class TerminalRequiredError extends SuperDeployError {
+  readonly code = "terminal-required";
   readonly command: GuardedCommand;
   readonly reason: "ci" | "no-terminal";
 
   constructor(command: GuardedCommand, reason: "ci" | "no-terminal") {
     super(
-      "terminal-required",
       `${command} ${reason === "ci" ? "never runs in CI" : "needs a terminal on stdin and stdout"}: run it yourself at a terminal, where it asks you to type YES`,
     );
     this.command = command;
@@ -627,6 +628,7 @@ export class TerminalRequiredError extends SuperDeployError {
 
 /** The person at the terminal did not type YES (or cancelled). Nothing changed. */
 export class NotConfirmedError extends SuperDeployError {
+  readonly code = "not-confirmed";
   readonly command: GuardedCommand;
   readonly target: string;
   /** What was typed instead of YES; undefined when the question was cancelled. */
@@ -638,7 +640,6 @@ export class NotConfirmedError extends SuperDeployError {
     typed: string | undefined,
   ) {
     super(
-      "not-confirmed",
       `${command} on target ${target} was not confirmed (${typed === undefined ? "cancelled" : `typed ${JSON.stringify(typed)}, not YES`}): nothing changed`,
     );
     this.command = command;
@@ -653,12 +654,12 @@ export class NotConfirmedError extends SuperDeployError {
  * asked or changed.
  */
 export class TargetNotDisposableError extends SuperDeployError {
+  readonly code = "target-not-disposable";
   readonly command: GuardedCommand;
   readonly target: string;
 
   constructor(command: GuardedCommand, target: string) {
     super(
-      "target-not-disposable",
       `${command} only runs on disposable targets, and target ${target} is not disposable (flag it with disposable --target ${target} --set yes if it is safe to wipe): nothing changed`,
     );
     this.command = command;
@@ -672,13 +673,13 @@ export class TargetNotDisposableError extends SuperDeployError {
  * the target must be there first. Nothing was asked or changed.
  */
 export class TargetBehindError extends SuperDeployError {
+  readonly code = "target-behind";
   readonly target: string;
   /** The pending migrations' folder names, in order. */
   readonly pending: readonly string[];
 
   constructor(target: string, pending: readonly string[]) {
     super(
-      "target-behind",
       `Target ${target} has pending migrations (${pending.join(", ")}): deploy them first, because the draft goes on top of the newest migration`,
     );
     this.target = target;
@@ -691,6 +692,7 @@ export class TargetBehindError extends SuperDeployError {
  * recorded migration is N-1: the Recovery runs N's schema change.
  */
 export class RecoveryBaseMismatchError extends SuperDeployError {
+  readonly code = "recovery-base-mismatch";
   readonly target: string;
   /** The recovered migration's folder name. */
   readonly migration: string;
@@ -711,7 +713,6 @@ export class RecoveryBaseMismatchError extends SuperDeployError {
         ? "use a target with no recorded migrations"
         : `run rebuild --to ${baseNumber} first`;
     super(
-      "recovery-base-mismatch",
       `The Recovery draft of migration ${migration} runs on top of ${base ?? "no recorded migration"}, but target ${target} is at ${recorded ?? "no recorded migration"}: ${fix}`,
     );
     this.target = target;
@@ -741,6 +742,7 @@ export interface UnrevokedGrant {
  * nothing changed.
  */
 export class WipeFailedError extends SuperDeployError {
+  readonly code = "wipe-failed";
   readonly target: string;
   readonly schema: string;
   /** PostgreSQL's descriptions of what is left, e.g. `function public.f(integer)`. */
@@ -765,7 +767,6 @@ export class WipeFailedError extends SuperDeployError {
         : []),
     ];
     super(
-      "wipe-failed",
       `Could not wipe schema ${schema} on target ${target}: ${left.join("; ")}, then run rebuild again (nothing changed)`,
     );
     this.target = target;
@@ -784,13 +785,13 @@ function unrevokedGrant(grant: UnrevokedGrant): string {
 
 /** A command was given a migration number the repo has no finalized migration for. */
 export class UnknownMigrationError extends SuperDeployError {
+  readonly code = "unknown-migration";
   readonly number: number;
   /** The repo's newest migration number; undefined when there is none. */
   readonly newest: number | undefined;
 
   constructor(number: number, newest: number | undefined) {
     super(
-      "unknown-migration",
       `There is no finalized migration ${number}${newest === undefined ? " (there are none yet)" : ` (the newest is ${newest})`}`,
     );
     this.number = number;
@@ -803,12 +804,12 @@ export class UnknownMigrationError extends SuperDeployError {
  * them and taking the lock. Nothing changed; run the command again.
  */
 export class TargetChangedError extends SuperDeployError {
+  readonly code = "target-changed";
   readonly command: GuardedCommand;
   readonly target: string;
 
   constructor(command: GuardedCommand, target: string) {
     super(
-      "target-changed",
       `Target ${target} changed while ${command} waited for YES (its recorded migrations, deployed draft or disposable flag): nothing changed; run ${command} again to see the new details`,
     );
     this.command = command;
@@ -823,6 +824,7 @@ export class TargetChangedError extends SuperDeployError {
  * succeeded or failed from the migrations rows the transaction wrote.
  */
 export class CommitOutcomeUnknownError extends SuperDeployError {
+  readonly code = "commit-outcome-unknown";
   readonly target: string;
   readonly attemptId: number;
 
@@ -833,7 +835,6 @@ export class CommitOutcomeUnknownError extends SuperDeployError {
         ? ""
         : ` (${cause instanceof Error ? cause.message : String(cause)})`;
     super(
-      "commit-outcome-unknown",
       `Lost the connection to target ${target} during COMMIT, so it is unknown whether attempt #${attemptId} landed; the next status or deploy settles it${reason}`,
       options,
     );
@@ -848,13 +849,13 @@ export class CommitOutcomeUnknownError extends SuperDeployError {
  * refuse until the target matches again; `status` lists the objects.
  */
 export class DriftError extends SuperDeployError {
+  readonly code = "target-drifted";
   readonly target: string;
   /** Sorted by object; never empty. */
   readonly objects: readonly DriftedObject[];
 
   constructor(target: string, objects: readonly DriftedObject[]) {
     super(
-      "target-drifted",
       `Target ${target} has drifted from its recorded migrations: ${listedDrift(objects)}. Deployments refuse until it matches them again (status --target ${target} lists the differences)`,
     );
     this.target = target;
@@ -864,12 +865,12 @@ export class DriftError extends SuperDeployError {
 
 /** The target records migrations the project doesn't have, so no replica of it can be built. */
 export class UnknownRecordedMigrationError extends SuperDeployError {
+  readonly code = "unknown-recorded-migration";
   readonly target: string;
   readonly numbers: readonly number[];
 
   constructor(target: string, numbers: readonly number[]) {
     super(
-      "unknown-recorded-migration",
       `Target ${target} records migration${numbers.length === 1 ? "" : "s"} ${numbers.join(", ")}, which the project doesn't have`,
     );
     this.target = target;
@@ -879,11 +880,11 @@ export class UnknownRecordedMigrationError extends SuperDeployError {
 
 /** `mark` found no pending migration on the target: there is nothing to record. */
 export class NothingToMarkError extends SuperDeployError {
+  readonly code = "nothing-to-mark";
   readonly target: string;
 
   constructor(target: string) {
     super(
-      "nothing-to-mark",
       `Target ${target} has no pending migration to mark: it records every migration in the project`,
     );
     this.target = target;
@@ -895,13 +896,13 @@ export class NothingToMarkError extends SuperDeployError {
  * HistoryMismatch), so no faithful replica of it can be built. Nothing changed.
  */
 export class HistoryMismatchError extends SuperDeployError {
+  readonly code = "history-mismatch";
   readonly target: string;
   /** Never empty. */
   readonly mismatches: readonly HistoryMismatch[];
 
   constructor(target: string, mismatches: readonly HistoryMismatch[]) {
     super(
-      "history-mismatch",
       `Target ${target}'s recorded migrations don't match the project's: ${mismatches.map((m) => m.message).join("; ")}`,
     );
     this.target = target;
@@ -915,6 +916,7 @@ export class HistoryMismatchError extends SuperDeployError {
  * Nothing was recorded.
  */
 export class MarkMismatchError extends SuperDeployError {
+  readonly code = "mark-mismatch";
   readonly target: string;
   /** The migration that was to be marked, e.g. `00002-add-orders`. */
   readonly migration: string;
@@ -927,7 +929,6 @@ export class MarkMismatchError extends SuperDeployError {
     objects: readonly DriftedObject[],
   ) {
     super(
-      "mark-mismatch",
       `Target ${target} does not match a replica of its migrations up to ${migration}: ${listedDrift(objects)}. Nothing was recorded; fix the target until it matches, then mark again`,
     );
     this.target = target;
@@ -941,15 +942,13 @@ export class MarkMismatchError extends SuperDeployError {
  * schema yet, and a target that records no migrations; nothing was written.
  */
 export class AdoptConflictError extends SuperDeployError {
+  readonly code = "adopt-conflict";
   readonly target: string;
   /** Each reason, e.g. `the project already has a draft`. */
   readonly reasons: readonly string[];
 
   constructor(target: string, reasons: readonly string[]) {
-    super(
-      "adopt-conflict",
-      `Cannot adopt target ${target}: ${reasons.join("; ")}`,
-    );
+    super(`Cannot adopt target ${target}: ${reasons.join("; ")}`);
     this.target = target;
     this.reasons = reasons;
   }
@@ -973,6 +972,7 @@ export interface UnsupportedObject {
  * doesn't support (or can't reproduce); nothing was written anywhere.
  */
 export class AdoptUnsupportedError extends SuperDeployError {
+  readonly code = "adopt-unsupported";
   readonly target: string;
   /** Every one found; never empty. */
   readonly objects: readonly UnsupportedObject[];
@@ -998,7 +998,6 @@ export class AdoptUnsupportedError extends SuperDeployError {
         ? ""
         : `. Once nothing else is refused, an override reason will be asked for ${overridesNeeded.map((needed) => needed.object).join(", ")}`;
     super(
-      "adopt-unsupported",
       `Cannot adopt target ${target}: its managed schema has ${objects.length} thing${objects.length === 1 ? "" : "s"} V1 doesn't support: ${shown}${more}. Nothing was written; change the target first, then adopt again${later}`,
     );
     this.target = target;
@@ -1012,13 +1011,13 @@ export class AdoptUnsupportedError extends SuperDeployError {
  * answer); nothing was written anywhere.
  */
 export class AdoptCancelledError extends SuperDeployError {
+  readonly code = "adopt-cancelled";
   readonly target: string;
   /** What the reason was asked for, e.g. `function load_staging(text)`. */
   readonly object: string;
 
   constructor(target: string, object: string) {
     super(
-      "adopt-cancelled",
       `Adoption of target ${target} cancelled: no override reason given for ${object}. Nothing was written`,
     );
     this.target = target;
