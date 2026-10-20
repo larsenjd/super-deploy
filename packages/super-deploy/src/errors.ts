@@ -1,7 +1,7 @@
 // Typed errors thrown by the programmatic API. Every error the library throws
 // on purpose is a SuperDeployError; `code` is stable and meant for programs,
 // `message` is one line meant for people (the CLI prints it after "Error: ").
-import type { OverwriteQuestion } from "./questions.ts";
+import type { DestructiveQuestion, OverwriteQuestion } from "./questions.ts";
 
 export type ErrorCode =
   | "project-not-found"
@@ -24,7 +24,8 @@ export type ErrorCode =
   | "unknown-target"
   | "target-locked"
   | "no-migration"
-  | "overwrite-not-acknowledged";
+  | "overwrite-not-acknowledged"
+  | "destructive-not-acknowledged";
 
 export class SuperDeployError extends Error {
   readonly code: ErrorCode;
@@ -362,6 +363,31 @@ export class OverwriteNotAcknowledgedError extends SuperDeployError {
       declined
         ? `${question.message} Answered no: nothing changed`
         : `${question.message} Refused without a terminal: pass --acknowledge-overwrite to delete or overwrite ${question.paths.join(", ")}`,
+    );
+    this.question = question;
+    this.declined = declined;
+  }
+}
+
+/**
+ * `finalize` found statements that drop structure or delete data, and they
+ * were not acknowledged: no `acknowledgeDestructive`, and `confirm` was
+ * missing or answered no. Nothing was changed.
+ */
+export class DestructiveNotAcknowledgedError extends SuperDeployError {
+  readonly question: DestructiveQuestion;
+  /** True when the question was asked and answered no. */
+  readonly declined: boolean;
+
+  constructor(question: DestructiveQuestion, declined: boolean) {
+    const statements = question.statements
+      .map((s) => `${s.file}:${s.line}: ${s.message}`)
+      .join("; ");
+    super(
+      "destructive-not-acknowledged",
+      declined
+        ? `${question.message} Answered no: nothing changed`
+        : `${question.message} ${statements}. Refused without a terminal: pass --acknowledge-destructive to finalize it anyway`,
     );
     this.question = question;
     this.declined = declined;

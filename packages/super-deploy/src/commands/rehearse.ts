@@ -5,7 +5,12 @@ import { NoDraftError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { rehearseDraft } from "../rehearsal/rehearse-draft.ts";
 import { readMigrationUnits, readReplayUnit } from "../rehearsal/replay.ts";
-import { analyseDesiredSchema } from "../sql-analysis/index.ts";
+import {
+  analyseDesiredSchema,
+  type DestructiveStatement,
+  type LockWarning,
+  type MigrationAnalysis,
+} from "../sql-analysis/index.ts";
 import { asSqlFiles, readDesiredSchemaFiles } from "../store/desired-schema.ts";
 import { type DraftMetadata, readDraft } from "../store/draft.ts";
 import type { HashedFile } from "../store/hashing.ts";
@@ -20,6 +25,10 @@ export interface RehearseResult {
   readonly migrationsReplayed: number;
   /** `server_version` of the rehearsal server. */
   readonly serverVersion: string;
+  /** Statements `finalize` will need acknowledged (draft paths). */
+  readonly destructive: readonly DestructiveStatement[];
+  /** Statements that rewrite or scan an existing table while holding its lock (draft paths). */
+  readonly warnings: readonly LockWarning[];
 }
 
 export async function rehearse(project: Project): Promise<RehearseResult> {
@@ -28,6 +37,8 @@ export async function rehearse(project: Project): Promise<RehearseResult> {
     name: rehearsed.draft.name,
     migrationsReplayed: rehearsed.migrations.length,
     serverVersion: rehearsed.serverVersion,
+    destructive: rehearsed.analysis.destructive,
+    warnings: rehearsed.analysis.warnings,
   };
 }
 
@@ -37,12 +48,22 @@ export interface RehearsedDraft {
   /** The desired schema that was rehearsed, relative to the desired-schema folder. */
   readonly desiredSchema: readonly HashedFile[];
   readonly serverVersion: string;
+  /** The draft's deploy-time analysis (no violations by now). */
+  readonly analysis: MigrationAnalysis;
 }
 
-/** Shared by `rehearse` and `finalize`. */
+/**
+ * Shared by `rehearse` and `finalize`. `beforeRehearsal` runs once the
+ * draft has passed the rules, before any database work (finalize asks for
+ * the destructive acknowledgement there).
+ */
 export async function rehearseCurrentDraft(
   project: Project,
   action: string,
+  beforeRehearsal?: (
+    draft: DraftMetadata,
+    analysis: MigrationAnalysis,
+  ) => Promise<void>,
 ): Promise<RehearsedDraft> {
   const { root, paths } = project;
   const draft = await readDraft(paths);
@@ -64,11 +85,14 @@ export async function rehearseCurrentDraft(
     paths.draft,
     `draft ${draft.name}`,
   );
-  await refuseRuleViolations(draftUnit, {
+  const previous = await newestSnapshot(root, migrations);
+  const analysis = await refuseRuleViolations(draftUnit, {
     managedSchema: project.config.managedSchema,
-    schemas: [await newestSnapshot(root, migrations), statements],
+    schemas: [previous, statements],
+    previous,
   });
+  await beforeRehearsal?.(draft, analysis);
   units.push(draftUnit);
   const { serverVersion } = await rehearseDraft(project, statements, units);
-  return { draft, migrations, desiredSchema, serverVersion };
+  return { draft, migrations, desiredSchema, serverVersion, analysis };
 }
