@@ -45,7 +45,7 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 21. As a developer, I want `finalize` to refuse destructive changes (drops, `DELETE`, `TRUNCATE`, lossy type changes) unless I acknowledge them, so that data loss is always a deliberate choice.
 22. As a developer, I want the destructive acknowledgement recorded in the migration, so that reviewers can see what was accepted.
 23. As a developer, I want `finalize` to warn me about statements that rewrite or fully scan existing tables, so that I know which locks will be held until commit.
-24. As a developer, I want to `unfinalize` the newest migration back into a draft, so that I can fix a mistake I haven't shipped.
+24. As a developer, I want to `unfinalize` the newest migration back into a draft, with the desired schema reset to that migration's own snapshot (the desired schema it was finalized from), so that I can fix a mistake I haven't shipped.
 25. As a developer, I want to `restore-schema` to the newest migration's desired schema, so that I can abandon unfinished edits.
 26. As a developer, I want to `discard-draft` while keeping my desired schema, so that I can regenerate from scratch.
 27. As a developer, I want overwrite-type commands to ask before discarding work, and to refuse without a flag in non-interactive use, so that nothing is lost by accident.
