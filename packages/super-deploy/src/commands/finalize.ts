@@ -2,7 +2,7 @@
 // migration: the draft's files, metadata and a desired-schema snapshot,
 // read-only, hashed and chained in the index.
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, posix } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { pgDeltaDiffer } from "../differ/pg-delta.ts";
 import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
@@ -13,6 +13,7 @@ import {
 import type {
   DestructiveStatement,
   LockWarning,
+  Override,
 } from "../sql-analysis/index.ts";
 import { draftMetadataFileName } from "../store/draft.ts";
 import {
@@ -36,13 +37,19 @@ import { rehearseCurrentDraft } from "./rehearse.ts";
 
 /**
  * metadata.json of a finalized migration. Deliberately no timestamps or
- * usernames: git records who and when. Ticket 10 adds overrides.
+ * usernames: git records who and when.
  */
 export interface MigrationMetadata {
   readonly tool: { readonly name: string; readonly version: string };
   readonly differ: { readonly name: string; readonly version: string };
   readonly parser: { readonly name: string; readonly version: string };
   readonly rehearsalServer: { readonly version: string };
+  /**
+   * Every override marker in the migration's deploy-time files, with the
+   * object it applies to, the rules overridden and the reason. File paths
+   * are relative to the migration folder.
+   */
+  readonly overrides: readonly Override[];
   /** Present only when the migration drops structure or deletes data. */
   readonly destructive?: DestructiveAcknowledgement;
 }
@@ -66,9 +73,9 @@ export interface FinalizeResult {
   readonly contentHash: string;
   readonly chainHash: string;
   readonly metadata: MigrationMetadata;
-  /** The acknowledged destructive statements (paths in the new migration folder). */
+  /** The acknowledged destructive statements (project-relative paths in the new migration folder). */
   readonly destructive: readonly DestructiveStatement[];
-  /** Statements that rewrite or scan an existing table while holding its lock (paths in the new migration folder). */
+  /** Statements that rewrite or scan an existing table while holding its lock (project-relative paths in the new migration folder). */
   readonly warnings: readonly LockWarning[];
 }
 
@@ -105,16 +112,16 @@ export async function finalize(
   }
   const folder = migrationFolderName(number, rehearsed.draft.name);
   const path = join(paths.migrations, folder);
-  // Draft paths are project-relative; after finalize the files live in the
-  // migration folder.
-  const draftFolder = projectRelative(root, paths.draft);
-  const inFolder = (file: string, prefix: string) =>
-    file.startsWith(`${draftFolder}/`)
-      ? posix.join(prefix, file.slice(draftFolder.length + 1))
-      : file;
-  const moved = <T extends { file: string }>(item: T, prefix: string): T => ({
+  // Draft files are named by project-relative path; once finalized they are
+  // named relative to the migration folder (metadata) or by their new
+  // project-relative path (the result).
+  const inMigration = <T extends { file: string }>(item: T): T => ({
     ...item,
-    file: inFolder(item.file, prefix),
+    file: relative(paths.draft, join(root, item.file)).split(sep).join("/"),
+  });
+  const finalized = <T extends { file: string }>(item: T): T => ({
+    ...item,
+    file: projectRelative(root, join(path, inMigration(item).file)),
   });
 
   const metadata: MigrationMetadata = {
@@ -122,12 +129,13 @@ export async function finalize(
     differ: { name: pgDeltaDiffer.name, version: pgDeltaDiffer.version },
     parser: { name: parserName, version: parserVersion },
     rehearsalServer: { version: rehearsed.serverVersion },
+    overrides: rehearsed.overrides.map(inMigration),
     ...(destructive.length === 0
       ? {}
       : {
           destructive: {
             acknowledged: true,
-            statements: destructive.map((item) => moved(item, "")),
+            statements: destructive.map(inMigration),
           },
         }),
   };
@@ -173,9 +181,7 @@ export async function finalize(
     path,
     metadata,
     ...entry,
-    destructive: destructive.map((item) =>
-      moved(item, projectRelative(root, path)),
-    ),
-    warnings: warnings.map((item) => moved(item, projectRelative(root, path))),
+    destructive: destructive.map(finalized),
+    warnings: warnings.map(finalized),
   };
 }

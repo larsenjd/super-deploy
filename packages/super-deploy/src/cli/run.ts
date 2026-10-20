@@ -28,8 +28,9 @@ export interface CliIo {
 export const exitCodes = { success: 0, failure: 1, usage: 2 } as const;
 
 /**
- * `prepare` loads the project and resolves the option values (`values`
- * undefined: a question was cancelled and nothing runs). If it throws, it
+ * `prepare` loads the project (unless the command needs none) and resolves
+ * the option values (`values` undefined: a question was cancelled and
+ * nothing runs). If it throws, it
  * must close any project it loaded itself.
  */
 export async function runCommand(
@@ -37,7 +38,8 @@ export async function runCommand(
   command: CommandDefinition,
   debug: boolean,
   prepare: () => Promise<{
-    project: Project;
+    /** Undefined only for commands that need no project. */
+    project: Project | undefined;
     values: OptionValues | undefined;
   }>,
 ): Promise<number> {
@@ -54,7 +56,14 @@ export async function runCommand(
     const prepared = await prepare();
     project = prepared.project;
     if (prepared.values !== undefined) {
-      await command.run(project, prepared.values, commandContext(io));
+      const context = commandContext(io);
+      if (command.needsProject === false) {
+        await command.run(io.cwd, prepared.values, context);
+      } else if (project === undefined) {
+        throw new Error(`${command.name} needs a project`);
+      } else {
+        await command.run(project, prepared.values, context);
+      }
     }
   } catch (error) {
     code = report(error);

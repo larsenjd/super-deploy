@@ -10,6 +10,7 @@ import {
   type DestructiveStatement,
   type LockWarning,
   type MigrationAnalysis,
+  type Override,
 } from "../sql-analysis/index.ts";
 import { asSqlFiles, readDesiredSchemaFiles } from "../store/desired-schema.ts";
 import { type DraftMetadata, readDraft } from "../store/draft.ts";
@@ -48,6 +49,8 @@ export interface RehearsedDraft {
   /** The desired schema that was rehearsed, relative to the desired-schema folder. */
   readonly desiredSchema: readonly HashedFile[];
   readonly serverVersion: string;
+  /** The override markers accepted in the draft's deploy-time files. */
+  readonly overrides: readonly Override[];
   /** The draft's deploy-time analysis (no violations by now). */
   readonly analysis: MigrationAnalysis;
 }
@@ -88,11 +91,19 @@ export async function rehearseCurrentDraft(
   const previous = await newestSnapshot(root, migrations);
   const analysis = await refuseRuleViolations(draftUnit, {
     managedSchema: project.config.managedSchema,
+    externalSchemas: project.config.externalSchemas,
     schemas: [previous, statements],
     previous,
   });
   await beforeRehearsal?.(draft, analysis);
   units.push(draftUnit);
   const { serverVersion } = await rehearseDraft(project, statements, units);
-  return { draft, migrations, desiredSchema, serverVersion, analysis };
+  return {
+    draft,
+    migrations,
+    desiredSchema,
+    serverVersion,
+    overrides: analysis.overrides,
+    analysis,
+  };
 }

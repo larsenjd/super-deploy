@@ -87,7 +87,8 @@ function syntaxViolation(file: SqlFile, error: unknown): RuleViolation {
   };
 }
 
-function lineAtByte(bytes: Buffer, offset: number): number {
+/** 1-based line of a UTF-8 byte offset. */
+export function lineAtByte(bytes: Buffer, offset: number): number {
   let line = 1;
   for (let index = 0; index < offset && index < bytes.length; index++) {
     if (bytes[index] === 0x0a) {

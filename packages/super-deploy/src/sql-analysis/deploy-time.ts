@@ -10,14 +10,16 @@
 // 2. Statement details: ALTER TABLE subcommands, DROP and RENAME object
 //    types, function languages, temporary-table lifetime and unsupported
 //    features.
-// 3. Expressions, walked over the whole statement except routine bodies
-//    (the desired-schema rules own those): function calls, schema
-//    references, column-order constructs and identity columns.
+// 3. Expressions, walked over the whole statement except routine bodies:
+//    function calls, schema references, column-order constructs and
+//    identity columns. Routine bodies get the same body rules as the
+//    desired schema (routine-bodies.ts).
 //
 // A migration's files are analysed in the order they run, so state (the
 // migration's temporary tables and identity columns created on the way)
-// carries from one file to the next. Destructive statements and lock
-// warnings are found alongside (destructive.ts); ticket 10 adds overrides.
+// carries from one file to the next. Override markers (overrides.ts) are
+// applied per statement. Destructive statements and lock warnings are found
+// alongside (destructive.ts).
 import type {
   AlterTableCmd,
   ColumnDef,
@@ -46,8 +48,10 @@ import {
   type DestructiveStatement,
   type LockWarning,
 } from "./destructive.ts";
+import { applyMarker, type Override, scanMarkers } from "./overrides.ts";
 import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 import { pgCatalogFunctions, pgCatalogRelations } from "./pg-catalog-names.ts";
+import { plpgsqlFindings, sqlBodyFindings } from "./routine-bodies.ts";
 import type { RuleId } from "./rule-catalogue.ts";
 import type { RuleContext } from "./rule-types.ts";
 import { objectTypeName, statementName } from "./statement-names.ts";
@@ -73,8 +77,7 @@ export interface DeployTimeFile extends SqlFile {
 /** Identity columns by table name (unqualified, as PostgreSQL folds it). */
 export type IdentityColumns = ReadonlyMap<string, ReadonlySet<string>>;
 
-export interface DeployTimeOptions
-  extends Partial<Pick<RuleContext, "managedSchema">> {
+export interface DeployTimeOptions extends Partial<RuleContext> {
   /**
    * Identity columns that exist before or after the migration (from the
    * desired-schema snapshots, see `identityColumnsOf`). Identity columns the
@@ -92,6 +95,8 @@ export interface DeployTimeOptions
 export interface MigrationAnalysis {
   /** Every rule violation, in file and statement order. */
   readonly violations: readonly RuleViolation[];
+  /** The override markers accepted, in file and statement order. */
+  readonly overrides: readonly Override[];
   /** Statements that drop structure or delete data (finalize needs them acknowledged), in order. */
   readonly destructive: readonly DestructiveStatement[];
   /** Statements that rewrite or scan an existing table while holding its lock, in order. */
@@ -101,10 +106,14 @@ export interface MigrationAnalysis {
 interface Finding {
   readonly rule: RuleId;
   readonly message: string;
+  /** Absolute line, for findings inside a routine body. */
+  readonly line?: number;
 }
 
 interface MigrationState {
   readonly managedSchema: string;
+  /** Schemas PL/pgSQL bodies may reference. */
+  readonly externalSchemas: readonly string[];
   readonly identity: Map<string, Set<string>>;
   /** Temporary tables created so far in this migration. */
   readonly temporary: Set<string>;
@@ -117,10 +126,12 @@ export async function analyseMigration(
 ): Promise<MigrationAnalysis> {
   const state: MigrationState = {
     managedSchema: options.managedSchema ?? "public",
+    externalSchemas: options.externalSchemas ?? [],
     identity: copyIdentity(options.identityColumns),
     temporary: new Set(),
   };
   const violations: RuleViolation[] = [];
+  const overrides: Override[] = [];
   const changes = new ChangeTracker(state.managedSchema, options.columnTypes);
   for (const file of files) {
     const parsed = await parseSqlFile(file);
@@ -128,27 +139,48 @@ export async function analyseMigration(
       violations.push(parsed.violation);
       continue;
     }
-    for (const statement of parsed.statements) {
-      const findings = checkStatement(statement, file.kind, state);
+    const scan = scanMarkers(file, parsed.statements);
+    const pending = [...scan.violations];
+    parsed.statements.forEach((statement, index) => {
+      while (pending[0] !== undefined && pending[0].line < statement.line) {
+        violations.push(pending.shift() as RuleViolation);
+      }
+      const found: RuleViolation[] = [];
       const seen = new Set<string>();
-      for (const finding of findings) {
-        const key = `${finding.rule}\n${finding.message}`;
+      for (const { line, ...finding } of checkStatement(
+        statement,
+        file.kind,
+        state,
+      )) {
+        const key = `${line}\n${finding.rule}\n${finding.message}`;
         if (!seen.has(key)) {
           seen.add(key);
-          violations.push({
+          found.push({
             file: statement.file,
-            line: statement.line,
+            line: line ?? statement.line,
             statement: statement.text,
             ...finding,
           });
         }
       }
+      const marked = applyMarker(
+        statement,
+        scan.markers.get(index),
+        found,
+        state.managedSchema,
+      );
+      violations.push(...marked.violations);
+      if (marked.override !== undefined) {
+        overrides.push(marked.override);
+      }
       remember(statement, state);
       changes.statement(statement);
-    }
+    });
+    violations.push(...pending);
   }
   return {
     violations,
+    overrides,
     destructive: changes.destructive,
     warnings: changes.warnings,
   };
@@ -160,6 +192,7 @@ export function identityColumnsOf(
 ): IdentityColumns {
   const state: MigrationState = {
     managedSchema: "",
+    externalSchemas: [],
     identity: new Map(),
     temporary: new Set(),
   };
@@ -937,8 +970,8 @@ function expressionFindings(
       });
     }
     if (type === "CreateFunctionStmt") {
-      // Routine bodies belong to the desired-schema / PL/pgSQL body rules;
-      // only the signature is checked here.
+      // Routine bodies get the body rules (routineBodyFindings); only the
+      // signature is checked here.
       const create = node as CreateFunctionStmt;
       findings.push(
         ...nameFindings(stringList(create.funcname), 1, "write", state),
@@ -1456,7 +1489,40 @@ function checkStatement(
       state,
     ),
     ...(kind === "schema-change" ? [] : scriptFindings(statement.node, state)),
+    ...routineBodyFindings(statement, state),
   ];
+}
+
+/**
+ * The PL/pgSQL body rules (and LANGUAGE sql string bodies), shared with the
+ * desired schema: a routine created by a schema change or a pre-migration
+ * script can't smuggle in what scripts may not do.
+ */
+function routineBodyFindings(
+  statement: ParsedStatement,
+  state: MigrationState,
+): Finding[] {
+  if (statement.nodeType !== "CreateFunctionStmt") {
+    return [];
+  }
+  const create = bodyOf(statement) as CreateFunctionStmt;
+  const language = functionLanguage(create);
+  const body = create.options
+    ?.map((option) =>
+      nodeOf<{ defname?: string; arg?: Node }>(option, "DefElem"),
+    )
+    .find((option) => option?.defname === "as")?.arg;
+  const context: RuleContext = {
+    managedSchema: state.managedSchema,
+    externalSchemas: state.externalSchemas,
+  };
+  const findings =
+    language === "plpgsql"
+      ? plpgsqlFindings(statement, body, context)
+      : language === "sql" && create.sql_body === undefined
+        ? sqlBodyFindings(statement, body, context)
+        : [];
+  return findings as Finding[];
 }
 
 /** Updates the migration's state after a statement: temporary tables and identity columns. */

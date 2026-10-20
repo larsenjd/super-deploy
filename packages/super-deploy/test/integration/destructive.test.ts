@@ -167,6 +167,32 @@ describe("finalize with destructive statements", () => {
   });
 });
 
+describe("destructive statements in scripts", () => {
+  test("a DELETE in the post-migration script needs the acknowledgement and is recorded", async () => {
+    const { dir, project } = await projectWithOrders(
+      `${orders}create index orders_qty_idx on orders (qty);\n`,
+    );
+    await dir.write(
+      "data-model/draft/post-migration.sql",
+      "delete from orders where qty = 0;\n",
+    );
+
+    const error = await refusal(finalize(project));
+    expect(error.question.statements).toEqual([
+      expect.objectContaining({
+        file: "data-model/draft/post-migration.sql",
+        line: 1,
+        kind: "delete",
+      }),
+    ]);
+
+    const result = await finalize(project, { acknowledgeDestructive: true });
+    expect(result.metadata.destructive?.statements).toEqual([
+      expect.objectContaining({ file: "post-migration.sql", kind: "delete" }),
+    ]);
+  });
+});
+
 describe("lock warnings", () => {
   test("finalize and rehearse report statements that rewrite or scan an existing table", async () => {
     const { project } = await projectWithOrders(

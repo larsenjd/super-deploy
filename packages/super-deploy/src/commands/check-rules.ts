@@ -24,6 +24,8 @@ import {
 
 export interface MigrationRuleContext {
   readonly managedSchema: string;
+  /** Schemas PL/pgSQL bodies may reference. */
+  readonly externalSchemas: readonly string[];
   /**
    * The desired schemas on either side of the migration (the previous
    * migration's snapshot and its own, or the current desired schema for the
@@ -40,7 +42,18 @@ export interface MigrationRuleContext {
 
 type DesiredSchema = readonly SqlFile[] | readonly ParsedStatement[];
 
-/** Analyses a migration's or the draft's deploy-time files, in the order they run. */
+/** Every rule violation in a migration's or the draft's deploy-time files, in the order they run. */
+export async function checkReplayUnit(
+  unit: ReplayUnit,
+  context: MigrationRuleContext,
+): Promise<readonly RuleViolation[]> {
+  return (await analyseReplayUnit(unit, context)).violations;
+}
+
+/**
+ * The rule analysis of a unit's deploy-time files: violations, overrides,
+ * destructive statements and lock warnings.
+ */
 export async function analyseReplayUnit(
   unit: ReplayUnit,
   context: MigrationRuleContext,
@@ -51,6 +64,7 @@ export async function analyseReplayUnit(
   });
   return analyseMigration(files, {
     managedSchema: context.managedSchema,
+    externalSchemas: context.externalSchemas,
     identityColumns: await identityColumnsIn(context.schemas),
     ...(context.previous === undefined
       ? {}
@@ -58,17 +72,10 @@ export async function analyseReplayUnit(
   });
 }
 
-/** Every rule violation in a migration's or the draft's deploy-time files, in the order they run. */
-export async function checkReplayUnit(
-  unit: ReplayUnit,
-  context: MigrationRuleContext,
-): Promise<readonly RuleViolation[]> {
-  return (await analyseReplayUnit(unit, context)).violations;
-}
-
 /**
  * Throws SqlRuleViolationError listing every violation in the unit's files;
- * otherwise returns the analysis (destructive statements and warnings).
+ * otherwise returns the analysis (overrides accepted, destructive statements
+ * and lock warnings).
  */
 export async function refuseRuleViolations(
   unit: ReplayUnit,

@@ -1,0 +1,4 @@
+# Migration hashes normalise line endings, but keep SQL and JSON as LF in
+# every checkout so files never show up as changed on Windows.
+*.sql text eol=lf
+*.json text eol=lf
