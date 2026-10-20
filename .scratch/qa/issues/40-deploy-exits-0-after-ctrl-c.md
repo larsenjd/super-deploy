@@ -1,6 +1,6 @@
 # 40: `deploy` exits 0 about 10 seconds after Ctrl+C or SIGTERM, though nothing was deployed
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** high
 **Area:** fail
@@ -99,12 +99,20 @@ Suppose Ctrl+C or SIGTERM reaches the whole process group, and the command owns 
 - The CLI's process shell (interruption → exit code 129–149).
 
 **Acceptance criteria:**
-- [ ] CLI seam regression test. Use a project whose rehearsal uses its own embedded server (it owns the data dir) and an external target on the test server. A pending migration stalls (stalling adapter / `TEST_STALL`). `spawnCli(..., { detached: true })` then `signalGroup("SIGINT")` exits 130 within a few seconds, not after about 10 s.
-- [ ] The same with `SIGTERM` exits 143.
-- [ ] After either, `status` shows the attempt abandoned with no migration recorded, and no postmaster is left running for the project.
-- [ ] The existing interruption tests still pass.
+- [x] CLI seam regression test. Use a project whose rehearsal uses its own embedded server (it owns the data dir) and an external target on the test server. A pending migration stalls (stalling adapter / `TEST_STALL`). `spawnCli(..., { detached: true })` then `signalGroup("SIGINT")` exits 130 within a few seconds, not after about 10 s.
+- [x] The same with `SIGTERM` exits 143.
+- [x] After either, `status` shows the attempt abandoned with no migration recorded, and no postmaster is left running for the project.
+- [x] The existing interruption tests still pass.
 
 **Out of scope / follow-up:**
 - Side finding, not part of this fix: SIGTERM to the group while a rehearsal statement is stalled exits 143 only after the statement ends (about 60 s). Smart shutdown appears to refuse the new connection that cleanup needs (`DROP DATABASE ... WITH (FORCE)`), so nothing ends the running statement. File it separately if it matters.
 - A final "rolled back, nothing recorded" line: by design, one notice only.
 - Embedded server sharing between concurrent commands (14).
+
+### Resolved, 2026-10-20 (8094053)
+
+- The embedded adapter's `stop()` skips the library's `stop()` when the postmaster has already exited (`exitCode` or `signalCode` set on the library's private child process). The peer dependency is pinned to one version. If the field ever moves, `stop()` is called as before.
+- Importing embedded-postgres now also removes async-exit-hook's `beforeExit` handler, which called `process.exit(0)`. Its `exit` handler stays, so a server left running is still stopped when the process exits.
+- The CLI sets `process.exitCode` at the first interruption. A process whose event loop drains still exits 130 or 143.
+- Tests: in `cli-deploy-interruption.test.ts`, the rehearsals run on the project's own embedded server and `dev` is a database on the test server. SIGINT to the group during the rehearsal exits 130, and SIGTERM during the deploy transaction exits 143. Each exits in under 8 s, leaves no `postmaster.pid`, and `status` shows the migration pending and the attempt abandoned. Both tests failed with exit 0 before the fix.
+- Not done: SIGTERM to the group while a rehearsal statement is stalled (out of scope; see Out of scope).
