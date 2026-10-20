@@ -9,9 +9,19 @@
 //       seed-data.sql               (optional) the draft's seed data, frozen as an audit record
 //       metadata.json               tool, differ, parser and rehearsal server versions
 //       desired-schema/**/*.sql     snapshot of the desired schema at finalize
+//       recoveries/                 (optional) the migration's Recoveries
+//         recovery-1/               Recovery 1: replacement scripts and seed data
+//           pre-migration.sql       (optional) replaces the migration's
+//           post-migration.sql      (optional) replaces the migration's
+//           seed-data.sql           (optional) the Recovery draft's seed data
+//           metadata.json           as for a migration
 //
-// Every file inside a migration folder is read-only and covered by the
-// folder's content hash (store/hashing.ts).
+// Every file inside a migration folder is read-only. Its content hash
+// (store/hashing.ts) covers every file except those under recoveries/; each
+// Recovery has its own content hash and a chain that starts from its
+// migration's chain hash, so adding a Recovery never changes the hashes a
+// target recorded for the migration. A Recovery never has a schema change:
+// it always runs its migration's.
 import { constants, type Dirent } from "node:fs";
 import {
   access,
@@ -55,6 +65,16 @@ export const deployTimeFileNames: readonly string[] = [
   postMigrationFileName,
 ];
 
+/**
+ * The files a Recovery replaces: everything a migration runs or loads except
+ * the schema change, which never changes (REFINEMENTS.md).
+ */
+export const recoveryFileNames: readonly string[] = [
+  preMigrationFileName,
+  postMigrationFileName,
+  seedDataFileName,
+];
+
 /** The rule set (file kind) each deploy-time file, and seed data, is checked against. */
 export const deployTimeFileKinds: Readonly<Record<string, DeployTimeKind>> = {
   [preMigrationFileName]: "pre-migration",
@@ -65,9 +85,50 @@ export const deployTimeFileKinds: Readonly<Record<string, DeployTimeKind>> = {
 
 export const maxMigrationNumber = 99_999;
 
+/** The folder inside a migration folder that holds its Recoveries. */
+export const recoveriesFolderName = "recoveries";
+
+/** `recovery-1` for Recovery 1. */
+export function recoveryFolderName(number: number): string {
+  return `recovery-${number}`;
+}
+
+/** The number in a Recovery folder name, or undefined if it isn't one. */
+export function parseRecoveryFolderName(folder: string): number | undefined {
+  const match = /^recovery-([1-9]\d{0,4})$/.exec(folder);
+  return match === null ? undefined : Number(match[1]);
+}
+
+/** True for a path (relative to a migration folder) inside its Recoveries. */
+export function isRecoveryPath(path: string): boolean {
+  return path.startsWith(`${recoveriesFolderName}/`);
+}
+
+/** A Recovery in index.json, in Recovery order. */
+export interface RecoveryIndexEntry {
+  /** e.g. `recovery-1`. */
+  readonly folder: string;
+  readonly contentHash: string;
+  readonly chainHash: string;
+}
+
 /** One entry of index.json, in migration order. */
 export interface IndexEntry {
   readonly folder: string;
+  readonly contentHash: string;
+  readonly chainHash: string;
+  /** The migration's Recoveries; absent (not empty) when it has none. */
+  readonly recoveries?: readonly RecoveryIndexEntry[];
+}
+
+/** A finalized Recovery of a migration. */
+export interface FinalizedRecovery {
+  /** K in "Recovery K", from 1. */
+  readonly number: number;
+  /** e.g. `recovery-1`. */
+  readonly folder: string;
+  /** Absolute path of the folder. */
+  readonly path: string;
   readonly contentHash: string;
   readonly chainHash: string;
 }
@@ -81,6 +142,8 @@ export interface FinalizedMigration {
   readonly path: string;
   readonly contentHash: string;
   readonly chainHash: string;
+  /** Its Recoveries in order (Recovery K at index K-1); empty when it has none. */
+  readonly recoveries: readonly FinalizedRecovery[];
 }
 
 /** `00001-add-customers` from 1 and `add-customers`. */
@@ -137,35 +200,71 @@ export async function readIndex(paths: ProjectPaths): Promise<IndexReadResult> {
   }
   const entries: IndexEntry[] = [];
   for (const [position, entry] of migrations.entries()) {
-    if (
-      typeof entry !== "object" ||
-      entry === null ||
-      typeof entry.folder !== "string" ||
-      typeof entry.contentHash !== "string" ||
-      typeof entry.chainHash !== "string"
-    ) {
+    const where = `entry ${position + 1}`;
+    if (!isHashedEntry(entry)) {
       return {
         ok: false,
-        reason: `entry ${position + 1} needs string "folder", "contentHash" and "chainHash"`,
+        reason: `${where} needs string "folder", "contentHash" and "chainHash"`,
       };
     }
-    entries.push({
-      folder: entry.folder,
-      contentHash: entry.contentHash,
-      chainHash: entry.chainHash,
-    });
+    const recoveries: unknown = (entry as { recoveries?: unknown }).recoveries;
+    if (recoveries === undefined) {
+      entries.push(hashedEntry(entry));
+      continue;
+    }
+    if (!Array.isArray(recoveries)) {
+      return {
+        ok: false,
+        reason: `${where} has a "recoveries" that is not an array`,
+      };
+    }
+    const parsed: RecoveryIndexEntry[] = [];
+    for (const [k, recovery] of recoveries.entries()) {
+      if (!isHashedEntry(recovery)) {
+        return {
+          ok: false,
+          reason: `${where} recovery ${k + 1} needs string "folder", "contentHash" and "chainHash"`,
+        };
+      }
+      parsed.push(hashedEntry(recovery));
+    }
+    entries.push({ ...hashedEntry(entry), recoveries: parsed });
   }
   return { ok: true, entries };
+}
+
+interface HashedEntry {
+  folder: string;
+  contentHash: string;
+  chainHash: string;
+}
+
+function isHashedEntry(entry: unknown): entry is HashedEntry {
+  return (
+    typeof entry === "object" &&
+    entry !== null &&
+    "folder" in entry &&
+    typeof entry.folder === "string" &&
+    "contentHash" in entry &&
+    typeof entry.contentHash === "string" &&
+    "chainHash" in entry &&
+    typeof entry.chainHash === "string"
+  );
+}
+
+function hashedEntry({ folder, contentHash, chainHash }: HashedEntry) {
+  return { folder, contentHash, chainHash };
 }
 
 export async function writeIndex(
   paths: ProjectPaths,
   entries: readonly IndexEntry[],
 ): Promise<void> {
-  const migrations = entries.map(({ folder, contentHash, chainHash }) => ({
-    folder,
-    contentHash,
-    chainHash,
+  const migrations = entries.map((entry) => ({
+    ...hashedEntry(entry),
+    ...(entry.recoveries === undefined || entry.recoveries.length === 0
+      ? {}
+      : { recoveries: entry.recoveries.map(hashedEntry) }),
   }));
   await writeFile(
     join(paths.migrations, indexFileName),

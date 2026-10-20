@@ -40,7 +40,15 @@ export type ErrorCode =
   | "history-mismatch"
   | "mark-mismatch"
   | "adopt-conflict"
-  | "adopt-unsupported";
+  | "adopt-unsupported"
+  | "target-not-disposable"
+  | "target-behind"
+  | "unknown-migration"
+  | "wipe-failed"
+  | "draft-exists"
+  | "recovery-draft"
+  | "recovery-schema-change-edited"
+  | "no-recovery";
 
 export class SuperDeployError extends Error {
   readonly code: ErrorCode;
@@ -323,7 +331,8 @@ export interface ValidationProblem {
    * Stable identifier: `index-invalid`, `invalid-folder-name`,
    * `unexpected-entry`, `migration-missing`, `migration-unindexed`,
    * `migration-renamed`, `numbering-gap`, `invalid-encoding`,
-   * `content-hash-mismatch`, `chain-hash-mismatch`, `sql-rule-violation` (errors);
+   * `content-hash-mismatch`, `chain-hash-mismatch`, `sql-rule-violation`,
+   * `recovery-schema-change-edited`, `unknown-migration` (errors);
    * `unfinalized-draft`, `undrafted-changes` (warnings).
    */
   readonly code: string;
@@ -377,6 +386,61 @@ export class ValidationFailedError extends SuperDeployError {
     );
     this.problems = problems;
     this.strict = strict;
+  }
+}
+
+/** One draft at a time: the command would create one while another exists. Nothing was changed. */
+export class DraftExistsError extends SuperDeployError {
+  /** The existing draft's name, if its draft.json is readable. */
+  readonly draft: string | undefined;
+
+  constructor(action: string, draft: string | undefined) {
+    super(
+      "draft-exists",
+      `Cannot ${action} while draft ${draft ?? "(unnamed)"} exists: finalize it or run discard-draft first`,
+    );
+    this.draft = draft;
+  }
+}
+
+/**
+ * The draft is a Recovery draft, whose schema change is its migration's and
+ * is never regenerated, and the command would regenerate it.
+ */
+export class RecoveryDraftError extends SuperDeployError {
+  /** The migration the Recovery draft recovers. */
+  readonly migration: number;
+
+  constructor(migration: number) {
+    super(
+      "recovery-draft",
+      `The draft is a Recovery of migration ${migration}: its schema change is migration ${migration}'s and is never regenerated. Edit its scripts and seed data, then rehearse or finalize it (or discard-draft)`,
+    );
+    this.migration = migration;
+  }
+}
+
+/** A Recovery draft's schema-change.sql is no longer a copy of its migration's. */
+export class RecoverySchemaChangeEditedError extends SuperDeployError {
+  /** Project-relative path of the draft's schema change. */
+  readonly file: string;
+
+  constructor(file: string, migration: string) {
+    super(
+      "recovery-schema-change-edited",
+      `${file} must stay an exact copy of ${migration}'s schema change: a Recovery replaces only the scripts and seed data`,
+    );
+    this.file = file;
+  }
+}
+
+/** `unfinalize` was asked for a migration's newest Recovery and it has none. */
+export class NoRecoveryError extends SuperDeployError {
+  constructor(migration: string) {
+    super(
+      "no-recovery",
+      `Migration ${migration} has no Recovery to unfinalize`,
+    );
   }
 }
 
@@ -573,6 +637,83 @@ export class NotConfirmedError extends SuperDeployError {
 }
 
 /**
+ * deploy-draft or rebuild was refused because the target's own history
+ * schema doesn't flag it as disposable (`disposable --set yes`). Nothing was
+ * asked or changed.
+ */
+export class TargetNotDisposableError extends SuperDeployError {
+  readonly command: GuardedCommand;
+  readonly target: string;
+
+  constructor(command: GuardedCommand, target: string) {
+    super(
+      "target-not-disposable",
+      `${command} only runs on disposable targets, and target ${target} is not disposable (flag it with disposable --target ${target} --set yes if it is safe to wipe): nothing changed`,
+    );
+    this.command = command;
+    this.target = target;
+  }
+}
+
+/**
+ * deploy-draft was refused because the target has pending migrations: the
+ * draft's schema change was generated on top of the newest migration, so
+ * the target must be there first. Nothing was asked or changed.
+ */
+export class TargetBehindError extends SuperDeployError {
+  readonly target: string;
+  /** The pending migrations' folder names, in order. */
+  readonly pending: readonly string[];
+
+  constructor(target: string, pending: readonly string[]) {
+    super(
+      "target-behind",
+      `Target ${target} has pending migrations (${pending.join(", ")}): deploy them first, because the draft goes on top of the newest migration`,
+    );
+    this.target = target;
+    this.pending = pending;
+  }
+}
+
+/**
+ * rebuild dropped everything it knows how to drop in the managed schema, but
+ * objects are left (e.g. members of an extension that lives elsewhere). The
+ * transaction rolled back: nothing changed.
+ */
+export class WipeFailedError extends SuperDeployError {
+  readonly target: string;
+  readonly schema: string;
+  /** PostgreSQL's descriptions of what is left, e.g. `function public.f(integer)`. */
+  readonly objects: readonly string[];
+
+  constructor(target: string, schema: string, objects: readonly string[]) {
+    super(
+      "wipe-failed",
+      `Could not wipe schema ${schema} on target ${target}: it still holds ${objects.join(", ")}; drop them by hand, then run rebuild again (nothing changed)`,
+    );
+    this.target = target;
+    this.schema = schema;
+    this.objects = objects;
+  }
+}
+
+/** A command was given a migration number the repo has no finalized migration for. */
+export class UnknownMigrationError extends SuperDeployError {
+  readonly number: number;
+  /** The repo's newest migration number; undefined when there is none. */
+  readonly newest: number | undefined;
+
+  constructor(number: number, newest: number | undefined) {
+    super(
+      "unknown-migration",
+      `There is no finalized migration ${number}${newest === undefined ? " (there are none yet)" : ` (the newest is ${newest})`}`,
+    );
+    this.number = number;
+    this.newest = newest;
+  }
+}
+
+/**
  * The target's recorded migrations or disposable flag changed between showing
  * them and taking the lock. Nothing changed; run the command again.
  */
@@ -583,7 +724,7 @@ export class TargetChangedError extends SuperDeployError {
   constructor(command: GuardedCommand, target: string) {
     super(
       "target-changed",
-      `Target ${target} changed while ${command} waited for YES (its recorded migrations or disposable flag): nothing changed; run ${command} again to see the new details`,
+      `Target ${target} changed while ${command} waited for YES (its recorded migrations, deployed draft or disposable flag): nothing changed; run ${command} again to see the new details`,
     );
     this.command = command;
     this.target = target;

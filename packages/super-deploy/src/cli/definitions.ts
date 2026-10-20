@@ -5,12 +5,15 @@
 import { join } from "node:path";
 import { adopt } from "../commands/adopt.ts";
 import { deploy } from "../commands/deploy.ts";
+import { deployDraft } from "../commands/deploy-draft.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
 import { disposable } from "../commands/disposable.ts";
 import { draft } from "../commands/draft.ts";
 import { finalize } from "../commands/finalize.ts";
 import { init } from "../commands/init.ts";
 import { mark } from "../commands/mark.ts";
+import { rebuild } from "../commands/rebuild.ts";
+import { recovery } from "../commands/recovery.ts";
 import { rehearse } from "../commands/rehearse.ts";
 import { restoreSchema } from "../commands/restore-schema.ts";
 import { status } from "../commands/status.ts";
@@ -30,6 +33,7 @@ import type { Project } from "../project.ts";
 import type { Confirm, OverwriteOptions, Question } from "../questions.ts";
 import type { LockWarning, Override } from "../sql-analysis/index.ts";
 import { readDraft } from "../store/draft.ts";
+import { parseMigrationFolderName, readIndex } from "../store/migrations.ts";
 
 export type CommandGroup =
   | "Start"
@@ -311,7 +315,9 @@ const rehearseCommand: CommandDefinition = {
       );
     }
     context.result(
-      `Rehearsed draft ${result.name} after ${plural(result.migrationsReplayed, "migration")}: matches the desired schema`,
+      result.recoveryOf === undefined
+        ? `Rehearsed draft ${result.name} after ${plural(result.migrationsReplayed, "migration")}: matches the desired schema`
+        : `Rehearsed the Recovery draft of migration ${migrationFolder(result.recoveryOf, result.name)}: it ends in the same structure as the original`,
     );
   },
 };
@@ -355,7 +361,9 @@ const finalizeCommand: CommandDefinition = {
     }
     reportWarnings(result.warnings, context);
     context.result(
-      `Finalized migration ${result.folder} in ${context.displayPath(result.path)}`,
+      result.recovery === undefined
+        ? `Finalized migration ${result.folder} in ${context.displayPath(result.path)}`
+        : `Finalized Recovery ${result.recovery} of migration ${result.folder} in ${context.displayPath(result.path)}`,
     );
     for (const override of result.metadata.overrides) {
       context.result(describeOverride(override, result.path, context));
@@ -396,7 +404,9 @@ const validateCommand: CommandDefinition = {
           `Made ${plural(result.readOnlyRestored.length, "finalized file")} read-only again`,
         );
       }
-      context.result(`Validated ${plural(result.migrations, "migration")}`);
+      context.result(
+        `Validated ${plural(result.migrations, "migration")}${result.recoveries === 0 ? "" : ` and ${plural(result.recoveries, "Recovery", "Recoveries")}`}`,
+      );
     } catch (error) {
       if (error instanceof ValidationFailedError) {
         error.problems.forEach(report);
@@ -493,17 +503,34 @@ const unfinalizeCommand: CommandDefinition = {
   name: "unfinalize",
   group: "Author",
   summary:
-    "Move the newest migration back into the draft and restore its desired-schema snapshot",
-  options: [acknowledgeOverwriteOption],
+    "Move the newest migration (or its newest Recovery) back into the draft and restore its desired-schema snapshot",
+  options: [
+    {
+      name: "recovery-of",
+      kind: "migration",
+      description:
+        "Move this migration's newest Recovery back into a Recovery draft instead",
+      migrations: (project) => indexedMigrations(project, "with-recoveries"),
+    },
+    acknowledgeOverwriteOption,
+  ],
   async run(project, values, context) {
+    const recoveryOf = values["recovery-of"];
     const result = await unlessDeclined(context, () =>
-      unfinalize(project, overwriteOptions(values, context)),
+      unfinalize(project, {
+        ...overwriteOptions(values, context),
+        ...(typeof recoveryOf === "string"
+          ? { recoveryOf: Number(recoveryOf) }
+          : {}),
+      }),
     );
     if (result === undefined) {
       return;
     }
     context.result(
-      `Moved migration ${result.folder} back into draft ${result.name} in ${context.displayPath(result.draftPath)}`,
+      result.recovery === undefined
+        ? `Moved migration ${result.folder} back into draft ${result.name} in ${context.displayPath(result.draftPath)}`
+        : `Moved Recovery ${result.recovery} of migration ${result.folder} back into a Recovery draft in ${context.displayPath(result.draftPath)}`,
     );
     reportRestore(project, result, context);
   },
@@ -645,6 +672,30 @@ const statusCommand: CommandDefinition = {
   },
 };
 
+const recoveryCommand: CommandDefinition = {
+  name: "recovery",
+  group: "Recover",
+  summary:
+    "Start a Recovery of a migration: replacement scripts and seed data for targets that haven't run it",
+  options: [
+    {
+      name: "migration",
+      kind: "migration",
+      description: "The migration to recover",
+      required: true,
+      migrations: indexedMigrations,
+    },
+  ],
+  async run(project, values, context) {
+    const result = await recovery(project, {
+      migration: Number(values.migration),
+    });
+    context.result(
+      `Created a Recovery draft of migration ${result.folder} in ${context.displayPath(result.draftPath)} (it becomes Recovery ${result.recovery} when finalized)`,
+    );
+  },
+};
+
 const markCommand: CommandDefinition = {
   name: "mark",
   group: "Recover",
@@ -713,6 +764,75 @@ function reportMarkMismatch(
   }
 }
 
+const deployDraftCommand: CommandDefinition = {
+  name: "deploy-draft",
+  group: "Disposable",
+  summary:
+    "Try the unfinalized draft on a disposable target, in one transaction; asks you to type YES",
+  options: [
+    targetOption,
+    {
+      name: "with-seed",
+      kind: "flag",
+      description:
+        "Load the draft's seed data first (it may clash with data already on the target)",
+    },
+  ],
+  async run(project, values, context) {
+    const result = await deployDraft(project, {
+      target: String(values.target),
+      withSeed: values["with-seed"] === true,
+    });
+    context.result(
+      `Deployed draft ${result.name} to ${result.target} on top of ${result.baseMigration ?? "no recorded migration"}, ${result.seedData ? "with" : "without"} seed data`,
+    );
+  },
+};
+
+/**
+ * The finalized migrations in index.json (only those with Recoveries, if
+ * asked), for the menu's migration questions.
+ */
+async function indexedMigrations(
+  project: Project,
+  only?: "with-recoveries",
+): Promise<MigrationChoice[]> {
+  const index = await readIndex(project.paths);
+  return index.ok
+    ? index.entries
+        .filter(
+          (entry) => only === undefined || (entry.recoveries ?? []).length > 0,
+        )
+        .flatMap((entry) => parseMigrationFolderName(entry.folder) ?? [])
+    : [];
+}
+
+const rebuildCommand: CommandDefinition = {
+  name: "rebuild",
+  group: "Disposable",
+  summary:
+    "Wipe a disposable target and replay migrations 1 to N, without seed data; asks you to type YES",
+  options: [
+    targetOption,
+    {
+      name: "to",
+      kind: "migration",
+      description: "The last migration to replay",
+      required: true,
+      migrations: indexedMigrations,
+    },
+  ],
+  async run(project, values, context) {
+    const result = await rebuild(project, {
+      target: String(values.target),
+      to: Number(values.to),
+    });
+    context.result(
+      `Rebuilt ${result.target} with ${plural(result.deployed.length, "migration")}: ${result.deployed.map((m) => m.folder).join(", ")}`,
+    );
+  },
+};
+
 function describeAttempt(attempt: AttemptRecord): string {
   const range =
     attempt.fromMigration === undefined
@@ -734,8 +854,13 @@ function describeOverride(
   return `override: ${file}:${override.line}: ${override.object} [${override.rules.join(", ")}]: ${override.reason}`;
 }
 
-function plural(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+function plural(count: number, noun: string, nouns = `${noun}s`): string {
+  return `${count} ${count === 1 ? noun : nouns}`;
+}
+
+/** `00002-require-email` from 2 and `require-email`. */
+function migrationFolder(number: number, name: string): string {
+  return `${String(number).padStart(5, "0")}-${name}`;
 }
 
 export const commands: readonly CommandDefinition[] = [
@@ -749,6 +874,9 @@ export const commands: readonly CommandDefinition[] = [
   validateCommand,
   deployCommand,
   statusCommand,
+  recoveryCommand,
   markCommand,
   disposableCommand,
+  deployDraftCommand,
+  rebuildCommand,
 ];

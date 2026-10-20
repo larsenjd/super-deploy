@@ -3,7 +3,7 @@
 //   1. refuse in CI or without a terminal on stdin and stdout (before the
 //      target is touched at all)
 //   2. connect and read the target's view (host, database, recorded
-//      migrations, disposable flag); the command checks its preconditions
+//      migrations, deployed draft, disposable flag); the command checks its preconditions
 //      on it and says what it is about to do (or that there is nothing to do)
 //   3. show the action plus the target's name, host, database and last
 //      recorded migration at the terminal
@@ -23,7 +23,9 @@ import { isCI } from "../cli/environment.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { type LockedTarget, withLockedTarget } from "../deploy/engine.ts";
 import {
+  type DeployedDraft,
   type RecordedMigration,
+  readDeployedDraft,
   readRecordedMigrations,
   readTargetSettings,
 } from "../deploy/history.ts";
@@ -46,6 +48,8 @@ export interface TargetView {
   readonly database: string;
   /** In number order. */
   readonly recorded: readonly RecordedMigration[];
+  /** The draft deploy-draft left on the target, if any. */
+  readonly draft: DeployedDraft | undefined;
   readonly disposable: boolean;
 }
 
@@ -162,6 +166,7 @@ async function readTargetView(
     host,
     database: server?.database ?? "",
     recorded: await readRecordedMigrations(session, schema),
+    draft: await readDeployedDraft(session, schema),
     disposable: (await readTargetSettings(session, schema)).disposable,
   };
 }
@@ -173,6 +178,11 @@ function describeTarget(view: TargetView): string[] {
     `Host:      ${view.host}`,
     `Database:  ${view.database}`,
     `Last recorded migration: ${last === undefined ? "none" : migrationFolderName(last.number, last.name)}`,
+    ...(view.draft === undefined
+      ? []
+      : [
+          `Deployed draft: ${view.draft.name} (attempt #${view.draft.attemptId})`,
+        ]),
   ];
 }
 
@@ -187,6 +197,7 @@ function fingerprint(view: TargetView): string {
       m.chainHash,
       m.recovery ?? null,
     ]),
+    draft: view.draft?.attemptId ?? null,
   });
 }
 

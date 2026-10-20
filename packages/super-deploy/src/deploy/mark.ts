@@ -24,9 +24,9 @@ import {
   NothingToMarkError,
 } from "../errors.ts";
 import type { Project } from "../project.ts";
-import { readMigrationUnits } from "../rehearsal/replay.ts";
 import {
   type MigrationWithUnit,
+  readMigrationsWithUnits,
   replicaUnits,
   withReplica,
 } from "../rehearsal/replica.ts";
@@ -38,7 +38,9 @@ import {
   type LockedTarget,
 } from "./engine.ts";
 import {
+  type DeployedDraft,
   type RecordedMigration,
+  readDeployedDraft,
   readRecordedMigrations,
   recordMigration,
 } from "./history.ts";
@@ -53,26 +55,25 @@ import { targetDatabaseRequest } from "./target.ts";
 export async function readMarkableMigrations(
   project: Project,
 ): Promise<MigrationWithUnit[]> {
-  const migrations = await verifiedMigrations(project.root, project.paths);
-  const units = await readMigrationUnits(project.root, migrations);
-  return migrations.map((migration, index) => ({
-    ...migration,
-    unit: units[index] ?? { label: migration.folder, files: [] },
-  }));
+  return readMigrationsWithUnits(
+    project.root,
+    await verifiedMigrations(project.root, project.paths),
+  );
 }
 
 /**
  * The target's next pending migration: the only one `mark` may record.
  * Refuses with HistoryMismatchError if what the target records doesn't match
- * the project (no faithful replica could be built), and NothingToMarkError
- * if nothing is pending.
+ * the project (no faithful replica could be built) or the target holds a
+ * deployed draft, and NothingToMarkError if nothing is pending.
  */
 export function nextToMark(
   targetName: string,
   migrations: readonly MigrationWithUnit[],
   recorded: readonly RecordedMigration[],
+  draft: DeployedDraft | undefined,
 ): MigrationWithUnit {
-  const mismatches = historyMismatches(migrations, recorded);
+  const mismatches = historyMismatches(migrations, recorded, draft);
   if (mismatches.length > 0) {
     throw new HistoryMismatchError(targetName, mismatches);
   }
@@ -169,7 +170,12 @@ export async function markNextPending(
     locked.session,
     project.config.historySchema,
   );
-  const next = nextToMark(locked.target.name, migrations, recorded);
+  const next = nextToMark(
+    locked.target.name,
+    migrations,
+    recorded,
+    await readDeployedDraft(locked.session, project.config.historySchema),
+  );
   await locked.attempt.setRange(next.number, next.number);
   await requireReplicaMatch(project, locked.target, locked.session, {
     migrations,

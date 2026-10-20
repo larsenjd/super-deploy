@@ -58,6 +58,7 @@ describe("validate", () => {
 
     expect(report).toEqual({
       migrations: 1,
+      recoveries: 0,
       problems: [],
       readOnlyRestored: [],
       overrides: [],

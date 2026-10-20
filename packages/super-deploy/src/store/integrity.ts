@@ -1,5 +1,5 @@
-// The integrity check of the finalized migrations: index, folder names,
-// numbering, content hashes and the hash chain. `validate` reports its
+// The integrity check of the finalized migrations and their Recoveries:
+// index, folder names, numbering, content hashes and the hash chains. `validate` reports its
 // findings; every command that builds on the migrations (draft, rehearse,
 // finalize) refuses to run while it finds errors.
 import type { Dirent } from "node:fs";
@@ -10,14 +10,23 @@ import {
   MigrationIntegrityError,
   type ValidationProblem,
 } from "../errors.ts";
-import { chainHash, migrationContentHash } from "./hashing.ts";
+import {
+  chainHash,
+  migrationContentHash,
+  recoveryContentHash,
+} from "./hashing.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";
 import {
   type FinalizedMigration,
+  type FinalizedRecovery,
+  type IndexEntry,
   indexFileName,
+  isRecoveryPath,
   parseMigrationFolderName,
+  parseRecoveryFolderName,
   readHashedFiles,
   readIndex,
+  recoveriesFolderName,
 } from "./migrations.ts";
 
 export interface IntegrityReport {
@@ -100,11 +109,13 @@ export async function checkMigrations(
       return { migrations, problems };
     }
     const path = join(paths.migrations, entry.folder);
+    const recoveries: FinalizedRecovery[] = [];
     migrations.push({
       ...parsed,
       folder: entry.folder,
       path,
       ...hashes(entry),
+      recoveries,
     });
 
     const expectedChain = chainHash(previousChain, entry.contentHash);
@@ -137,7 +148,11 @@ export async function checkMigrations(
       continue;
     }
     try {
-      const files = await readHashedFiles(root, path);
+      const files = await readHashedFiles(
+        root,
+        path,
+        (file) => !isRecoveryPath(file),
+      );
       if (migrationContentHash(entry.folder, files) !== entry.contentHash) {
         problem(
           "content-hash-mismatch",
@@ -151,6 +166,9 @@ export async function checkMigrations(
       }
       problem("invalid-encoding", error.message, error.file);
     }
+    recoveries.push(
+      ...(await checkRecoveries(root, entry, path, indexPath, problem)),
+    );
   }
 
   for (const [, folder] of [...onDisk].sort(([a], [b]) => a - b)) {
@@ -162,6 +180,113 @@ export async function checkMigrations(
     );
   }
   return { migrations, problems };
+}
+
+/**
+ * A migration's Recoveries: the index's entries against the folders under
+ * `<migration>/recoveries/`, their content hashes and their chain (which
+ * starts from the migration's chain hash). Problems go to `problem`.
+ */
+async function checkRecoveries(
+  root: string,
+  entry: IndexEntry,
+  migrationPath: string,
+  indexPath: string,
+  problem: (code: string, message: string, path?: string) => void,
+): Promise<FinalizedRecovery[]> {
+  const display = (absolute: string) => projectRelative(root, absolute);
+  const folder = join(migrationPath, recoveriesFolderName);
+  let entries: Dirent[] = [];
+  try {
+    entries = await readdir(folder, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const onDisk = new Set<string>();
+  for (const dirent of entries) {
+    const path = display(join(folder, dirent.name));
+    if (!dirent.isDirectory()) {
+      problem(
+        "unexpected-entry",
+        `${path} does not belong in a recoveries folder`,
+        path,
+      );
+    } else if (parseRecoveryFolderName(dirent.name) === undefined) {
+      problem(
+        "invalid-folder-name",
+        `${path} is not a Recovery folder name (recovery-<number>)`,
+        path,
+      );
+    } else {
+      onDisk.add(dirent.name);
+    }
+  }
+
+  const recoveries: FinalizedRecovery[] = [];
+  let previousChain = entry.chainHash;
+  for (const [position, recovery] of (entry.recoveries ?? []).entries()) {
+    const number = position + 1;
+    if (parseRecoveryFolderName(recovery.folder) !== number) {
+      problem(
+        "index-invalid",
+        `${indexPath}: Recovery ${number} of ${entry.folder} names ${JSON.stringify(recovery.folder)}, expected recovery-${number}`,
+        indexPath,
+      );
+      return recoveries;
+    }
+    const path = join(folder, recovery.folder);
+    recoveries.push({
+      number,
+      folder: recovery.folder,
+      path,
+      ...hashes(recovery),
+    });
+    if (recovery.chainHash !== chainHash(previousChain, recovery.contentHash)) {
+      problem(
+        "chain-hash-mismatch",
+        `${indexPath}: the chain hash of ${entry.folder} Recovery ${number} does not follow from the migration and the Recoveries before it`,
+        indexPath,
+      );
+    }
+    previousChain = recovery.chainHash;
+    if (!onDisk.delete(recovery.folder)) {
+      problem(
+        "migration-missing",
+        `${display(path)} is missing`,
+        display(path),
+      );
+      continue;
+    }
+    try {
+      const files = await readHashedFiles(root, path);
+      if (
+        recoveryContentHash(entry.folder, recovery.folder, files) !==
+        recovery.contentHash
+      ) {
+        problem(
+          "content-hash-mismatch",
+          `${display(path)} was changed after it was finalized (its content hash does not match ${indexPath})`,
+          display(path),
+        );
+      }
+    } catch (error) {
+      if (!(error instanceof InvalidEncodingError)) {
+        throw error;
+      }
+      problem("invalid-encoding", error.message, error.file);
+    }
+  }
+  for (const name of [...onDisk].sort()) {
+    const path = display(join(folder, name));
+    problem(
+      "migration-unindexed",
+      `${path} is not in ${indexPath}; Recoveries are only created by finalize`,
+      path,
+    );
+  }
+  return recoveries;
 }
 
 /** The finalized migrations, or MigrationIntegrityError if the check finds anything wrong. */

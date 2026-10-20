@@ -1,6 +1,7 @@
 // `finalize`: rehearse the draft, then freeze it as the next numbered
 // migration: the draft's files, metadata and a desired-schema snapshot,
-// read-only, hashed and chained in the index.
+// read-only, hashed and chained in the index. A Recovery draft becomes its
+// migration's next Recovery (store/migrations.ts) instead.
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { pgDeltaDiffer } from "../differ/pg-delta.ts";
@@ -20,20 +21,27 @@ import {
   chainHash,
   type HashedFile,
   migrationContentHash,
+  recoveryContentHash,
 } from "../store/hashing.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
+  type IndexEntry,
+  isRecoveryPath,
   makeReadOnly,
   maxMigrationNumber,
   metadataFileName,
   migrationFolderName,
+  type RecoveryIndexEntry,
   readHashedFiles,
   readIndex,
+  recoveriesFolderName,
+  recoveryFolderName,
+  schemaChangeFileName,
   snapshotFolderName,
   writeIndex,
 } from "../store/migrations.ts";
 import { parserName, parserVersion, toolVersion } from "../version.ts";
-import { rehearseCurrentDraft } from "./rehearse.ts";
+import { type RehearsedDraft, rehearseCurrentDraft } from "./rehearse.ts";
 
 /**
  * metadata.json of a finalized migration. Deliberately no timestamps or
@@ -64,12 +72,16 @@ export interface DestructiveAcknowledgement {
 export type FinalizeOptions = DestructiveOptions;
 
 export interface FinalizeResult {
+  /** The migration's number (for a Recovery, the number of the migration it recovers). */
   readonly number: number;
   readonly name: string;
-  /** Folder name, e.g. `00001-add-customers`. */
+  /** The migration's folder name, e.g. `00001-add-customers`. */
   readonly folder: string;
-  /** Absolute path of the migration folder. */
+  /** For a Recovery draft: K, the new Recovery's number. Undefined for a migration. */
+  readonly recovery: number | undefined;
+  /** Absolute path of the new migration (or Recovery) folder. */
   readonly path: string;
+  /** The new migration's (or Recovery's) content and chain hashes. */
   readonly contentHash: string;
   readonly chainHash: string;
   readonly metadata: MigrationMetadata;
@@ -103,18 +115,11 @@ export async function finalize(
     },
   );
   const { destructive, warnings } = rehearsed.analysis;
-  const number = rehearsed.migrations.length + 1;
-  if (number > maxMigrationNumber) {
-    throw new SuperDeployError(
-      "migration-integrity",
-      `Migration numbers stop at ${maxMigrationNumber}`,
-    );
-  }
-  const folder = migrationFolderName(number, rehearsed.draft.name);
-  const path = join(paths.migrations, folder);
+  const target = await finalizedPlace(project, rehearsed);
+  const { path } = target;
   // Draft files are named by project-relative path; once finalized they are
-  // named relative to the migration folder (metadata) or by their new
-  // project-relative path (the result).
+  // named relative to the migration (or Recovery) folder (metadata) or by
+  // their new project-relative path (the result).
   const inMigration = <T extends { file: string }>(item: T): T => ({
     ...item,
     file: relative(paths.draft, join(root, item.file)).split(sep).join("/"),
@@ -140,48 +145,119 @@ export async function finalize(
         }),
   };
   const files: HashedFile[] = [
-    ...(await readHashedFiles(
-      root,
-      paths.draft,
-      (path) => path !== draftMetadataFileName,
-    )),
+    ...(await readHashedFiles(root, paths.draft, target.fromDraft)),
     ...rehearsed.desiredSchema.map((file) => ({
       path: `${snapshotFolderName}/${file.path}`,
       text: file.text,
     })),
     { path: metadataFileName, text: `${JSON.stringify(metadata, null, 2)}\n` },
   ];
-  const contentHash = migrationContentHash(folder, files);
-  const previous = rehearsed.migrations.at(-1)?.chainHash ?? "";
+  const contentHash = target.contentHash(files);
   const entry = {
-    folder,
+    folder: target.folder,
     contentHash,
-    chainHash: chainHash(previous, contentHash),
+    chainHash: chainHash(target.previousChainHash, contentHash),
   };
 
   // Written under a temporary name, then renamed, so a half-written folder
-  // never looks like a migration (validate reports a leftover one).
-  const staging = join(paths.migrations, `.finalizing-${folder}`);
+  // never looks like a migration or Recovery (validate reports a leftover one).
+  const staging = join(dirname(path), `.finalizing-${target.folder}`);
   await rm(staging, { recursive: true, force: true });
   for (const file of files) {
-    const target = join(staging, file.path);
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, file.text);
+    const written = join(staging, file.path);
+    await mkdir(dirname(written), { recursive: true });
+    await writeFile(written, file.text);
   }
   await makeReadOnly(staging);
   await rename(staging, path);
 
   const index = await readIndex(paths);
-  await writeIndex(paths, [...(index.ok ? index.entries : []), entry]);
+  await writeIndex(paths, target.indexed(index.ok ? index.entries : [], entry));
   await rm(paths.draft, { recursive: true, force: true });
 
+  const migration = rehearsed.recoveryOf;
   return {
-    number,
+    number: migration?.number ?? target.number,
     name: rehearsed.draft.name,
     path,
     metadata,
     ...entry,
+    folder: migration?.folder ?? target.folder,
+    recovery: migration === undefined ? undefined : target.number,
     destructive: destructive.map(finalized),
     warnings: warnings.map(finalized),
+  };
+}
+
+/** Where a rehearsed draft is frozen, and how it is hashed and indexed. */
+interface FinalizedPlace {
+  /** The migration's number, or K for Recovery K. */
+  readonly number: number;
+  /** `00003-add-orders`, or `recovery-1`. */
+  readonly folder: string;
+  /** Absolute path of the folder. */
+  readonly path: string;
+  /** Which draft files (relative to the draft folder) it holds. */
+  readonly fromDraft: (path: string) => boolean;
+  readonly contentHash: (files: readonly HashedFile[]) => string;
+  readonly previousChainHash: string;
+  /** index.json with the new entry added. */
+  readonly indexed: (
+    entries: readonly IndexEntry[],
+    entry: RecoveryIndexEntry,
+  ) => IndexEntry[];
+}
+
+async function finalizedPlace(
+  project: Project,
+  rehearsed: RehearsedDraft,
+): Promise<FinalizedPlace> {
+  const { paths } = project;
+  const migration = rehearsed.recoveryOf;
+  if (migration === undefined) {
+    const number = rehearsed.migrations.length + 1;
+    if (number > maxMigrationNumber) {
+      throw new SuperDeployError(
+        "migration-integrity",
+        `Migration numbers stop at ${maxMigrationNumber}`,
+      );
+    }
+    const folder = migrationFolderName(number, rehearsed.draft.name);
+    return {
+      number,
+      folder,
+      path: join(paths.migrations, folder),
+      fromDraft: (path) =>
+        path !== draftMetadataFileName && !isRecoveryPath(path),
+      contentHash: (files) => migrationContentHash(folder, files),
+      previousChainHash: rehearsed.migrations.at(-1)?.chainHash ?? "",
+      indexed: (entries, entry) => [...entries, entry],
+    };
+  }
+  // A Recovery holds the draft's scripts and seed data, never the schema
+  // change (always its migration's) or a desired-schema snapshot.
+  const number = migration.recoveries.length + 1;
+  const folder = recoveryFolderName(number);
+  const recoveries = join(migration.path, recoveriesFolderName);
+  await mkdir(recoveries, { recursive: true });
+  return {
+    number,
+    folder,
+    path: join(recoveries, folder),
+    fromDraft: (path) =>
+      path !== draftMetadataFileName && path !== schemaChangeFileName,
+    contentHash: (files) =>
+      recoveryContentHash(migration.folder, folder, files),
+    previousChainHash:
+      migration.recoveries.at(-1)?.chainHash ?? migration.chainHash,
+    indexed: (entries, entry) =>
+      entries.map((existing) =>
+        existing.folder === migration.folder
+          ? {
+              ...existing,
+              recoveries: [...(existing.recoveries ?? []), entry],
+            }
+          : existing,
+      ),
   };
 }

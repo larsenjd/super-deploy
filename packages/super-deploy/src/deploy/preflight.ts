@@ -6,7 +6,8 @@
 //   - every declared external schema exists
 //   - the deploy role is not superuser and holds none of the predefined roles
 //     that reach outside the database (a warning, never a refusal)
-//   - what the target's history schema records matches the repo
+//   - what the target's history schema records matches the repo, and the
+//     target holds no draft (deploy-draft's), which is not a migration
 // `status` runs the same checks and reports them.
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
@@ -19,7 +20,11 @@ import {
   migrationFolderName,
   snapshotFolderName,
 } from "../store/migrations.ts";
-import type { RecordedMigration } from "./history.ts";
+import {
+  type DeployedDraft,
+  type RecordedMigration,
+  readDeployedDraft,
+} from "./history.ts";
 import { lastRecordedNumber } from "./pending.ts";
 
 /** One way the target's recorded history disagrees with the repo. */
@@ -29,14 +34,21 @@ export interface HistoryMismatch {
   /**
    * `not-in-repo` (the target records a migration the repo doesn't have),
    * `not-recorded` (a gap: a later migration is recorded but this one isn't),
-   * `name`, `content-hash` or `chain-hash` (recorded differently).
+   * `name`, `content-hash` or `chain-hash` (recorded differently),
+   * `recovery` (the target ran a Recovery the repo doesn't have, or has
+   * with a different chain hash), `draft` (deploy-draft left a draft on the
+   * target; `number` is the one it would get). A draft is not a finalized
+   * migration, so the target's structure is no longer that of its recorded
+   * migrations: only `rebuild` resets it.
    */
   readonly reason:
+    | "draft"
     | "not-in-repo"
     | "not-recorded"
     | "name"
     | "content-hash"
-    | "chain-hash";
+    | "chain-hash"
+    | "recovery";
   readonly message: string;
 }
 
@@ -89,7 +101,11 @@ export async function preflightChecks(
       "SELECT nspname AS name FROM pg_catalog.pg_namespace WHERE nspname = ANY($1::text[])",
       project.config.externalSchemas,
     ),
-    historyMismatches: historyMismatches(input.migrations, input.recorded),
+    historyMismatches: historyMismatches(
+      input.migrations,
+      input.recorded,
+      await readDeployedDraft(session, project.config.historySchema),
+    ),
     warnings: await deployRoleWarnings(session, input.targetName),
   };
 }
@@ -130,11 +146,14 @@ async function deploymentRoles(
 /**
  * How the recorded history disagrees with the repo: every recorded migration
  * must be the repo's migration of that number (same name, content and chain
- * hashes), with no gaps.
+ * hashes), with no gaps; a recorded Recovery must be the repo's Recovery of
+ * that number (same chain hash), so its replica can replay it; and no draft
+ * may be deployed on top of them.
  */
 export function historyMismatches(
   migrations: readonly FinalizedMigration[],
   recorded: readonly RecordedMigration[],
+  draft: DeployedDraft | undefined,
 ): HistoryMismatch[] {
   const repo = new Map(migrations.map((m) => [m.number, m]));
   const recordedNumbers = new Set(recorded.map((r) => r.number));
@@ -176,9 +195,48 @@ export function historyMismatches(
         reason: "chain-hash",
         message: `the target records migration ${ours.folder} with chain hash ${entry.chainHash}, but the repo's is ${ours.chainHash}`,
       });
+    } else if (entry.recovery !== undefined) {
+      const k = entry.recovery;
+      const recovery = ours.recoveries[k - 1];
+      if (recovery === undefined) {
+        mismatches.push({
+          number: entry.number,
+          reason: "recovery",
+          message: `the target records migration ${ours.folder} with Recovery ${k}, which the repo doesn't have`,
+        });
+      } else if (recovery.chainHash !== entry.recoveryChainHash) {
+        mismatches.push({
+          number: entry.number,
+          reason: "recovery",
+          message: `the target records migration ${ours.folder} Recovery ${k} with chain hash ${entry.recoveryChainHash ?? "(none)"}, but the repo's is ${recovery.chainHash}`,
+        });
+      }
     }
   }
+  if (draft !== undefined) {
+    mismatches.push(draftMismatch(draft, recorded));
+  }
   return mismatches.sort((a, b) => a.number - b.number);
+}
+
+function draftMismatch(
+  draft: DeployedDraft,
+  recorded: readonly RecordedMigration[],
+): HistoryMismatch {
+  const base = recorded.find((entry) => entry.number === draft.baseMigration);
+  const where =
+    base === undefined
+      ? "before any migration"
+      : `on top of ${migrationFolderName(base.number, base.name)}`;
+  const reset =
+    draft.baseMigration === undefined
+      ? "rebuild --to N"
+      : `rebuild --to ${draft.baseMigration}`;
+  return {
+    number: (draft.baseMigration ?? 0) + 1,
+    reason: "draft",
+    message: `the target holds draft ${draft.name} (deployed by attempt #${draft.attemptId} ${where}, ${draft.seedData ? "with" : "without"} seed data), not a finalized migration: reset it with ${reset}`,
+  };
 }
 
 /** The names in `wanted` that `sql` (selecting `name` for `$1`) doesn't return, in order. */

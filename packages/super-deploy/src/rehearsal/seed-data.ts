@@ -23,11 +23,16 @@ export interface SeededUnit {
   readonly migration: ReplayUnit;
 }
 
-/** Reads a draft folder's seed data and deploy-time files. */
+/**
+ * Reads a draft (or migration, or Recovery) folder's seed data and
+ * deploy-time files; for a Recovery folder `schemaChangeFolder` is its
+ * migration's (see readReplayUnit).
+ */
 export async function readSeededUnit(
   root: string,
   folder: string,
   label: string,
+  schemaChangeFolder: string = folder,
 ): Promise<SeededUnit> {
   const absolute = join(folder, seedDataFileName);
   let seedData: ReplayUnit | undefined;
@@ -40,7 +45,7 @@ export async function readSeededUnit(
   }
   return {
     seedData,
-    migration: await readReplayUnit(root, folder, label),
+    migration: await readReplayUnit(root, folder, label, schemaChangeFolder),
   };
 }
 

@@ -13,6 +13,8 @@ import {
   deployTimeFileNames,
   exists,
   type FinalizedMigration,
+  type FinalizedRecovery,
+  schemaChangeFileName,
 } from "../store/migrations.ts";
 import { ensureRoles, pinnedSettings } from "./throwaway.ts";
 
@@ -29,15 +31,24 @@ export interface ReplayUnit {
   readonly files: readonly DeployTimeFile[];
 }
 
-/** The deploy-time SQL files a migration or draft folder holds, in the order they run. */
+/**
+ * The deploy-time SQL files a migration or draft folder holds, in the order
+ * they run. For a Recovery folder, `schemaChangeFolder` is its migration's
+ * folder: a Recovery runs its own scripts around its migration's schema
+ * change.
+ */
 export async function readReplayUnit(
   root: string,
   folder: string,
   label: string,
+  schemaChangeFolder: string = folder,
 ): Promise<ReplayUnit> {
   const files: DeployTimeFile[] = [];
   for (const name of deployTimeFileNames) {
-    const absolute = join(folder, name);
+    const absolute = join(
+      name === schemaChangeFileName ? schemaChangeFolder : folder,
+      name,
+    );
     if (await exists(absolute)) {
       const file = projectRelative(root, absolute);
       files.push({
@@ -49,14 +60,45 @@ export async function readReplayUnit(
   return { label, files };
 }
 
-/** Every finalized migration as a replay unit, in order. */
+/** e.g. `00002-require-email recovery 1`. */
+export function recoveryLabel(
+  migration: FinalizedMigration,
+  recovery: FinalizedRecovery,
+): string {
+  return `${migration.folder} ${recovery.folder.replace("-", " ")}`;
+}
+
+/** A finalized Recovery's deploy-time files: its scripts around its migration's schema change. */
+export function readRecoveryUnit(
+  root: string,
+  migration: FinalizedMigration,
+  recovery: FinalizedRecovery,
+): Promise<ReplayUnit> {
+  return readReplayUnit(
+    root,
+    recovery.path,
+    recoveryLabel(migration, recovery),
+    migration.path,
+  );
+}
+
+/**
+ * Every finalized migration as a replay unit, in order, each as its NEWEST
+ * variant (its newest Recovery, else the original). Structure is the same
+ * whichever variant runs, so rehearsals of the draft replay these.
+ */
 export async function readMigrationUnits(
   root: string,
   migrations: readonly FinalizedMigration[],
 ): Promise<ReplayUnit[]> {
   const units: ReplayUnit[] = [];
   for (const migration of migrations) {
-    units.push(await readReplayUnit(root, migration.path, migration.folder));
+    const newest = migration.recoveries.at(-1);
+    units.push(
+      newest === undefined
+        ? await readReplayUnit(root, migration.path, migration.folder)
+        : await readRecoveryUnit(root, migration, newest),
+    );
   }
   return units;
 }
