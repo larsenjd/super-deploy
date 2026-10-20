@@ -159,8 +159,10 @@ export interface MigrationToApply {
   readonly name: string;
   readonly contentHash: string;
   readonly chainHash: string;
-  /** Undefined for the original scripts, K for Recovery K (ticket 17). */
+  /** Undefined for the original scripts, K for Recovery K. */
   readonly recovery: number | undefined;
+  /** Recovery K's chain hash, recorded with it; undefined for the original. */
+  readonly recoveryChainHash?: string | undefined;
   /** Its deploy-time files, in the order they run. */
   readonly unit: ReplayUnit;
 }
@@ -221,6 +223,7 @@ export async function applyMigrations(
         contentHash: migration.contentHash,
         chainHash: migration.chainHash,
         recovery: migration.recovery,
+        recoveryChainHash: migration.recoveryChainHash,
         attemptId: options.attemptId,
         recordedHow: "deployed",
       });

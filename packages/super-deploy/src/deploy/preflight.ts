@@ -29,14 +29,17 @@ export interface HistoryMismatch {
   /**
    * `not-in-repo` (the target records a migration the repo doesn't have),
    * `not-recorded` (a gap: a later migration is recorded but this one isn't),
-   * `name`, `content-hash` or `chain-hash` (recorded differently).
+   * `name`, `content-hash` or `chain-hash` (recorded differently),
+   * `recovery` (the target ran a Recovery the repo doesn't have, or has
+   * with a different chain hash).
    */
   readonly reason:
     | "not-in-repo"
     | "not-recorded"
     | "name"
     | "content-hash"
-    | "chain-hash";
+    | "chain-hash"
+    | "recovery";
   readonly message: string;
 }
 
@@ -130,7 +133,8 @@ async function deploymentRoles(
 /**
  * How the recorded history disagrees with the repo: every recorded migration
  * must be the repo's migration of that number (same name, content and chain
- * hashes), with no gaps.
+ * hashes), with no gaps, and a recorded Recovery must be the repo's Recovery
+ * of that number (same chain hash), so its replica can replay it.
  */
 export function historyMismatches(
   migrations: readonly FinalizedMigration[],
@@ -176,6 +180,22 @@ export function historyMismatches(
         reason: "chain-hash",
         message: `the target records migration ${ours.folder} with chain hash ${entry.chainHash}, but the repo's is ${ours.chainHash}`,
       });
+    } else if (entry.recovery !== undefined) {
+      const k = entry.recovery;
+      const recovery = ours.recoveries[k - 1];
+      if (recovery === undefined) {
+        mismatches.push({
+          number: entry.number,
+          reason: "recovery",
+          message: `the target records migration ${ours.folder} with Recovery ${k}, which the repo doesn't have`,
+        });
+      } else if (recovery.chainHash !== entry.recoveryChainHash) {
+        mismatches.push({
+          number: entry.number,
+          reason: "recovery",
+          message: `the target records migration ${ours.folder} Recovery ${k} with chain hash ${entry.recoveryChainHash ?? "(none)"}, but the repo's is ${recovery.chainHash}`,
+        });
+      }
     }
   }
   return mismatches.sort((a, b) => a.number - b.number);

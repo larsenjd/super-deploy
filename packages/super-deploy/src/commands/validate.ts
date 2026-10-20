@@ -1,7 +1,9 @@
 // `validate [--strict]`: database-free checks for the pre-commit hook.
 // Errors: the migrations index, folder names and numbering, content hashes
-// and the hash chain; rule violations in the desired schema, in every
-// finalized migration's deploy-time files and seed data, and in the draft's.
+// and the hash chains (migrations and their Recoveries); rule violations in
+// the desired schema, in every finalized migration's and Recovery's
+// deploy-time files and seed data, and in the draft's; a Recovery draft
+// whose schema change is no longer its migration's.
 // Warnings: an unfinalized draft, and desired-schema
 // changes not yet drafted. `strict` turns warnings into failures.
 //
@@ -9,9 +11,10 @@
 // finalized files. A writable file whose migration still verifies is made
 // read-only again and listed in `readOnlyRestored`; integrity itself rests
 // on the hashes, which catch any edit.
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import {
   InvalidEncodingError,
+  RecoverySchemaChangeEditedError,
   type RuleViolation,
   SqlRuleViolationError,
   ValidationFailedError,
@@ -28,16 +31,18 @@ import {
   readDesiredSchema,
   readDesiredSchemaFiles,
 } from "../store/desired-schema.ts";
-import { readDraft } from "../store/draft.ts";
+import { type DraftMetadata, readDraft } from "../store/draft.ts";
 import { desiredSchemaHash } from "../store/hashing.ts";
 import { checkMigrations, type IntegrityReport } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
   makeReadOnly,
+  schemaChangeFileName,
   snapshotFolderName,
   writableFiles,
 } from "../store/migrations.ts";
 import { analyseReplayUnit } from "./check-rules.ts";
+import { requireOriginalSchemaChange } from "./rehearse.ts";
 
 export interface ValidateOptions {
   /** Fail on warnings too (the pre-commit hook uses this). */
@@ -47,6 +52,8 @@ export interface ValidateOptions {
 export interface ValidationReport {
   /** How many finalized migrations were checked. */
   readonly migrations: number;
+  /** How many finalized Recoveries (of all migrations) were checked. */
+  readonly recoveries: number;
   /** Warnings found (a passing report never has errors). */
   readonly problems: readonly ValidationProblem[];
   /** Project-relative paths of finalized files that were writable and were made read-only again. */
@@ -73,24 +80,35 @@ export async function validate(
   };
 
   const draft = await readDraft(paths);
+  // A Recovery draft (of migration N) never covers desired-schema changes.
+  const recoveryOf =
+    draft?.recoveryOf === undefined
+      ? undefined
+      : integrity.migrations[draft.recoveryOf - 1];
   if (draft !== undefined) {
     warn(
       "unfinalized-draft",
-      `Draft ${draft.name} is not finalized yet`,
+      `Draft ${draft.name}${draft.recoveryOf === undefined ? "" : ` (a Recovery of migration ${recoveryOf?.folder ?? draft.recoveryOf})`} is not finalized yet`,
       display(paths.draft),
     );
   }
+  if (draft?.recoveryOf !== undefined) {
+    problems.push(
+      ...(await recoveryDraftProblems(project, draft.recoveryOf, integrity)),
+    );
+  }
+  const covering = draft?.recoveryOf === undefined ? draft : undefined;
   try {
     const current = desiredSchemaHash(
       await readDesiredSchemaFiles(root, paths.desiredSchema),
     );
     const newest = integrity.migrations.at(-1);
     const where = display(paths.desiredSchema);
-    if (draft !== undefined) {
-      if (draft.desiredSchemaHash !== current) {
+    if (covering !== undefined) {
+      if (covering.desiredSchemaHash !== current) {
         warn(
           "undrafted-changes",
-          `The desired schema has changed since draft ${draft.name} was generated; run draft again`,
+          `The desired schema has changed since draft ${covering.name} was generated; run draft again`,
           where,
         );
       }
@@ -129,13 +147,14 @@ export async function validate(
     });
   }
 
-  const rules = await ruleProblems(project, draft?.name, integrity);
+  const rules = await ruleProblems(project, draft, integrity);
   problems.push(...rules.problems);
 
   if (problems.some((p) => p.severity === "error" || strict)) {
     throw new ValidationFailedError(problems, strict);
   }
 
+  // Recoveries live inside their migration's folder, so this covers them.
   const readOnlyRestored: string[] = [];
   for (const migration of integrity.migrations) {
     const writable = await writableFiles(migration.path);
@@ -150,21 +169,62 @@ export async function validate(
   }
   return {
     migrations: integrity.migrations.length,
+    recoveries: integrity.migrations.reduce(
+      (count, migration) => count + migration.recoveries.length,
+      0,
+    ),
     problems,
     readOnlyRestored,
     overrides: rules.overrides,
   };
 }
 
+/** A Recovery draft must recover an existing migration and keep its schema change. */
+async function recoveryDraftProblems(
+  project: Project,
+  number: number,
+  integrity: IntegrityReport,
+): Promise<ValidationProblem[]> {
+  const migration = integrity.migrations[number - 1];
+  const path = projectRelative(project.root, project.paths.draftMetadata);
+  if (migration === undefined) {
+    return [
+      {
+        severity: "error",
+        code: "unknown-migration",
+        message: `${path} recovers migration ${number}, which the project doesn't have`,
+        path,
+      },
+    ];
+  }
+  try {
+    await requireOriginalSchemaChange(project, migration);
+    return [];
+  } catch (error) {
+    if (!(error instanceof RecoverySchemaChangeEditedError)) {
+      throw error;
+    }
+    return [
+      {
+        severity: "error",
+        code: error.code,
+        message: error.message,
+        path: error.file,
+      },
+    ];
+  }
+}
+
 /**
  * Rule violations as errors, and the overrides accepted: every finalized
- * migration's deploy-time files and seed data (only when the migrations
- * verify, so the files are the ones finalized), the desired schema, and the
- * draft's files.
+ * migration's and Recovery's deploy-time files and seed data (only when the
+ * migrations verify, so the files are the ones finalized), the desired
+ * schema, and the draft's files. A Recovery runs its migration's schema
+ * change, which is checked (and its overrides listed) with the migration.
  */
 async function ruleProblems(
   project: Project,
-  draftName: string | undefined,
+  draft: DraftMetadata | undefined,
   integrity: IntegrityReport,
 ): Promise<{ problems: ValidationProblem[]; overrides: Override[] }> {
   const { root, paths, config } = project;
@@ -175,28 +235,53 @@ async function ruleProblems(
     managedSchema: config.managedSchema,
     externalSchemas: config.externalSchemas,
   };
-  const collect = (analysis: {
-    violations: readonly RuleViolation[];
-    overrides: readonly Override[];
-  }) => {
-    violations.push(...analysis.violations);
-    overrides.push(...analysis.overrides);
+  const collect = (
+    analysis: {
+      violations: readonly RuleViolation[];
+      overrides: readonly Override[];
+    },
+    include: (file: string) => boolean = () => true,
+  ) => {
+    violations.push(...analysis.violations.filter(({ file }) => include(file)));
+    overrides.push(...analysis.overrides.filter(({ file }) => include(file)));
   };
+  const notSchemaChange = (file: string) =>
+    posix.basename(file) !== schemaChangeFileName;
   try {
     const snapshot = (path: string) =>
       readDesiredSchema(root, join(path, snapshotFolderName));
     let previous: SqlFile[] = [];
+    // The snapshots on either side of each migration, for a Recovery draft.
+    const around = new Map<number, { before: SqlFile[]; after: SqlFile[] }>();
     if (integrity.problems.length === 0) {
       for (const migration of integrity.migrations) {
         const own = await snapshot(migration.path);
+        const context = { ...rules, schemas: [previous, own] };
         collect(
           await analyseReplayUnit(
             seededFiles(
               await readSeededUnit(root, migration.path, migration.folder),
             ),
-            { ...rules, schemas: [previous, own] },
+            context,
           ),
         );
+        for (const recovery of migration.recoveries) {
+          collect(
+            await analyseReplayUnit(
+              seededFiles(
+                await readSeededUnit(
+                  root,
+                  recovery.path,
+                  `${migration.folder} ${recovery.folder}`,
+                  migration.path,
+                ),
+              ),
+              context,
+            ),
+            notSchemaChange,
+          );
+        }
+        around.set(migration.number, { before: previous, after: own });
         previous = own;
       }
     }
@@ -212,15 +297,31 @@ async function ruleProblems(
       }
       violations.push(...error.violations);
     }
-    if (draftName !== undefined) {
+    if (draft !== undefined && draft.recoveryOf === undefined) {
       collect(
         await analyseReplayUnit(
           seededFiles(
-            await readSeededUnit(root, paths.draft, `draft ${draftName}`),
+            await readSeededUnit(root, paths.draft, `draft ${draft.name}`),
           ),
           { ...rules, schemas: [previous, desired] },
         ),
       );
+    } else if (draft?.recoveryOf !== undefined) {
+      // Checked against its migration's snapshots. Its copy of the schema
+      // change is the migration's (checked with it) unless edited, which
+      // recoveryDraftProblems reports.
+      const sides = around.get(draft.recoveryOf);
+      if (sides !== undefined) {
+        collect(
+          await analyseReplayUnit(
+            seededFiles(
+              await readSeededUnit(root, paths.draft, `draft ${draft.name}`),
+            ),
+            { ...rules, schemas: [sides.before, sides.after] },
+          ),
+          notSchemaChange,
+        );
+      }
     }
   } catch (error) {
     if (!(error instanceof InvalidEncodingError)) {

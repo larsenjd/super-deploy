@@ -25,8 +25,12 @@ import {
   targetDatabaseRequest,
 } from "../deploy/target.ts";
 import type { Project } from "../project.ts";
-import { readMigrationUnits } from "../rehearsal/replay.ts";
-import { replicaUnits, withReplica } from "../rehearsal/replica.ts";
+import {
+  newestVariant,
+  readMigrationsWithUnits,
+  replicaUnits,
+  withReplica,
+} from "../rehearsal/replica.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { type DriftedObject, driftBetween } from "../verification/drift.ts";
 import type { DeployedMigration } from "./deploy.ts";
@@ -67,11 +71,7 @@ export async function status(
   const { root, paths, config } = project;
   const target = resolveTarget(project, options.target);
   const migrations = await verifiedMigrations(root, paths);
-  const units = await readMigrationUnits(root, migrations);
-  const withUnits = migrations.map((migration, index) => ({
-    ...migration,
-    unit: units[index] ?? { label: migration.folder, files: [] },
-  }));
+  const withUnits = await readMigrationsWithUnits(root, migrations);
   const session = await connectTarget(target);
   try {
     const schema = config.historySchema;
@@ -85,7 +85,7 @@ export async function status(
       targetName: target.name,
       migrations,
       recorded,
-      pending: pending.map((migration) => migration.unit),
+      pending: pending.map((migration) => newestVariant(migration).unit),
     });
     const drift =
       preflight.historyMismatches.length > 0
