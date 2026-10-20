@@ -103,7 +103,8 @@ export interface SettledAttempt {
  * ones (the COMMIT's result was lost) and `running` ones whose command went
  * away without ending them (a crash, a forced exit). Only once the attempt's
  * server process is gone, so its transaction is over: then the migrations
- * rows written inside that transaction say whether it committed. With rows it
+ * rows (or, for deploy-draft, the deployed_draft row) written inside that
+ * transaction say whether it committed. With rows it
  * succeeded; without, an `unknown` attempt failed and a `running` one was
  * abandoned. A server process id reused by a newer backend counts as gone.
  * Runs on any session to the target, in autocommit; the history schema must
@@ -115,6 +116,7 @@ export async function settleAttempts(
 ): Promise<SettledAttempt[]> {
   const attempts = historyTable(historySchema, "attempts");
   const migrations = historyTable(historySchema, "migrations");
+  const deployedDraft = historyTable(historySchema, "deployed_draft");
   const { rows } = await session.query<{
     id: string;
     outcome: SettledAttempt["outcome"];
@@ -122,7 +124,8 @@ export async function settleAttempts(
     `WITH settled AS (
        SELECT a.id,
               CASE
-                WHEN EXISTS (SELECT 1 FROM ${migrations} m WHERE m.attempt_id = a.id) THEN 'succeeded'
+                WHEN EXISTS (SELECT 1 FROM ${migrations} m WHERE m.attempt_id = a.id)
+                  OR EXISTS (SELECT 1 FROM ${deployedDraft} d WHERE d.attempt_id = a.id) THEN 'succeeded'
                 WHEN a.outcome = 'unknown' THEN 'failed'
                 ELSE 'abandoned'
               END AS outcome
@@ -140,8 +143,8 @@ export async function settleAttempts(
             error = concat_ws('; ',
               coalesce(a.error, CASE WHEN a.outcome = 'running' THEN 'The command ended without recording an outcome' END),
               CASE settled.outcome
-                WHEN 'succeeded' THEN 'settled as succeeded: its migrations are recorded'
-                ELSE 'settled as ' || settled.outcome || ': none of its migrations are recorded'
+                WHEN 'succeeded' THEN 'settled as succeeded: ' || CASE WHEN a.command = 'deploy-draft' THEN 'its draft is' ELSE 'its migrations are' END || ' recorded'
+                ELSE 'settled as ' || settled.outcome || ': ' || CASE WHEN a.command = 'deploy-draft' THEN 'its draft is not' ELSE 'none of its migrations are' END || ' recorded'
               END)
        FROM settled
       WHERE a.id = settled.id AND a.outcome IN ('unknown', 'running')

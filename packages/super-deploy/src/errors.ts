@@ -38,7 +38,11 @@ export type ErrorCode =
   | "unknown-recorded-migration"
   | "nothing-to-mark"
   | "history-mismatch"
-  | "mark-mismatch";
+  | "mark-mismatch"
+  | "target-not-disposable"
+  | "target-behind"
+  | "unknown-migration"
+  | "wipe-failed";
 
 export class SuperDeployError extends Error {
   readonly code: ErrorCode;
@@ -571,6 +575,83 @@ export class NotConfirmedError extends SuperDeployError {
 }
 
 /**
+ * deploy-draft or rebuild was refused because the target's own history
+ * schema doesn't flag it as disposable (`disposable --set yes`). Nothing was
+ * asked or changed.
+ */
+export class TargetNotDisposableError extends SuperDeployError {
+  readonly command: GuardedCommand;
+  readonly target: string;
+
+  constructor(command: GuardedCommand, target: string) {
+    super(
+      "target-not-disposable",
+      `${command} only runs on disposable targets, and target ${target} is not disposable (flag it with disposable --target ${target} --set yes if it is safe to wipe): nothing changed`,
+    );
+    this.command = command;
+    this.target = target;
+  }
+}
+
+/**
+ * deploy-draft was refused because the target has pending migrations: the
+ * draft's schema change was generated on top of the newest migration, so
+ * the target must be there first. Nothing was asked or changed.
+ */
+export class TargetBehindError extends SuperDeployError {
+  readonly target: string;
+  /** The pending migrations' folder names, in order. */
+  readonly pending: readonly string[];
+
+  constructor(target: string, pending: readonly string[]) {
+    super(
+      "target-behind",
+      `Target ${target} has pending migrations (${pending.join(", ")}): deploy them first, because the draft goes on top of the newest migration`,
+    );
+    this.target = target;
+    this.pending = pending;
+  }
+}
+
+/**
+ * rebuild dropped everything it knows how to drop in the managed schema, but
+ * objects are left (e.g. members of an extension that lives elsewhere). The
+ * transaction rolled back: nothing changed.
+ */
+export class WipeFailedError extends SuperDeployError {
+  readonly target: string;
+  readonly schema: string;
+  /** PostgreSQL's descriptions of what is left, e.g. `function public.f(integer)`. */
+  readonly objects: readonly string[];
+
+  constructor(target: string, schema: string, objects: readonly string[]) {
+    super(
+      "wipe-failed",
+      `Could not wipe schema ${schema} on target ${target}: it still holds ${objects.join(", ")}; drop them by hand, then run rebuild again (nothing changed)`,
+    );
+    this.target = target;
+    this.schema = schema;
+    this.objects = objects;
+  }
+}
+
+/** A command was given a migration number the repo has no finalized migration for. */
+export class UnknownMigrationError extends SuperDeployError {
+  readonly number: number;
+  /** The repo's newest migration number; undefined when there is none. */
+  readonly newest: number | undefined;
+
+  constructor(number: number, newest: number | undefined) {
+    super(
+      "unknown-migration",
+      `There is no finalized migration ${number}${newest === undefined ? " (there are none yet)" : ` (the newest is ${newest})`}`,
+    );
+    this.number = number;
+    this.newest = newest;
+  }
+}
+
+/**
  * The target's recorded migrations or disposable flag changed between showing
  * them and taking the lock. Nothing changed; run the command again.
  */
@@ -581,7 +662,7 @@ export class TargetChangedError extends SuperDeployError {
   constructor(command: GuardedCommand, target: string) {
     super(
       "target-changed",
-      `Target ${target} changed while ${command} waited for YES (its recorded migrations or disposable flag): nothing changed; run ${command} again to see the new details`,
+      `Target ${target} changed while ${command} waited for YES (its recorded migrations, deployed draft or disposable flag): nothing changed; run ${command} again to see the new details`,
     );
     this.command = command;
     this.target = target;

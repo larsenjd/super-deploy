@@ -4,12 +4,14 @@
 // define it here and append it to `commands`.
 import { join } from "node:path";
 import { deploy } from "../commands/deploy.ts";
+import { deployDraft } from "../commands/deploy-draft.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
 import { disposable } from "../commands/disposable.ts";
 import { draft } from "../commands/draft.ts";
 import { finalize } from "../commands/finalize.ts";
 import { init } from "../commands/init.ts";
 import { mark } from "../commands/mark.ts";
+import { rebuild } from "../commands/rebuild.ts";
 import { rehearse } from "../commands/rehearse.ts";
 import { restoreSchema } from "../commands/restore-schema.ts";
 import { status } from "../commands/status.ts";
@@ -28,6 +30,7 @@ import type { Project } from "../project.ts";
 import type { Confirm, OverwriteOptions, Question } from "../questions.ts";
 import type { LockWarning, Override } from "../sql-analysis/index.ts";
 import { readDraft } from "../store/draft.ts";
+import { parseMigrationFolderName, readIndex } from "../store/migrations.ts";
 
 export type CommandGroup =
   | "Start"
@@ -641,6 +644,67 @@ const disposableCommand: CommandDefinition = {
   },
 };
 
+const deployDraftCommand: CommandDefinition = {
+  name: "deploy-draft",
+  group: "Disposable",
+  summary:
+    "Try the unfinalized draft on a disposable target, in one transaction; asks you to type YES",
+  options: [
+    targetOption,
+    {
+      name: "with-seed",
+      kind: "flag",
+      description:
+        "Load the draft's seed data first (it may clash with data already on the target)",
+    },
+  ],
+  async run(project, values, context) {
+    const result = await deployDraft(project, {
+      target: String(values.target),
+      withSeed: values["with-seed"] === true,
+    });
+    context.result(
+      `Deployed draft ${result.name} to ${result.target} on top of ${result.baseMigration ?? "no recorded migration"}, ${result.seedData ? "with" : "without"} seed data`,
+    );
+  },
+};
+
+/** The finalized migrations in index.json, for the menu's migration question. */
+async function indexedMigrations(project: Project): Promise<MigrationChoice[]> {
+  const index = await readIndex(project.paths);
+  return index.ok
+    ? index.entries.flatMap(
+        (entry) => parseMigrationFolderName(entry.folder) ?? [],
+      )
+    : [];
+}
+
+const rebuildCommand: CommandDefinition = {
+  name: "rebuild",
+  group: "Disposable",
+  summary:
+    "Wipe a disposable target and replay migrations 1 to N, without seed data; asks you to type YES",
+  options: [
+    targetOption,
+    {
+      name: "to",
+      kind: "migration",
+      description: "The last migration to replay",
+      required: true,
+      migrations: indexedMigrations,
+    },
+  ],
+  async run(project, values, context) {
+    const result = await rebuild(project, {
+      target: String(values.target),
+      to: Number(values.to),
+    });
+    context.result(
+      `Rebuilt ${result.target} with ${plural(result.deployed.length, "migration")}: ${result.deployed.map((m) => m.folder).join(", ")}`,
+    );
+  },
+};
+
 function describeAttempt(attempt: AttemptRecord): string {
   const range =
     attempt.fromMigration === undefined
@@ -679,4 +743,6 @@ export const commands: readonly CommandDefinition[] = [
   statusCommand,
   markCommand,
   disposableCommand,
+  deployDraftCommand,
+  rebuildCommand,
 ];

@@ -2,14 +2,18 @@
 // no lock. It writes only to settle attempts whose outcome was never recorded
 // (`settleAttempts`: a lost COMMIT, a command that died); a target without a
 // history schema is not written to and simply has every migration pending. It
-// reports the deploy pre-flight's findings, and drift: the target's managed
+// reports the deploy pre-flight's findings (including a draft deploy-draft
+// left on the target, a history mismatch), and drift: the target's managed
 // schema compared with a replica of its recorded migrations, built on a
-// throwaway database matching its locale (the CLI exits 1 on drift).
+// throwaway database matching its locale (the CLI exits 1 on drift). Drift is
+// not checked while the history mismatches, a deployed draft included.
 import { settleAttempts } from "../deploy/attempts.ts";
 import {
   type AttemptRecord,
+  type DeployedDraft,
   historySchemaExists,
   type RecordedMigration,
+  readDeployedDraft,
   readRecentAttempts,
   readRecordedMigrations,
   readTargetSettings,
@@ -49,6 +53,12 @@ export interface StatusReport {
   /** The newest attempts first. */
   readonly attempts: readonly AttemptRecord[];
   readonly disposable: boolean;
+  /**
+   * The draft deploy-draft left on the target, if any: the target's structure
+   * is then no longer that of its recorded migrations, and a deployment
+   * refuses (it is also one of `preflight.historyMismatches`) until rebuild.
+   */
+  readonly draft: DeployedDraft | undefined;
   /** What the deploy pre-flight finds now; a deployment would refuse on anything but warnings. */
   readonly preflight: PreflightFindings;
   /**
@@ -114,6 +124,7 @@ export async function status(
         options.attempts ?? 10,
       ),
       disposable: (await readTargetSettings(session, schema)).disposable,
+      draft: await readDeployedDraft(session, schema),
       preflight,
       drift,
     };

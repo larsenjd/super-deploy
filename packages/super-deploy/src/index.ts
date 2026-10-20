@@ -1,7 +1,7 @@
 // The programmatic API. Every command is an exported function taking a loaded
 // project, with flags as options, questions as callbacks, and typed errors.
 //
-// Guarded commands (`disposable`, `mark`; later `deploy-draft`, `rebuild`)
+// Guarded commands (`disposable`, `mark`, `deploy-draft`, `rebuild`)
 // are the exception: they stay terminal-only. They take no answer callback;
 // they ask the person at this process's own terminal to type YES, and throw
 // TerminalRequiredError in CI or without a terminal on stdin and stdout.
@@ -28,6 +28,11 @@ export {
   deploy,
 } from "./commands/deploy.ts";
 export {
+  type DeployDraftOptions,
+  type DeployDraftResult,
+  deployDraft,
+} from "./commands/deploy-draft.ts";
+export {
   type DiscardDraftOptions,
   type DiscardDraftResult,
   discardDraft,
@@ -51,6 +56,11 @@ export {
 } from "./commands/finalize.ts";
 export { type InitOptions, type InitResult, init } from "./commands/init.ts";
 export { type MarkOptions, type MarkResult, mark } from "./commands/mark.ts";
+export {
+  type RebuildOptions,
+  type RebuildResult,
+  rebuild,
+} from "./commands/rebuild.ts";
 export { type RehearseResult, rehearse } from "./commands/rehearse.ts";
 export {
   type RestoreSchemaOptions,
@@ -83,6 +93,7 @@ export {
 export type {
   AttemptOutcome,
   AttemptRecord,
+  DeployedDraft,
   RecordedMigration,
 } from "./deploy/history.ts";
 export type {
@@ -122,15 +133,19 @@ export {
   SqlFileFailedError,
   SqlRuleViolationError,
   SuperDeployError,
+  TargetBehindError,
   TargetChangedError,
   TargetLockedError,
+  TargetNotDisposableError,
   TerminalRequiredError,
+  UnknownMigrationError,
   UnknownRecordedMigrationError,
   UnknownTargetError,
   UnsupportedServerError,
   ValidationFailedError,
   type ValidationProblem,
   type ValidationSeverity,
+  WipeFailedError,
 } from "./errors.ts";
 export {
   type LoadProjectOptions,

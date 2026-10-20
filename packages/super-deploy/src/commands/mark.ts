@@ -57,7 +57,12 @@ export async function mark(
     async check(view, session) {
       // After the guard's terminal check, so CI is refused first.
       const migrations = await readMarkableMigrations(project);
-      const next = nextToMark(view.target.name, migrations, view.recorded);
+      const next = nextToMark(
+        view.target.name,
+        migrations,
+        view.recorded,
+        view.draft,
+      );
       await requireReplicaMatch(project, view.target, session, {
         migrations,
         recorded: view.recorded,
