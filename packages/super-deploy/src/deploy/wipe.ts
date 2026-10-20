@@ -11,11 +11,15 @@
 //
 // The drops cover every kind of object a schema can hold. Afterwards the
 // schema's dependents in pg_depend (what DROP SCHEMA would have dropped) and
-// any grant the deploy role couldn't revoke must be gone; anything left
-// refuses the rebuild with WipeFailedError.
+// every other grant must be gone; anything left refuses the rebuild with
+// WipeFailedError. A grant is left when the deploy role can't revoke it:
+// PostgreSQL revokes only what the revoking role (or, for a superuser or a
+// member of the owner, the owner) granted, so a grant the owner made on a
+// schema the deploy role doesn't own stays.
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
-import { WipeFailedError } from "../errors.ts";
+import { type UnrevokedGrant, WipeFailedError } from "../errors.ts";
+import { schemaSetupRoles } from "../verification/schema-setup.ts";
 import { quoteIdentifier } from "./history.ts";
 
 /** Drops every object in `schema` (creating the schema if the target lacks it). */
@@ -53,16 +57,19 @@ export async function wipeManagedSchema(
        FROM pg_catalog.pg_depend
       WHERE refclassid = 'pg_catalog.pg_namespace'::regclass AND refobjid = $1
         AND classid <> 'pg_catalog.pg_default_acl'::regclass
-     UNION ALL
-     SELECT object FROM (${grantsLeft}) grants
       ORDER BY 1`,
-    [namespace, schema === "public"],
+    [namespace],
   );
-  if (left.rows.length > 0) {
+  const grants = await session.query<UnrevokedGrant>(grantsLeft, [
+    namespace,
+    schema === "public",
+  ]);
+  if (left.rows.length > 0 || grants.rows.length > 0) {
     throw new WipeFailedError(
       target.name,
       schema,
       left.rows.map((row) => row.object),
+      grants.rows,
     );
   }
 }
@@ -164,24 +171,24 @@ SELECT statement FROM (
 ORDER BY step, name COLLATE "C", statement COLLATE "C"`;
 
 // The schema's grants to anyone but its owner and the deploy role, $1 the
-// schema's oid. `grantsLeft` also takes $2: whether PUBLIC's USAGE is the
-// default (schema public).
+// schema's oid, with the grantee's name as REVOKE writes it. `grantsLeft`
+// also takes $2: whether PUBLIC's USAGE is the default (schema public).
 const otherGrants = `
-  SELECT e.grantee, e.grantor, e.privilege_type, n.nspname
+  SELECT e.grantee, e.grantor, e.privilege_type, n.nspname, n.nspowner,
+         CASE e.grantee WHEN 0 THEN 'PUBLIC' ELSE quote_ident(pg_catalog.pg_get_userbyid(e.grantee)) END AS grantee_name
     FROM pg_catalog.pg_namespace n,
          pg_catalog.aclexplode(COALESCE(n.nspacl, pg_catalog.acldefault('n', n.nspowner))) e
-   WHERE n.oid = $1 AND e.grantee <> n.nspowner
-     AND e.grantee <> (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)`;
+   WHERE n.oid = $1 AND e.grantee NOT IN (${schemaSetupRoles("n.nspowner")})`;
 
 const revokeStatements = `
-SELECT DISTINCT format('REVOKE ALL ON SCHEMA %I FROM %s CASCADE', nspname,
-         CASE grantee WHEN 0 THEN 'PUBLIC' ELSE quote_ident(pg_catalog.pg_get_userbyid(grantee)) END) AS statement
+SELECT DISTINCT format('REVOKE ALL ON SCHEMA %I FROM %s CASCADE', nspname, grantee_name) AS statement
   FROM (${otherGrants}) g
  ORDER BY 1`;
 
 const grantsLeft = `
-SELECT format('grant of %s on schema %I to %s by %s', privilege_type, nspname,
-         CASE grantee WHEN 0 THEN 'PUBLIC' ELSE quote_ident(pg_catalog.pg_get_userbyid(grantee)) END,
-         quote_ident(pg_catalog.pg_get_userbyid(grantor))) AS object
+SELECT privilege_type AS privilege, grantee_name AS grantee,
+       quote_ident(pg_catalog.pg_get_userbyid(grantor)) AS grantor,
+       grantor = nspowner AS "byOwner"
   FROM (${otherGrants}) g
- WHERE NOT (grantee = 0 AND privilege_type = 'USAGE' AND $2::boolean)`;
+ WHERE NOT (grantee = 0 AND privilege_type = 'USAGE' AND $2::boolean)
+ ORDER BY grantee_name, privilege_type, grantor`;

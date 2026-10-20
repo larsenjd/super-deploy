@@ -712,26 +712,65 @@ export class RecoveryBaseMismatchError extends SuperDeployError {
   }
 }
 
+/** A grant on the managed schema that rebuild's deploy role couldn't revoke. */
+export interface UnrevokedGrant {
+  /** E.g. `USAGE`. */
+  readonly privilege: string;
+  /** The role it is granted to (quoted if need be), or `PUBLIC`. */
+  readonly grantee: string;
+  /** The role that granted it (quoted if need be). */
+  readonly grantor: string;
+  /** Whether the grantor is the schema's owner. */
+  readonly byOwner: boolean;
+}
+
 /**
  * rebuild dropped everything it knows how to drop in the managed schema, but
- * objects are left (e.g. members of an extension that lives elsewhere). The
- * transaction rolled back: nothing changed.
+ * objects are left (e.g. members of an extension that lives elsewhere), or
+ * grants on the schema that only their grantor can revoke (e.g. the owner's,
+ * when the deploy role doesn't own the schema). The transaction rolled back:
+ * nothing changed.
  */
 export class WipeFailedError extends SuperDeployError {
   readonly target: string;
   readonly schema: string;
   /** PostgreSQL's descriptions of what is left, e.g. `function public.f(integer)`. */
   readonly objects: readonly string[];
+  /** The grants on the schema left, which the deploy role can't revoke. */
+  readonly grants: readonly UnrevokedGrant[];
 
-  constructor(target: string, schema: string, objects: readonly string[]) {
+  constructor(
+    target: string,
+    schema: string,
+    objects: readonly string[],
+    grants: readonly UnrevokedGrant[] = [],
+  ) {
+    const left = [
+      ...(objects.length > 0
+        ? [`it still holds ${objects.join(", ")}; drop them by hand`]
+        : []),
+      ...(grants.length > 0
+        ? [
+            `the deploy role can't revoke ${grants.map(unrevokedGrant).join(", ")}; revoke them as their grantor`,
+          ]
+        : []),
+    ];
     super(
       "wipe-failed",
-      `Could not wipe schema ${schema} on target ${target}: it still holds ${objects.join(", ")}; drop them by hand, then run rebuild again (nothing changed)`,
+      `Could not wipe schema ${schema} on target ${target}: ${left.join("; ")}, then run rebuild again (nothing changed)`,
     );
     this.target = target;
     this.schema = schema;
     this.objects = objects;
+    this.grants = grants;
   }
+}
+
+function unrevokedGrant(grant: UnrevokedGrant): string {
+  const who = grant.byOwner
+    ? `${grant.grantor}, the schema's owner: only the owner`
+    : `${grant.grantor}: only ${grant.grantor}`;
+  return `${grant.privilege} to ${grant.grantee} (granted by ${who} or a superuser can revoke it)`;
 }
 
 /** A command was given a migration number the repo has no finalized migration for. */

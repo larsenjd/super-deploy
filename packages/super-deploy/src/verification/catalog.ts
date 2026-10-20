@@ -18,6 +18,7 @@
 // (ADR-0004) compares them; rehearsals don't.
 import type { Session } from "../adapters/types.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
+import { schemaSetupRoles } from "./schema-setup.ts";
 
 const describe = (classTable: string, oid: string, sub = "0") =>
   `pg_describe_object('${classTable}'::regclass, ${oid}, ${sub})`;
@@ -36,26 +37,25 @@ const privileges = (acl: string, owner: string) => `array(
 
 /**
  * The managed schema's own ACL, written like `privileges` but with the
- * session's role (the deploy role on a target) counted as the owner too: a
- * target's schema may belong to an administrator who granted the deploy role
- * its privileges (with grant option, so it can grant USAGE), while a
- * rehearsal's belongs to the rehearsal login. Those privileges are target
- * setup; every other grant on the schema is the desired schema's (stories
- * 98-99), so on a target it is drift. A target that doesn't have the schema
+ * session's role (the deploy role on a target) counted as the owner too
+ * (schema-setup.ts): a rehearsal's schema belongs to the rehearsal login.
+ * Every other grant on the schema is the desired schema's (stories 98-99),
+ * so on a target it is drift. A target that doesn't have the schema
  * yet reads as the schema its first deployment creates.
  */
 const schemaAcl = `
     select 'schema ' || quote_ident($1), 'schema ' || $1 || ' ' || array(
-      select distinct case when e.grantee = 0 then 'public' when e.grantee in (s.owner, me.oid) then '<owner>' else quote_ident(pg_get_userbyid(e.grantee)) end
+      select distinct case when e.grantee = 0 then 'public' when e.grantee = any(setup.roles) then '<owner>' else quote_ident(pg_get_userbyid(e.grantee)) end
         || ':' || e.privilege_type
-        || case when e.is_grantable and e.grantee not in (s.owner, me.oid) then '*' else '' end
-        || '/' || case when e.grantor in (s.owner, me.oid) then '<owner>' else quote_ident(pg_get_userbyid(e.grantor)) end
+        || case when e.is_grantable and e.grantee <> all(setup.roles) then '*' else '' end
+        || '/' || case when e.grantor = any(setup.roles) then '<owner>' else quote_ident(pg_get_userbyid(e.grantor)) end
       from aclexplode(s.acl) e order by 1)::text
     from (select oid from pg_roles where rolname = current_user) me,
       lateral (select coalesce(
           (select coalesce(n.nspacl, acldefault('n'::"char", n.nspowner)) from pg_namespace n where n.nspname = $1),
           acldefault('n'::"char", me.oid)) as acl,
-        coalesce((select n.nspowner from pg_namespace n where n.nspname = $1), me.oid) as owner) s`;
+        coalesce((select n.nspowner from pg_namespace n where n.nspname = $1), me.oid) as owner) s,
+      lateral (select array(${schemaSetupRoles("s.owner")}) as roles) setup`;
 
 /** Each query selects `object` and `line`; `$1` is the managed schema. */
 const queries: Readonly<Record<string, string>> = {

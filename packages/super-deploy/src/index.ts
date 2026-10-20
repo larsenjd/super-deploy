@@ -159,6 +159,7 @@ export {
   UnknownMigrationError,
   UnknownRecordedMigrationError,
   UnknownTargetError,
+  type UnrevokedGrant,
   type UnsupportedObject,
   UnsupportedServerError,
   ValidationFailedError,

@@ -3,11 +3,12 @@
 // aren't disposable before asking, show what they are about to do, and go
 // ahead only once YES is typed. Their API refusal in CI is in
 // deploy-draft-rebuild.test.ts.
+import { randomBytes } from "node:crypto";
 import { userInfo } from "node:os";
 import { deploy, draft, finalize, loadProject, recovery } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
-import { deployConfig } from "../support/deploy.ts";
+import { deployConfig, targetDatabaseName } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject, type TestProject } from "../support/project.ts";
 import { keys, spawnTerminal } from "../support/terminal.ts";
@@ -693,6 +694,87 @@ unix("rebuild", () => {
       [],
       database,
     );
+  });
+
+  test("rolls back when the schema's owner granted it to other roles, which the deploy role can't revoke, naming each grant and why", async () => {
+    const suffix = randomBytes(4).toString("hex");
+    const [owner, deployer, reader] = ["owner", "deployer", "reader"].map(
+      (role) => `rebuild_${role}_${suffix}`,
+    );
+    const database = targetDatabaseName();
+    await server.query(`create role ${owner} nologin`);
+    await server.query(`create role ${deployer} login password 'deployer'`);
+    await server.query(`create role ${reader} nologin`);
+    await server.query(`create database ${database}`);
+    // An administrator's setup: app belongs to its owner, who lets the
+    // deploy role create objects there and grant USAGE.
+    await server.query(
+      `create schema app authorization ${owner};
+       grant usage, create on schema app to ${deployer} with grant option;
+       grant create on database ${database} to ${deployer}`,
+      [],
+      database,
+    );
+    const { config } = deployConfig(server, {
+      database,
+      settings: 'managedSchema: "app",',
+      preamble: `import { postgresTarget } from "super-deploy";
+const asDeployer = {
+  async connect() {
+    const url = new URL(await postgres.connectionString(${JSON.stringify(database)}));
+    url.username = ${JSON.stringify(deployer)};
+    url.password = "deployer";
+    return postgresTarget({ connectionString: url.href }).connect();
+  },
+};`,
+      adapter: "asDeployer",
+    });
+    const dir = await createTestProject({
+      config,
+      files: { "data-model/desired-schema/customers.sql": customers("") },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await draft(project, { name: "add customers" });
+      await finalize(project);
+      await deploy(project, { target: "dev" });
+    } finally {
+      await project.close();
+    }
+    for (const sql of [
+      "insert into app.customers (id, name) values (1, 'Ada')",
+      "update deployment_history.settings set disposable = true",
+      // Later the owner gives a reader USAGE itself (a superuser grants as
+      // the owner).
+      `grant usage on schema app to ${reader}`,
+    ]) {
+      await server.query(sql, [], database);
+    }
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor("Type YES");
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor("then run rebuild again (nothing changed)");
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen.replace(/\s+/g, " ")).toContain(
+      `Error: Could not wipe schema app on target dev: the deploy role can't revoke USAGE to ${reader} (granted by ${owner}, the schema's owner: only the owner or a superuser can revoke it); revoke them as their grantor, then run rebuild again (nothing changed)`,
+    );
+    expect(
+      await server.query("select id, name from app.customers", [], database),
+    ).toEqual([{ id: "1", name: "Ada" }]);
+    expect(
+      await server.query(
+        "select command, outcome from deployment_history.attempts order by id",
+        [],
+        database,
+      ),
+    ).toEqual([
+      { command: "deploy", outcome: "succeeded" },
+      { command: "rebuild", outcome: "failed" },
+    ]);
   });
 
   test("refuses, without asking, a target that isn't disposable or a migration the repo doesn't have", async () => {
