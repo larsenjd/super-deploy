@@ -2,13 +2,18 @@
 // the desired schema. The desired schema is loaded into one throwaway
 // database and read back from the catalogs (ADR-0003); the starting point is
 // built in another; the differ compares the two.
+import { posix } from "node:path";
 import { pgDeltaDiffer } from "../differ/pg-delta.ts";
 import type { PlannedStatement } from "../differ/types.ts";
 import { DraftNameRequiredError } from "../errors.ts";
 import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { checkOrderIndependence } from "../rehearsal/order-independence.ts";
-import { readMigrationUnits, replay } from "../rehearsal/replay.ts";
+import {
+  readMigrationUnits,
+  readReplayUnit,
+  replay,
+} from "../rehearsal/replay.ts";
 import {
   draftDatabaseRequest,
   ensureManagedSchema,
@@ -21,6 +26,12 @@ import { readDraft, writeDraft } from "../store/draft.ts";
 import { normaliseDraftName } from "../store/draft-name.ts";
 import { desiredSchemaHash } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
+import { schemaChangeFileName } from "../store/migrations.ts";
+import {
+  type MigrationRuleContext,
+  newestSnapshot,
+  refuseRuleViolations,
+} from "./check-rules.ts";
 
 export interface DraftOptions {
   /**
@@ -64,10 +75,26 @@ export async function draft(
       externalSchemas: config.externalSchemas,
     },
   );
-  const migrations = await readMigrationUnits(
-    project.root,
-    await verifiedMigrations(project.root, paths),
-  );
+  const finalized = await verifiedMigrations(project.root, paths);
+  const migrations = await readMigrationUnits(project.root, finalized);
+  const rules: MigrationRuleContext = {
+    managedSchema: config.managedSchema,
+    schemas: [await newestSnapshot(project.root, finalized), statements],
+  };
+  // The draft's hand-written scripts are checked before anything runs them;
+  // the schema change is regenerated below and checked once written.
+  if (existing !== undefined) {
+    const scripts = await readReplayUnit(project.root, paths.draft, name);
+    await refuseRuleViolations(
+      {
+        ...scripts,
+        files: scripts.files.filter(
+          ({ file }) => posix.basename(file) !== schemaChangeFileName,
+        ),
+      },
+      rules,
+    );
+  }
 
   const planned = await withThrowawayDatabase(
     config.rehearsal,
@@ -105,6 +132,12 @@ export async function draft(
     paths,
     { name, desiredSchemaHash: desiredSchemaHash(files) },
     renderSchemaChange(planned),
+  );
+  // Generated SQL obeys the same rules as hand-written SQL, so a differ bug
+  // cannot bypass them. The schema change stays on disk for review.
+  await refuseRuleViolations(
+    await readReplayUnit(project.root, paths.draft, name),
+    rules,
   );
   return {
     name,

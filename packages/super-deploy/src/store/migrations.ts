@@ -19,6 +19,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import type { DeployTimeKind } from "../sql-analysis/deploy-time.ts";
 import { maxDraftNameLength } from "./draft-name.ts";
 import { decodeHashedText, type HashedFile } from "./hashing.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";
@@ -33,6 +34,14 @@ export const snapshotFolderName = "desired-schema";
  * adds the pre- and post-migration scripts around the schema change.
  */
 export const deployTimeFileNames: readonly string[] = [schemaChangeFileName];
+
+/**
+ * The rule set (file kind) each deploy-time file is checked against. Tickets
+ * 07 and 15 add the pre-/post-migration scripts and seed data here.
+ */
+export const deployTimeFileKinds: Readonly<Record<string, DeployTimeKind>> = {
+  [schemaChangeFileName]: "schema-change",
+};
 
 export const maxMigrationNumber = 99_999;
 
