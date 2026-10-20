@@ -550,6 +550,54 @@ unix("rebuild", () => {
     );
   });
 
+  test("replays and records each migration's newest variant: Recovery 1 of migration 2, without its seed data", async () => {
+    const { dir, database } = await recoveryDraftProject({ deployed: true });
+    await dir.write(
+      "data-model/draft/post-migration.sql",
+      "insert into customers (id, name, city) values (9, 'Recovered', 'Here');\n",
+    );
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await finalize(project);
+    } finally {
+      await project.close();
+    }
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "2"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor("Type YES");
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor(
+      "Rebuilt dev with 2 migrations: 00001-add-customers, 00002-require-city",
+    );
+    expect(await terminal.exited).toBe(0);
+
+    // Recovery 1's post-migration script ran; its seed data (Cy) did not load.
+    expect(
+      await server.query(
+        "select id, name, city from customers order by id",
+        [],
+        database,
+      ),
+    ).toEqual([{ id: "9", name: "Recovered", city: "Here" }]);
+    expect(
+      await server.query(
+        "select number, recovery, recovery_chain_hash is not null as chained from deployment_history.migrations order by number",
+        [],
+        database,
+      ),
+    ).toEqual([
+      { number: 1, recovery: null, chained: false },
+      { number: 2, recovery: 1, chained: true },
+    ]);
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).not.toContain("Deploy would refuse");
+  });
+
   test("resets a target holding a deployed draft, so it deploys again", async () => {
     const { dir, database } = await deployedProject();
     await requireCityDraft(dir);
