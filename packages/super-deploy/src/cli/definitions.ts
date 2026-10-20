@@ -22,6 +22,7 @@ import {
 } from "../errors.ts";
 import type { Project } from "../project.ts";
 import type { OverwriteOptions, Question } from "../questions.ts";
+import type { Override } from "../sql-analysis/index.ts";
 import { readDraft } from "../store/draft.ts";
 
 export type CommandGroup =
@@ -252,6 +253,9 @@ const finalizeCommand: CommandDefinition = {
     context.result(
       `Finalized migration ${result.folder} in ${context.displayPath(result.path)}`,
     );
+    for (const override of result.metadata.overrides) {
+      context.result(describeOverride(override, result.path, context));
+    }
   },
 };
 
@@ -275,6 +279,9 @@ const validateCommand: CommandDefinition = {
         strict: values.strict === true,
       });
       result.problems.forEach(report);
+      for (const override of result.overrides) {
+        context.result(describeOverride(override, project.root, context));
+      }
       if (result.readOnlyRestored.length > 0) {
         context.warn(
           `Made ${plural(result.readOnlyRestored.length, "finalized file")} read-only again`,
@@ -531,6 +538,16 @@ function describeAttempt(attempt: AttemptRecord): string {
         : ` migrations ${attempt.fromMigration}-${attempt.toMigration}`;
   const error = attempt.error === undefined ? "" : `: ${attempt.error}`;
   return `#${attempt.id} ${attempt.command} ${attempt.outcome}${range} by ${attempt.osUser} at ${attempt.startedAt.toISOString()}${error}`;
+}
+
+/** `override: <file>:<line>: <object> [<rules>]: <reason>`; `file` is relative to `base`. */
+function describeOverride(
+  override: Override,
+  base: string,
+  context: CommandContext,
+): string {
+  const file = context.displayPath(join(base, override.file));
+  return `override: ${file}:${override.line}: ${override.object} [${override.rules.join(", ")}]: ${override.reason}`;
 }
 
 function plural(count: number, noun: string): string {

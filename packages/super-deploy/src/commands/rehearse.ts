@@ -10,7 +10,7 @@ import {
   seededFiles,
   seededUnits,
 } from "../rehearsal/seed-data.ts";
-import { analyseDesiredSchema } from "../sql-analysis/index.ts";
+import { analyseDesiredSchema, type Override } from "../sql-analysis/index.ts";
 import { asSqlFiles, readDesiredSchemaFiles } from "../store/desired-schema.ts";
 import { type DraftMetadata, readDraft } from "../store/draft.ts";
 import type { HashedFile } from "../store/hashing.ts";
@@ -42,6 +42,8 @@ export interface RehearsedDraft {
   /** The desired schema that was rehearsed, relative to the desired-schema folder. */
   readonly desiredSchema: readonly HashedFile[];
   readonly serverVersion: string;
+  /** The override markers accepted in the draft's deploy-time files. */
+  readonly overrides: readonly Override[];
 }
 
 /** Shared by `rehearse` and `finalize`. */
@@ -67,11 +69,12 @@ export async function rehearseCurrentDraft(
   // The draft's seed data loads just before its pre-migration script; the
   // finalized migrations' seed data is never loaded.
   const seeded = await readSeededUnit(root, paths.draft, `draft ${draft.name}`);
-  await refuseRuleViolations(seededFiles(seeded), {
+  const { overrides } = await refuseRuleViolations(seededFiles(seeded), {
     managedSchema: project.config.managedSchema,
+    externalSchemas: project.config.externalSchemas,
     schemas: [await newestSnapshot(root, migrations), statements],
   });
   units.push(...seededUnits(seeded));
   const { serverVersion } = await rehearseDraft(project, statements, units);
-  return { draft, migrations, desiredSchema, serverVersion };
+  return { draft, migrations, desiredSchema, serverVersion, overrides };
 }
