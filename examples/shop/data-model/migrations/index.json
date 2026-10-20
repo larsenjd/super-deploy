@@ -26,6 +26,11 @@
           "chainHash": "6e5f1729a808b9f11446506fdbde3892a54e8fc893a3957ecd8dfee9c8062831"
         }
       ]
+    },
+    {
+      "folder": "00005-add-loyalty-accounts",
+      "contentHash": "f38a86fcd079fedd1afb886cae12ed4a301b455c0b20f2ae74c0ec0d495629dd",
+      "chainHash": "86284fdb6d0a68eb3a3c4d5c00982b045267d8ecbd95b6022a01056636cc21ac"
     }
   ]
 }
