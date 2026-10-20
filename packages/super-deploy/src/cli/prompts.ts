@@ -120,12 +120,13 @@ export async function pickCommand(
 
 /**
  * Asks for each of the command's options in order. Resolves to the values,
- * or `undefined` if a question was cancelled (nothing should run).
+ * or `undefined` if a question was cancelled (nothing should run). `project`
+ * is undefined for commands that need none (their options never use it).
  */
 export async function askOptions(
   io: PromptIo,
   command: CommandDefinition,
-  project: Project,
+  project: Project | undefined,
 ): Promise<OptionValues | undefined> {
   const values: Record<string, string | boolean> = {};
   for (const option of command.options) {
@@ -145,12 +146,12 @@ const cancelled = Symbol("cancelled");
 async function askOption(
   io: PromptIo,
   option: OptionDefinition,
-  project: Project,
+  project: Project | undefined,
 ): Promise<string | boolean | undefined | typeof cancelled> {
   const message = option.description;
   switch (option.kind) {
     case "target": {
-      const names = Object.keys(project.config.targets);
+      const names = Object.keys(needed(project, option).config.targets);
       if (names.length === 0) {
         throw new RefusedError("super-deploy.config.ts has no targets");
       }
@@ -163,9 +164,9 @@ async function askOption(
       );
     }
     case "migration": {
-      const migrations = [...(await option.migrations(project))].sort(
-        (a, b) => b.number - a.number,
-      );
+      const migrations = [
+        ...(await option.migrations(needed(project, option))),
+      ].sort((a, b) => b.number - a.number);
       if (migrations.length === 0) {
         throw new RefusedError("There are no migrations to choose from");
       }
@@ -208,6 +209,17 @@ async function askOption(
   }
 }
 
+/** Options of commands without a project must not need one (see DirectoryCommandDefinition). */
+function needed(
+  project: Project | undefined,
+  option: OptionDefinition,
+): Project {
+  if (project === undefined) {
+    throw new Error(`Option --${option.name} needs a project`);
+  }
+  return project;
+}
+
 function answered<T>(answer: T): Exclude<T, symbol> | typeof cancelled {
   return isCancel(answer) ? cancelled : (answer as Exclude<T, symbol>);
 }
@@ -216,9 +228,12 @@ function answered<T>(answer: T): Exclude<T, symbol> | typeof cancelled {
 async function askName(
   io: PromptIo,
   option: NameOption,
-  project: Project,
+  project: Project | undefined,
 ): Promise<string | undefined | typeof cancelled> {
-  const initial = (await option.initial?.(project)) ?? "";
+  const initial =
+    (option.initial === undefined
+      ? undefined
+      : await option.initial(needed(project, option))) ?? "";
   const preview = (input: string): string => {
     if (input.trim() === "") {
       return styleText(

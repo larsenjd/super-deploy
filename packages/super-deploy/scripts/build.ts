@@ -5,13 +5,11 @@ import { spawnSync } from "node:child_process";
 import { cpSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join } from "node:path";
+import { isTemplateContent } from "../src/store/template.ts";
 
 const packageDir = join(import.meta.dirname, "..");
 const distDir = join(packageDir, "dist");
 const templateDir = join(packageDir, "..", "template");
-
-/** Paths inside the template package that are workspace artefacts, not template content. */
-const excludedNames = new Set(["node_modules", "dist", ".super-deploy"]);
 
 rmSync(distDir, { recursive: true, force: true });
 
@@ -31,8 +29,5 @@ if (tsc.status !== 0) {
 
 cpSync(templateDir, join(distDir, "template"), {
   recursive: true,
-  filter: (source) => {
-    const name = basename(source);
-    return !excludedNames.has(name) && !name.endsWith(".tsbuildinfo");
-  },
+  filter: (source) => isTemplateContent(basename(source)),
 });

@@ -12,7 +12,7 @@
     "format:file": "biome format --write --no-errors-on-unmatched",
     "lint": "biome check",
     "typecheck": "tsc --noEmit",
-    "precommit": "biome check && tsc --noEmit"
+    "precommit": "biome check && tsc --noEmit && super-deploy validate --strict"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
