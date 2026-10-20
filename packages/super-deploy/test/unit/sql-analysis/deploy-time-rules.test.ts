@@ -304,6 +304,16 @@ const hazardFixtures: readonly Fixture[] = [
     "denylisted-call",
   ),
   refused(
+    "2.5",
+    call("set_config('search_path', 'app', true)"),
+    "denylisted-call",
+  ),
+  refused(
+    "2.5",
+    call("set_config('lock_timeout', '0', is_local => true)"),
+    "denylisted-call",
+  ),
+  refused(
     "2.6",
     "set session_replication_role = replica",
     "escapes-transaction",

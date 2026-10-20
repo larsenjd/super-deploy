@@ -2,9 +2,12 @@
 // deploy transaction (not undone by a rollback, or outliving it), from
 // research/transactional-hazards.md §2. Shared by the desired-schema rules
 // (including PL/pgSQL bodies) and the deploy-time rules (ticket 06).
+// set_config is refused in every form: even with is_local it overrides the
+// session settings pinned for the rest of the deployment (spec "Session
+// settings are pinned identically"), as SET LOCAL would.
 // Volatile built-ins such as now() and gen_random_uuid() stay allowed.
 import type { RuleFinding } from "./rule-types.ts";
-import { type Json, list, stringList, unwrap, walk } from "./syntax-tree.ts";
+import { type Json, stringList, unwrap, walk } from "./syntax-tree.ts";
 
 const sequences = "changes a sequence outside the transaction";
 const advisory = "takes or releases a session-level advisory lock";
@@ -13,7 +16,8 @@ const remote = "runs work in another session that a rollback cannot undo";
 const files = "reads or writes server files or large objects";
 const admin = "signals or administers the server";
 const replication = "changes replication state outside the transaction";
-const settings = "changes a setting for the rest of the session";
+const settings =
+  "changes a setting, even with is_local, that deployments pin for every migration";
 const sleep = "holds every lock of the deployment while it sleeps";
 const snapshot = "exports a snapshot other sessions can use";
 const statistics =
@@ -56,6 +60,7 @@ const byName: ReadonlyMap<string, string> = new Map([
   ["pg_backup_stop", admin],
   ["pg_log_standby_snapshot", admin],
   ["pg_import_system_collations", admin],
+  ["set_config", settings],
   ["pg_sleep", sleep],
   ["pg_sleep_for", sleep],
   ["pg_sleep_until", sleep],
@@ -83,16 +88,10 @@ const byPrefix: readonly (readonly [string, string])[] = [
 ];
 
 /**
- * Why a call to the built-in `name` escapes the transaction, or undefined if
- * it doesn't. `isLocal` is set_config's third argument when it is a literal.
+ * Why a call to the built-in `name` escapes the transaction or the pinned
+ * session settings, or undefined if it doesn't.
  */
-export function denylistReason(
-  name: string,
-  isLocal?: boolean,
-): string | undefined {
-  if (name === "set_config") {
-    return isLocal === true ? undefined : settings;
-  }
+export function denylistReason(name: string): string | undefined {
   return (
     byName.get(name) ??
     byPrefix.find(([prefix]) => name.startsWith(prefix))?.[1]
@@ -132,17 +131,16 @@ export function denylistedCall(
   ) {
     return undefined;
   }
-  const third = unwrap(list(call.args)[2], "A_Const");
-  const isLocal =
-    third === undefined
-      ? undefined
-      : unwrap(third, "boolval")?.boolval === true;
-  const reason = denylistReason(name, isLocal);
+  const reason = denylistReason(name);
+  const consequence =
+    reason === settings
+      ? ""
+      : ", which a failed deployment's rollback cannot undo";
   return reason === undefined
     ? undefined
     : {
         rule: "denylisted-call",
-        message: `${name}() is not allowed: it ${reason}, which a failed deployment's rollback cannot undo`,
+        message: `${name}() is not allowed: it ${reason}${consequence}`,
         ...(line === undefined ? {} : { line }),
       };
 }
