@@ -3,7 +3,7 @@
 // research/transactional-hazards.md §2. Shared by the desired-schema rules
 // (including PL/pgSQL bodies) and the deploy-time rules (ticket 06).
 // Volatile built-ins such as now() and gen_random_uuid() stay allowed.
-import type { RuleFinding } from "./desired-schema-rules.ts";
+import type { RuleFinding } from "./rule-types.ts";
 import { list, stringList, unwrap, walk } from "./syntax-tree.ts";
 
 const sequences = "changes a sequence outside the transaction";

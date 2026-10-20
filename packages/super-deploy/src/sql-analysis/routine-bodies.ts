@@ -13,8 +13,8 @@
 // the WASM module (checkRules always parses the file first).
 import { parsePlPgSQLSync, parseSync } from "libpg-query";
 import { denylistFindings } from "./denylist.ts";
-import type { RuleContext, RuleFinding } from "./desired-schema-rules.ts";
 import type { ParsedStatement } from "./parse.ts";
+import type { RuleContext, RuleFinding } from "./rule-types.ts";
 import { referencedSchemas, referenceFindings } from "./schemas.ts";
 import {
   defElemString,

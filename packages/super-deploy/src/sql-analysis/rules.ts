@@ -6,13 +6,12 @@
 import type { RuleViolation } from "../errors.ts";
 import {
   desiredSchemaFindings,
-  type RuleContext,
-  type RuleFinding,
   statementName,
 } from "./desired-schema-rules.ts";
 import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
+import type { RuleContext, RuleFinding } from "./rule-types.ts";
 
-export type { RuleContext } from "./desired-schema-rules.ts";
+export type { RuleContext, RuleFinding } from "./rule-types.ts";
 
 export type FileKind =
   | "desired-schema"

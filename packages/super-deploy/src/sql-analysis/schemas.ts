@@ -3,8 +3,9 @@
 // schemas. Statements that bind references at CREATE and name an external
 // schema pass these rules but fail in rehearsal, which explains why (see
 // externalSchemasBoundAtCreate).
-import type { RuleContext, RuleFinding } from "./desired-schema-rules.ts";
+
 import type { ParsedStatement } from "./parse.ts";
+import type { RuleContext, RuleFinding } from "./rule-types.ts";
 import {
   isObject,
   type Json,
