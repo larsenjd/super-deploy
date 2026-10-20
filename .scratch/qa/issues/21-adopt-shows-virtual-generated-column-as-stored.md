@@ -1,6 +1,6 @@
 # 21: Adoption shows a VIRTUAL generated column as STORED and refuses it for the wrong reason
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** adopt
@@ -73,10 +73,20 @@ Adoption reads the target's virtual generated columns in the managed schema from
 - The existing `unsupported-object` rule's message for virtual generated columns: reuse its text.
 
 **Acceptance criteria:**
-- [ ] At the API seam, adopting a database with `v text generated always as (upper(first)) virtual` refuses with `AdoptUnsupportedError`, whose entries include that column with the virtual-column reason.
-- [ ] No entry for that column says STORED or cites the desired-schema statement rule.
-- [ ] A STORED generated column still adopts (once issue 20 is fixed).
+- [x] At the API seam, adopting a database with `v text generated always as (upper(first)) virtual` refuses with `AdoptUnsupportedError`, whose entries include that column with the virtual-column reason.
+- [x] No entry for that column says STORED or cites the desired-schema statement rule.
+- [x] A STORED generated column still adopts (once issue 20 is fixed).
 
 **Out of scope:**
 - Supporting virtual generated columns.
 - Folding split `ADD COLUMN` statements into `CREATE TABLE` (issue 20).
+
+### Resolved, 2026-10-20 (f7bd5d6)
+
+- `verification/catalog.ts`: `isVirtualGeneratedColumn` picks out the `column` facts with `generated=v`. Adoption already reads these facts from the target.
+- `adopt` lists each virtual column as `column v of table people` with the rule `unsupported-object` and the rules' own virtual-column reason (`virtualGeneratedColumnFinding`). These entries sit alongside the `other` catalog objects. Because the list is refused before the reproduction check runs, no `not-reproduced` entry appears for the column.
+- The reason now lives in one place, `refusedObjects.virtualGeneratedColumns`, used by both the desired-schema rule and adoption.
+- Tests (API seam, `adopt.test.ts`): adopting the reproduction table is refused with exactly one entry, the column with the virtual reason, and nothing is written. Without the fix, the same test got `not-reproduced: ... generated=v` vs `generated=s`. The existing STORED test still adopts.
+- Not done:
+  - If the same table is also refused for something else (e.g. `with (fillfactor = 70)`), that table's entry is the first line of the generated `CREATE TABLE`, and that line still shows the column as `STORED`. The column's own entry is correct.
+  - An inheritance child or partition of a table with a virtual column gets its own entry for the inherited column. Those tables are refused anyway.
