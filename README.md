@@ -10,7 +10,7 @@ A pnpm workspace (Node 24, ESM only, strict TypeScript built with plain `tsc`):
 
 - `packages/super-deploy`: the library and the `super-deploy` CLI. Its build bundles the template into `dist/template`.
 - `packages/template`: the project that `super-deploy init` copies.
-- `examples/shop`: an example project.
+- `examples/shop`: an example project with a realistic migration history; its README walks through it.
 
 Open `super-deploy.code-workspace` in VS Code for per-package settings.
 

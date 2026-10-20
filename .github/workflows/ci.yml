@@ -32,3 +32,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+
+      # The example's own precommit: validate --strict, then rehearse its whole
+      # migration history on a throwaway PostgreSQL 18 database.
+      - run: pnpm --filter super-deploy-example-shop precommit

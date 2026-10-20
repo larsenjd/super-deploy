@@ -1,5 +1,9 @@
 create table customers (
   id bigint primary key,
-  name text not null,
+  full_name text not null,
+  -- Stored in lower case, so each address belongs to one customer whatever
+  -- case it was typed in.
   email text not null
+    constraint customers_email_key unique
+    constraint customers_email_lower_case check (email = lower(email))
 );

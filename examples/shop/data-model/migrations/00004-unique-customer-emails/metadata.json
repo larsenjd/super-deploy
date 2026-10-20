@@ -1,0 +1,18 @@
+{
+  "tool": {
+    "name": "super-deploy",
+    "version": "0.0.0"
+  },
+  "differ": {
+    "name": "@supabase/pg-delta",
+    "version": "1.0.0-alpha.59 (engine 0.3.0)"
+  },
+  "parser": {
+    "name": "libpg-query",
+    "version": "18.1.5"
+  },
+  "rehearsalServer": {
+    "version": "18.4"
+  },
+  "overrides": []
+}

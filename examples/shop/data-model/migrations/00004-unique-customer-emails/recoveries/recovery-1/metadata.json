@@ -1,0 +1,30 @@
+{
+  "tool": {
+    "name": "super-deploy",
+    "version": "0.0.0"
+  },
+  "differ": {
+    "name": "@supabase/pg-delta",
+    "version": "1.0.0-alpha.59 (engine 0.3.0)"
+  },
+  "parser": {
+    "name": "libpg-query",
+    "version": "18.1.5"
+  },
+  "rehearsalServer": {
+    "version": "18.4"
+  },
+  "overrides": [],
+  "destructive": {
+    "acknowledged": true,
+    "statements": [
+      {
+        "file": "pre-migration.sql",
+        "line": 24,
+        "statement": "delete from customers c\n  using duplicate_customers d\n  where c.id = d.id",
+        "kind": "delete",
+        "message": "DELETE FROM customers deletes rows"
+      }
+    ]
+  }
+}
