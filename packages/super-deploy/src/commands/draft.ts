@@ -1,8 +1,8 @@
 // `draft`: generate the draft's schema change from the newest migration to
 // the desired schema. The desired schema is loaded into one throwaway
 // database and read back from the catalogs (ADR-0003); the starting point is
-// built in another (the finalized migrations replayed, then the draft's
-// pre-migration script); the differ compares the two.
+// built in another (the finalized migrations replayed, then the draft's seed
+// data and pre-migration script); the differ compares the two.
 import { posix } from "node:path";
 import { pgDeltaDiffer } from "../differ/pg-delta.ts";
 import type { PlannedStatement } from "../differ/types.ts";
@@ -11,7 +11,6 @@ import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { checkOrderIndependence } from "../rehearsal/order-independence.ts";
 import {
-  type ReplayUnit,
   readMigrationUnits,
   readReplayUnit,
   replay,
@@ -20,6 +19,11 @@ import {
   type ScriptCoverage,
   scriptCoverage,
 } from "../rehearsal/script-coverage.ts";
+import {
+  readSeededUnit,
+  seededFiles,
+  seededUnits,
+} from "../rehearsal/seed-data.ts";
 import {
   draftDatabaseRequest,
   ensureManagedSchema,
@@ -101,24 +105,31 @@ export async function draft(
     externalSchemas: config.externalSchemas,
     schemas: [await newestSnapshot(project.root, finalized), statements],
   };
-  // The draft's hand-written scripts are checked before anything runs them;
-  // the schema change is regenerated below and checked once written.
-  const draftUnit = await readReplayUnit(project.root, paths.draft, name);
-  const scripts: ReplayUnit = {
-    ...draftUnit,
-    files: draftUnit.files.filter(
-      ({ file }) => posix.basename(file) !== schemaChangeFileName,
-    ),
-  };
-  await refuseRuleViolations(scripts, rules);
+  // The draft's seed data and hand-written scripts are checked before
+  // anything runs them; the schema change is regenerated below and checked
+  // once written.
+  const seeded = await readSeededUnit(project.root, paths.draft, name);
+  const handWritten = seededFiles(seeded);
+  await refuseRuleViolations(
+    {
+      ...handWritten,
+      files: handWritten.files.filter(
+        ({ file }) => posix.basename(file) !== schemaChangeFileName,
+      ),
+    },
+    rules,
+  );
   // What runs before the schema change on the diff's starting point: the
-  // pre-migration script (ticket 15 puts the draft's seed data first).
-  const beforeSchemaChange: ReplayUnit = {
-    ...scripts,
-    files: scripts.files.filter(
-      ({ file }) => posix.basename(file) === preMigrationFileName,
-    ),
-  };
+  // draft's seed data, then its pre-migration script.
+  const beforeSchemaChange = seededUnits({
+    ...seeded,
+    migration: {
+      ...seeded.migration,
+      files: seeded.migration.files.filter(
+        ({ file }) => posix.basename(file) === preMigrationFileName,
+      ),
+    },
+  });
 
   const { planned, toCover } = await withThrowawayDatabase(
     config.rehearsal,
@@ -142,12 +153,13 @@ export async function draft(
         draftDatabaseRequest,
         async (source) => {
           // The starting point: every finalized migration, then the draft's
-          // pre-migration script, in one transaction as a deployment runs
-          // them. Renames and backfills done there are not regenerated.
+          // seed data and pre-migration script, in one transaction as a
+          // deployment runs them. Renames and backfills done there are not
+          // regenerated, and what to cover counts the seeded rows.
           await ensureManagedSchema(source, config.managedSchema);
           await replay(
             source,
-            [...migrations, beforeSchemaChange],
+            [...migrations, ...beforeSchemaChange],
             config.managedSchema,
           );
           const statements = await pgDeltaDiffer.diff(source, desired);
