@@ -30,11 +30,9 @@ describe("desired-schema rules", () => {
   });
 
   test.each([
-    ["create view v as select 1 as x", "CREATE VIEW"],
-    ["create index t_a_idx on t (a)", "CREATE INDEX"],
+    ["update t set a = 1", "UPDATE"],
     ["insert into t (a) values (1)", "INSERT"],
     ["drop table t", "DROP"],
-    ["create type mood as enum ('happy')", "CREATE TYPE ... AS ENUM"],
     ["begin", "Transaction control"],
   ])("refuse %j", async (sql, name) => {
     const violations = await checkRules(file(`${sql};`), "desired-schema");
@@ -53,13 +51,13 @@ describe("desired-schema rules", () => {
   test("report each refused statement's own line, past comments and multi-byte text", async () => {
     const violations = await checkRules(
       file(
-        "create table t (a text default 'ünïcödé');\n\n-- a comment\n/* block */ create view v as select a from t;\ncreate table u (b int);\n\n  insert into t (a)\n  values ('x');\n",
+        "create table t (a text default 'ünïcödé');\n\n-- a comment\n/* block */ drop view v;\ncreate table u (b int);\n\n  insert into t (a)\n  values ('x');\n",
       ),
       "desired-schema",
     );
 
     expect(violations.map((v) => [v.line, v.statement])).toEqual([
-      [4, "create view v as select a from t"],
+      [4, "drop view v"],
       [7, "insert into t (a)\n  values ('x')"],
     ]);
   });

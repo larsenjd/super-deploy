@@ -98,8 +98,8 @@ describe("draft", () => {
       config: embeddedConfig(server),
       files: {
         "data-model/desired-schema/customers.sql": customers,
-        "data-model/desired-schema/views/active.sql":
-          "-- Active customers\n\ncreate view active_customers as select id from customers;\n",
+        "data-model/desired-schema/types/status.sql":
+          "-- Customer status\n\ncreate type status as enum ('active');\n",
       },
     });
     const project = await loadProject({ cwd: dir.root });
@@ -112,15 +112,16 @@ describe("draft", () => {
     expect(error).toBeInstanceOf(SqlRuleViolationError);
     expect((error as SqlRuleViolationError).violations).toEqual([
       {
-        file: "data-model/desired-schema/views/active.sql",
+        file: "data-model/desired-schema/types/status.sql",
         line: 3,
-        statement: "create view active_customers as select id from customers",
-        rule: "desired-schema-statement",
-        message: "CREATE VIEW is not allowed in the desired schema",
+        statement: "create type status as enum ('active')",
+        rule: "unsupported-object",
+        message:
+          "Enums are not supported in V1: use a lookup table with a foreign key, or a CHECK constraint",
       },
     ]);
     expect((error as Error).message).toContain(
-      "data-model/desired-schema/views/active.sql:3:",
+      "data-model/desired-schema/types/status.sql:3:",
     );
     expect(dir.exists("data-model/draft")).toBe(false);
     expect(await server.databases()).toEqual(before);
