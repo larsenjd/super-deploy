@@ -47,6 +47,7 @@ export {
   finalize,
   type MigrationMetadata,
 } from "./commands/finalize.ts";
+export { type InitOptions, type InitResult, init } from "./commands/init.ts";
 export { type RehearseResult, rehearse } from "./commands/rehearse.ts";
 export {
   type RestoreSchemaOptions,
@@ -95,6 +96,7 @@ export {
   DraftNameRequiredError,
   type ErrorCode,
   type GuardedCommand,
+  InitConflictError,
   InterruptedError,
   InvalidDraftNameError,
   InvalidEncodingError,

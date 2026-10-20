@@ -8,6 +8,7 @@ import { discardDraft } from "../commands/discard-draft.ts";
 import { disposable } from "../commands/disposable.ts";
 import { draft } from "../commands/draft.ts";
 import { finalize } from "../commands/finalize.ts";
+import { init } from "../commands/init.ts";
 import { rehearse } from "../commands/rehearse.ts";
 import { restoreSchema } from "../commands/restore-schema.ts";
 import { status } from "../commands/status.ts";
@@ -115,17 +116,40 @@ export interface CommandContext {
   readonly confirm: ((question: string) => Promise<boolean>) | undefined;
 }
 
-export interface CommandDefinition {
+interface CommandBase {
   readonly name: string;
   readonly group: CommandGroup;
   readonly summary: string;
   readonly options: readonly OptionDefinition[];
+}
+
+/** A command on the project found from the working directory (most commands). */
+export interface ProjectCommandDefinition extends CommandBase {
+  readonly needsProject?: true;
   run(
     project: Project,
     values: OptionValues,
     context: CommandContext,
   ): Promise<void>;
 }
+
+/**
+ * A command that runs in the working directory without loading a project
+ * (`init`). Its options must not need one: no `target` or `migration` kinds,
+ * and no `initial` on `name` options.
+ */
+export interface DirectoryCommandDefinition extends CommandBase {
+  readonly needsProject: false;
+  run(
+    directory: string,
+    values: OptionValues,
+    context: CommandContext,
+  ): Promise<void>;
+}
+
+export type CommandDefinition =
+  | ProjectCommandDefinition
+  | DirectoryCommandDefinition;
 
 /** A command refused to go ahead (exit 1). */
 export class RefusedError extends Error {
@@ -153,6 +177,24 @@ export async function acknowledge(
   }
   return context.confirm(question);
 }
+
+const initCommand: DirectoryCommandDefinition = {
+  name: "init",
+  group: "Start",
+  summary:
+    "Create a project here from the bundled template, with a local embedded PostgreSQL and a dev target",
+  needsProject: false,
+  options: [],
+  async run(directory, _values, context) {
+    const result = await init({ directory });
+    context.result(
+      `Initialised a super-deploy project in ${context.displayPath(result.root)}`,
+    );
+    context.result(
+      "Next: pnpm install, add CREATE statements under data-model/desired-schema/, then run draft",
+    );
+  },
+};
 
 const draftCommand: CommandDefinition = {
   name: "draft",
@@ -493,6 +535,7 @@ function plural(count: number, noun: string): string {
 }
 
 export const commands: readonly CommandDefinition[] = [
+  initCommand,
   draftCommand,
   rehearseCommand,
   finalizeCommand,

@@ -1,5 +1,6 @@
 // The interactive menu at the CLI process seam, in a real pseudo-terminal.
 // Skipped on Windows: ConPTY's key and Ctrl+C handling is unverified there.
+import { rm } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { waitForFile } from "../support/cli.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
@@ -75,8 +76,8 @@ describe.skipIf(process.platform === "win32")("menu", () => {
       /Error: data-model\/desired-schema\/customers\.sql:1: .*moneyamount/,
     );
     await terminal.waitFor("quit");
-    // Up from the first command wraps round to quit, the last entry.
-    terminal.type(`${keys.up}${keys.enter}`);
+    // The menu starts on draft; Up passes init and wraps round to quit.
+    terminal.type(`${keys.up}${keys.up}${keys.enter}`);
     expect(await terminal.exited).toBe(0);
     expect(dir.exists("data-model/draft")).toBe(false);
   });
@@ -129,5 +130,26 @@ describe.skipIf(process.platform === "win32")("menu", () => {
     );
     expect(leftovers).toEqual([]);
     expect(dir.exists("data-model/draft")).toBe(false);
+  });
+
+  test("without a project the menu starts on init, which needs none; the new project is then used", async () => {
+    const dir = await createTestProject();
+    await rm(dir.path("package.json"));
+    const terminal = spawnTerminal([], { cwd: dir.root });
+
+    expect(await terminal.waitFor("quit")).toMatch(/Start\s*\n.*init/);
+    terminal.type(keys.enter);
+    await terminal.waitFor("Initialised a super-deploy project in .");
+    expect(dir.exists("super-deploy.config.ts")).toBe(true);
+
+    // Back on init: running it again now refuses, as the files exist.
+    await terminal.waitFor("quit");
+    terminal.type(keys.enter);
+    await terminal.waitFor(
+      /Error: Cannot initialise a project in .*package\.json/,
+    );
+    await terminal.waitFor("quit");
+    terminal.type(keys.escape);
+    expect(await terminal.exited).toBe(0);
   });
 });

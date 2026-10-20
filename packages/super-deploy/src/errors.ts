@@ -30,7 +30,8 @@ export type ErrorCode =
   | "preflight-failed"
   | "terminal-required"
   | "not-confirmed"
-  | "target-changed";
+  | "target-changed"
+  | "init-conflict";
 
 export class SuperDeployError extends Error {
   readonly code: ErrorCode;
@@ -52,6 +53,22 @@ export class ProjectNotFoundError extends SuperDeployError {
       `No super-deploy.config.ts found in ${searchedFrom} or any parent directory`,
     );
     this.searchedFrom = searchedFrom;
+  }
+}
+
+/** `init` would overwrite existing files; nothing was written. */
+export class InitConflictError extends SuperDeployError {
+  readonly directory: string;
+  /** Paths relative to `directory`, sorted. */
+  readonly paths: readonly string[];
+
+  constructor(directory: string, paths: readonly string[]) {
+    super(
+      "init-conflict",
+      `Cannot initialise a project in ${directory}: it already has ${paths.join(", ")}`,
+    );
+    this.directory = directory;
+    this.paths = paths;
   }
 }
 

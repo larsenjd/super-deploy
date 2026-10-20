@@ -89,7 +89,8 @@ export async function loadProject(
   };
 }
 
-function findConfig(start: string): string | undefined {
+/** The super-deploy.config.ts in `start` or its nearest parent, if any. */
+export function findConfig(start: string): string | undefined {
   for (let dir = start; ; dir = dirname(dir)) {
     const candidate = join(dir, configFileName);
     if (existsSync(candidate)) {
