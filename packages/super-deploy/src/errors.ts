@@ -13,6 +13,7 @@ export type ErrorCode =
   | "unsupported-server"
   | "adapter-failed"
   | "differ-failed"
+  | "interrupted"
   | "invalid-encoding"
   | "no-draft"
   | "sql-file-failed"
@@ -307,14 +308,24 @@ export class OverwriteNotAcknowledgedError extends SuperDeployError {
   readonly declined: boolean;
 
   constructor(question: OverwriteQuestion, declined: boolean) {
-    const what = question.paths.join(", ");
     super(
       "overwrite-not-acknowledged",
       declined
-        ? `Nothing changed: ${question.command} was not confirmed`
-        : `${question.command} would delete or overwrite ${what}; pass --acknowledge-overwrite to go ahead without a terminal`,
+        ? `${question.message} Answered no: nothing changed`
+        : `${question.message} Refused without a terminal: pass --acknowledge-overwrite to delete or overwrite ${question.paths.join(", ")}`,
     );
     this.question = question;
     this.declined = declined;
+  }
+}
+
+/**
+ * The project's interruption signal aborted while a command was running. The
+ * command has cleaned up (rolled back, dropped throwaway databases) by the
+ * time this is thrown; `cause` is the signal's abort reason.
+ */
+export class InterruptedError extends SuperDeployError {
+  constructor(options?: ErrorOptions) {
+    super("interrupted", "Interrupted", options);
   }
 }

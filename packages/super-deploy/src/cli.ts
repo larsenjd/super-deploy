@@ -1,16 +1,17 @@
 #!/usr/bin/env node
-import { inCI, terminalConfirm } from "./cli/confirm.ts";
+import { isCI } from "./cli/environment.ts";
 import { runCli } from "./cli/main.ts";
+import { watchInterruptions } from "./cli/process.ts";
 
-const interactive =
-  process.stdin.isTTY === true && process.stdout.isTTY === true && !inCI();
-const exitCode = await runCli(process.argv.slice(2), {
+const interruptions = watchInterruptions();
+const code = await runCli(process.argv.slice(2), {
   cwd: process.cwd(),
+  stdin: process.stdin,
   stdout: process.stdout,
   stderr: process.stderr,
-  confirm: interactive
-    ? terminalConfirm(process.stdin, process.stderr)
-    : undefined,
+  interactive:
+    process.stdin.isTTY === true && process.stdout.isTTY === true && !isCI(),
+  signal: interruptions.signal,
 });
 
 // Exit explicitly once output is flushed: embedded-postgres installs an
@@ -18,7 +19,13 @@ const exitCode = await runCli(process.argv.slice(2), {
 await Promise.all(
   [process.stdout, process.stderr].map(
     (stream) =>
-      new Promise<void>((resolve) => stream.write("", () => resolve())),
+      new Promise<void>((resolve) => {
+        if (stream.destroyed) {
+          resolve();
+        } else {
+          stream.write("", () => resolve());
+        }
+      }),
   ),
 );
-process.exit(exitCode);
+process.exit(interruptions.exitCode ?? code);

@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject, embeddedConfig } from "../support/project.ts";
+import { keys, spawnTerminal } from "../support/terminal.ts";
 
 let server: TestServer;
 beforeAll(async () => {
@@ -45,7 +46,7 @@ describe("discard-draft", () => {
       exitCode: 1,
       stdout: "",
       stderr:
-        "Error: discard-draft would delete or overwrite data-model/draft; pass --acknowledge-overwrite to go ahead without a terminal\n",
+        "Error: Discard draft add-customers? Refused without a terminal: pass --acknowledge-overwrite to delete or overwrite data-model/draft\n",
     });
     expect(dir.exists("data-model/draft")).toBe(true);
   });
@@ -63,6 +64,36 @@ describe("discard-draft", () => {
       stderr: "",
     });
     expect(dir.exists("data-model/draft")).toBe(false);
+  });
+});
+
+describe.skipIf(process.platform === "win32")("in a terminal", () => {
+  test("asks yes/no, default no: Enter changes nothing and exits 0", async () => {
+    const dir = await draftedProject();
+    const terminal = spawnTerminal(["discard-draft"], { cwd: dir.root });
+
+    const question = await terminal.waitFor("Discard draft add-customers?");
+    terminal.type(keys.enter);
+
+    await terminal.waitFor("Nothing changed");
+    expect(await terminal.exited).toBe(0);
+    expect(question).not.toContain("Error");
+    expect(dir.exists("data-model/draft")).toBe(true);
+  });
+
+  test("answering yes goes ahead, listing what is lost in the question", async () => {
+    const dir = await finalizedProject();
+    await dir.write("data-model/desired-schema/orders.sql", "-- new\n");
+    const terminal = spawnTerminal(["restore-schema"], { cwd: dir.root });
+
+    await terminal.waitFor("discarding 1 changed file?");
+    await terminal.waitFor("data-model/desired-schema/orders.sql");
+    terminal.type("y");
+    terminal.type(keys.enter);
+
+    await terminal.waitFor("Deleted data-model/desired-schema/orders.sql");
+    expect(await terminal.exited).toBe(0);
+    expect(dir.exists("data-model/desired-schema/orders.sql")).toBe(false);
   });
 });
 
