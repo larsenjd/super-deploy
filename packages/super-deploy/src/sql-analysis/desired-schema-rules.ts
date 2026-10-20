@@ -555,29 +555,166 @@ const grantTypes = new Set([
   "OBJECT_DOMAIN",
 ]);
 
-function checkGrant(node: Json): RuleFinding[] {
-  if (node.is_grant !== true) {
-    return [
-      notAllowed(
-        "REVOKE is not allowed in the desired schema: it declares what is granted, so remove the GRANT instead",
-      ),
-    ];
-  }
+/**
+ * PostgreSQL's default privileges for PUBLIC on the objects a desired schema
+ * defines, the only ones it may revoke. Tables, views and sequences have
+ * none. The public schema's default USAGE is handled in `checkRevoke`.
+ */
+const publicDefaults: Readonly<Record<string, string>> = {
+  OBJECT_FUNCTION: "execute",
+  OBJECT_PROCEDURE: "execute",
+  OBJECT_ROUTINE: "execute",
+  OBJECT_TYPE: "usage",
+  OBJECT_DOMAIN: "usage",
+};
+
+const objectTypePlurals: Readonly<Record<string, string>> = {
+  OBJECT_FUNCTION: "functions",
+  OBJECT_PROCEDURE: "procedures",
+  OBJECT_ROUTINE: "routines",
+  OBJECT_TYPE: "types",
+  OBJECT_DOMAIN: "domains",
+  OBJECT_TABLE: "tables",
+  OBJECT_SEQUENCE: "sequences",
+};
+
+function checkGrant(
+  node: Json,
+  _statement: ParsedStatement,
+  context: RuleContext,
+): RuleFinding[] {
+  const verb = node.is_grant === true ? "GRANT" : "REVOKE";
   if (node.targtype !== "ACL_TARGET_OBJECT") {
     return [
       notAllowed(
-        "GRANT ... ON ALL ... IN SCHEMA is not allowed in the desired schema: it depends on which objects exist when it runs, so grant on each object",
+        `${verb} ... ON ALL ... IN SCHEMA is not allowed in the desired schema: it depends on which objects exist when it runs, so ${verb.toLowerCase()} on each object`,
       ),
     ];
   }
-  if (!grantTypes.has(String(node.objtype))) {
+  if (node.objtype === "OBJECT_SCHEMA") {
+    const others = schemaNames(node).filter(
+      (schema) => schema !== context.managedSchema,
+    );
+    if (others.length > 0) {
+      return [
+        notAllowed(
+          `${verb} ON SCHEMA ${others.join(", ")} is not allowed in the desired schema: grant USAGE only on the managed schema "${context.managedSchema}"; other schemas are set up outside super-deploy`,
+        ),
+      ];
+    }
+  } else if (!grantTypes.has(String(node.objtype))) {
     return [
       notAllowed(
-        `GRANT ON ${objectTypeKeyword(node.objtype)} is not allowed in the desired schema: grant only on the objects it defines`,
+        `${verb} ON ${objectTypeKeyword(node.objtype)} is not allowed in the desired schema: ${verb.toLowerCase()} only on the objects it defines`,
+      ),
+    ];
+  }
+  if (node.is_grant !== true) {
+    return checkRevoke(node, context);
+  }
+  if (node.objtype === "OBJECT_SCHEMA") {
+    const privileges = privilegeNames(node);
+    const other = privileges.find((privilege) => privilege !== "usage");
+    if (privileges.length === 0 || other !== undefined) {
+      return [
+        notAllowed(
+          `GRANT ${(other ?? "all").toUpperCase()} ON SCHEMA is not allowed in the desired schema: grant only USAGE on the managed schema; objects are created by the deploy role`,
+        ),
+      ];
+    }
+  }
+  return [];
+}
+
+/**
+ * REVOKE is allowed only to take away PostgreSQL's default privileges for
+ * PUBLIC on objects the desired schema defines (ADR-0002): the desired
+ * schema declares what is granted, so every other REVOKE would only undo
+ * one of its own GRANTs.
+ */
+function checkRevoke(node: Json, context: RuleContext): RuleFinding[] {
+  const others = list(node.grantees)
+    .map((grantee) => unwrap(grantee, "RoleSpec") ?? {})
+    .filter((role) => role.roletype !== "ROLESPEC_PUBLIC")
+    .map((role) =>
+      typeof role.rolename === "string"
+        ? role.rolename
+        : String(role.roletype).replace("ROLESPEC_", ""),
+    );
+  if (others.length > 0) {
+    return [
+      notAllowed(
+        `REVOKE FROM ${others.join(", ")} is not allowed in the desired schema: it declares what is granted, so remove the GRANT instead; only PostgreSQL's default privileges for PUBLIC may be revoked`,
+      ),
+    ];
+  }
+  if (node.grant_option === true) {
+    return [
+      notAllowed(
+        "REVOKE GRANT OPTION FOR is not allowed in the desired schema: PUBLIC holds no grant options by default",
+      ),
+    ];
+  }
+  if (node.grantor !== undefined) {
+    return [
+      notAllowed(
+        "REVOKE ... GRANTED BY is not allowed in the desired schema: PUBLIC's default privileges are granted by the owner, so revoke them without GRANTED BY",
+      ),
+    ];
+  }
+  const objtype = String(node.objtype);
+  const privileges = privilegeNames(node);
+  const expected =
+    objtype === "OBJECT_SCHEMA"
+      ? context.managedSchema === "public"
+        ? "usage"
+        : undefined
+      : publicDefaults[objtype];
+  if (expected === undefined) {
+    const what =
+      objtype === "OBJECT_SCHEMA"
+        ? `schema ${context.managedSchema}`
+        : (objectTypePlurals[objtype] ?? objectTypeKeyword(objtype));
+    return [
+      notAllowed(
+        `PUBLIC has no privileges on ${what} by default, so there is nothing to revoke: the desired schema declares what is granted, so remove the GRANT instead`,
+      ),
+    ];
+  }
+  if (privileges.length === 0) {
+    return [
+      notAllowed(
+        `REVOKE ALL is not allowed in the desired schema: name the default privilege, REVOKE ${expected.toUpperCase()}`,
+      ),
+    ];
+  }
+  const other = privileges.find((privilege) => privilege !== expected);
+  if (other !== undefined) {
+    const what =
+      objtype === "OBJECT_SCHEMA"
+        ? `schema ${context.managedSchema}`
+        : (objectTypePlurals[objtype] ?? objectTypeKeyword(objtype));
+    return [
+      notAllowed(
+        `PUBLIC has no ${other.toUpperCase()} privilege on ${what} by default: revoke ${expected.toUpperCase()}, its only default privilege`,
       ),
     ];
   }
   return [];
+}
+
+/** The privileges a GRANT or REVOKE names, lowercase; empty for ALL. */
+function privilegeNames(node: Json): string[] {
+  return list(node.privileges).map((privilege) =>
+    String(unwrap(privilege, "AccessPriv")?.priv_name ?? "all"),
+  );
+}
+
+/** The schemas a GRANT or REVOKE ON SCHEMA names. */
+function schemaNames(node: Json): string[] {
+  return list(node.objects).map((object) =>
+    String(unwrap(object, "String")?.sval ?? ""),
+  );
 }
 
 function checkExtension(node: Json): RuleFinding[] {

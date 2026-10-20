@@ -23,7 +23,7 @@ export interface OrderingFixture {
   readonly postgresRefuses?: string;
   /**
    * Rule ids the desired-schema rules refuse this (orderable) fixture with,
-   * e.g. `REVOKE`, which the spec's allowlist leaves out. Ordering still
+   * e.g. `GRANT ... ON ALL`, which the spec's allowlist leaves out. Ordering still
    * covers it; the API seam expects draft to refuse it before loading.
    */
   readonly refusedByRules?: readonly string[];
@@ -474,7 +474,6 @@ create table editors (name text primary key);
       ["create trigger docs_audit", "comment on trigger docs_audit"],
       ["create policy docs_team", "alter table docs enable"],
     ],
-    refusedByRules: ["desired-schema-statement"],
   },
   {
     name: "unnamed-index: indexes without names are refused",

@@ -61,6 +61,43 @@ describe("generated schema changes", () => {
   });
 });
 
+describe("managed-schema grants and PUBLIC revokes", () => {
+  // What pg-delta generates for them (checked against 1.0.0-alpha.59).
+  const generated = [
+    'REVOKE ALL ON SCHEMA "app" FROM "reader";',
+    'GRANT USAGE ON SCHEMA "app" TO "reader";',
+    'REVOKE ALL ON SCHEMA "app" FROM PUBLIC;',
+    'GRANT USAGE ON SCHEMA "app" TO PUBLIC;',
+    'REVOKE ALL ON FUNCTION "app"."f"() FROM PUBLIC;',
+    'GRANT EXECUTE ON FUNCTION "app"."f"() TO PUBLIC;',
+    'REVOKE ALL ON PROCEDURE "app"."p"() FROM PUBLIC;',
+    'REVOKE ALL ON TYPE "app"."d" FROM PUBLIC;',
+    'GRANT USAGE ON TYPE "app"."d" TO PUBLIC;',
+  ].join("\n");
+
+  test("are allowed in generated schema changes", async () => {
+    expect(await check("schema-change", generated, "app")).toEqual([]);
+  });
+
+  test.each(["pre-migration", "post-migration", "seed-data"] as const)(
+    "are refused in %s files",
+    async (kind) => {
+      const found = await check(kind, generated, "app");
+      expect(found).toHaveLength(9);
+    },
+  );
+
+  test.each([
+    ['GRANT CREATE ON SCHEMA "app" TO "writer"', "unsupported-object"],
+    ['GRANT ALL ON SCHEMA "app" TO "writer"', "unsupported-object"],
+    ['GRANT USAGE ON SCHEMA "reporting" TO "reader"', "outside-managed-schema"],
+  ])("a schema change may not: %s", async (sql, rule) => {
+    expect(
+      (await check("schema-change", sql, "app")).map(({ rule }) => rule),
+    ).toEqual([rule]);
+  });
+});
+
 describe("transaction control, CALL and DO", () => {
   test.each([
     ["begin", "transaction-control"],

@@ -839,6 +839,23 @@ function detailFindings(
         `GRANT and REVOKE on a ${objectTypeName(grant.objtype)} are not supported: super-deploy manages only the objects in its schema`,
       );
     }
+    // The desired schema grants only USAGE on the managed schema; CREATE
+    // belongs to the deploy role's setup outside super-deploy.
+    const privileges = (grant.privileges ?? []).map(
+      (privilege) =>
+        unwrap<{ priv_name?: string }>(privilege, "AccessPriv")?.priv_name ??
+        "all",
+    );
+    if (
+      grant.objtype === "OBJECT_SCHEMA" &&
+      grant.is_grant === true &&
+      (privileges.length === 0 ||
+        privileges.some((privilege) => privilege !== "usage"))
+    ) {
+      unsupportedFeature(
+        "GRANT on a schema may grant only USAGE: CREATE on the managed schema is set up outside super-deploy",
+      );
+    }
   }
   if (type === "CreateFunctionStmt") {
     const language = functionLanguage(body as CreateFunctionStmt);

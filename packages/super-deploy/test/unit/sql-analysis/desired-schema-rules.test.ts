@@ -467,19 +467,9 @@ describe("refused statements and clauses", () => {
       /^ALTER TABLE IF EXISTS is not allowed.*exactly once/,
     ],
     [
-      "REVOKE",
-      "revoke all on function f() from public",
-      /^REVOKE is not allowed in the desired schema/,
-    ],
-    [
       "GRANT ON ALL TABLES IN SCHEMA",
       "grant select on all tables in schema public to r",
       /^GRANT \.\.\. ON ALL \.\.\. IN SCHEMA is not allowed/,
-    ],
-    [
-      "GRANT ON SCHEMA",
-      "grant usage on schema public to r",
-      /^GRANT ON SCHEMA is not allowed in the desired schema/,
     ],
     [
       "GRANT ON DATABASE",
@@ -567,6 +557,149 @@ describe("refused statements and clauses", () => {
     expect(found[0]?.rule).toMatch(
       /^(desired-schema-statement|unsupported-object)$/,
     );
+  });
+});
+
+describe("managed-schema grants and PUBLIC revokes", () => {
+  test.each([
+    ["USAGE on the managed schema", "grant usage on schema app to reader"],
+    [
+      "USAGE on the managed schema to PUBLIC, with grant option",
+      "grant usage on schema app to public, reader with grant option",
+    ],
+    [
+      "EXECUTE on a function revoked from PUBLIC",
+      "revoke execute on function f(int) from public",
+    ],
+    [
+      "EXECUTE on a procedure revoked from PUBLIC",
+      "revoke execute on procedure p() from public",
+    ],
+    [
+      "EXECUTE on a routine revoked from PUBLIC",
+      "revoke execute on routine f(int) from public",
+    ],
+    [
+      "USAGE on a type revoked from PUBLIC",
+      "revoke usage on type address from public",
+    ],
+    [
+      "USAGE on a domain revoked from PUBLIC",
+      "revoke usage on domain positive_int from public",
+    ],
+  ])("allowed: %s", async (_name, sql) => {
+    expect(await violations(`${sql};`, { managedSchema: "app" })).toEqual([]);
+  });
+
+  test("the public schema's default USAGE for PUBLIC can be revoked when it is the managed schema", async () => {
+    expect(
+      await violations("revoke usage on schema public from public;"),
+    ).toEqual([]);
+    expect(
+      await violations("revoke usage on schema app from public;", {
+        managedSchema: "app",
+      }),
+    ).toMatchObject([
+      {
+        rule: "desired-schema-statement",
+        message: expect.stringMatching(
+          /^PUBLIC has no privileges on schema app by default/,
+        ),
+      },
+    ]);
+  });
+
+  test.each([
+    [
+      "CREATE on the managed schema",
+      "grant create on schema app to writer",
+      /^GRANT CREATE ON SCHEMA is not allowed in the desired schema: grant only USAGE on the managed schema/,
+    ],
+    [
+      "ALL on the managed schema",
+      "grant all on schema app to writer",
+      /^GRANT ALL ON SCHEMA is not allowed in the desired schema: grant only USAGE on the managed schema/,
+    ],
+    [
+      "USAGE on another schema",
+      "grant usage on schema reporting to reader",
+      /^GRANT ON SCHEMA reporting is not allowed in the desired schema: grant USAGE only on the managed schema "app"/,
+    ],
+    [
+      "USAGE on the managed schema and another",
+      "grant usage on schema app, reporting to reader",
+      /^GRANT ON SCHEMA reporting is not allowed/,
+    ],
+    [
+      "REVOKE from a role other than PUBLIC",
+      "revoke execute on function f(int) from reader",
+      /^REVOKE FROM reader is not allowed in the desired schema: it declares what is granted, so remove the GRANT instead; only PostgreSQL's default privileges for PUBLIC may be revoked/,
+    ],
+    [
+      "REVOKE from PUBLIC and another role",
+      "revoke execute on function f(int) from public, reader",
+      /^REVOKE FROM reader is not allowed/,
+    ],
+    [
+      "REVOKE of a table privilege PUBLIC doesn't have",
+      "revoke select on t from public",
+      /^PUBLIC has no privileges on tables by default/,
+    ],
+    [
+      "REVOKE of a sequence privilege PUBLIC doesn't have",
+      "revoke usage on sequence t_id_seq from public",
+      /^PUBLIC has no privileges on sequences by default/,
+    ],
+    [
+      "REVOKE of USAGE on a function",
+      "revoke usage on function f(int) from public",
+      /^PUBLIC has no USAGE privilege on functions by default: revoke EXECUTE/,
+    ],
+    [
+      "REVOKE ALL on a function",
+      "revoke all on function f(int) from public",
+      /^REVOKE ALL is not allowed in the desired schema: name the default privilege, REVOKE EXECUTE/,
+    ],
+    [
+      "REVOKE ALL on a type",
+      "revoke all on type address from public",
+      /^REVOKE ALL is not allowed in the desired schema: name the default privilege, REVOKE USAGE/,
+    ],
+    [
+      "REVOKE CREATE on the managed schema",
+      "revoke create on schema app from public",
+      /^PUBLIC has no privileges on schema app by default/,
+    ],
+    [
+      "REVOKE GRANT OPTION FOR",
+      "revoke grant option for execute on function f(int) from public",
+      /^REVOKE GRANT OPTION FOR is not allowed in the desired schema: PUBLIC holds no grant options by default/,
+    ],
+    [
+      "REVOKE ... GRANTED BY",
+      "revoke execute on function f(int) from public granted by owner_role",
+      /^REVOKE \.\.\. GRANTED BY is not allowed in the desired schema/,
+    ],
+    [
+      "REVOKE ... ON ALL ... IN SCHEMA",
+      "revoke execute on all functions in schema app from public",
+      /^REVOKE \.\.\. ON ALL \.\.\. IN SCHEMA is not allowed/,
+    ],
+  ])("refused: %s", async (_name, sql, message) => {
+    const found = await violations(`${sql};`, { managedSchema: "app" });
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      line: 1,
+      statement: sql,
+      rule: "desired-schema-statement",
+      message: expect.stringMatching(message),
+    });
+  });
+
+  test("revokes on objects outside the managed schema are refused like grants", async () => {
+    expect(
+      await violations("revoke execute on function other.f() from public;"),
+    ).toMatchObject([{ rule: "outside-managed-schema" }]);
   });
 });
 

@@ -34,6 +34,29 @@ const privileges = (acl: string, owner: string) => `array(
         || '/' || case when e.grantor = ${owner} then '<owner>' else quote_ident(pg_get_userbyid(e.grantor)) end
       from aclexplode(${acl}) e order by 1)::text`;
 
+/**
+ * The managed schema's own ACL, written like `privileges` but with the
+ * session's role (the deploy role on a target) counted as the owner too: a
+ * target's schema may belong to an administrator who granted the deploy role
+ * its privileges (with grant option, so it can grant USAGE), while a
+ * rehearsal's belongs to the rehearsal login. Those privileges are target
+ * setup; every other grant on the schema is the desired schema's (stories
+ * 98-99), so on a target it is drift. A target that doesn't have the schema
+ * yet reads as the schema its first deployment creates.
+ */
+const schemaAcl = `
+    select 'schema ' || quote_ident($1), 'schema ' || $1 || ' ' || array(
+      select distinct case when e.grantee = 0 then 'public' when e.grantee in (s.owner, me.oid) then '<owner>' else quote_ident(pg_get_userbyid(e.grantee)) end
+        || ':' || e.privilege_type
+        || case when e.is_grantable and e.grantee not in (s.owner, me.oid) then '*' else '' end
+        || '/' || case when e.grantor in (s.owner, me.oid) then '<owner>' else quote_ident(pg_get_userbyid(e.grantor)) end
+      from aclexplode(s.acl) e order by 1)::text
+    from (select oid from pg_roles where rolname = current_user) me,
+      lateral (select coalesce(
+          (select coalesce(n.nspacl, acldefault('n'::"char", n.nspowner)) from pg_namespace n where n.nspname = $1),
+          acldefault('n'::"char", me.oid)) as acl,
+        coalesce((select n.nspowner from pg_namespace n where n.nspname = $1), me.oid) as owner) s`;
+
 /** Each query selects `object` and `line`; `$1` is the managed schema. */
 const queries: Readonly<Record<string, string>> = {
   relation: `
@@ -139,7 +162,8 @@ const queries: Readonly<Record<string, string>> = {
     select case when r.relkind is null or r.relkind = 'c' then ${describe("pg_type", "t.oid")} else ${describe("pg_class", "r.oid")} end,
       t.typname || ' ' || ${privileges(`coalesce(t.typacl, acldefault('T'::"char", t.typowner))`, "t.typowner")}
     from pg_type t join pg_namespace n on n.oid = t.typnamespace left join pg_class r on r.oid = t.typrelid
-    where n.nspname = $1 and t.typtype in ('d','c')`,
+    where n.nspname = $1 and t.typtype in ('d','c')
+    union all${schemaAcl}`,
   // Everything else a schema can hold. Desired schemas can't create these,
   // so rehearsals never have any; on a target they are drift.
   other: `

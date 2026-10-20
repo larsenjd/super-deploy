@@ -1,6 +1,7 @@
 // One round-trip scenario per supported object type, from the
 // `prototype/pg-delta` (9d619fe) scenarios, adapted to the desired-schema
-// rules: indexes and constraints named, no VIRTUAL columns, no REVOKE.
+// rules: indexes and constraints named, no VIRTUAL columns, REVOKE only
+// of PUBLIC's defaults.
 // Each scenario has three desired schemas: create a -> b, alter b -> c,
 // drop c -> a.
 //
@@ -181,6 +182,23 @@ export const roundTrips: readonly RoundTrip[] = [
     c: `${t3} create view v as select id from t; create function f() returns int language sql as $$ select 1 $$;
         grant select, insert on t to round_trip_writer; grant select (id, a) on t to round_trip_reader;
         grant execute on function f() to round_trip_reader;`,
+  },
+  {
+    name: "schema grants and revokes of PUBLIC defaults",
+    a: `${t3} create function f() returns int language sql as $$ select 1 $$;
+        create procedure p() language sql as $$ select 1 $$;
+        create type pair as (x int, y int); create domain positive as int constraint positive_check check (value > 0);`,
+    b: `${t3} create function f() returns int language sql as $$ select 1 $$;
+        create procedure p() language sql as $$ select 1 $$;
+        create type pair as (x int, y int); create domain positive as int constraint positive_check check (value > 0);
+        grant usage on schema public to round_trip_reader;
+        revoke execute on function f() from public; grant execute on function f() to round_trip_reader;
+        revoke usage on type pair from public; revoke usage on domain positive from public;`,
+    c: `${t3} create function f() returns int language sql as $$ select 1 $$;
+        create procedure p() language sql as $$ select 1 $$;
+        create type pair as (x int, y int); create domain positive as int constraint positive_check check (value > 0);
+        grant usage on schema public to round_trip_writer; revoke usage on schema public from public;
+        revoke execute on procedure p() from public; revoke usage on domain positive from public;`,
   },
   {
     name: "column type change under a view, policy and index",
