@@ -489,6 +489,34 @@ describe("adopt", () => {
     }
   });
 
+  test("refuses a virtual generated column as virtual, though the differ renders it STORED", async () => {
+    const { dir, project } = await adoptableProject(`
+      create table people (
+        id bigint generated always as identity primary key,
+        first text not null,
+        v text generated always as (upper(first)) virtual
+      );
+    `);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      expect((error as AdoptUnsupportedError).objects).toEqual([
+        {
+          object: "column v of table people",
+          rule: "unsupported-object",
+          reason:
+            "Virtual generated columns are not supported in V1 (a generated column without STORED is virtual in PostgreSQL 18): add STORED",
+        },
+      ]);
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+    } finally {
+      await project.close();
+    }
+  });
+
   test("writes the managed schema's USAGE grants and revoked PUBLIC defaults, but not the owner's or deploy role's own privileges", async () => {
     const deployer = "adopt_deployer";
     const prod = await server.createDatabase(`

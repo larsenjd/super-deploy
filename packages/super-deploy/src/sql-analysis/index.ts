@@ -34,6 +34,7 @@ export {
 export {
   catalogObjectFinding,
   isAlreadyInstalled,
+  virtualGeneratedColumnFinding,
 } from "./desired-schema-rules.ts";
 export {
   type ColumnTypes,

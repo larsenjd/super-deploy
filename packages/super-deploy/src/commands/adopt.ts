@@ -15,7 +15,8 @@
 //      desired-schema files (sql-analysis/adoption.ts).
 //   2. Refuse, listing everything at once, if anything there is unsupported:
 //      objects a desired schema can't create at all (the catalog check's
-//      `other` kind), every desired-schema rule (or ordering) violation in
+//      `other` kind, and virtual generated columns, which pg-delta renders
+//      STORED), every desired-schema rule (or ordering) violation in
 //      the generated files, and, when those pass, every object the files
 //      don't reproduce exactly (loaded on a throwaway database and compared
 //      with the target like the drift check). Nothing is written before
@@ -75,6 +76,7 @@ import {
   type RuleContext,
   type SqlFile,
   SqlRuleViolationError,
+  virtualGeneratedColumnFinding,
   withOverrideMarkers,
 } from "../sql-analysis/index.ts";
 import type { Override } from "../sql-analysis/overrides.ts";
@@ -87,7 +89,11 @@ import {
   makeWritable,
   readIndex,
 } from "../store/migrations.ts";
-import { catalogFacts } from "../verification/catalog.ts";
+import {
+  type CatalogFact,
+  catalogFacts,
+  isVirtualGeneratedColumn,
+} from "../verification/catalog.ts";
 import { type DriftChange, driftBetween } from "../verification/drift.ts";
 import { schemaSetupRoles } from "../verification/schema-setup.ts";
 import { draft } from "./draft.ts";
@@ -283,12 +289,7 @@ async function readTarget(
       await catalogFacts(session, config.managedSchema, {
         settings: targetTimeouts(target),
       })
-    )
-      .filter((fact) => fact.kind === "other")
-      .map((fact): UnsupportedObject => {
-        const { rule, message } = catalogObjectFinding(fact);
-        return { object: fact.object, rule, reason: message };
-      });
+    ).flatMap(unsupportedFact);
     const candidates = withOverrides
       ? await overrideCandidates(sqlFiles(project, files), context)
       : [];
@@ -333,6 +334,23 @@ async function readTarget(
   } finally {
     await session.close().catch(() => {});
   }
+}
+
+/**
+ * A target object the generated desired schema can't express, refused for
+ * what it is: kind `other`, and virtual generated columns (pg-delta renders
+ * them STORED, so the rules never see them).
+ */
+function unsupportedFact(fact: CatalogFact): UnsupportedObject[] {
+  const finding =
+    fact.kind === "other"
+      ? catalogObjectFinding(fact)
+      : isVirtualGeneratedColumn(fact)
+        ? virtualGeneratedColumnFinding()
+        : undefined;
+  return finding === undefined
+    ? []
+    : [{ object: fact.object, rule: finding.rule, reason: finding.message }];
 }
 
 /**

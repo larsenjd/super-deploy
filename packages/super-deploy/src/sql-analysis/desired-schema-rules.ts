@@ -97,6 +97,11 @@ const refusedObjects = {
     ),
   baseTypes: () => v1("Base types", ": use a domain or a composite type"),
   windowFunctions: () => routineOption("window"),
+  virtualGeneratedColumns: () =>
+    v1(
+      "Virtual generated columns",
+      " (a generated column without STORED is virtual in PostgreSQL 18): add STORED",
+    ),
 } satisfies Record<string, () => RuleFinding>;
 
 function routineOption(name: string): RuleFinding {
@@ -219,6 +224,15 @@ export function catalogObjectFinding(fact: {
     return refusedObjects.textSearch();
   }
   return unsupported(`${object} is not supported in V1`);
+}
+
+/**
+ * Why V1 refuses a virtual generated column found in a database's managed
+ * schema (`isVirtualGeneratedColumn` in verification/catalog.ts), as the
+ * rules refuse a statement declaring one.
+ */
+export function virtualGeneratedColumnFinding(): RuleFinding {
+  return refusedObjects.virtualGeneratedColumns();
 }
 
 /** Every rule finding for one desired-schema statement. */
@@ -345,12 +359,7 @@ function constraintFindings(nodes: unknown): RuleFinding[] {
       findings.push(v1("NOT ENFORCED constraints"));
     }
     if (type === "CONSTR_GENERATED" && constraint.generated_kind !== "s") {
-      findings.push(
-        v1(
-          "Virtual generated columns",
-          " (a generated column without STORED is virtual in PostgreSQL 18): add STORED",
-        ),
-      );
+      findings.push(refusedObjects.virtualGeneratedColumns());
     }
     if (constraint.indexspace !== undefined) {
       findings.push(tablespaces);

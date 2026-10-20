@@ -296,6 +296,16 @@ export function factLine(fact: CatalogFact): string {
   return `${fact.kind}: ${fact.line}`;
 }
 
+/**
+ * A column the target generates without storing (`attgenerated = 'v'`).
+ * pg-delta renders every generated column STORED, so only this fact tells
+ * a virtual one apart (adopt refuses it, as the rules do). Reads the
+ * `column` query's `generated=` field, which ` default=` always follows.
+ */
+export function isVirtualGeneratedColumn(fact: CatalogFact): boolean {
+  return fact.kind === "column" && fact.line.includes(" generated=v default=");
+}
+
 /** One sorted line per object in `schema`, each prefixed with its kind. */
 export async function catalogSnapshot(
   session: Session,
