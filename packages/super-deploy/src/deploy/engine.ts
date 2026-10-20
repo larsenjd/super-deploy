@@ -18,7 +18,10 @@
 // command session, in order (fault-injection wrappers match on these):
 //   execute("BEGIN")
 //   execute(<SET LOCAL statements joined by ";\n">)
-//   execute(<one batch per deploy-time file>), then query(INSERT INTO <history>.migrations ...) per migration
+//   per migration: execute(<one batch per deploy-time file: pre-migration
+//     script, schema change, post-migration script>), execute("SET CONSTRAINTS
+//     ALL IMMEDIATE"), execute("DISCARD TEMP"), then query(INSERT INTO
+//     <history>.migrations ...)
 //   execute("COMMIT")            or execute("ROLLBACK") after a failure
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
