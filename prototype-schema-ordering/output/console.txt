@@ -1,0 +1,278 @@
+PostgreSQL: PostgreSQL 18.4 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 7.5.0-3ubuntu1~18.04) 7.5.0, 64-bit
+Databases: prototype_schema_ordering_wipe_me*
+
+
+== q35-shuffled (from prototype-pg-delta): 9 files
+   static analysis: 17 statements, 18 edges, 0 errors, 0 lints, 19.4 ms
+   static order: type address  |  domain money_amount  |  table admins  |  table customers  |  table orders  |  function customer_total(int4)  |  function is_admin()  |  function touch_updated_at()  |  view order_totals  |  view big_customers  |  constraint customers.customers_last_order_fk  |  index orders_customer_idx  |  trigger orders.orders_touch  |  policy orders.orders_visible  |  rls orders AT_EnableRowSecurity  |  grant table orders  |  comment table orders
+     [loaded] static order (ours), one transaction, fail fast
+     file names / statement order invariance (one file per statement, random names, reversed): same order
+     [FAILED] path order (spec fallback), one pass
+         error: a_policies.sql: relation "orders" does not exist
+     [loaded] REVERSE path order, one pass -> SAME catalog as static order
+     [loaded] pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback) -> SAME catalog as static order (rounds=4)
+   determinism guard (same statements, other valid topological orders):
+     same: reverse
+     same: reverse-ignore-priority
+     same: random-valid(seed 1)
+     same: random-valid(seed 2)
+     same: random-valid(seed 3)
+   guard verdict: order-independent (PASS)
+
+== q35-overload-binding (from prototype-pg-delta): 3 files
+   static analysis: 3 statements, 2 edges, 0 errors, 1 lints, 0.5 ms
+     LINT OVERLOADED_REFERENCE: pick has 2 overloads (function pick(numeric), function pick(int4)) and is referenced at CREATE time by view which_pick @b_view.sql:1
+   static order: function pick(int4)  |  function pick(numeric)  |  view which_pick
+     [loaded] static order (ours), one transaction, fail fast
+     file names / statement order invariance (one file per statement, random names, reversed): same order
+     [loaded] path order (spec fallback), one pass -> DIFFERENT catalog (4 lines)
+         - depends: rule _RETURN on view which_pick -> function pick(integer) [n]
+         - view: v which_pick  SELECT pick(1) AS picked;
+         + depends: rule _RETURN on view which_pick -> function pick(numeric) [n]
+         + view: v which_pick  SELECT pick(1::numeric) AS picked;
+     [loaded] REVERSE path order, one pass -> SAME catalog as static order
+     [loaded] pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback) -> DIFFERENT catalog (4 lines) (rounds=1)
+         - depends: rule _RETURN on view which_pick -> function pick(integer) [n]
+         - view: v which_pick  SELECT pick(1) AS picked;
+         + depends: rule _RETURN on view which_pick -> function pick(numeric) [n]
+         + view: v which_pick  SELECT pick(1::numeric) AS picked;
+   determinism guard (same statements, other valid topological orders):
+     same: reverse
+     same: reverse-ignore-priority
+     same: random-valid(seed 1)
+     same: random-valid(seed 2)
+     same: random-valid(seed 3)
+   guard verdict: order-independent (PASS)
+   ablation (edges to ONE overload only, i.e. without the all-overloads rule):
+     [loaded] ABLATION static order with one-overload edges
+     same: reverse
+     DIFFERENT: reverse-ignore-priority - depends: rule _RETURN on view which_pick -> function pick(integer) [n] | - view: v which_pick  SELECT pick(1) AS picked; | + depends: rule _RETURN on view which_pick -> function pick(numeric) [n] | + view: v which_pick  SELECT pick(1::numeric) AS picked;
+     DIFFERENT: random-valid(seed 1) - depends: rule _RETURN on view which_pick -> function pick(integer) [n] | - view: v which_pick  SELECT pick(1) AS picked; | + depends: rule _RETURN on view which_pick -> function pick(numeric) [n] | + view: v which_pick  SELECT pick(1::numeric) AS picked;
+     DIFFERENT: random-valid(seed 2) - depends: rule _RETURN on view which_pick -> function pick(integer) [n] | - view: v which_pick  SELECT pick(1) AS picked; | + depends: rule _RETURN on view which_pick -> function pick(numeric) [n] | + view: v which_pick  SELECT pick(1::numeric) AS picked;
+     DIFFERENT: random-valid(seed 3) - depends: rule _RETURN on view which_pick -> function pick(integer) [n] | - view: v which_pick  SELECT pick(1) AS picked; | + depends: rule _RETURN on view which_pick -> function pick(numeric) [n] | + view: v which_pick  SELECT pick(1::numeric) AS picked;
+   ablation guard verdict: ORDER-DEPENDENT: guard catches it
+
+== overloads: 3 files
+   static analysis: 9 statements, 7 edges, 0 errors, 3 lints, 1.0 ms
+     LINT OVERLOADED_REFERENCE: pick has 2 overloads (function pick(numeric), function pick(int4)) and is referenced at CREATE time by view which_pick @b_views.sql:1
+     LINT OVERLOADED_REFERENCE: fmt has 2 overloads (function fmt(numeric), function fmt(int4)) and is referenced at CREATE time by function uses_fmt() @b_views.sql:5, table fmt_defaults @b_views.sql:11
+     LINT SHADOWS_PG_CATALOG: function length also exists in pg_catalog; with search_path = managed, pg_catalog the user function can capture calls
+   static order: function fmt(int4)  |  function fmt(numeric)  |  table fmt_defaults  |  function length(text)  |  function pick(int4)  |  function pick(numeric)  |  function uses_fmt()  |  view which_len  |  view which_pick
+     [loaded] static order (ours), one transaction, fail fast
+     file names / statement order invariance (one file per statement, random names, reversed): same order
+     [loaded] path order (spec fallback), one pass -> DIFFERENT catalog (19 lines)
+         - column: fmt_defaults.label text notnull=false identity= generated= default=fmt(3) collation="default"
+         - depends: default value for column label of table fmt_defaults -> function fmt(integer) [n]
+         - depends: function uses_fmt() -> function fmt(integer) [n]
+         - depends: rule _RETURN on view which_len -> function public.length(text) [n]
+         - depends: rule _RETURN on view which_pick -> function pick(integer) [n]
+         - routine: CREATE OR REPLACE FUNCTION public.uses_fmt()
+ RETURNS text
+ LANGUAGE sql
+ STABLE
+BEGIN ATOMIC
+ SELECT fmt(2) AS fmt;
+END
+
+     [loaded] REVERSE path order, one pass -> SAME catalog as static order
+     [loaded] pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback) -> DIFFERENT catalog (19 lines) (rounds=1)
+         - column: fmt_defaults.label text notnull=false identity= generated= default=fmt(3) collation="default"
+         - depends: default value for column label of table fmt_defaults -> function fmt(integer) [n]
+         - depends: function uses_fmt() -> function fmt(integer) [n]
+         - depends: rule _RETURN on view which_len -> function public.length(text) [n]
+         - depends: rule _RETURN on view which_pick -> function pick(integer) [n]
+         - routine: CREATE OR REPLACE FUNCTION public.uses_fmt()
+ RETURNS text
+ LANGUAGE sql
+ STABLE
+BEGIN ATOMIC
+ SELECT fmt(2) AS fmt;
+END
+
+   determinism guard (same statements, other valid topological orders):
+     same: reverse
+     same: reverse-ignore-priority
+     same: random-valid(seed 1)
+     same: random-valid(seed 2)
+     same: random-valid(seed 3)
+   guard verdict: order-independent (PASS)
+   ablation (edges to ONE overload only, i.e. without the all-overloads rule):
+     [loaded] ABLATION static order with one-overload edges
+     DIFFERENT: reverse - column: fmt_defaults.label text notnull=false identity= generated= default=fmt(3) collation="default" | - depends: default value for column label of table fmt_defaults -> function fmt(integer) [n] | - depends: function uses_fmt() -> function fmt(integer) [n] | - routine: CREATE OR REPLACE FUNCTION public.uses_fmt()
+ RETURNS text
+ LANGUAGE sql
+ STABLE
+BEGIN ATOMIC
+ SELECT fmt(2) AS fmt;
+END
+
+     DIFFERENT: reverse-ignore-priority - column: fmt_defaults.label text notnull=false identity= generated= default=fmt(3) collation="default" | - depends: default value for column label of table fmt_defaults -> function fmt(integer) [n] | - depends: function uses_fmt() -> function fmt(integer) [n] | - depends: rule _RETURN on view which_pick -> function pick(integer) [n]
+     same: random-valid(seed 1)
+     DIFFERENT: random-valid(seed 2) - column: fmt_defaults.label text notnull=false identity= generated= default=fmt(3) collation="default" | - depends: default value for column label of table fmt_defaults -> function fmt(integer) [n] | - depends: rule _RETURN on view which_pick -> function pick(integer) [n] | - view: v which_pick  SELECT pick(1) AS picked;
+     DIFFERENT: random-valid(seed 3) - column: fmt_defaults.label text notnull=false identity= generated= default=fmt(3) collation="default" | - depends: default value for column label of table fmt_defaults -> function fmt(integer) [n] | - depends: rule _RETURN on view which_pick -> function pick(integer) [n] | - view: v which_pick  SELECT pick(1) AS picked;
+   ablation guard verdict: ORDER-DEPENDENT: guard catches it
+
+== overload-ambiguous: 3 files
+   static analysis: 3 statements, 2 edges, 0 errors, 1 lints, 0.4 ms
+     LINT OVERLOADED_REFERENCE: fmt has 2 overloads (function fmt(numeric), function fmt(int8)) and is referenced at CREATE time by table fmt_defaults @b_table.sql:1
+   static order: function fmt(int8)  |  function fmt(numeric)  |  table fmt_defaults
+     [FAILED] static order (ours), one transaction, fail fast
+         error: b_table.sql:1 (table fmt_defaults): function fmt(integer) is not unique
+     file names / statement order invariance (one file per statement, random names, reversed): same order
+     [loaded] path order (spec fallback), one pass
+     [loaded] REVERSE path order, one pass
+     [loaded] pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback) (rounds=1)
+     reverse path order vs path order: DIFFERENT: - column: fmt_defaults.label text notnull=false identity= generated= default=fmt((3)::numeric) collation="default" | - depends: default value for column label of table fmt_defaults -> function fmt(numeric) [n] | + column: fmt_defaults.label text notnull=false identity= generated= default=fmt((3)::bigint) collation="default" | + depends: default value for column label of table fmt_defaults -> function fmt(bigint) [n]
+
+== extraction-gap: 3 files
+   static analysis: 4 statements, 3 edges, 0 errors, 0 lints, 0.6 ms
+   static order: table customers  |  function name_of(customers.name)  |  function order_count(customers)  |  view customer_stats
+     [loaded] static order (ours), one transaction, fail fast
+     file names / statement order invariance (one file per statement, random names, reversed): same order
+     [FAILED] path order (spec fallback), one pass
+         error: a_view.sql: relation "customers" does not exist
+     [loaded] REVERSE path order, one pass -> SAME catalog as static order
+     [loaded] pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback) -> SAME catalog as static order (rounds=3)
+   determinism guard (same statements, other valid topological orders):
+     same: reverse
+     DIFFERENT: reverse-ignore-priority error: a_view.sql:5 (view customer_stats): column c.order_count does not exist
+     DIFFERENT: random-valid(seed 1) error: a_view.sql:5 (view customer_stats): column c.order_count does not exist
+     DIFFERENT: random-valid(seed 2) error: a_view.sql:5 (view customer_stats): column c.order_count does not exist
+     DIFFERENT: random-valid(seed 3) error: a_view.sql:5 (view customer_stats): column c.order_count does not exist
+   guard verdict: ORDER-DEPENDENT: would be refused
+
+== domain-composite: 5 files
+   static analysis: 9 statements, 12 edges, 0 errors, 0 lints, 0.8 ms
+   static order: type pair  |  domain pos_int  |  domain pos_pair  |  table points  |  function make_pair(pos_int,pos_int)  |  function pair_sum(pos_pair)  |  view point_sums  |  comment column points.p  |  comment domain pos_pair
+     [loaded] static order (ours), one transaction, fail fast
+     file names / statement order invariance (one file per statement, random names, reversed): same order
+     [FAILED] path order (spec fallback), one pass
+         error: a_views.sql: relation "points" does not exist
+     [loaded] REVERSE path order, one pass -> SAME catalog as static order
+     [loaded] pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback) -> SAME catalog as static order (rounds=4)
+   determinism guard (same statements, other valid topological orders):
+     same: reverse
+     same: reverse-ignore-priority
+     same: random-valid(seed 1)
+     same: random-valid(seed 2)
+     same: random-valid(seed 3)
+   guard verdict: order-independent (PASS)
+
+== view-chain: 6 files
+   static analysis: 8 statements, 6 edges, 0 errors, 0 lints, 1.2 ms
+   static order: table base  |  table items  |  function double_it(int8)  |  view v1  |  view v2  |  view v3  |  matview mv  |  index mv_k_idx
+     [loaded] static order (ours), one transaction, fail fast
+     file names / statement order invariance (one file per statement, random names, reversed): same order
+     [FAILED] path order (spec fallback), one pass
+         error: a_v3.sql: relation "v2" does not exist
+     [loaded] REVERSE path order, one pass -> SAME catalog as static order
+     [loaded] pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback) -> SAME catalog as static order (rounds=4)
+   determinism guard (same statements, other valid topological orders):
+     same: reverse
+     same: reverse-ignore-priority
+     same: random-valid(seed 1)
+     same: random-valid(seed 2)
+     same: random-valid(seed 3)
+   guard verdict: order-independent (PASS)
+
+== sql-functions: 5 files
+   static analysis: 12 statements, 11 edges, 0 errors, 0 lints, 1.0 ms
+   static order: table accounts  |  table not_yet_created  |  function account_balance(int4)  |  function accounts_count()  |  function default_amount()  |  table ledger  |  function late_bound()  |  function ledger_oid()  |  function owner_ok(text)  |  procedure credit(int4,numeric)  |  constraint accounts.accounts_cap  |  constraint accounts.accounts_owner_known
+     [loaded] static order (ours), one transaction, fail fast
+     file names / statement order invariance (one file per statement, random names, reversed): same order
+     [FAILED] path order (spec fallback), one pass
+         error: a_ledger.sql: function default_amount() does not exist
+     [FAILED] REVERSE path order, one pass
+         error: c_constraints.sql: function owner_ok(text) does not exist
+     [loaded] pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback) -> SAME catalog as static order (rounds=2)
+   determinism guard (same statements, other valid topological orders):
+     same: reverse
+     same: reverse-ignore-priority
+     same: random-valid(seed 1)
+     same: random-valid(seed 2)
+     same: random-valid(seed 3)
+   guard verdict: order-independent (PASS)
+
+== triggers-policies: 6 files
+   static analysis: 23 statements, 22 edges, 0 errors, 0 lints, 1.2 ms
+   static order: table doc_audit  |  table editors  |  table teams  |  table docs  |  function audit_doc()  |  function is_editor(text)  |  function should_audit(text)  |  trigger docs.docs_audit  |  policy docs.docs_owner  |  policy docs.docs_team  |  rls docs AT_EnableRowSecurity  |  rls docs AT_ForceRowSecurity  |  grant function is_editor  |  grant table docs  |  grant table docs  |  grant table teams  |  revoke function should_audit  |  comment column docs.title  |  comment function is_editor  |  comment index docs_pkey  |  comment policy docs.docs_owner  |  comment tabconstraint docs.docs_title_len  |  comment trigger docs.docs_audit
+     [loaded] static order (ours), one transaction, fail fast
+     file names / statement order invariance (one file per statement, random names, reversed): same order
+     [FAILED] path order (spec fallback), one pass
+         error: a_policies.sql: relation "docs" does not exist
+     [FAILED] REVERSE path order, one pass
+         error: c_grants_comments.sql: trigger "docs_audit" for table "docs" does not exist
+     [loaded] pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback) -> SAME catalog as static order (rounds=3)
+   determinism guard (same statements, other valid topological orders):
+     same: reverse
+     same: reverse-ignore-priority
+     same: random-valid(seed 1)
+     same: random-valid(seed 2)
+     same: random-valid(seed 3)
+   guard verdict: order-independent (PASS)
+
+== fk-index-choice: 5 files
+   static analysis: 7 statements, 8 edges, 0 errors, 1 lints, 0.6 ms
+     LINT FK_INDEX_CHOICE: parent(code) has 2 unique indexes/constraints (index parent_code_uidx, constraint parent.parent_code_key) and is referenced by a foreign key: PostgreSQL binds the FK to whichever qualifying index it finds first
+   static order: table node  |  table leaf  |  table parent  |  constraint node.node_best_leaf_fk  |  constraint parent.parent_code_key  |  index parent_code_uidx  |  table child
+     [loaded] static order (ours), one transaction, fail fast
+     file names / statement order invariance (one file per statement, random names, reversed): same order
+     [FAILED] path order (spec fallback), one pass
+         error: a_child.sql: relation "parent" does not exist
+     [FAILED] REVERSE path order, one pass
+         error: e_tree.sql: relation "node" does not exist
+     [FAILED] pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)
+         error: shadow load stuck after 5 round(s): 1 file(s) cannot apply | e_tree.sql: relation "node" does not exist — at line 1: -- self-referencing FK, plus a node <-> leaf FK cycle closed by ALTER TABLE alte… (failed identically in 5 round(s) — likely a genuine missing dependency, not ordering)
+   determinism guard (same statements, other valid topological orders):
+     same: reverse
+     DIFFERENT: reverse-ignore-priority - depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n] | - fkIndex: child.child_parent_code_fkey uses index parent_code_key | + depends: constraint child_parent_code_fkey on table child -> index parent_code_uidx [n] | + fkIndex: child.child_parent_code_fkey uses index parent_code_uidx
+     DIFFERENT: random-valid(seed 1) - depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n] | - fkIndex: child.child_parent_code_fkey uses index parent_code_key | + depends: constraint child_parent_code_fkey on table child -> index parent_code_uidx [n] | + fkIndex: child.child_parent_code_fkey uses index parent_code_uidx
+     DIFFERENT: random-valid(seed 2) - depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n] | - fkIndex: child.child_parent_code_fkey uses index parent_code_key | + depends: constraint child_parent_code_fkey on table child -> index parent_code_uidx [n] | + fkIndex: child.child_parent_code_fkey uses index parent_code_uidx
+     DIFFERENT: random-valid(seed 3) - depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n] | - fkIndex: child.child_parent_code_fkey uses index parent_code_key | + depends: constraint child_parent_code_fkey on table child -> index parent_code_uidx [n] | + fkIndex: child.child_parent_code_fkey uses index parent_code_uidx
+   guard verdict: ORDER-DEPENDENT: would be refused
+
+== unnamed-index: 3 files
+   static analysis: 3 statements, 2 edges, 0 errors, 2 lints, 0.3 ms
+     LINT UNNAMED_INDEX: a_partial.sql:3: unnamed index on t: its generated name depends on which other unnamed indexes exist first
+     LINT UNNAMED_INDEX: b_plain.sql:1: unnamed index on t: its generated name depends on which other unnamed indexes exist first
+   static order: table t  |  index (unnamed) on t  |  index (unnamed) on t
+     [loaded] static order (ours), one transaction, fail fast
+     file names / statement order invariance (one file per statement, random names, reversed): same order
+     [FAILED] path order (spec fallback), one pass
+         error: a_partial.sql: relation "t" does not exist
+     [loaded] REVERSE path order, one pass -> SAME catalog as static order
+     [loaded] pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback) -> DIFFERENT catalog (4 lines) (rounds=2)
+         - index: CREATE INDEX t_a_idx ON public.t USING btree (a)
+         - index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0)
+         + index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0)
+         + index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)
+   determinism guard (same statements, other valid topological orders):
+     DIFFERENT: reverse - index: CREATE INDEX t_a_idx ON public.t USING btree (a) | - index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0) | + index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0) | + index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)
+     DIFFERENT: reverse-ignore-priority - index: CREATE INDEX t_a_idx ON public.t USING btree (a) | - index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0) | + index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0) | + index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)
+     DIFFERENT: random-valid(seed 1) - index: CREATE INDEX t_a_idx ON public.t USING btree (a) | - index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0) | + index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0) | + index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)
+     DIFFERENT: random-valid(seed 2) - index: CREATE INDEX t_a_idx ON public.t USING btree (a) | - index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0) | + index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0) | + index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)
+     DIFFERENT: random-valid(seed 3) - index: CREATE INDEX t_a_idx ON public.t USING btree (a) | - index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0) | + index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0) | + index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)
+   guard verdict: ORDER-DEPENDENT: would be refused
+
+== cycle-error: 2 files
+   static analysis: 4 statements, 4 edges, 0 errors, 0 lints, 0.5 ms
+     ERROR CYCLE: dependency cycle: table b (b.sql:1) -> table a (a.sql:2) -> table b (b.sql:1). Tip: move one foreign key out of CREATE TABLE into ALTER TABLE ... ADD CONSTRAINT.
+     [FAILED] path order (spec fallback), one pass
+         error: a.sql: relation "b" does not exist
+     [FAILED] REVERSE path order, one pass
+         error: b.sql: relation "a" does not exist
+     [FAILED] pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)
+         error: shadow load stuck after 2 round(s): 2 file(s) cannot apply Tip: if two tables reference each other with inline REFERENCES clauses, split one foreign key into a separate ALTER TABLE … ADD CONSTRAINT statement. | a.sql: relation "b" does not exist — at line 1: -- Inline FK cycle: unsatisfiable without ALTER TABLE ... ADD CONSTRAINT. create… (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering) | b.sql: relation "a" does not exist — at line 1: create table b (id int primary key, a_id int references a (id)) (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering)
+
+== unresolved: 1 files
+   static analysis: 4 statements, 1 edges, 2 errors, 0 lints, 0.4 ms
+     ERROR UNRESOLVED: a.sql:1: table orders references type "moneyamount", which no statement creates and pg_catalog does not have
+     ERROR UNRESOLVED: a.sql:2: view order_ids references relation "ordrs", which no statement creates and pg_catalog does not have
+     [FAILED] path order (spec fallback), one pass
+         error: a.sql: type "moneyamount" does not exist
+     [FAILED] REVERSE path order, one pass
+         error: a.sql: type "moneyamount" does not exist
+     [FAILED] pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)
+         error: shadow load stuck after 2 round(s): 1 file(s) cannot apply | a.sql: type "moneyamount" does not exist — at line 1: create table orders (id int primary key, amount moneyamount) (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering)
+
+Done in 10s. Details: prototype-schema-ordering/output/

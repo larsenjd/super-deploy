@@ -1,0 +1,2306 @@
+{
+  "server": "PostgreSQL 18.4 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 7.5.0-3ubuntu1~18.04) 7.5.0, 64-bit",
+  "results": [
+    {
+      "fixture": "q35-shuffled (from prototype-pg-delta)",
+      "files": [
+        "a_policies.sql",
+        "b_views.sql",
+        "c_triggers.sql",
+        "d_functions.sql",
+        "e_constraints/customers_last_order_fk.sql",
+        "f_orders.sql",
+        "g_customers.sql",
+        "h_types.sql",
+        "i_admins.sql"
+      ],
+      "statements": [
+        {
+          "at": "a_policies.sql:1",
+          "identity": "rls orders AT_EnableRowSecurity",
+          "provides": [],
+          "requires": [
+            "rel:orders"
+          ]
+        },
+        {
+          "at": "a_policies.sql:2",
+          "identity": "policy orders.orders_visible",
+          "provides": [
+            "policy:orders.orders_visible"
+          ],
+          "requires": [
+            "func:is_admin",
+            "rel:orders"
+          ]
+        },
+        {
+          "at": "b_views.sql:1",
+          "identity": "view order_totals",
+          "provides": [
+            "rel:order_totals",
+            "type:order_totals"
+          ],
+          "requires": [
+            "func:count",
+            "func:sum",
+            "rel:customers",
+            "rel:orders"
+          ]
+        },
+        {
+          "at": "b_views.sql:6",
+          "identity": "view big_customers",
+          "provides": [
+            "rel:big_customers",
+            "type:big_customers"
+          ],
+          "requires": [
+            "rel:order_totals"
+          ]
+        },
+        {
+          "at": "c_triggers.sql:1",
+          "identity": "trigger orders.orders_touch",
+          "provides": [
+            "trigger:orders.orders_touch"
+          ],
+          "requires": [
+            "func:touch_updated_at",
+            "rel:orders"
+          ]
+        },
+        {
+          "at": "d_functions.sql:1",
+          "identity": "function touch_updated_at()",
+          "provides": [
+            "func:touch_updated_at"
+          ],
+          "requires": [
+            "type:trigger"
+          ]
+        },
+        {
+          "at": "d_functions.sql:7",
+          "identity": "function is_admin()",
+          "provides": [
+            "func:is_admin"
+          ],
+          "requires": [
+            "rel:admins"
+          ]
+        },
+        {
+          "at": "d_functions.sql:11",
+          "identity": "function customer_total(int4)",
+          "provides": [
+            "func:customer_total"
+          ],
+          "requires": [
+            "func:sum",
+            "rel:orders"
+          ]
+        },
+        {
+          "at": "e_constraints/customers_last_order_fk.sql:2",
+          "identity": "constraint customers.customers_last_order_fk",
+          "provides": [
+            "con:customers.customers_last_order_fk"
+          ],
+          "requires": [
+            "rel:customers",
+            "rel:orders",
+            "uniq:orders"
+          ]
+        },
+        {
+          "at": "f_orders.sql:1",
+          "identity": "table orders",
+          "provides": [
+            "rel:orders",
+            "type:orders",
+            "uniq:orders",
+            "rel:orders_pkey",
+            "uniqcols:orders(id)"
+          ],
+          "requires": [
+            "rel:customers",
+            "type:money_amount",
+            "type:timestamptz",
+            "uniq:customers"
+          ]
+        },
+        {
+          "at": "f_orders.sql:9",
+          "identity": "index orders_customer_idx",
+          "provides": [
+            "rel:orders_customer_idx"
+          ],
+          "requires": [
+            "rel:orders"
+          ]
+        },
+        {
+          "at": "f_orders.sql:10",
+          "identity": "grant table orders",
+          "provides": [],
+          "requires": [
+            "rel:orders"
+          ]
+        },
+        {
+          "at": "f_orders.sql:11",
+          "identity": "comment table orders",
+          "provides": [],
+          "requires": [
+            "rel:orders"
+          ]
+        },
+        {
+          "at": "g_customers.sql:1",
+          "identity": "table customers",
+          "provides": [
+            "rel:customers",
+            "type:customers",
+            "uniq:customers",
+            "rel:customers_pkey",
+            "uniqcols:customers(id)"
+          ],
+          "requires": [
+            "type:address",
+            "type:text"
+          ]
+        },
+        {
+          "at": "h_types.sql:1",
+          "identity": "domain money_amount",
+          "provides": [
+            "type:money_amount"
+          ],
+          "requires": []
+        },
+        {
+          "at": "h_types.sql:2",
+          "identity": "type address",
+          "provides": [
+            "type:address",
+            "rel:address"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        },
+        {
+          "at": "i_admins.sql:1",
+          "identity": "table admins",
+          "provides": [
+            "rel:admins",
+            "type:admins",
+            "uniq:admins",
+            "rel:admins_pkey",
+            "uniqcols:admins(name)"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        }
+      ],
+      "findings": [],
+      "staticOrder": [
+        "type address",
+        "domain money_amount",
+        "table admins",
+        "table customers",
+        "table orders",
+        "function customer_total(int4)",
+        "function is_admin()",
+        "function touch_updated_at()",
+        "view order_totals",
+        "view big_customers",
+        "constraint customers.customers_last_order_fk",
+        "index orders_customer_idx",
+        "trigger orders.orders_touch",
+        "policy orders.orders_visible",
+        "rls orders AT_EnableRowSecurity",
+        "grant table orders",
+        "comment table orders"
+      ],
+      "analysisMs": 19.4,
+      "staticLoad": {
+        "method": "static order (ours), one transaction, fail fast",
+        "loaded": true
+      },
+      "fileNameInvariant": true,
+      "comparisons": [
+        {
+          "method": "path order (spec fallback), one pass",
+          "loaded": false,
+          "error": "a_policies.sql: relation \"orders\" does not exist"
+        },
+        {
+          "method": "REVERSE path order, one pass",
+          "loaded": true,
+          "diffVsStatic": []
+        },
+        {
+          "method": "pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)",
+          "loaded": true,
+          "note": "rounds=4",
+          "diffVsStatic": []
+        }
+      ],
+      "guard": [
+        {
+          "order": "reverse",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "reverse-ignore-priority",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 1)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 2)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 3)",
+          "same": true,
+          "diff": []
+        }
+      ]
+    },
+    {
+      "fixture": "q35-overload-binding (from prototype-pg-delta)",
+      "files": [
+        "a_pick_numeric.sql",
+        "b_view.sql",
+        "c_pick_integer.sql"
+      ],
+      "statements": [
+        {
+          "at": "a_pick_numeric.sql:1",
+          "identity": "function pick(numeric)",
+          "provides": [
+            "func:pick"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        },
+        {
+          "at": "b_view.sql:1",
+          "identity": "view which_pick",
+          "provides": [
+            "rel:which_pick",
+            "type:which_pick"
+          ],
+          "requires": [
+            "func:pick"
+          ]
+        },
+        {
+          "at": "c_pick_integer.sql:1",
+          "identity": "function pick(int4)",
+          "provides": [
+            "func:pick"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "level": "lint",
+          "code": "OVERLOADED_REFERENCE",
+          "message": "pick has 2 overloads (function pick(numeric), function pick(int4)) and is referenced at CREATE time by view which_pick @b_view.sql:1"
+        }
+      ],
+      "staticOrder": [
+        "function pick(int4)",
+        "function pick(numeric)",
+        "view which_pick"
+      ],
+      "analysisMs": 0.5,
+      "staticLoad": {
+        "method": "static order (ours), one transaction, fail fast",
+        "loaded": true
+      },
+      "fileNameInvariant": true,
+      "comparisons": [
+        {
+          "method": "path order (spec fallback), one pass",
+          "loaded": true,
+          "diffVsStatic": [
+            "- depends: rule _RETURN on view which_pick -> function pick(integer) [n]",
+            "- view: v which_pick  SELECT pick(1) AS picked;",
+            "+ depends: rule _RETURN on view which_pick -> function pick(numeric) [n]",
+            "+ view: v which_pick  SELECT pick(1::numeric) AS picked;"
+          ]
+        },
+        {
+          "method": "REVERSE path order, one pass",
+          "loaded": true,
+          "diffVsStatic": []
+        },
+        {
+          "method": "pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)",
+          "loaded": true,
+          "note": "rounds=1",
+          "diffVsStatic": [
+            "- depends: rule _RETURN on view which_pick -> function pick(integer) [n]",
+            "- view: v which_pick  SELECT pick(1) AS picked;",
+            "+ depends: rule _RETURN on view which_pick -> function pick(numeric) [n]",
+            "+ view: v which_pick  SELECT pick(1::numeric) AS picked;"
+          ]
+        }
+      ],
+      "guard": [
+        {
+          "order": "reverse",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "reverse-ignore-priority",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 1)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 2)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 3)",
+          "same": true,
+          "diff": []
+        }
+      ],
+      "ablationGuard": [
+        {
+          "order": "reverse",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "reverse-ignore-priority",
+          "same": false,
+          "diff": [
+            "- depends: rule _RETURN on view which_pick -> function pick(integer) [n]",
+            "- view: v which_pick  SELECT pick(1) AS picked;",
+            "+ depends: rule _RETURN on view which_pick -> function pick(numeric) [n]",
+            "+ view: v which_pick  SELECT pick(1::numeric) AS picked;"
+          ]
+        },
+        {
+          "order": "random-valid(seed 1)",
+          "same": false,
+          "diff": [
+            "- depends: rule _RETURN on view which_pick -> function pick(integer) [n]",
+            "- view: v which_pick  SELECT pick(1) AS picked;",
+            "+ depends: rule _RETURN on view which_pick -> function pick(numeric) [n]",
+            "+ view: v which_pick  SELECT pick(1::numeric) AS picked;"
+          ]
+        },
+        {
+          "order": "random-valid(seed 2)",
+          "same": false,
+          "diff": [
+            "- depends: rule _RETURN on view which_pick -> function pick(integer) [n]",
+            "- view: v which_pick  SELECT pick(1) AS picked;",
+            "+ depends: rule _RETURN on view which_pick -> function pick(numeric) [n]",
+            "+ view: v which_pick  SELECT pick(1::numeric) AS picked;"
+          ]
+        },
+        {
+          "order": "random-valid(seed 3)",
+          "same": false,
+          "diff": [
+            "- depends: rule _RETURN on view which_pick -> function pick(integer) [n]",
+            "- view: v which_pick  SELECT pick(1) AS picked;",
+            "+ depends: rule _RETURN on view which_pick -> function pick(numeric) [n]",
+            "+ view: v which_pick  SELECT pick(1::numeric) AS picked;"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture": "overloads",
+      "files": [
+        "a_pick_numeric.sql",
+        "b_views.sql",
+        "c_more_overloads.sql"
+      ],
+      "statements": [
+        {
+          "at": "a_pick_numeric.sql:4",
+          "identity": "function pick(numeric)",
+          "provides": [
+            "func:pick"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        },
+        {
+          "at": "a_pick_numeric.sql:5",
+          "identity": "function fmt(numeric)",
+          "provides": [
+            "func:fmt"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        },
+        {
+          "at": "b_views.sql:1",
+          "identity": "view which_pick",
+          "provides": [
+            "rel:which_pick",
+            "type:which_pick"
+          ],
+          "requires": [
+            "func:pick"
+          ]
+        },
+        {
+          "at": "b_views.sql:2",
+          "identity": "view which_len",
+          "provides": [
+            "rel:which_len",
+            "type:which_len"
+          ],
+          "requires": [
+            "func:length",
+            "type:text"
+          ]
+        },
+        {
+          "at": "b_views.sql:5",
+          "identity": "function uses_fmt()",
+          "provides": [
+            "func:uses_fmt"
+          ],
+          "requires": [
+            "func:fmt",
+            "type:text"
+          ]
+        },
+        {
+          "at": "b_views.sql:11",
+          "identity": "table fmt_defaults",
+          "provides": [
+            "rel:fmt_defaults",
+            "type:fmt_defaults",
+            "uniq:fmt_defaults",
+            "rel:fmt_defaults_pkey",
+            "uniqcols:fmt_defaults(id)"
+          ],
+          "requires": [
+            "func:fmt",
+            "type:text"
+          ]
+        },
+        {
+          "at": "c_more_overloads.sql:1",
+          "identity": "function pick(int4)",
+          "provides": [
+            "func:pick"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        },
+        {
+          "at": "c_more_overloads.sql:2",
+          "identity": "function fmt(int4)",
+          "provides": [
+            "func:fmt"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        },
+        {
+          "at": "c_more_overloads.sql:4",
+          "identity": "function length(text)",
+          "provides": [
+            "func:length"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "level": "lint",
+          "code": "OVERLOADED_REFERENCE",
+          "message": "pick has 2 overloads (function pick(numeric), function pick(int4)) and is referenced at CREATE time by view which_pick @b_views.sql:1"
+        },
+        {
+          "level": "lint",
+          "code": "OVERLOADED_REFERENCE",
+          "message": "fmt has 2 overloads (function fmt(numeric), function fmt(int4)) and is referenced at CREATE time by function uses_fmt() @b_views.sql:5, table fmt_defaults @b_views.sql:11"
+        },
+        {
+          "level": "lint",
+          "code": "SHADOWS_PG_CATALOG",
+          "message": "function length also exists in pg_catalog; with search_path = managed, pg_catalog the user function can capture calls"
+        }
+      ],
+      "staticOrder": [
+        "function fmt(int4)",
+        "function fmt(numeric)",
+        "table fmt_defaults",
+        "function length(text)",
+        "function pick(int4)",
+        "function pick(numeric)",
+        "function uses_fmt()",
+        "view which_len",
+        "view which_pick"
+      ],
+      "analysisMs": 1,
+      "staticLoad": {
+        "method": "static order (ours), one transaction, fail fast",
+        "loaded": true
+      },
+      "fileNameInvariant": true,
+      "comparisons": [
+        {
+          "method": "path order (spec fallback), one pass",
+          "loaded": true,
+          "diffVsStatic": [
+            "- column: fmt_defaults.label text notnull=false identity= generated= default=fmt(3) collation=\"default\"",
+            "- depends: default value for column label of table fmt_defaults -> function fmt(integer) [n]",
+            "- depends: function uses_fmt() -> function fmt(integer) [n]",
+            "- depends: rule _RETURN on view which_len -> function public.length(text) [n]",
+            "- depends: rule _RETURN on view which_pick -> function pick(integer) [n]",
+            "- routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt(2) AS fmt;\nEND\n",
+            "- view: v which_len  SELECT public.length('abc'::text) AS l;",
+            "- view: v which_pick  SELECT pick(1) AS picked;",
+            "- viewOutput: which_len=42",
+            "- viewOutput: which_pick=integer",
+            "+ column: fmt_defaults.label text notnull=false identity= generated= default=fmt((3)::numeric) collation=\"default\"",
+            "+ depends: default value for column label of table fmt_defaults -> function fmt(numeric) [n]",
+            "+ depends: function uses_fmt() -> function fmt(numeric) [n]",
+            "+ depends: rule _RETURN on view which_pick -> function pick(numeric) [n]",
+            "+ routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt((2)::numeric) AS fmt;\nEND\n",
+            "+ view: v which_len  SELECT length('abc'::text) AS l;",
+            "+ view: v which_pick  SELECT pick(1::numeric) AS picked;",
+            "+ viewOutput: which_len=3",
+            "+ viewOutput: which_pick=numeric"
+          ]
+        },
+        {
+          "method": "REVERSE path order, one pass",
+          "loaded": true,
+          "diffVsStatic": []
+        },
+        {
+          "method": "pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)",
+          "loaded": true,
+          "note": "rounds=1",
+          "diffVsStatic": [
+            "- column: fmt_defaults.label text notnull=false identity= generated= default=fmt(3) collation=\"default\"",
+            "- depends: default value for column label of table fmt_defaults -> function fmt(integer) [n]",
+            "- depends: function uses_fmt() -> function fmt(integer) [n]",
+            "- depends: rule _RETURN on view which_len -> function public.length(text) [n]",
+            "- depends: rule _RETURN on view which_pick -> function pick(integer) [n]",
+            "- routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt(2) AS fmt;\nEND\n",
+            "- view: v which_len  SELECT public.length('abc'::text) AS l;",
+            "- view: v which_pick  SELECT pick(1) AS picked;",
+            "- viewOutput: which_len=42",
+            "- viewOutput: which_pick=integer",
+            "+ column: fmt_defaults.label text notnull=false identity= generated= default=fmt((3)::numeric) collation=\"default\"",
+            "+ depends: default value for column label of table fmt_defaults -> function fmt(numeric) [n]",
+            "+ depends: function uses_fmt() -> function fmt(numeric) [n]",
+            "+ depends: rule _RETURN on view which_pick -> function pick(numeric) [n]",
+            "+ routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt((2)::numeric) AS fmt;\nEND\n",
+            "+ view: v which_len  SELECT length('abc'::text) AS l;",
+            "+ view: v which_pick  SELECT pick(1::numeric) AS picked;",
+            "+ viewOutput: which_len=3",
+            "+ viewOutput: which_pick=numeric"
+          ]
+        }
+      ],
+      "guard": [
+        {
+          "order": "reverse",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "reverse-ignore-priority",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 1)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 2)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 3)",
+          "same": true,
+          "diff": []
+        }
+      ],
+      "ablationGuard": [
+        {
+          "order": "reverse",
+          "same": false,
+          "diff": [
+            "- column: fmt_defaults.label text notnull=false identity= generated= default=fmt(3) collation=\"default\"",
+            "- depends: default value for column label of table fmt_defaults -> function fmt(integer) [n]",
+            "- depends: function uses_fmt() -> function fmt(integer) [n]",
+            "- routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt(2) AS fmt;\nEND\n",
+            "+ column: fmt_defaults.label text notnull=false identity= generated= default=fmt((3)::numeric) collation=\"default\"",
+            "+ depends: default value for column label of table fmt_defaults -> function fmt(numeric) [n]",
+            "+ depends: function uses_fmt() -> function fmt(numeric) [n]",
+            "+ routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt((2)::numeric) AS fmt;\nEND\n"
+          ]
+        },
+        {
+          "order": "reverse-ignore-priority",
+          "same": false,
+          "diff": [
+            "- column: fmt_defaults.label text notnull=false identity= generated= default=fmt(3) collation=\"default\"",
+            "- depends: default value for column label of table fmt_defaults -> function fmt(integer) [n]",
+            "- depends: function uses_fmt() -> function fmt(integer) [n]",
+            "- depends: rule _RETURN on view which_pick -> function pick(integer) [n]",
+            "- routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt(2) AS fmt;\nEND\n",
+            "- view: v which_pick  SELECT pick(1) AS picked;",
+            "- viewOutput: which_pick=integer",
+            "+ column: fmt_defaults.label text notnull=false identity= generated= default=fmt((3)::numeric) collation=\"default\"",
+            "+ depends: default value for column label of table fmt_defaults -> function fmt(numeric) [n]",
+            "+ depends: function uses_fmt() -> function fmt(numeric) [n]",
+            "+ depends: rule _RETURN on view which_pick -> function pick(numeric) [n]",
+            "+ routine: CREATE OR REPLACE FUNCTION public.uses_fmt()\n RETURNS text\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT fmt((2)::numeric) AS fmt;\nEND\n",
+            "+ view: v which_pick  SELECT pick(1::numeric) AS picked;",
+            "+ viewOutput: which_pick=numeric"
+          ]
+        },
+        {
+          "order": "random-valid(seed 1)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 2)",
+          "same": false,
+          "diff": [
+            "- column: fmt_defaults.label text notnull=false identity= generated= default=fmt(3) collation=\"default\"",
+            "- depends: default value for column label of table fmt_defaults -> function fmt(integer) [n]",
+            "- depends: rule _RETURN on view which_pick -> function pick(integer) [n]",
+            "- view: v which_pick  SELECT pick(1) AS picked;",
+            "- viewOutput: which_pick=integer",
+            "+ column: fmt_defaults.label text notnull=false identity= generated= default=fmt((3)::numeric) collation=\"default\"",
+            "+ depends: default value for column label of table fmt_defaults -> function fmt(numeric) [n]",
+            "+ depends: rule _RETURN on view which_pick -> function pick(numeric) [n]",
+            "+ view: v which_pick  SELECT pick(1::numeric) AS picked;",
+            "+ viewOutput: which_pick=numeric"
+          ]
+        },
+        {
+          "order": "random-valid(seed 3)",
+          "same": false,
+          "diff": [
+            "- column: fmt_defaults.label text notnull=false identity= generated= default=fmt(3) collation=\"default\"",
+            "- depends: default value for column label of table fmt_defaults -> function fmt(integer) [n]",
+            "- depends: rule _RETURN on view which_pick -> function pick(integer) [n]",
+            "- view: v which_pick  SELECT pick(1) AS picked;",
+            "- viewOutput: which_pick=integer",
+            "+ column: fmt_defaults.label text notnull=false identity= generated= default=fmt((3)::numeric) collation=\"default\"",
+            "+ depends: default value for column label of table fmt_defaults -> function fmt(numeric) [n]",
+            "+ depends: rule _RETURN on view which_pick -> function pick(numeric) [n]",
+            "+ view: v which_pick  SELECT pick(1::numeric) AS picked;",
+            "+ viewOutput: which_pick=numeric"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture": "overload-ambiguous",
+      "files": [
+        "a_fmt_numeric.sql",
+        "b_table.sql",
+        "c_fmt_bigint.sql"
+      ],
+      "statements": [
+        {
+          "at": "a_fmt_numeric.sql:4",
+          "identity": "function fmt(numeric)",
+          "provides": [
+            "func:fmt"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        },
+        {
+          "at": "b_table.sql:1",
+          "identity": "table fmt_defaults",
+          "provides": [
+            "rel:fmt_defaults",
+            "type:fmt_defaults",
+            "uniq:fmt_defaults",
+            "rel:fmt_defaults_pkey",
+            "uniqcols:fmt_defaults(id)"
+          ],
+          "requires": [
+            "func:fmt",
+            "type:text"
+          ]
+        },
+        {
+          "at": "c_fmt_bigint.sql:1",
+          "identity": "function fmt(int8)",
+          "provides": [
+            "func:fmt"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "level": "lint",
+          "code": "OVERLOADED_REFERENCE",
+          "message": "fmt has 2 overloads (function fmt(numeric), function fmt(int8)) and is referenced at CREATE time by table fmt_defaults @b_table.sql:1"
+        }
+      ],
+      "staticOrder": [
+        "function fmt(int8)",
+        "function fmt(numeric)",
+        "table fmt_defaults"
+      ],
+      "analysisMs": 0.4,
+      "staticLoad": {
+        "method": "static order (ours), one transaction, fail fast",
+        "loaded": false,
+        "error": "b_table.sql:1 (table fmt_defaults): function fmt(integer) is not unique"
+      },
+      "fileNameInvariant": true,
+      "comparisons": [
+        {
+          "method": "path order (spec fallback), one pass",
+          "loaded": true
+        },
+        {
+          "method": "REVERSE path order, one pass",
+          "loaded": true
+        },
+        {
+          "method": "pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)",
+          "loaded": true,
+          "note": "rounds=1"
+        }
+      ],
+      "reverseVsPath": {
+        "method": "REVERSE path order compared with path order",
+        "loaded": true,
+        "diffVsStatic": [
+          "- column: fmt_defaults.label text notnull=false identity= generated= default=fmt((3)::numeric) collation=\"default\"",
+          "- depends: default value for column label of table fmt_defaults -> function fmt(numeric) [n]",
+          "+ column: fmt_defaults.label text notnull=false identity= generated= default=fmt((3)::bigint) collation=\"default\"",
+          "+ depends: default value for column label of table fmt_defaults -> function fmt(bigint) [n]"
+        ]
+      }
+    },
+    {
+      "fixture": "extraction-gap",
+      "files": [
+        "a_view.sql",
+        "b_functions.sql",
+        "c_customers.sql"
+      ],
+      "statements": [
+        {
+          "at": "a_view.sql:5",
+          "identity": "view customer_stats",
+          "provides": [
+            "rel:customer_stats",
+            "type:customer_stats"
+          ],
+          "requires": [
+            "rel:customers"
+          ]
+        },
+        {
+          "at": "b_functions.sql:1",
+          "identity": "function order_count(customers)",
+          "provides": [
+            "func:order_count"
+          ],
+          "requires": [
+            "type:customers"
+          ]
+        },
+        {
+          "at": "b_functions.sql:5",
+          "identity": "function name_of(customers.name)",
+          "provides": [
+            "func:name_of"
+          ],
+          "requires": [
+            "func:upper",
+            "rel:customers",
+            "type:text"
+          ]
+        },
+        {
+          "at": "c_customers.sql:1",
+          "identity": "table customers",
+          "provides": [
+            "rel:customers",
+            "type:customers",
+            "uniq:customers",
+            "rel:customers_pkey",
+            "uniqcols:customers(id)"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        }
+      ],
+      "findings": [],
+      "staticOrder": [
+        "table customers",
+        "function name_of(customers.name)",
+        "function order_count(customers)",
+        "view customer_stats"
+      ],
+      "analysisMs": 0.6,
+      "staticLoad": {
+        "method": "static order (ours), one transaction, fail fast",
+        "loaded": true
+      },
+      "fileNameInvariant": true,
+      "comparisons": [
+        {
+          "method": "path order (spec fallback), one pass",
+          "loaded": false,
+          "error": "a_view.sql: relation \"customers\" does not exist"
+        },
+        {
+          "method": "REVERSE path order, one pass",
+          "loaded": true,
+          "diffVsStatic": []
+        },
+        {
+          "method": "pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)",
+          "loaded": true,
+          "note": "rounds=3",
+          "diffVsStatic": []
+        }
+      ],
+      "guard": [
+        {
+          "order": "reverse",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "reverse-ignore-priority",
+          "same": false,
+          "error": "a_view.sql:5 (view customer_stats): column c.order_count does not exist",
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 1)",
+          "same": false,
+          "error": "a_view.sql:5 (view customer_stats): column c.order_count does not exist",
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 2)",
+          "same": false,
+          "error": "a_view.sql:5 (view customer_stats): column c.order_count does not exist",
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 3)",
+          "same": false,
+          "error": "a_view.sql:5 (view customer_stats): column c.order_count does not exist",
+          "diff": []
+        }
+      ]
+    },
+    {
+      "fixture": "domain-composite",
+      "files": [
+        "a_views.sql",
+        "b_functions.sql",
+        "c_tables.sql",
+        "d_domains.sql",
+        "e_types.sql"
+      ],
+      "statements": [
+        {
+          "at": "a_views.sql:1",
+          "identity": "view point_sums",
+          "provides": [
+            "rel:point_sums",
+            "type:point_sums"
+          ],
+          "requires": [
+            "func:pair_sum",
+            "rel:points"
+          ]
+        },
+        {
+          "at": "b_functions.sql:1",
+          "identity": "function pair_sum(pos_pair)",
+          "provides": [
+            "func:pair_sum"
+          ],
+          "requires": [
+            "type:pos_pair"
+          ]
+        },
+        {
+          "at": "b_functions.sql:4",
+          "identity": "function make_pair(pos_int,pos_int)",
+          "provides": [
+            "func:make_pair"
+          ],
+          "requires": [
+            "type:pair",
+            "type:pos_int",
+            "type:pos_pair"
+          ]
+        },
+        {
+          "at": "c_tables.sql:1",
+          "identity": "table points",
+          "provides": [
+            "rel:points",
+            "type:points",
+            "uniq:points",
+            "rel:points_pkey",
+            "uniqcols:points(id)"
+          ],
+          "requires": [
+            "type:pair",
+            "type:pos_int",
+            "type:pos_pair"
+          ]
+        },
+        {
+          "at": "c_tables.sql:6",
+          "identity": "comment column points.p",
+          "provides": [],
+          "requires": [
+            "rel:points"
+          ]
+        },
+        {
+          "at": "d_domains.sql:1",
+          "identity": "domain pos_pair",
+          "provides": [
+            "type:pos_pair"
+          ],
+          "requires": [
+            "type:pair"
+          ]
+        },
+        {
+          "at": "d_domains.sql:3",
+          "identity": "domain pos_int",
+          "provides": [
+            "type:pos_int"
+          ],
+          "requires": []
+        },
+        {
+          "at": "d_domains.sql:4",
+          "identity": "comment domain pos_pair",
+          "provides": [],
+          "requires": [
+            "type:pos_pair"
+          ]
+        },
+        {
+          "at": "e_types.sql:1",
+          "identity": "type pair",
+          "provides": [
+            "type:pair",
+            "rel:pair"
+          ],
+          "requires": []
+        }
+      ],
+      "findings": [],
+      "staticOrder": [
+        "type pair",
+        "domain pos_int",
+        "domain pos_pair",
+        "table points",
+        "function make_pair(pos_int,pos_int)",
+        "function pair_sum(pos_pair)",
+        "view point_sums",
+        "comment column points.p",
+        "comment domain pos_pair"
+      ],
+      "analysisMs": 0.8,
+      "staticLoad": {
+        "method": "static order (ours), one transaction, fail fast",
+        "loaded": true
+      },
+      "fileNameInvariant": true,
+      "comparisons": [
+        {
+          "method": "path order (spec fallback), one pass",
+          "loaded": false,
+          "error": "a_views.sql: relation \"points\" does not exist"
+        },
+        {
+          "method": "REVERSE path order, one pass",
+          "loaded": true,
+          "diffVsStatic": []
+        },
+        {
+          "method": "pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)",
+          "loaded": true,
+          "note": "rounds=4",
+          "diffVsStatic": []
+        }
+      ],
+      "guard": [
+        {
+          "order": "reverse",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "reverse-ignore-priority",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 1)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 2)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 3)",
+          "same": true,
+          "diff": []
+        }
+      ]
+    },
+    {
+      "fixture": "view-chain",
+      "files": [
+        "a_v3.sql",
+        "b_v2.sql",
+        "c_v1.sql",
+        "d_functions.sql",
+        "e_items.sql",
+        "z_base.sql"
+      ],
+      "statements": [
+        {
+          "at": "a_v3.sql:1",
+          "identity": "view v3",
+          "provides": [
+            "rel:v3",
+            "type:v3"
+          ],
+          "requires": [
+            "rel:v2"
+          ]
+        },
+        {
+          "at": "a_v3.sql:2",
+          "identity": "matview mv",
+          "provides": [
+            "rel:mv",
+            "type:mv"
+          ],
+          "requires": [
+            "func:sum",
+            "rel:v1"
+          ]
+        },
+        {
+          "at": "a_v3.sql:3",
+          "identity": "index mv_k_idx",
+          "provides": [
+            "rel:mv_k_idx",
+            "uniq:mv",
+            "uniqcols:mv(k)"
+          ],
+          "requires": [
+            "rel:mv"
+          ]
+        },
+        {
+          "at": "b_v2.sql:3",
+          "identity": "view v2",
+          "provides": [
+            "rel:v2",
+            "type:v2"
+          ],
+          "requires": [
+            "func:double_it",
+            "rel:v1"
+          ]
+        },
+        {
+          "at": "c_v1.sql:1",
+          "identity": "view v1",
+          "provides": [
+            "rel:v1",
+            "type:v1"
+          ],
+          "requires": [
+            "func:count",
+            "rel:items"
+          ]
+        },
+        {
+          "at": "d_functions.sql:1",
+          "identity": "function double_it(int8)",
+          "provides": [
+            "func:double_it"
+          ],
+          "requires": []
+        },
+        {
+          "at": "e_items.sql:1",
+          "identity": "table items",
+          "provides": [
+            "rel:items",
+            "type:items",
+            "uniq:items",
+            "rel:items_pkey",
+            "uniqcols:items(id)"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        },
+        {
+          "at": "z_base.sql:1",
+          "identity": "table base",
+          "provides": [
+            "rel:base",
+            "type:base"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        }
+      ],
+      "findings": [],
+      "staticOrder": [
+        "table base",
+        "table items",
+        "function double_it(int8)",
+        "view v1",
+        "view v2",
+        "view v3",
+        "matview mv",
+        "index mv_k_idx"
+      ],
+      "analysisMs": 1.2,
+      "staticLoad": {
+        "method": "static order (ours), one transaction, fail fast",
+        "loaded": true
+      },
+      "fileNameInvariant": true,
+      "comparisons": [
+        {
+          "method": "path order (spec fallback), one pass",
+          "loaded": false,
+          "error": "a_v3.sql: relation \"v2\" does not exist"
+        },
+        {
+          "method": "REVERSE path order, one pass",
+          "loaded": true,
+          "diffVsStatic": []
+        },
+        {
+          "method": "pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)",
+          "loaded": true,
+          "note": "rounds=4",
+          "diffVsStatic": []
+        }
+      ],
+      "guard": [
+        {
+          "order": "reverse",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "reverse-ignore-priority",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 1)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 2)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 3)",
+          "same": true,
+          "diff": []
+        }
+      ]
+    },
+    {
+      "fixture": "sql-functions",
+      "files": [
+        "a_ledger.sql",
+        "b_functions.sql",
+        "c_constraints.sql",
+        "d_accounts.sql",
+        "z_late.sql"
+      ],
+      "statements": [
+        {
+          "at": "a_ledger.sql:4",
+          "identity": "table ledger",
+          "provides": [
+            "rel:ledger",
+            "type:ledger",
+            "uniq:ledger",
+            "rel:ledger_pkey",
+            "uniqcols:ledger(id)"
+          ],
+          "requires": [
+            "func:default_amount",
+            "rel:accounts",
+            "type:text",
+            "uniq:accounts"
+          ]
+        },
+        {
+          "at": "b_functions.sql:1",
+          "identity": "function default_amount()",
+          "provides": [
+            "func:default_amount"
+          ],
+          "requires": [
+            "func:max",
+            "rel:accounts"
+          ]
+        },
+        {
+          "at": "b_functions.sql:4",
+          "identity": "function account_balance(int4)",
+          "provides": [
+            "func:account_balance"
+          ],
+          "requires": [
+            "rel:accounts"
+          ]
+        },
+        {
+          "at": "b_functions.sql:9",
+          "identity": "function owner_ok(text)",
+          "provides": [
+            "func:owner_ok"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        },
+        {
+          "at": "b_functions.sql:12",
+          "identity": "function accounts_count()",
+          "provides": [
+            "func:accounts_count"
+          ],
+          "requires": [
+            "func:count",
+            "rel:accounts"
+          ]
+        },
+        {
+          "at": "b_functions.sql:16",
+          "identity": "function late_bound()",
+          "provides": [
+            "func:late_bound"
+          ],
+          "requires": []
+        },
+        {
+          "at": "b_functions.sql:21",
+          "identity": "procedure credit(int4,numeric)",
+          "provides": [
+            "func:credit"
+          ],
+          "requires": [
+            "rel:accounts"
+          ]
+        },
+        {
+          "at": "b_functions.sql:27",
+          "identity": "function ledger_oid()",
+          "provides": [
+            "func:ledger_oid"
+          ],
+          "requires": [
+            "rel:ledger",
+            "type:regclass"
+          ]
+        },
+        {
+          "at": "c_constraints.sql:3",
+          "identity": "constraint accounts.accounts_owner_known",
+          "provides": [
+            "con:accounts.accounts_owner_known"
+          ],
+          "requires": [
+            "func:owner_ok",
+            "rel:accounts"
+          ]
+        },
+        {
+          "at": "c_constraints.sql:4",
+          "identity": "constraint accounts.accounts_cap",
+          "provides": [
+            "con:accounts.accounts_cap"
+          ],
+          "requires": [
+            "func:accounts_count",
+            "rel:accounts"
+          ]
+        },
+        {
+          "at": "d_accounts.sql:1",
+          "identity": "table accounts",
+          "provides": [
+            "rel:accounts",
+            "type:accounts",
+            "uniq:accounts",
+            "rel:accounts_pkey",
+            "uniqcols:accounts(id)"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        },
+        {
+          "at": "z_late.sql:1",
+          "identity": "table not_yet_created",
+          "provides": [
+            "rel:not_yet_created",
+            "type:not_yet_created"
+          ],
+          "requires": []
+        }
+      ],
+      "findings": [],
+      "staticOrder": [
+        "table accounts",
+        "table not_yet_created",
+        "function account_balance(int4)",
+        "function accounts_count()",
+        "function default_amount()",
+        "table ledger",
+        "function late_bound()",
+        "function ledger_oid()",
+        "function owner_ok(text)",
+        "procedure credit(int4,numeric)",
+        "constraint accounts.accounts_cap",
+        "constraint accounts.accounts_owner_known"
+      ],
+      "analysisMs": 1,
+      "staticLoad": {
+        "method": "static order (ours), one transaction, fail fast",
+        "loaded": true
+      },
+      "fileNameInvariant": true,
+      "comparisons": [
+        {
+          "method": "path order (spec fallback), one pass",
+          "loaded": false,
+          "error": "a_ledger.sql: function default_amount() does not exist"
+        },
+        {
+          "method": "REVERSE path order, one pass",
+          "loaded": false,
+          "error": "c_constraints.sql: function owner_ok(text) does not exist"
+        },
+        {
+          "method": "pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)",
+          "loaded": true,
+          "note": "rounds=2",
+          "diffVsStatic": []
+        }
+      ],
+      "guard": [
+        {
+          "order": "reverse",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "reverse-ignore-priority",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 1)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 2)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 3)",
+          "same": true,
+          "diff": []
+        }
+      ]
+    },
+    {
+      "fixture": "triggers-policies",
+      "files": [
+        "a_policies.sql",
+        "b_triggers.sql",
+        "c_grants_comments.sql",
+        "d_functions.sql",
+        "e_tables.sql",
+        "f_teams.sql"
+      ],
+      "statements": [
+        {
+          "at": "a_policies.sql:1",
+          "identity": "rls docs AT_EnableRowSecurity",
+          "provides": [],
+          "requires": [
+            "rel:docs"
+          ]
+        },
+        {
+          "at": "a_policies.sql:2",
+          "identity": "rls docs AT_ForceRowSecurity",
+          "provides": [],
+          "requires": [
+            "rel:docs"
+          ]
+        },
+        {
+          "at": "a_policies.sql:4",
+          "identity": "policy docs.docs_owner",
+          "provides": [
+            "policy:docs.docs_owner"
+          ],
+          "requires": [
+            "func:is_editor",
+            "rel:docs"
+          ]
+        },
+        {
+          "at": "a_policies.sql:7",
+          "identity": "policy docs.docs_team",
+          "provides": [
+            "policy:docs.docs_team"
+          ],
+          "requires": [
+            "rel:docs",
+            "rel:teams"
+          ]
+        },
+        {
+          "at": "b_triggers.sql:1",
+          "identity": "trigger docs.docs_audit",
+          "provides": [
+            "trigger:docs.docs_audit"
+          ],
+          "requires": [
+            "func:audit_doc",
+            "func:should_audit",
+            "rel:docs"
+          ]
+        },
+        {
+          "at": "c_grants_comments.sql:1",
+          "identity": "grant table docs",
+          "provides": [],
+          "requires": [
+            "rel:docs"
+          ]
+        },
+        {
+          "at": "c_grants_comments.sql:2",
+          "identity": "grant function is_editor",
+          "provides": [],
+          "requires": [
+            "func:is_editor",
+            "type:text"
+          ]
+        },
+        {
+          "at": "c_grants_comments.sql:3",
+          "identity": "grant table teams",
+          "provides": [],
+          "requires": [
+            "rel:teams"
+          ]
+        },
+        {
+          "at": "c_grants_comments.sql:4",
+          "identity": "revoke function should_audit",
+          "provides": [],
+          "requires": [
+            "func:should_audit",
+            "type:text"
+          ]
+        },
+        {
+          "at": "c_grants_comments.sql:5",
+          "identity": "grant table docs",
+          "provides": [],
+          "requires": [
+            "rel:docs"
+          ]
+        },
+        {
+          "at": "c_grants_comments.sql:6",
+          "identity": "comment column docs.title",
+          "provides": [],
+          "requires": [
+            "rel:docs"
+          ]
+        },
+        {
+          "at": "c_grants_comments.sql:7",
+          "identity": "comment tabconstraint docs.docs_title_len",
+          "provides": [],
+          "requires": [
+            "rel:docs"
+          ]
+        },
+        {
+          "at": "c_grants_comments.sql:8",
+          "identity": "comment trigger docs.docs_audit",
+          "provides": [],
+          "requires": []
+        },
+        {
+          "at": "c_grants_comments.sql:9",
+          "identity": "comment policy docs.docs_owner",
+          "provides": [],
+          "requires": []
+        },
+        {
+          "at": "c_grants_comments.sql:10",
+          "identity": "comment function is_editor",
+          "provides": [],
+          "requires": [
+            "func:is_editor"
+          ]
+        },
+        {
+          "at": "c_grants_comments.sql:11",
+          "identity": "comment index docs_pkey",
+          "provides": [],
+          "requires": [
+            "rel:docs_pkey"
+          ]
+        },
+        {
+          "at": "d_functions.sql:1",
+          "identity": "function is_editor(text)",
+          "provides": [
+            "func:is_editor"
+          ],
+          "requires": [
+            "rel:editors",
+            "type:text"
+          ]
+        },
+        {
+          "at": "d_functions.sql:4",
+          "identity": "function should_audit(text)",
+          "provides": [
+            "func:should_audit"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        },
+        {
+          "at": "d_functions.sql:7",
+          "identity": "function audit_doc()",
+          "provides": [
+            "func:audit_doc"
+          ],
+          "requires": [
+            "type:trigger"
+          ]
+        },
+        {
+          "at": "e_tables.sql:1",
+          "identity": "table docs",
+          "provides": [
+            "rel:docs",
+            "type:docs",
+            "uniq:docs",
+            "rel:docs_pkey",
+            "uniqcols:docs(id)",
+            "con:docs.docs_title_len"
+          ],
+          "requires": [
+            "func:length",
+            "rel:teams",
+            "type:text",
+            "uniq:teams"
+          ]
+        },
+        {
+          "at": "e_tables.sql:8",
+          "identity": "table doc_audit",
+          "provides": [
+            "rel:doc_audit",
+            "type:doc_audit"
+          ],
+          "requires": [
+            "func:now",
+            "type:timestamptz"
+          ]
+        },
+        {
+          "at": "f_teams.sql:1",
+          "identity": "table teams",
+          "provides": [
+            "rel:teams",
+            "type:teams",
+            "uniq:teams",
+            "rel:teams_pkey",
+            "uniqcols:teams(id)"
+          ],
+          "requires": []
+        },
+        {
+          "at": "f_teams.sql:2",
+          "identity": "table editors",
+          "provides": [
+            "rel:editors",
+            "type:editors",
+            "uniq:editors",
+            "rel:editors_pkey",
+            "uniqcols:editors(name)"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        }
+      ],
+      "findings": [],
+      "staticOrder": [
+        "table doc_audit",
+        "table editors",
+        "table teams",
+        "table docs",
+        "function audit_doc()",
+        "function is_editor(text)",
+        "function should_audit(text)",
+        "trigger docs.docs_audit",
+        "policy docs.docs_owner",
+        "policy docs.docs_team",
+        "rls docs AT_EnableRowSecurity",
+        "rls docs AT_ForceRowSecurity",
+        "grant function is_editor",
+        "grant table docs",
+        "grant table docs",
+        "grant table teams",
+        "revoke function should_audit",
+        "comment column docs.title",
+        "comment function is_editor",
+        "comment index docs_pkey",
+        "comment policy docs.docs_owner",
+        "comment tabconstraint docs.docs_title_len",
+        "comment trigger docs.docs_audit"
+      ],
+      "analysisMs": 1.2,
+      "staticLoad": {
+        "method": "static order (ours), one transaction, fail fast",
+        "loaded": true
+      },
+      "fileNameInvariant": true,
+      "comparisons": [
+        {
+          "method": "path order (spec fallback), one pass",
+          "loaded": false,
+          "error": "a_policies.sql: relation \"docs\" does not exist"
+        },
+        {
+          "method": "REVERSE path order, one pass",
+          "loaded": false,
+          "error": "c_grants_comments.sql: trigger \"docs_audit\" for table \"docs\" does not exist"
+        },
+        {
+          "method": "pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)",
+          "loaded": true,
+          "note": "rounds=3",
+          "diffVsStatic": []
+        }
+      ],
+      "guard": [
+        {
+          "order": "reverse",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "reverse-ignore-priority",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 1)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 2)",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "random-valid(seed 3)",
+          "same": true,
+          "diff": []
+        }
+      ]
+    },
+    {
+      "fixture": "fk-index-choice",
+      "files": [
+        "a_child.sql",
+        "b_unique_index.sql",
+        "c_unique_constraint.sql",
+        "d_parent.sql",
+        "e_tree.sql"
+      ],
+      "statements": [
+        {
+          "at": "a_child.sql:4",
+          "identity": "table child",
+          "provides": [
+            "rel:child",
+            "type:child",
+            "uniq:child",
+            "rel:child_pkey",
+            "uniqcols:child(id)"
+          ],
+          "requires": [
+            "rel:parent",
+            "type:text",
+            "uniq:parent"
+          ]
+        },
+        {
+          "at": "b_unique_index.sql:1",
+          "identity": "index parent_code_uidx",
+          "provides": [
+            "rel:parent_code_uidx",
+            "uniq:parent",
+            "uniqcols:parent(code)"
+          ],
+          "requires": [
+            "rel:parent"
+          ]
+        },
+        {
+          "at": "c_unique_constraint.sql:1",
+          "identity": "constraint parent.parent_code_key",
+          "provides": [
+            "con:parent.parent_code_key",
+            "uniq:parent",
+            "uniqcols:parent(code)",
+            "rel:parent_code_key"
+          ],
+          "requires": [
+            "rel:parent"
+          ]
+        },
+        {
+          "at": "d_parent.sql:1",
+          "identity": "table parent",
+          "provides": [
+            "rel:parent",
+            "type:parent",
+            "uniq:parent",
+            "rel:parent_pkey",
+            "uniqcols:parent(id)"
+          ],
+          "requires": [
+            "type:text"
+          ]
+        },
+        {
+          "at": "e_tree.sql:2",
+          "identity": "constraint node.node_best_leaf_fk",
+          "provides": [
+            "con:node.node_best_leaf_fk"
+          ],
+          "requires": [
+            "rel:leaf",
+            "rel:node",
+            "uniq:leaf"
+          ]
+        },
+        {
+          "at": "e_tree.sql:3",
+          "identity": "table leaf",
+          "provides": [
+            "rel:leaf",
+            "type:leaf",
+            "uniq:leaf",
+            "rel:leaf_pkey",
+            "uniqcols:leaf(id)"
+          ],
+          "requires": [
+            "rel:node",
+            "uniq:node"
+          ]
+        },
+        {
+          "at": "e_tree.sql:4",
+          "identity": "table node",
+          "provides": [
+            "rel:node",
+            "type:node",
+            "uniq:node",
+            "rel:node_pkey",
+            "uniqcols:node(id)"
+          ],
+          "requires": []
+        }
+      ],
+      "findings": [
+        {
+          "level": "lint",
+          "code": "FK_INDEX_CHOICE",
+          "message": "parent(code) has 2 unique indexes/constraints (index parent_code_uidx, constraint parent.parent_code_key) and is referenced by a foreign key: PostgreSQL binds the FK to whichever qualifying index it finds first"
+        }
+      ],
+      "staticOrder": [
+        "table node",
+        "table leaf",
+        "table parent",
+        "constraint node.node_best_leaf_fk",
+        "constraint parent.parent_code_key",
+        "index parent_code_uidx",
+        "table child"
+      ],
+      "analysisMs": 0.6,
+      "staticLoad": {
+        "method": "static order (ours), one transaction, fail fast",
+        "loaded": true
+      },
+      "fileNameInvariant": true,
+      "comparisons": [
+        {
+          "method": "path order (spec fallback), one pass",
+          "loaded": false,
+          "error": "a_child.sql: relation \"parent\" does not exist"
+        },
+        {
+          "method": "REVERSE path order, one pass",
+          "loaded": false,
+          "error": "e_tree.sql: relation \"node\" does not exist"
+        },
+        {
+          "method": "pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)",
+          "loaded": false,
+          "error": "shadow load stuck after 5 round(s): 1 file(s) cannot apply | e_tree.sql: relation \"node\" does not exist — at line 1: -- self-referencing FK, plus a node <-> leaf FK cycle closed by ALTER TABLE alte… (failed identically in 5 round(s) — likely a genuine missing dependency, not ordering)"
+        }
+      ],
+      "guard": [
+        {
+          "order": "reverse",
+          "same": true,
+          "diff": []
+        },
+        {
+          "order": "reverse-ignore-priority",
+          "same": false,
+          "diff": [
+            "- depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n]",
+            "- fkIndex: child.child_parent_code_fkey uses index parent_code_key",
+            "+ depends: constraint child_parent_code_fkey on table child -> index parent_code_uidx [n]",
+            "+ fkIndex: child.child_parent_code_fkey uses index parent_code_uidx"
+          ]
+        },
+        {
+          "order": "random-valid(seed 1)",
+          "same": false,
+          "diff": [
+            "- depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n]",
+            "- fkIndex: child.child_parent_code_fkey uses index parent_code_key",
+            "+ depends: constraint child_parent_code_fkey on table child -> index parent_code_uidx [n]",
+            "+ fkIndex: child.child_parent_code_fkey uses index parent_code_uidx"
+          ]
+        },
+        {
+          "order": "random-valid(seed 2)",
+          "same": false,
+          "diff": [
+            "- depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n]",
+            "- fkIndex: child.child_parent_code_fkey uses index parent_code_key",
+            "+ depends: constraint child_parent_code_fkey on table child -> index parent_code_uidx [n]",
+            "+ fkIndex: child.child_parent_code_fkey uses index parent_code_uidx"
+          ]
+        },
+        {
+          "order": "random-valid(seed 3)",
+          "same": false,
+          "diff": [
+            "- depends: constraint child_parent_code_fkey on table child -> index parent_code_key [n]",
+            "- fkIndex: child.child_parent_code_fkey uses index parent_code_key",
+            "+ depends: constraint child_parent_code_fkey on table child -> index parent_code_uidx [n]",
+            "+ fkIndex: child.child_parent_code_fkey uses index parent_code_uidx"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture": "unnamed-index",
+      "files": [
+        "a_partial.sql",
+        "b_plain.sql",
+        "c_table.sql"
+      ],
+      "statements": [
+        {
+          "at": "a_partial.sql:3",
+          "identity": "index (unnamed) on t",
+          "provides": [],
+          "requires": [
+            "rel:t"
+          ]
+        },
+        {
+          "at": "b_plain.sql:1",
+          "identity": "index (unnamed) on t",
+          "provides": [],
+          "requires": [
+            "rel:t"
+          ]
+        },
+        {
+          "at": "c_table.sql:1",
+          "identity": "table t",
+          "provides": [
+            "rel:t",
+            "type:t",
+            "uniq:t",
+            "rel:t_pkey",
+            "uniqcols:t(id)"
+          ],
+          "requires": []
+        }
+      ],
+      "findings": [
+        {
+          "level": "lint",
+          "code": "UNNAMED_INDEX",
+          "message": "a_partial.sql:3: unnamed index on t: its generated name depends on which other unnamed indexes exist first"
+        },
+        {
+          "level": "lint",
+          "code": "UNNAMED_INDEX",
+          "message": "b_plain.sql:1: unnamed index on t: its generated name depends on which other unnamed indexes exist first"
+        }
+      ],
+      "staticOrder": [
+        "table t",
+        "index (unnamed) on t",
+        "index (unnamed) on t"
+      ],
+      "analysisMs": 0.3,
+      "staticLoad": {
+        "method": "static order (ours), one transaction, fail fast",
+        "loaded": true
+      },
+      "fileNameInvariant": true,
+      "comparisons": [
+        {
+          "method": "path order (spec fallback), one pass",
+          "loaded": false,
+          "error": "a_partial.sql: relation \"t\" does not exist"
+        },
+        {
+          "method": "REVERSE path order, one pass",
+          "loaded": true,
+          "diffVsStatic": []
+        },
+        {
+          "method": "pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)",
+          "loaded": true,
+          "note": "rounds=2",
+          "diffVsStatic": [
+            "- index: CREATE INDEX t_a_idx ON public.t USING btree (a)",
+            "- index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0)",
+            "+ index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0)",
+            "+ index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)"
+          ]
+        }
+      ],
+      "guard": [
+        {
+          "order": "reverse",
+          "same": false,
+          "diff": [
+            "- index: CREATE INDEX t_a_idx ON public.t USING btree (a)",
+            "- index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0)",
+            "+ index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0)",
+            "+ index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)"
+          ]
+        },
+        {
+          "order": "reverse-ignore-priority",
+          "same": false,
+          "diff": [
+            "- index: CREATE INDEX t_a_idx ON public.t USING btree (a)",
+            "- index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0)",
+            "+ index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0)",
+            "+ index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)"
+          ]
+        },
+        {
+          "order": "random-valid(seed 1)",
+          "same": false,
+          "diff": [
+            "- index: CREATE INDEX t_a_idx ON public.t USING btree (a)",
+            "- index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0)",
+            "+ index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0)",
+            "+ index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)"
+          ]
+        },
+        {
+          "order": "random-valid(seed 2)",
+          "same": false,
+          "diff": [
+            "- index: CREATE INDEX t_a_idx ON public.t USING btree (a)",
+            "- index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0)",
+            "+ index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0)",
+            "+ index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)"
+          ]
+        },
+        {
+          "order": "random-valid(seed 3)",
+          "same": false,
+          "diff": [
+            "- index: CREATE INDEX t_a_idx ON public.t USING btree (a)",
+            "- index: CREATE INDEX t_a_idx1 ON public.t USING btree (a) WHERE (a > 0)",
+            "+ index: CREATE INDEX t_a_idx ON public.t USING btree (a) WHERE (a > 0)",
+            "+ index: CREATE INDEX t_a_idx1 ON public.t USING btree (a)"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture": "cycle-error",
+      "files": [
+        "a.sql",
+        "b.sql"
+      ],
+      "statements": [
+        {
+          "at": "a.sql:2",
+          "identity": "table a",
+          "provides": [
+            "rel:a",
+            "type:a",
+            "uniq:a",
+            "rel:a_pkey",
+            "uniqcols:a(id)"
+          ],
+          "requires": [
+            "rel:b",
+            "uniq:b"
+          ]
+        },
+        {
+          "at": "b.sql:1",
+          "identity": "table b",
+          "provides": [
+            "rel:b",
+            "type:b",
+            "uniq:b",
+            "rel:b_pkey",
+            "uniqcols:b(id)"
+          ],
+          "requires": [
+            "rel:a",
+            "uniq:a"
+          ]
+        },
+        {
+          "at": "b.sql:4",
+          "identity": "table notes",
+          "provides": [
+            "rel:notes",
+            "type:notes",
+            "uniq:notes",
+            "rel:notes_pkey",
+            "uniqcols:notes(id)"
+          ],
+          "requires": [
+            "func:next_label",
+            "type:text"
+          ]
+        },
+        {
+          "at": "b.sql:5",
+          "identity": "function next_label()",
+          "provides": [
+            "func:next_label"
+          ],
+          "requires": [
+            "func:count",
+            "rel:notes",
+            "type:text"
+          ]
+        }
+      ],
+      "findings": [],
+      "cycle": "dependency cycle: table b (b.sql:1) -> table a (a.sql:2) -> table b (b.sql:1). Tip: move one foreign key out of CREATE TABLE into ALTER TABLE ... ADD CONSTRAINT.",
+      "analysisMs": 0.5,
+      "comparisons": [
+        {
+          "method": "path order (spec fallback), one pass",
+          "loaded": false,
+          "error": "a.sql: relation \"b\" does not exist"
+        },
+        {
+          "method": "REVERSE path order, one pass",
+          "loaded": false,
+          "error": "b.sql: relation \"a\" does not exist"
+        },
+        {
+          "method": "pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)",
+          "loaded": false,
+          "error": "shadow load stuck after 2 round(s): 2 file(s) cannot apply Tip: if two tables reference each other with inline REFERENCES clauses, split one foreign key into a separate ALTER TABLE … ADD CONSTRAINT statement. | a.sql: relation \"b\" does not exist — at line 1: -- Inline FK cycle: unsatisfiable without ALTER TABLE ... ADD CONSTRAINT. create… (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering) | b.sql: relation \"a\" does not exist — at line 1: create table b (id int primary key, a_id int references a (id)) (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering)"
+        }
+      ]
+    },
+    {
+      "fixture": "unresolved",
+      "files": [
+        "a.sql"
+      ],
+      "statements": [
+        {
+          "at": "a.sql:1",
+          "identity": "table orders",
+          "provides": [
+            "rel:orders",
+            "type:orders",
+            "uniq:orders",
+            "rel:orders_pkey",
+            "uniqcols:orders(id)"
+          ],
+          "requires": [
+            "type:moneyamount"
+          ]
+        },
+        {
+          "at": "a.sql:2",
+          "identity": "view order_ids",
+          "provides": [
+            "rel:order_ids",
+            "type:order_ids"
+          ],
+          "requires": [
+            "rel:ordrs"
+          ]
+        },
+        {
+          "at": "a.sql:3",
+          "identity": "function total()",
+          "provides": [
+            "func:total"
+          ],
+          "requires": [
+            "func:sum",
+            "rel:orders"
+          ]
+        },
+        {
+          "at": "a.sql:4",
+          "identity": "function late()",
+          "provides": [
+            "func:late"
+          ],
+          "requires": []
+        }
+      ],
+      "findings": [
+        {
+          "level": "error",
+          "code": "UNRESOLVED",
+          "message": "a.sql:1: table orders references type \"moneyamount\", which no statement creates and pg_catalog does not have"
+        },
+        {
+          "level": "error",
+          "code": "UNRESOLVED",
+          "message": "a.sql:2: view order_ids references relation \"ordrs\", which no statement creates and pg_catalog does not have"
+        }
+      ],
+      "analysisMs": 0.4,
+      "comparisons": [
+        {
+          "method": "path order (spec fallback), one pass",
+          "loaded": false,
+          "error": "a.sql: type \"moneyamount\" does not exist"
+        },
+        {
+          "method": "REVERSE path order, one pass",
+          "loaded": false,
+          "error": "a.sql: type \"moneyamount\" does not exist"
+        },
+        {
+          "method": "pg-delta loadSqlFiles (lexicographic + retry rounds + statement fallback)",
+          "loaded": false,
+          "error": "shadow load stuck after 2 round(s): 1 file(s) cannot apply | a.sql: type \"moneyamount\" does not exist — at line 1: create table orders (id int primary key, amount moneyamount) (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering)"
+        }
+      ]
+    }
+  ]
+}

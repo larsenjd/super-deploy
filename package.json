@@ -1,8 +1,9 @@
 {
   "name": "super-deploy-root",
   "private": true,
-  "description": "Root of the prototype/pg-delta spike branch. The prototype is throwaway; see prototype-pg-delta/.",
+  "description": "Root of the prototype spike branches. Prototypes are throwaway; see prototype-*/.",
   "scripts": {
-    "prototype:pg-delta": "pnpm --dir prototype-pg-delta install --frozen-lockfile && pnpm --dir prototype-pg-delta start"
+    "prototype:pg-delta": "pnpm --dir prototype-pg-delta install --frozen-lockfile && pnpm --dir prototype-pg-delta start",
+    "prototype:schema-ordering": "pnpm --dir prototype-schema-ordering install --frozen-lockfile && pnpm --dir prototype-schema-ordering start"
   }
 }

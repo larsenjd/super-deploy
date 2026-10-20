@@ -1,0 +1,11 @@
+grant select, insert on docs to prototype_reader;
+grant execute on function is_editor(text) to prototype_reader;
+grant select (public) on teams to prototype_reader;
+revoke execute on function should_audit(text) from public;
+grant select on docs to prototype_writer;
+comment on column docs.title is 'Title';
+comment on constraint docs_title_len on docs is 'length limit';
+comment on trigger docs_audit on docs is 'audit trail';
+comment on policy docs_owner on docs is 'owners and editors';
+comment on function is_editor(text) is 'is the user an editor';
+comment on index docs_pkey is 'pk of docs';
