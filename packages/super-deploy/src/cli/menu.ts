@@ -34,8 +34,21 @@ export async function runMenu(io: CliIo, debug: boolean): Promise<number> {
     }
     current = command;
     await runCommand(io, command, debug, async () => {
-      if (command.needsProject === false) {
-        const values = await askOptions(prompts, command, undefined);
+      const projectMode =
+        command.needsProject === false ? command.projectMode : undefined;
+      const inProject = findConfig(io.cwd) !== undefined;
+      if (command.needsProject === false && !(projectMode && inProject)) {
+        // Outside a project, the option that needs one isn't asked.
+        const values = await askOptions(
+          prompts,
+          {
+            ...command,
+            options: command.options.filter(
+              (option) => option.name !== projectMode?.option,
+            ),
+          },
+          undefined,
+        );
         if (values === undefined && !io.signal.aborted) {
           cancel("Cancelled: nothing ran", output);
         }
@@ -47,7 +60,20 @@ export async function runMenu(io: CliIo, debug: boolean): Promise<number> {
         reload: true,
       });
       try {
-        const values = await askOptions(prompts, command, project);
+        // Inside a project, a directory command runs in its project mode,
+        // so that mode's option is required.
+        const values = await askOptions(
+          prompts,
+          {
+            ...command,
+            options: command.options.map((option) =>
+              option.name === projectMode?.option
+                ? { ...option, required: true }
+                : option,
+            ),
+          },
+          project,
+        );
         if (values === undefined && !io.signal.aborted) {
           cancel("Cancelled: nothing ran", output);
         }

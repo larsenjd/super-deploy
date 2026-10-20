@@ -2,10 +2,9 @@
 // package (no network fetch). The result is ready to use: its config runs a
 // private embedded PostgreSQL 18 for rehearsals and the `dev` target.
 //
-// Ticket 22 adds `--adopt <target>` (turning an existing database's managed
-// schema into migration 1). It needs a loaded project for the target, so it
-// is expected to be its own step after (or instead of) scaffolding;
-// `InitOptions` is where the API option goes.
+// `init --adopt <target>` doesn't scaffold: it needs the target's connection
+// from config, so it runs in a project initialised (and configured) already,
+// and is the `adopt` API function (commands/adopt.ts).
 import { constants, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";

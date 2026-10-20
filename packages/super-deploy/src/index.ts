@@ -22,6 +22,11 @@ export type {
   ThrowawayDatabase,
 } from "./adapters/types.ts";
 export {
+  type AdoptOptions,
+  type AdoptResult,
+  adopt,
+} from "./commands/adopt.ts";
+export {
   type DeployedMigration,
   type DeployOptions,
   type DeployResult,
@@ -108,6 +113,8 @@ export type {
 export type { PlannedStatement } from "./differ/types.ts";
 export {
   AdapterError,
+  AdoptConflictError,
+  AdoptUnsupportedError,
   CommitOutcomeUnknownError,
   ConfigError,
   DesiredSchemaLoadError,
@@ -150,6 +157,7 @@ export {
   UnknownMigrationError,
   UnknownRecordedMigrationError,
   UnknownTargetError,
+  type UnsupportedObject,
   UnsupportedServerError,
   ValidationFailedError,
   type ValidationProblem,

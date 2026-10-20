@@ -2,7 +2,7 @@
 // terminal) or run one command from its flags.
 import { loadProject, type Project } from "../project.ts";
 import { toolVersion } from "../version.ts";
-import { commands, type OptionValues } from "./definitions.ts";
+import { commands, needsProject, type OptionValues } from "./definitions.ts";
 import { commandHelp, usage } from "./help.ts";
 import { runMenu } from "./menu.ts";
 import { type Invocation, parseInvocation, UsageError } from "./parse.ts";
@@ -42,7 +42,7 @@ export async function runCli(
       return exitCodes.success;
     case "run": {
       const { command, values } = invocation;
-      if (command.needsProject === false) {
+      if (!needsProject(command, values)) {
         return runCommand(io, command, invocation.debug, async () => ({
           project: undefined,
           values,

@@ -132,7 +132,7 @@ describe.skipIf(process.platform === "win32")("menu", () => {
     expect(dir.exists("data-model/draft")).toBe(false);
   });
 
-  test("without a project the menu starts on init, which needs none; the new project is then used", async () => {
+  test("without a project the menu starts on init, which needs none; inside the new project init adopts a target", async () => {
     const dir = await createTestProject();
     await rm(dir.path("package.json"));
     const terminal = spawnTerminal([], { cwd: dir.root });
@@ -142,12 +142,14 @@ describe.skipIf(process.platform === "win32")("menu", () => {
     await terminal.waitFor("Initialised a super-deploy project in .");
     expect(dir.exists("super-deploy.config.ts")).toBe(true);
 
-    // Back on init: running it again now refuses, as the files exist.
+    // Back on init: inside the project now, it adopts a target, so it asks
+    // which one (Escape cancels).
     await terminal.waitFor("quit");
     terminal.type(keys.enter);
-    await terminal.waitFor(
-      /Error: Cannot initialise a project in .*package\.json/,
-    );
+    await terminal.waitFor("turn this target's managed schema");
+    await terminal.waitFor("dev");
+    terminal.type(keys.escape);
+    await terminal.waitFor("Cancelled: nothing ran");
     await terminal.waitFor("quit");
     terminal.type(keys.escape);
     expect(await terminal.exited).toBe(0);

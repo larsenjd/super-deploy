@@ -29,6 +29,15 @@ Run `pnpm exec super-deploy` with no arguments for an interactive menu, or
 production) to `super-deploy.config.ts`; keep credentials out of it, for
 example by reading a connection string from an environment variable.
 
+## Adopting an existing database
+
+To bring a database that already exists under management, add it as a target
+in `super-deploy.config.ts` (before any draft or migration exists), then run
+`pnpm exec super-deploy init --adopt <target>`. Its managed schema becomes the
+desired schema and migration `00001-adopt`, which is recorded on that target
+as already deployed. If the database holds anything super-deploy doesn't
+support, nothing is written and every such object is listed.
+
 ## Files
 
 - `data-model/migrations/`: finalized migrations. Never edit them: they are
