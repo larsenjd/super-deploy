@@ -113,6 +113,7 @@ export type {
 export type { PlannedStatement } from "./differ/types.ts";
 export {
   AdapterError,
+  AdoptCancelledError,
   AdoptConflictError,
   AdoptUnsupportedError,
   CommitOutcomeUnknownError,
@@ -171,9 +172,12 @@ export {
   type Project,
 } from "./project.ts";
 export type {
+  AskOverrideReason,
   Confirm,
   DestructiveOptions,
   DestructiveQuestion,
+  OverrideNeeded,
+  OverrideReasonQuestion,
   OverwriteOptions,
   OverwriteQuestion,
   Question,
@@ -188,6 +192,7 @@ export type {
   LockWarning,
   LockWarningKind,
 } from "./sql-analysis/destructive.ts";
+export type { Override } from "./sql-analysis/overrides.ts";
 export { maxDraftNameLength, normaliseDraftName } from "./store/draft-name.ts";
 export type { ProjectPaths } from "./store/layout.ts";
 export type { DriftChange, DriftedObject } from "./verification/drift.ts";

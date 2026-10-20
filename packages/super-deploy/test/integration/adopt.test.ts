@@ -4,13 +4,17 @@
 // recorded on the target as marked after mark's replica check.
 import { readdir, rm } from "node:fs/promises";
 import {
+  AdoptCancelledError,
   AdoptConflictError,
   AdoptUnsupportedError,
   adopt,
   deploy,
   draft,
   MarkMismatchError,
+  type Override,
+  type OverrideReasonQuestion,
   status,
+  validate,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { deployProject, finalizeMigration } from "../support/deploy.ts";
@@ -57,6 +61,19 @@ comment on table customers is 'People who order';
 grant select on customers to adopt_reader;
 insert into customers (name) values ('Ada');
 `;
+
+/** Functions a desired schema needs an override marker for. */
+const loaders = `
+create table staging (id bigint primary key);
+create function load_staging(source text) returns void language plpgsql
+  as $$ begin execute format('insert into staging select * from %I', source); end $$;
+create function ping() returns void language sql
+  as $$ select pg_notify('orders', '') $$;
+`;
+const reasons: Record<string, string> = {
+  "function load_staging(text)": "loads tables named by the caller",
+  "function ping()": "wakes the order worker",
+};
 
 describe("adopt", () => {
   test("turns the target's managed schema into migration 1 and records it there as marked", async () => {
@@ -166,6 +183,164 @@ describe("adopt", () => {
           prod,
         ),
       ).toEqual([]);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("asks a reason for each function that needs an override marker and writes the marker with it", async () => {
+    const { dir, project } = await adoptableProject(loaders);
+    try {
+      const asked: OverrideReasonQuestion[] = [];
+      const result = await adopt(project, {
+        target: "prod",
+        overrideReason: (question) => {
+          asked.push(question);
+          return `  ${reasons[question.object]}  `;
+        },
+      });
+
+      expect(
+        asked.map(({ kind, target, object, rules, index }) => ({
+          kind,
+          target,
+          object,
+          rules,
+          index,
+        })),
+      ).toEqual([
+        {
+          kind: "override-reason",
+          target: "prod",
+          object: "function load_staging(text)",
+          rules: ["plpgsql-dynamic-sql"],
+          index: 0,
+        },
+        {
+          kind: "override-reason",
+          target: "prod",
+          object: "function ping()",
+          rules: ["denylisted-call"],
+          index: 1,
+        },
+      ]);
+      expect(asked[0]?.needed.map((needed) => needed.object)).toEqual([
+        "function load_staging(text)",
+        "function ping()",
+      ]);
+      const routines = (
+        await dir.read("data-model/desired-schema/routines.sql")
+      ).split("\n");
+      for (const [object, reason] of Object.entries(reasons)) {
+        const name = /function (\w+)/.exec(object)?.[1];
+        const at = routines.findIndex((line) =>
+          line.startsWith(`CREATE FUNCTION public.${name}(`),
+        );
+        expect(at).toBeGreaterThan(0);
+        expect(routines[at - 1]).toBe(
+          `-- OVERRIDE SUPER-DEPLOY REFUSAL: ${reason}`,
+        );
+      }
+
+      const overrides = (o: readonly Override[]) =>
+        o.map(({ object, rules, reason }) => ({ object, rules, reason }));
+      const expected = [
+        {
+          object: "function load_staging(text)",
+          rules: ["plpgsql-dynamic-sql"],
+          reason: reasons["function load_staging(text)"],
+        },
+        {
+          object: "function ping()",
+          rules: ["denylisted-call"],
+          reason: reasons["function ping()"],
+        },
+      ];
+      expect(overrides(result.overrides)).toEqual(expected);
+      expect(
+        result.overrides.every(
+          (override) => override.file === "schema-change.sql",
+        ),
+      ).toBe(true);
+      const report = await validate(project);
+      expect(overrides(report.overrides)).toEqual([...expected, ...expected]);
+      expect((await status(project, { target: "prod" })).drift).toEqual([]);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses functions that need an override marker without a reason callback, and cancels on an empty reason, writing nothing", async () => {
+    const { dir, project, prod } = await adoptableProject(loaders);
+    try {
+      const refused = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+      expect(refused).toBeInstanceOf(AdoptUnsupportedError);
+      expect(
+        (refused as AdoptUnsupportedError).objects.map((o) => o.rule),
+      ).toEqual(["plpgsql-dynamic-sql", "denylisted-call"]);
+
+      const cancelled = await adopt(project, {
+        target: "prod",
+        overrideReason: ({ index }) => (index === 0 ? "a reason" : " "),
+      }).catch((e: unknown) => e);
+      expect(cancelled).toBeInstanceOf(AdoptCancelledError);
+      expect(cancelled).toMatchObject({
+        code: "adopt-cancelled",
+        target: "prod",
+        object: "function ping()",
+      });
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+      expect(dir.exists("data-model/migrations")).toBe(false);
+      expect(
+        await server.query(
+          "select 1 from pg_namespace where nspname = 'deployment_history'",
+          [],
+          prod,
+        ),
+      ).toEqual([]);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("asks no reason while anything else is refused, and never uses one for it", async () => {
+    const { project } = await adoptableProject(`${loaders}
+      create type mood as enum ('sad', 'happy');
+      create procedure batch() language plpgsql
+        as $$ begin execute 'select 1'; commit; end $$;
+    `);
+    try {
+      let asked = 0;
+      const error = await adopt(project, {
+        target: "prod",
+        overrideReason: () => {
+          asked += 1;
+          return "a reason";
+        },
+      }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const { objects } = error as AdoptUnsupportedError;
+      expect(objects.map(({ object, rule }) => ({ object, rule }))).toEqual(
+        expect.arrayContaining([
+          {
+            object: expect.stringContaining('CREATE TYPE "public"."mood"'),
+            rule: "unsupported-object",
+          },
+          {
+            object: expect.stringContaining("CREATE PROCEDURE public.batch()"),
+            rule: "plpgsql-dynamic-sql",
+          },
+          {
+            object: expect.stringContaining("CREATE PROCEDURE public.batch()"),
+            rule: "plpgsql-transaction-control",
+          },
+        ]),
+      );
+      expect(objects).toHaveLength(3);
+      expect(asked).toBe(0);
     } finally {
       await project.close();
     }

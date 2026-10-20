@@ -12,7 +12,7 @@ import type {
   OptionValues,
 } from "./definitions.ts";
 import { UsageError } from "./parse.ts";
-import { confirmAtTerminal } from "./prompts.ts";
+import { askAtTerminal, confirmAtTerminal } from "./prompts.ts";
 
 export interface CliIo {
   readonly cwd: string;
@@ -94,6 +94,9 @@ function commandContext(io: CliIo): CommandContext {
     displayPath: (path) => relative(io.cwd, path).split("\\").join("/") || ".",
     confirm: io.interactive
       ? (question) => confirmAtTerminal(prompts, question)
+      : undefined,
+    ask: io.interactive
+      ? (question) => askAtTerminal(prompts, question)
       : undefined,
   };
 }

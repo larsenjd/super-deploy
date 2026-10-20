@@ -169,7 +169,8 @@ export async function analyseMigration(
       }
       const marked = applyMarker(
         statement,
-        scan.markers.get(index),
+        index,
+        scan,
         found,
         state.managedSchema,
       );

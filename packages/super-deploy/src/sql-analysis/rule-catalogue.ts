@@ -2,7 +2,7 @@
 // can be done about it. Rule ids are stable: they appear in messages, in
 // RuleViolation.rule, and (ticket 10) in override records.
 //
-// Only "risk" rules can be overridden with `-- OVERRIDE DANGEROUS COMMAND:`.
+// Only "risk" rules can be overridden with `-- OVERRIDE SUPER-DEPLOY REFUSAL:`.
 // Everything that breaks or escapes the deploy transaction is "transaction",
 // which no marker can override (spec "Override marker").
 
@@ -79,7 +79,7 @@ const definitions = {
   // Override markers themselves (ticket 10).
   "override-malformed": [
     "override",
-    'An override marker must read exactly "-- OVERRIDE DANGEROUS COMMAND: <reason>"',
+    'An override marker must read exactly "-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>"',
   ],
   "override-without-reason": ["override", "An override marker needs a reason"],
   "override-misplaced": [

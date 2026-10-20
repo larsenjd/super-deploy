@@ -43,6 +43,16 @@ desired schema and migration `00001-adopt`, which is recorded on that target
 as already deployed. If the database holds anything super-deploy doesn't
 support, nothing is written and every such object is listed.
 
+Functions that use dynamic SQL (`EXECUTE`) or call a built-in whose effects
+escape the transaction (such as `pg_notify`) need an override marker in the
+desired schema. Once nothing else is refused, adoption run in a terminal
+lists them and asks for a reason for each: the reason reviewers will read in
+`-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`, which adoption writes on the
+line before the function. An empty answer cancels the adoption, writing
+nothing. Without a terminal (in CI, for example) adoption refuses them like
+anything else it doesn't support. `finalize` and `validate` show these
+overrides like any other.
+
 ## Permissions
 
 ### What the desired schema declares

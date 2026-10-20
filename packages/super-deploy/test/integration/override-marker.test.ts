@@ -17,7 +17,7 @@ afterAll(async () => {
 const reason = "loads tables named by the caller";
 const loaders = `create table staging (id bigint primary key, name text);
 
--- OVERRIDE DANGEROUS COMMAND: ${reason}
+-- OVERRIDE SUPER-DEPLOY REFUSAL: ${reason}
 create function load_staging(source text) returns void
 language plpgsql as $$
 begin
@@ -49,10 +49,10 @@ describe("draft and finalize", () => {
     const generated = await dir.read(schemaChange);
     const markerLine = lineStarting(
       generated,
-      "-- OVERRIDE DANGEROUS COMMAND:",
+      "-- OVERRIDE SUPER-DEPLOY REFUSAL:",
     );
     expect(generated.split("\n")[markerLine - 1]).toBe(
-      `-- OVERRIDE DANGEROUS COMMAND: ${reason}`,
+      `-- OVERRIDE SUPER-DEPLOY REFUSAL: ${reason}`,
     );
     expect(generated.split("\n")[markerLine]).toMatch(
       /^CREATE (OR REPLACE )?FUNCTION public\.load_staging/,
@@ -82,7 +82,7 @@ describe("validate", () => {
     await draft(p, { name: "add loader" });
     const markerLine = lineStarting(
       await dir.read(schemaChange),
-      "-- OVERRIDE DANGEROUS COMMAND:",
+      "-- OVERRIDE SUPER-DEPLOY REFUSAL:",
     );
     const before = await validate(p);
     expect(before.overrides).toEqual([
@@ -128,7 +128,7 @@ create table counters (name text primary key, value bigint);
     await dir.write(
       "data-model/draft/post-migration.sql",
       `insert into counters (name, value) values ('orders', 0);
--- OVERRIDE DANGEROUS COMMAND: ${scriptReason}
+-- OVERRIDE SUPER-DEPLOY REFUSAL: ${scriptReason}
 update counters set value = setval('orders_id_seq', 1000) where name = 'orders';
 `,
     );
@@ -167,7 +167,7 @@ describe("CLI", () => {
     ).toBe(0);
     const markerLine = lineStarting(
       await dir.read(schemaChange),
-      "-- OVERRIDE DANGEROUS COMMAND:",
+      "-- OVERRIDE SUPER-DEPLOY REFUSAL:",
     );
     const migration = "data-model/migrations/00001-add-loader";
 

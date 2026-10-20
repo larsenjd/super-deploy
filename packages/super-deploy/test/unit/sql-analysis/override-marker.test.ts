@@ -1,4 +1,4 @@
-// The override marker (`-- OVERRIDE DANGEROUS COMMAND: <reason>`) at the
+// The override marker (`-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`) at the
 // SQL-analysis seam (database-free): which rules it overrides, where it must
 // be written, and the override records reviewers see.
 import { describe, expect, test } from "vitest";
@@ -29,7 +29,7 @@ describe("desired schema", () => {
     const file = {
       path: desiredPath,
       text: loader(
-        "-- OVERRIDE DANGEROUS COMMAND: loads tables named by the caller",
+        "-- OVERRIDE SUPER-DEPLOY REFUSAL: loads tables named by the caller",
       ),
     };
     expect(await checkRules(file, "desired-schema")).toEqual([]);
@@ -54,7 +54,7 @@ async function broken(text: string, kind: "desired-schema" = "desired-schema") {
   ]);
 }
 
-const marker = "-- OVERRIDE DANGEROUS COMMAND: justified";
+const marker = "-- OVERRIDE SUPER-DEPLOY REFUSAL: justified";
 
 describe("transaction-breaking rules are never overridden", () => {
   test("COMMIT in a PL/pgSQL body still fails, and the marker is reported as unable to override it", async () => {
@@ -101,25 +101,29 @@ end
 $$;`;
 
   test.each([
-    ["no reason", "-- OVERRIDE DANGEROUS COMMAND:", "override-without-reason"],
+    [
+      "no reason",
+      "-- OVERRIDE SUPER-DEPLOY REFUSAL:",
+      "override-without-reason",
+    ],
     [
       "a blank reason",
-      "-- OVERRIDE DANGEROUS COMMAND:   ",
+      "-- OVERRIDE SUPER-DEPLOY REFUSAL:   ",
       "override-without-reason",
     ],
     [
       "lower case",
-      "-- override dangerous command: justified",
+      "-- override super-deploy refusal: justified",
       "override-malformed",
     ],
     [
       "no space after --",
-      "--OVERRIDE DANGEROUS COMMAND: justified",
+      "--OVERRIDE SUPER-DEPLOY REFUSAL: justified",
       "override-malformed",
     ],
     [
       "a block comment",
-      "/* OVERRIDE DANGEROUS COMMAND: justified */",
+      "/* OVERRIDE SUPER-DEPLOY REFUSAL: justified */",
       "override-malformed",
     ],
   ])("refuses a marker with %s", async (_, written, rule) => {
@@ -173,8 +177,8 @@ $$;`;
     expect(
       await broken(`create function f() returns text language plpgsql as $$
 begin
-  -- OVERRIDE DANGEROUS COMMAND: not a marker
-  return '-- OVERRIDE DANGEROUS COMMAND: nor this';
+  -- OVERRIDE SUPER-DEPLOY REFUSAL: not a marker
+  return '-- OVERRIDE SUPER-DEPLOY REFUSAL: nor this';
 end
 $$;
 `),
@@ -205,6 +209,59 @@ $$;
     ]);
   });
 
+  test("no longer accepts the old marker form, which is just a comment", async () => {
+    expect(
+      await broken(`-- OVERRIDE DANGEROUS COMMAND: justified\n${dynamic}\n`),
+    ).toEqual([[4, "plpgsql-dynamic-sql"]]);
+    expect(
+      await broken(
+        "-- OVERRIDE DANGEROUS COMMAND: justified\ncreate table t (id bigint primary key);\n",
+      ),
+    ).toEqual([]);
+  });
+
+  test("hints the new form when a refused statement follows the old form", async () => {
+    const violations = await checkRules(
+      {
+        path: desiredPath,
+        text: `  -- OVERRIDE DANGEROUS COMMAND: justified\n${dynamic}\n`,
+      },
+      "desired-schema",
+    );
+    expect(violations.map((v) => [v.line, v.rule])).toEqual([
+      [4, "plpgsql-dynamic-sql"],
+    ]);
+    expect(violations[0]?.message).toMatch(
+      /\. Hint: the override marker is now "-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>"$/,
+    );
+  });
+
+  test("gives no hint for the old form when the statement is refused only for a transaction rule", async () => {
+    const analysis = await analyseMigration([
+      {
+        path: "data-model/draft/post-migration.sql",
+        kind: "post-migration",
+        text: "-- OVERRIDE DANGEROUS COMMAND: justified\ncommit;\n",
+      },
+    ]);
+    expect(analysis.violations.map((v) => v.rule)).toEqual([
+      "transaction-control",
+    ]);
+    expect(analysis.violations[0]?.message).not.toContain("Hint");
+  });
+
+  test("gives no hint when the old form is not on the line directly before", async () => {
+    const [violation] = await checkRules(
+      {
+        path: desiredPath,
+        text: `-- OVERRIDE DANGEROUS COMMAND: justified\n\n${dynamic}\n`,
+      },
+      "desired-schema",
+    );
+    expect(violation?.rule).toBe("plpgsql-dynamic-sql");
+    expect(violation?.message).not.toContain("Hint");
+  });
+
   test("applies to one statement only", async () => {
     expect(
       await broken(`${marker}\n${dynamic}\n${dynamic.replace("f()", "g()")}\n`),
@@ -221,7 +278,7 @@ describe("deploy-time scripts", () => {
         path: post,
         kind: "post-migration",
         text: `update orders set total = 0 where total is null;
--- OVERRIDE DANGEROUS COMMAND: move the sequence past imported ids
+-- OVERRIDE SUPER-DEPLOY REFUSAL: move the sequence past imported ids
 update counters set value = setval('orders_id_seq', 1000) where name = 'orders';
 `,
       },
@@ -335,7 +392,7 @@ describe("regenerated schema changes", () => {
         {
           path: desiredPath,
           text: loader(
-            "-- OVERRIDE DANGEROUS COMMAND: loads tables named by the caller",
+            "-- OVERRIDE SUPER-DEPLOY REFUSAL: loads tables named by the caller",
           ).replaceAll(/\bstaging\b/g, "app.staging"),
         },
       ],
@@ -358,7 +415,7 @@ $function$`,
     });
     expect(carried).toEqual([
       generated[0],
-      `-- OVERRIDE DANGEROUS COMMAND: loads tables named by the caller\n${generated[1]}`,
+      `-- OVERRIDE SUPER-DEPLOY REFUSAL: loads tables named by the caller\n${generated[1]}`,
       generated[2],
     ]);
     const path = "data-model/draft/schema-change.sql";
