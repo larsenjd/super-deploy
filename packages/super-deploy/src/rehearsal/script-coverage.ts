@@ -11,7 +11,7 @@
 // loss at finalize is ticket 11's, from the same statements.
 import type { Session } from "../adapters/types.ts";
 import { quoteIdentifier } from "../deploy/history.ts";
-import type { PlannedStatement } from "../differ/types.ts";
+import type { PlannedStatement } from "../differ/index.ts";
 import { parseSqlFile } from "../sql-analysis/parse.ts";
 import {
   isObject,

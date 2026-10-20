@@ -1,7 +1,7 @@
 // The SQL-analysis seam for adoption: the differ's statements for a whole
 // database in, desired-schema files for the managed schema out.
 import { describe, expect, test } from "vitest";
-import { adoptedDesiredSchema } from "../../../src/sql-analysis/adoption.ts";
+import { adoptedDesiredSchema } from "../../../src/sql-analysis/index.ts";
 
 const options = { managedSchema: "app", header: ["Adopted."] };
 

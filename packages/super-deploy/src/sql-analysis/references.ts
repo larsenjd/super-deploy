@@ -19,6 +19,7 @@
 import type { Node } from "@pgsql/types";
 import { parseSync } from "libpg-query";
 import { generatedName } from "./generated-names.ts";
+import { isObject, type Json } from "./syntax-tree.ts";
 
 export type StatementKind =
   | "extension"
@@ -111,11 +112,6 @@ export interface StatementFacts {
   routine?: { name: string; arguments: string[] };
   problems: Problem[];
 }
-
-type Json = Record<string, unknown>;
-
-const isObject = (value: unknown): value is Json =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 function strings(list: unknown): string[] {
   if (!Array.isArray(list)) {

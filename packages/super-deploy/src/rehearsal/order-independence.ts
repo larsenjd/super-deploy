@@ -9,8 +9,8 @@ import type {
   Session,
 } from "../adapters/types.ts";
 import { DesiredSchemaLoadError, OrderDependenceError } from "../errors.ts";
-import { alternativeOrder } from "../sql-analysis/ordering.ts";
-import type { ParsedStatement } from "../sql-analysis/parse.ts";
+import type { ParsedStatement } from "../sql-analysis/index.ts";
+import { alternativeOrder } from "../sql-analysis/index.ts";
 import {
   catalogFacts,
   factDifferences,

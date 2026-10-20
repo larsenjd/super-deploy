@@ -497,6 +497,16 @@ describe("refused statements and clauses", () => {
       /^COMMENT ON EXTENSION is not allowed/,
     ],
     [
+      "COMMENT ON SERVER, worded as in SQL",
+      "comment on server s is 'x'",
+      /^COMMENT ON SERVER is not allowed/,
+    ],
+    [
+      "GRANT ON FOREIGN SERVER, worded like COMMENT ON SERVER",
+      "grant usage on foreign server s to r",
+      /^GRANT ON SERVER is not allowed/,
+    ],
+    [
       "CREATE OR REPLACE VIEW",
       "create or replace view v as select 1 as a",
       /^CREATE OR REPLACE VIEW is not allowed.*exactly once/,
@@ -778,6 +788,12 @@ describe("PL/pgSQL bodies", () => {
       "denylisted-call",
       /^set_config\(\) is not allowed: it changes a setting/,
     ],
+    [
+      "set_config scoped to the transaction",
+      "  perform set_config('search_path', 'other', true);",
+      "denylisted-call",
+      /^set_config\(\) is not allowed: it changes a setting/,
+    ],
     ["NOTIFY", "  notify chan;", "denylisted-call", /^NOTIFY is not allowed/],
     [
       "undeclared schema in a query",
@@ -843,11 +859,10 @@ describe("PL/pgSQL bodies", () => {
     expect(await violations(sql, { externalSchemas: ["ext"] })).toEqual([]);
   });
 
-  test("allow volatile built-ins, transaction-scoped locks and SET LOCAL-style set_config", async () => {
+  test("allow volatile built-ins and transaction-scoped locks", async () => {
     const sql = plpgsql(
       [
         "  perform pg_advisory_xact_lock(1);",
-        "  perform set_config('a.b', 'c', true);",
         "  insert into t (id, at) values (gen_random_uuid(), now());",
         "  return nextval('t_id_seq');",
       ].join("\n"),
@@ -899,6 +914,10 @@ describe("denylisted calls outside PL/pgSQL", () => {
     [
       "check constraint",
       "create table t (a int constraint t_a_check check (pg_cancel_backend(a)))",
+    ],
+    [
+      "set_config scoped to the transaction",
+      "create view v as select set_config('lock_timeout', '0', true) as s",
     ],
   ])("%s", async (_name, sql) => {
     expect(await violations(`${sql};`)).toMatchObject([

@@ -6,5 +6,5 @@
 
 - While the row exists, the target's structure is not that of its recorded migrations. The deploy pre-flight reports it as a history mismatch (`reason: "draft"`), so `deploy` refuses, `status` lists it under "Deploy would refuse" and doesn't check drift, `mark` should refuse, and `deploy-draft` refuses a second draft on top.
 - `rebuild --to N` is the only way back: in one transaction it drops everything in the managed schema (the schema itself, its privileges and default privileges stay), deletes the recorded migrations and the `deployed_draft` row, and replays migrations 1 to N without seed data. The attempt log and the disposable flag are kept.
-- `deploy-draft` needs the target at the newest finalized migration (the draft's schema change was generated on top of it), with its history matching the repo.
+- `deploy-draft` needs the target at the newest finalized migration (the draft's schema change was generated on top of it), with its history matching the repo. A Recovery draft of migration N instead needs the target at N-1, since it runs N's schema change between its own scripts; it is recorded the same way (a `deployed_draft` row on top of N-1, never a migration or Recovery row).
 - A lost COMMIT of `deploy-draft` is settled like a deployment's, from whether the `deployed_draft` row with its attempt id exists.

@@ -7,14 +7,12 @@
 //   original   then migration N's original scripts and schema change
 //   recovery   then the Recovery draft's seed data, and its scripts around
 //              migration N's schema change
-// and the same comparison as a draft rehearsal (pg-delta and our own
-// pg_catalog comparison) must find no difference.
+// and the same comparison as a draft rehearsal (rehearsal/same-structure.ts)
+// must find no difference.
 import type { Session } from "../adapters/types.ts";
-import { pgDeltaDiffer } from "../differ/pg-delta.ts";
-import { RehearsalMismatchError } from "../errors.ts";
 import type { Project } from "../project.ts";
-import { catalogDifferences } from "../verification/catalog.ts";
 import { type ReplayUnit, replay } from "./replay.ts";
+import { requireSameStructure } from "./same-structure.ts";
 import {
   draftDatabaseRequest,
   ensureManagedSchema,
@@ -51,19 +49,12 @@ export async function rehearseRecovery(
         draftDatabaseRequest,
         async (recovered) => {
           await build(recovered, [...input.before, ...input.recovery]);
-          const differences = [
-            ...(await pgDeltaDiffer.diff(recovered, original)).map(
-              (statement) => `pg-delta: ${statement.sql}`,
-            ),
-            ...(
-              await catalogDifferences(recovered, original, managedSchema)
-            ).map((line) => `catalog: ${line}`),
-          ];
-          if (differences.length > 0) {
-            throw new RehearsalMismatchError(differences, {
-              subject: `The Recovery's rehearsal does not end in the same structure as migration ${input.folder}; a Recovery may change only data`,
-            });
-          }
+          await requireSameStructure(
+            recovered,
+            original,
+            managedSchema,
+            `The Recovery's rehearsal does not end in the same structure as migration ${input.folder}; a Recovery may change only data`,
+          );
           return { serverVersion: await recovered.serverVersion() };
         },
       );

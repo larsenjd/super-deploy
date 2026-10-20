@@ -314,7 +314,7 @@ describe("the deploy role's privileges", () => {
     ).toEqual(warnings);
   });
 
-  test("warns when the deploy role holds pg_write_server_files, pg_execute_server_program or pg_signal_backend, directly or through another role", async () => {
+  test("warns when the deploy role holds pg_read_server_files, pg_write_server_files, pg_execute_server_program or pg_signal_backend, directly or through another role", async () => {
     const deployer = roleName("deployer");
     const group = roleName("ops");
     const database = targetDatabaseName();
@@ -362,6 +362,12 @@ const asDeployer = {
     await server.query(`grant pg_execute_server_program to ${deployer}`);
     expect(await warnings()).toEqual([
       `The deploy role "${deployer}" on target dev holds pg_execute_server_program (it can run programs on the database server): deploy with a role that doesn't`,
+    ]);
+
+    await server.query(`revoke pg_execute_server_program from ${deployer}`);
+    await server.query(`grant pg_read_server_files to ${deployer}`);
+    expect(await warnings()).toEqual([
+      `The deploy role "${deployer}" on target dev holds pg_read_server_files (it can read files on the database server): deploy with a role that doesn't`,
     ]);
   });
 });

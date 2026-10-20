@@ -22,6 +22,7 @@ import {
   isObject,
   type Json,
   list,
+  schemaQualifier,
   stringList,
   unwrap,
 } from "./syntax-tree.ts";
@@ -221,16 +222,16 @@ function ownSchema(type: string, node: Json): string | null | undefined {
     case "AlterPolicyStmt":
       return relationSchema(node.table);
     case "CreateFunctionStmt":
-      return qualifier(stringList(node.funcname), 2);
+      return schemaQualifier(stringList(node.funcname), 2);
     case "AlterFunctionStmt":
       return objectSchema(node.func, 2);
     case "CreateDomainStmt":
-      return qualifier(stringList(node.domainname), 2);
+      return schemaQualifier(stringList(node.domainname), 2);
     case "AlterDomainStmt":
     case "AlterEnumStmt":
     case "CreateEnumStmt":
     case "CreateRangeStmt":
-      return qualifier(stringList(node.typeName), 2);
+      return schemaQualifier(stringList(node.typeName), 2);
     case "CommentStmt":
       return objectSchema(
         node.object,
@@ -278,11 +279,11 @@ function objectSchema(
   }
   const typeName = unwrap(value, "TypeName");
   if (typeName !== undefined) {
-    return qualifier(stringList(typeName.names), 2);
+    return schemaQualifier(stringList(typeName.names), 2);
   }
   const routine = unwrap(value, "ObjectWithArgs");
   if (routine !== undefined) {
-    return qualifier(stringList(routine.objname), 2);
+    return schemaQualifier(stringList(routine.objname), 2);
   }
   const items = list(unwrap(value, "List")?.items);
   const [head] = items;
@@ -290,12 +291,5 @@ function objectSchema(
     // A domain constraint: (type, name).
     return objectSchema(head, 2);
   }
-  return items.length === 0 ? null : qualifier(stringList(value), parts);
-}
-
-function qualifier(
-  names: readonly string[],
-  parts: number,
-): string | undefined {
-  return names.length >= parts ? names[0] : undefined;
+  return items.length === 0 ? null : schemaQualifier(stringList(value), parts);
 }

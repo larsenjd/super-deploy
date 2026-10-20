@@ -142,6 +142,7 @@ export {
   OverwriteNotAcknowledgedError,
   PreflightFailedError,
   ProjectNotFoundError,
+  RecoveryBaseMismatchError,
   RecoveryDraftError,
   RecoverySchemaChangeEditedError,
   RehearsalMismatchError,

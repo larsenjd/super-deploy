@@ -33,7 +33,11 @@ import type { Project } from "../project.ts";
 import type { Confirm, OverwriteOptions, Question } from "../questions.ts";
 import type { LockWarning, Override } from "../sql-analysis/index.ts";
 import { readDraft } from "../store/draft.ts";
-import { parseMigrationFolderName, readIndex } from "../store/migrations.ts";
+import {
+  migrationFolderName,
+  parseMigrationFolderName,
+  readIndex,
+} from "../store/migrations.ts";
 
 export type CommandGroup =
   | "Start"
@@ -280,7 +284,8 @@ const draftCommand: CommandDefinition = {
       kind: "name",
       description:
         "Name for a new draft, or a new name for the existing draft (spaces become hyphens)",
-      initial: async (project) => (await readDraft(project.paths))?.name,
+      initial: async (project) =>
+        (await readDraft(project.root, project.paths))?.name,
     },
   ],
   async run(project, values, context) {
@@ -317,7 +322,7 @@ const rehearseCommand: CommandDefinition = {
     context.result(
       result.recoveryOf === undefined
         ? `Rehearsed draft ${result.name} after ${plural(result.migrationsReplayed, "migration")}: matches the desired schema`
-        : `Rehearsed the Recovery draft of migration ${migrationFolder(result.recoveryOf, result.name)}: it ends in the same structure as the original`,
+        : `Rehearsed the Recovery draft of migration ${migrationFolderName(result.recoveryOf, result.name)}: it ends in the same structure as the original`,
     );
   },
 };
@@ -783,8 +788,12 @@ const deployDraftCommand: CommandDefinition = {
       target: String(values.target),
       withSeed: values["with-seed"] === true,
     });
+    const what =
+      result.recoveryOf === undefined
+        ? `draft ${result.name}`
+        : `the Recovery draft of migration ${result.recoveryOf}`;
     context.result(
-      `Deployed draft ${result.name} to ${result.target} on top of ${result.baseMigration ?? "no recorded migration"}, ${result.seedData ? "with" : "without"} seed data`,
+      `Deployed ${what} to ${result.target} on top of ${result.baseMigration ?? "no recorded migration"}, ${result.seedData ? "with" : "without"} seed data`,
     );
   },
 };
@@ -856,11 +865,6 @@ function describeOverride(
 
 function plural(count: number, noun: string, nouns = `${noun}s`): string {
   return `${count} ${count === 1 ? noun : nouns}`;
-}
-
-/** `00002-require-email` from 2 and `require-email`. */
-function migrationFolder(number: number, name: string): string {
-  return `${String(number).padStart(5, "0")}-${name}`;
 }
 
 export const commands: readonly CommandDefinition[] = [

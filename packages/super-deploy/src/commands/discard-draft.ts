@@ -39,7 +39,7 @@ export async function discardDraft(
 /** The draft's name, or undefined when draft.json is missing or broken (discarding it is still allowed). */
 export async function draftName(project: Project): Promise<string | undefined> {
   try {
-    return (await readDraft(project.paths))?.name;
+    return (await readDraft(project.root, project.paths))?.name;
   } catch {
     return undefined;
   }

@@ -21,7 +21,6 @@
 // applied per statement. Destructive statements and lock warnings are found
 // alongside (destructive.ts).
 import type {
-  AlterTableCmd,
   ColumnDef,
   Constraint,
   CreateFunctionStmt,
@@ -54,10 +53,15 @@ import { pgCatalogFunctions, pgCatalogRelations } from "./pg-catalog-names.ts";
 import { plpgsqlFindings, sqlBodyFindings } from "./routine-bodies.ts";
 import type { RuleId } from "./rule-catalogue.ts";
 import type { RuleContext } from "./rule-types.ts";
-import { objectTypeName, statementName } from "./statement-names.ts";
 import {
-  isObject,
+  objectTypeKeyword,
+  objectTypeName,
+  statementName,
+} from "./statement-names.ts";
+import {
+  alterTableCommands,
   type Json,
+  statementBody,
   stringList,
   unwrap,
   walkNodes,
@@ -394,7 +398,7 @@ const data = new Set([
 
 function classify(statement: ParsedStatement): Classification {
   const type = statement.nodeType;
-  const body = bodyOf(statement);
+  const body = statementBody(statement);
   const name = statementName(statement.nodeType);
 
   if (type === "TransactionStmt") {
@@ -502,8 +506,8 @@ function classify(statement: ParsedStatement): Classification {
     );
   }
   if (type === "AlterTableStmt") {
-    for (const cmd of commands(body)) {
-      const partition = nodeOf<{ concurrent?: boolean }>(
+    for (const cmd of alterTableCommands(body)) {
+      const partition = unwrap<{ concurrent?: boolean }>(
         cmd.def,
         "PartitionCmd",
       );
@@ -743,7 +747,7 @@ function detailFindings(
   state: MigrationState,
 ): Finding[] {
   const type = statement.nodeType;
-  const body = bodyOf(statement);
+  const body = statementBody(statement);
   const findings: Finding[] = [];
   const unsupportedFeature = (message: string) =>
     findings.push({ rule: "unsupported-object", message });
@@ -762,9 +766,9 @@ function detailFindings(
       );
     }
     for (const element of create.tableElts ?? []) {
-      const column = nodeOf<ColumnDef>(element, "ColumnDef");
+      const column = unwrap<ColumnDef>(element, "ColumnDef");
       findings.push(...(column ? columnFindings(column) : []));
-      const constraint = nodeOf<Constraint>(element, "Constraint");
+      const constraint = unwrap<Constraint>(element, "Constraint");
       findings.push(...(constraint ? constraintFindings(constraint) : []));
     }
   }
@@ -772,7 +776,7 @@ function detailFindings(
     if (body.objtype === "OBJECT_FOREIGN_TABLE") {
       unsupportedFeature("Foreign tables are not supported");
     }
-    for (const cmd of commands(body)) {
+    for (const cmd of alterTableCommands(body)) {
       const subtype = String(cmd.subtype ?? "");
       const reason = alterTableUnsupported[subtype];
       if (reason !== undefined) {
@@ -785,7 +789,7 @@ function detailFindings(
           message: `ALTER TABLE ... ${alterTableCommandName(subtype)} is not allowed in deploy-time SQL`,
         });
       }
-      const column = nodeOf<ColumnDef>(cmd.def, "ColumnDef");
+      const column = unwrap<ColumnDef>(cmd.def, "ColumnDef");
       if (column !== undefined && subtype === "AT_AddColumn") {
         findings.push(...columnFindings(column));
       }
@@ -798,7 +802,7 @@ function detailFindings(
           ...expressionFindings(column.raw_default, "executed", state),
         );
       }
-      const constraint = nodeOf<Constraint>(cmd.def, "Constraint");
+      const constraint = unwrap<Constraint>(cmd.def, "Constraint");
       findings.push(...(constraint ? constraintFindings(constraint) : []));
     }
   }
@@ -806,7 +810,7 @@ function detailFindings(
     const drop = body as DropStmt;
     if (!managedObjectTypes.has(drop.removeType ?? "")) {
       unsupportedFeature(
-        `DROP ${objectTypeName(drop.removeType).toUpperCase()} is not supported: super-deploy manages only the objects in its schema`,
+        `DROP ${objectTypeKeyword(drop.removeType)} is not supported: super-deploy manages only the objects in its schema`,
       );
     }
   }
@@ -824,7 +828,7 @@ function detailFindings(
       body.objtype !== "OBJECT_SCHEMA"
     ) {
       unsupportedFeature(
-        `COMMENT ON ${objectTypeName(String(body.objtype)).toUpperCase()} is not supported: super-deploy manages only the objects in its schema`,
+        `COMMENT ON ${objectTypeKeyword(body.objtype)} is not supported: super-deploy manages only the objects in its schema`,
       );
     }
   }
@@ -862,7 +866,7 @@ function columnFindings(column: ColumnDef): Finding[] {
     });
   }
   for (const item of column.constraints ?? []) {
-    const constraint = nodeOf<Constraint>(item, "Constraint");
+    const constraint = unwrap<Constraint>(item, "Constraint");
     findings.push(...(constraint ? constraintFindings(constraint) : []));
   }
   return findings;
@@ -899,9 +903,9 @@ function constraintFindings(constraint: Constraint): Finding[] {
 
 function functionLanguage(create: CreateFunctionStmt): string {
   for (const option of create.options ?? []) {
-    const element = nodeOf<{ defname?: string; arg?: Node }>(option, "DefElem");
+    const element = unwrap<{ defname?: string; arg?: Node }>(option, "DefElem");
     if (element?.defname === "language") {
-      return nodeOf<{ sval?: string }>(element.arg, "String")?.sval ?? "";
+      return unwrap<{ sval?: string }>(element.arg, "String")?.sval ?? "";
     }
   }
   // A BEGIN ATOMIC or RETURN body is SQL; anything else needs a LANGUAGE.
@@ -1030,7 +1034,7 @@ function expressionFindings(
     }
     if (type === "GrantStmt") {
       for (const object of (node as GrantStmt).objects ?? []) {
-        const schema = nodeOf<{ sval?: string }>(object, "String");
+        const schema = unwrap<{ sval?: string }>(object, "String");
         if (schema !== undefined) {
           findings.push(...schemaFindings(schema.sval ?? "", "write", state));
         }
@@ -1192,13 +1196,13 @@ function objectNameFindings(
     type === "DropStmt" ? ((node.objects as unknown[]) ?? []) : [node.object];
   const findings: Finding[] = [];
   for (const object of objects) {
-    const list = nodeOf<{ items?: Node[] }>(object, "List");
+    const list = unwrap<{ items?: Node[] }>(object, "List");
     if (list !== undefined) {
       findings.push(
         ...nameFindings(stringList(list.items), trailing, "write", state),
       );
     }
-    const schema = nodeOf<{ sval?: string }>(object, "String");
+    const schema = unwrap<{ sval?: string }>(object, "String");
     if (schema !== undefined && objectType === "OBJECT_SCHEMA") {
       findings.push(...schemaFindings(schema.sval ?? "", "write", state));
     }
@@ -1240,7 +1244,7 @@ function scriptFindings(root: unknown, state: MigrationState): Finding[] {
             "* expands to the columns in their physical order, which differs between a rehearsal and a long-lived target; list the columns",
         });
       } else if (fields.length === 1) {
-        const name = nodeOf<{ sval?: string }>(fields[0], "String")?.sval;
+        const name = unwrap<{ sval?: string }>(fields[0], "String")?.sval;
         if (name !== undefined && relations.has(name)) {
           findings.push({
             rule: "whole-row-reference",
@@ -1261,7 +1265,7 @@ function scriptFindings(root: unknown, state: MigrationState): Finding[] {
       };
       ordinal(
         (select.sortClause ?? []).map(
-          (item) => nodeOf<{ node?: Node }>(item, "SortBy")?.node ?? item,
+          (item) => unwrap<{ node?: Node }>(item, "SortBy")?.node ?? item,
         ),
         "ORDER BY",
       );
@@ -1293,13 +1297,13 @@ function scriptFindings(root: unknown, state: MigrationState): Finding[] {
 }
 
 function isOrdinal(item: Node): boolean {
-  const constant = nodeOf<{ ival?: unknown }>(item, "A_Const");
+  const constant = unwrap<{ ival?: unknown }>(item, "A_Const");
   return constant?.ival !== undefined;
 }
 
 function groupItems(items: readonly Node[] | undefined): Node[] {
   return (items ?? []).flatMap((item) => {
-    const set = nodeOf<{ content?: Node[] }>(item, "GroupingSet");
+    const set = unwrap<{ content?: Node[] }>(item, "GroupingSet");
     return set === undefined ? [item] : groupItems(set.content);
   });
 }
@@ -1355,7 +1359,7 @@ function insertFindings(insert: InsertStmt, state: MigrationState): Finding[] {
 function mergeFindings(merge: MergeStmt, state: MigrationState): Finding[] {
   const findings: Finding[] = [];
   for (const item of merge.mergeWhenClauses ?? []) {
-    const clause = nodeOf<MergeWhenClause>(item, "MergeWhenClause");
+    const clause = unwrap<MergeWhenClause>(item, "MergeWhenClause");
     if (clause?.commandType === "CMD_INSERT") {
       if (
         (clause.values ?? []).length > 0 &&
@@ -1415,7 +1419,7 @@ function identityAssignments(
     relation,
     targets,
     state,
-    (target) => nodeOf(target.val, "SetToDefault") === undefined,
+    (target) => unwrap(target.val, "SetToDefault") === undefined,
   );
 }
 
@@ -1431,7 +1435,7 @@ function identityColumnsNamed(
     return [];
   }
   return (targets ?? []).flatMap((item) => {
-    const target = nodeOf<ResTarget>(item, "ResTarget");
+    const target = unwrap<ResTarget>(item, "ResTarget");
     if (
       target?.name === undefined ||
       !identity.has(target.name) ||
@@ -1505,11 +1509,11 @@ function routineBodyFindings(
   if (statement.nodeType !== "CreateFunctionStmt") {
     return [];
   }
-  const create = bodyOf(statement) as CreateFunctionStmt;
+  const create = statementBody(statement) as CreateFunctionStmt;
   const language = functionLanguage(create);
   const body = create.options
     ?.map((option) =>
-      nodeOf<{ defname?: string; arg?: Node }>(option, "DefElem"),
+      unwrap<{ defname?: string; arg?: Node }>(option, "DefElem"),
     )
     .find((option) => option?.defname === "as")?.arg;
   const context: RuleContext = {
@@ -1527,7 +1531,7 @@ function routineBodyFindings(
 
 /** Updates the migration's state after a statement: temporary tables and identity columns. */
 function remember(statement: ParsedStatement, state: MigrationState): void {
-  const body = bodyOf(statement);
+  const body = statementBody(statement);
   const addIdentity = (
     table: string | undefined,
     column: string | undefined,
@@ -1552,7 +1556,7 @@ function remember(statement: ParsedStatement, state: MigrationState): void {
       state.temporary.add(relation.relname);
     }
     for (const element of (body.tableElts as Node[] | undefined) ?? []) {
-      const column = nodeOf<ColumnDef>(element, "ColumnDef");
+      const column = unwrap<ColumnDef>(element, "ColumnDef");
       if (column !== undefined && isIdentity(column)) {
         addIdentity(relation?.relname, column.colname);
       }
@@ -1560,8 +1564,8 @@ function remember(statement: ParsedStatement, state: MigrationState): void {
   }
   if (statement.nodeType === "AlterTableStmt") {
     const table = (body.relation as RangeVar | undefined)?.relname;
-    for (const cmd of commands(body)) {
-      const column = nodeOf<ColumnDef>(cmd.def, "ColumnDef");
+    for (const cmd of alterTableCommands(body)) {
+      const column = unwrap<ColumnDef>(cmd.def, "ColumnDef");
       if (
         cmd.subtype === "AT_AddColumn" &&
         column !== undefined &&
@@ -1579,7 +1583,7 @@ function remember(statement: ParsedStatement, state: MigrationState): void {
 function isIdentity(column: ColumnDef): boolean {
   return (column.constraints ?? []).some(
     (item) =>
-      nodeOf<Constraint>(item, "Constraint")?.contype === "CONSTR_IDENTITY",
+      unwrap<Constraint>(item, "Constraint")?.contype === "CONSTR_IDENTITY",
   );
 }
 
@@ -1587,27 +1591,11 @@ function isTemporary(relation: RangeVar): boolean {
   return relation.relpersistence === "t" || relation.schemaname === "pg_temp";
 }
 
-function bodyOf(statement: ParsedStatement): Json {
-  const body = (statement.node as unknown as Json)[statement.nodeType];
-  return isObject(body) ? body : {};
-}
-
-function commands(body: Json): AlterTableCmd[] {
-  return ((body.cmds as Node[] | undefined) ?? []).flatMap((item) => {
-    const cmd = nodeOf<AlterTableCmd>(item, "AlterTableCmd");
-    return cmd === undefined ? [] : [cmd];
-  });
-}
-
 function hasOption(options: unknown, name: string): boolean {
   return (Array.isArray(options) ? options : []).some(
     (option) =>
-      nodeOf<{ defname?: string }>(option, "DefElem")?.defname === name,
+      unwrap<{ defname?: string }>(option, "DefElem")?.defname === name,
   );
-}
-
-function nodeOf<T>(value: unknown, type: string): T | undefined {
-  return unwrap(value, type) as T | undefined;
 }
 
 function qualifiedName(parts: readonly (string | undefined)[]): string {

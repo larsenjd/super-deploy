@@ -7,8 +7,13 @@ migrations from it.
 ## Getting started
 
 ```sh
+git init
 pnpm install
 ```
+
+Initialise Git first: `pnpm install` then also installs the pre-commit hook
+(`.husky/pre-commit`, via Husky), which runs `pnpm precommit` on every commit.
+If you install before `git init`, run `pnpm install` again afterwards.
 
 Nothing else is needed: `super-deploy.config.ts` runs a private PostgreSQL 18
 server in `.super-deploy/postgres` (gitignored). It provides the throwaway
@@ -45,8 +50,8 @@ support, nothing is written and every such object is listed.
 - `data-model/draft/schema-change.sql`: generated; run `draft` again instead
   of editing it.
 - `pnpm precommit` runs Biome, the type checker and
-  `super-deploy validate --strict`. Run it before every commit, for example
-  from a Git hook.
+  `super-deploy validate --strict`. The pre-commit hook runs it before every
+  commit.
 
 ## Renaming a column
 

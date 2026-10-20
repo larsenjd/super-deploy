@@ -8,6 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "prepare": "husky",
     "format": "biome format --write",
     "format:file": "biome format --write --no-errors-on-unmatched",
     "lint": "biome check",
@@ -18,6 +19,7 @@
     "@biomejs/biome": "2.5.15",
     "@types/node": "24.19.2",
     "embedded-postgres": "18.4.0-beta.17",
+    "husky": "9.1.7",
     "super-deploy": "workspace:*",
     "typescript": "7.0.2"
   }

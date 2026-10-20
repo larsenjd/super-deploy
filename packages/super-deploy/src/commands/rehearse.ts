@@ -14,6 +14,7 @@ import { rehearseRecovery } from "../rehearsal/rehearse-recovery.ts";
 import { readMigrationUnits, readReplayUnit } from "../rehearsal/replay.ts";
 import {
   readSeededUnit,
+  type SeededUnit,
   seededFiles,
   seededUnits,
 } from "../rehearsal/seed-data.ts";
@@ -23,6 +24,7 @@ import {
   type LockWarning,
   type MigrationAnalysis,
   type Override,
+  type ParsedStatement,
 } from "../sql-analysis/index.ts";
 import {
   asSqlFiles,
@@ -99,7 +101,7 @@ export async function rehearseCurrentDraft(
   ) => Promise<void>,
 ): Promise<RehearsedDraft> {
   const { root, paths } = project;
-  const draft = await readDraft(paths);
+  const draft = await readDraft(root, paths);
   if (draft === undefined) {
     throw new NoDraftError(action);
   }
@@ -107,26 +109,15 @@ export async function rehearseCurrentDraft(
   if (draft.recoveryOf !== undefined) {
     return rehearseRecoveryDraft(project, draft, migrations, beforeRehearsal);
   }
-  const desiredSchema = await readDesiredSchemaFiles(root, paths.desiredSchema);
-  const statements = await analyseDesiredSchema(
-    asSqlFiles(root, paths.desiredSchema, desiredSchema),
-    {
-      managedSchema: project.config.managedSchema,
-      externalSchemas: project.config.externalSchemas,
-    },
+  const { desiredSchema, statements, seeded, analysis } = await checkDraft(
+    project,
+    draft,
+    migrations,
   );
+  await beforeRehearsal?.(draft, analysis);
   const units = await readMigrationUnits(root, migrations);
   // The draft's seed data loads just before its pre-migration script; the
   // finalized migrations' seed data is never loaded.
-  const seeded = await readSeededUnit(root, paths.draft, `draft ${draft.name}`);
-  const previous = await newestSnapshot(root, migrations);
-  const analysis = await refuseRuleViolations(seededFiles(seeded), {
-    managedSchema: project.config.managedSchema,
-    externalSchemas: project.config.externalSchemas,
-    schemas: [previous, statements],
-    previous,
-  });
-  await beforeRehearsal?.(draft, analysis);
   units.push(...seededUnits(seeded));
   const { serverVersion } = await rehearseDraft(project, statements, units);
   return {
@@ -140,12 +131,51 @@ export async function rehearseCurrentDraft(
   };
 }
 
+export interface CheckedDraft {
+  /** The desired schema, relative to the desired-schema folder. */
+  readonly desiredSchema: readonly HashedFile[];
+  readonly statements: readonly ParsedStatement[];
+  readonly seeded: SeededUnit;
+  /** The analysis of the draft's files as they run. */
+  readonly analysis: MigrationAnalysis;
+}
+
 /**
- * A Recovery draft of migration N: its schema change must still be N's; the
- * rules apply to all its files as they run (seed data, scripts, N's schema
- * change); then the rehearsal proves it ends in N's original structure.
- * Destructive statements, warnings and overrides are the Recovery's own: the
- * schema change's were acknowledged and recorded with N.
+ * Shared by rehearse, finalize and deploy-draft. The desired schema must pass
+ * its rules, and the (non-Recovery) draft's files the deploy-time rules as
+ * they run (seed data, scripts, schema change), between the newest snapshot
+ * and the desired schema (SqlRuleViolationError).
+ */
+export async function checkDraft(
+  project: Project,
+  draft: DraftMetadata,
+  migrations: readonly FinalizedMigration[],
+): Promise<CheckedDraft> {
+  const { root, paths, config } = project;
+  const desiredSchema = await readDesiredSchemaFiles(root, paths.desiredSchema);
+  const statements = await analyseDesiredSchema(
+    asSqlFiles(root, paths.desiredSchema, desiredSchema),
+    {
+      managedSchema: config.managedSchema,
+      externalSchemas: config.externalSchemas,
+    },
+  );
+  const seeded = await readSeededUnit(root, paths.draft, `draft ${draft.name}`);
+  const previous = await newestSnapshot(root, migrations);
+  const analysis = await refuseRuleViolations(seededFiles(seeded), {
+    managedSchema: config.managedSchema,
+    externalSchemas: config.externalSchemas,
+    schemas: [previous, statements],
+    previous,
+  });
+  return { desiredSchema, statements, seeded, analysis };
+}
+
+/**
+ * A Recovery draft of migration N: the rules apply to all its files as they
+ * run (see `checkRecoveryDraft`); then the rehearsal proves it ends in N's
+ * original structure. Destructive statements, warnings and overrides are the
+ * Recovery's own: the schema change's were acknowledged and recorded with N.
  */
 async function rehearseRecoveryDraft(
   project: Project,
@@ -155,29 +185,12 @@ async function rehearseRecoveryDraft(
     | ((draft: DraftMetadata, analysis: MigrationAnalysis) => Promise<void>)
     | undefined,
 ): Promise<RehearsedDraft> {
-  const { root, paths, config } = project;
-  const number = draft.recoveryOf as number;
-  const migration = migrations[number - 1];
-  if (migration === undefined) {
-    throw new UnknownMigrationError(number, migrations.at(-1)?.number);
-  }
-  await requireOriginalSchemaChange(project, migration);
-  const earlier = migrations.slice(0, number - 1);
-  const seeded = await readSeededUnit(
-    root,
-    paths.draft,
-    `Recovery draft of ${migration.folder}`,
-  );
-  const previous = await newestSnapshot(root, earlier);
-  const full = await refuseRuleViolations(seededFiles(seeded), {
-    managedSchema: config.managedSchema,
-    externalSchemas: config.externalSchemas,
-    schemas: [
-      previous,
-      await readDesiredSchema(root, join(migration.path, snapshotFolderName)),
-    ],
-    previous,
-  });
+  const { root } = project;
+  const {
+    migration,
+    seeded,
+    analysis: full,
+  } = await checkRecoveryDraft(project, draft, migrations);
   const own = <T extends { file: string }>(items: readonly T[]) =>
     items.filter(({ file }) => posix.basename(file) !== schemaChangeFileName);
   const analysis: MigrationAnalysis = {
@@ -189,7 +202,10 @@ async function rehearseRecoveryDraft(
   await beforeRehearsal?.(draft, analysis);
   const { serverVersion } = await rehearseRecovery(project, {
     folder: migration.folder,
-    before: await readMigrationUnits(root, earlier),
+    before: await readMigrationUnits(
+      root,
+      migrations.slice(0, migration.number - 1),
+    ),
     original: await readReplayUnit(root, migration.path, migration.folder),
     recovery: seededUnits(seeded),
   });
@@ -202,6 +218,51 @@ async function rehearseRecoveryDraft(
     overrides: analysis.overrides,
     analysis,
   };
+}
+
+export interface CheckedRecoveryDraft {
+  /** The migration the draft recovers. */
+  readonly migration: FinalizedMigration;
+  readonly seeded: SeededUnit;
+  /** The analysis of all its files, N's schema change included. */
+  readonly analysis: MigrationAnalysis;
+}
+
+/**
+ * Shared by rehearse, finalize and deploy-draft. A Recovery draft of
+ * migration N must name a finalized N (UnknownMigrationError), its schema
+ * change must still be N's (RecoverySchemaChangeEditedError), and its files
+ * must pass the rules as they run (seed data, scripts, N's schema change),
+ * against the snapshots of N-1 and N (SqlRuleViolationError).
+ */
+export async function checkRecoveryDraft(
+  project: Project,
+  draft: DraftMetadata,
+  migrations: readonly FinalizedMigration[],
+): Promise<CheckedRecoveryDraft> {
+  const { root, paths, config } = project;
+  const number = draft.recoveryOf as number;
+  const migration = migrations[number - 1];
+  if (migration === undefined) {
+    throw new UnknownMigrationError(number, migrations.at(-1)?.number);
+  }
+  await requireOriginalSchemaChange(project, migration);
+  const seeded = await readSeededUnit(
+    root,
+    paths.draft,
+    `Recovery draft of ${migration.folder}`,
+  );
+  const previous = await newestSnapshot(root, migrations.slice(0, number - 1));
+  const analysis = await refuseRuleViolations(seededFiles(seeded), {
+    managedSchema: config.managedSchema,
+    externalSchemas: config.externalSchemas,
+    schemas: [
+      previous,
+      await readDesiredSchema(root, join(migration.path, snapshotFolderName)),
+    ],
+    previous,
+  });
+  return { migration, seeded, analysis };
 }
 
 /** Refuses a Recovery draft whose schema-change.sql is no longer its migration's (line endings aside). */

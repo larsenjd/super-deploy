@@ -10,7 +10,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { SuperDeployError } from "../errors.ts";
 import { normaliseDraftName } from "./draft-name.ts";
-import type { ProjectPaths } from "./layout.ts";
+import { type ProjectPaths, projectRelative } from "./layout.ts";
 
 /** The draft's own metadata file; never copied into the finalized migration. */
 export const draftMetadataFileName = "draft.json";
@@ -23,9 +23,12 @@ export interface DraftMetadata {
   readonly recoveryOf?: number | undefined;
 }
 
+/** Reads draft.json; errors name it relative to the project `root`. */
 export async function readDraft(
+  root: string,
   paths: ProjectPaths,
 ): Promise<DraftMetadata | undefined> {
+  const file = projectRelative(root, paths.draftMetadata);
   let text: string;
   try {
     text = await readFile(paths.draftMetadata, "utf8");
@@ -35,17 +38,23 @@ export async function readDraft(
     }
     throw error;
   }
-  const parsed: unknown = JSON.parse(text);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new SuperDeployError(
+      "invalid-config",
+      `${file} is not valid JSON (${(error as Error).message})`,
+      { cause: error },
+    );
+  }
   if (
     typeof parsed !== "object" ||
     parsed === null ||
     !("name" in parsed) ||
     typeof parsed.name !== "string"
   ) {
-    throw new SuperDeployError(
-      "invalid-config",
-      `${paths.draftMetadata} has no "name"`,
-    );
+    throw new SuperDeployError("invalid-config", `${file} has no "name"`);
   }
   const hash =
     "desiredSchemaHash" in parsed &&
@@ -63,7 +72,7 @@ export async function readDraft(
   ) {
     throw new SuperDeployError(
       "invalid-config",
-      `${paths.draftMetadata} has a "recoveryOf" that is not a migration number`,
+      `${file} has a "recoveryOf" that is not a migration number`,
     );
   }
   return {

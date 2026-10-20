@@ -32,7 +32,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import type { DeployTimeKind } from "../sql-analysis/deploy-time.ts";
+import type { DeployTimeKind } from "../sql-analysis/index.ts";
 import { maxDraftNameLength } from "./draft-name.ts";
 import { decodeHashedText, type HashedFile } from "./hashing.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";

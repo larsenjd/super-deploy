@@ -5,18 +5,19 @@ import type {
   RehearsalAdapter,
   Session,
 } from "../adapters/types.ts";
+import { quoteIdentifier } from "../deploy/history.ts";
 import {
   AdapterError,
   DesiredSchemaLoadError,
   SuperDeployError,
   UnsupportedServerError,
 } from "../errors.ts";
+import type { ParsedStatement } from "../sql-analysis/index.ts";
 import {
   externalSchemasBoundAtCreate,
   isAlreadyInstalled,
   rolesNamedIn,
 } from "../sql-analysis/index.ts";
-import type { ParsedStatement } from "../sql-analysis/parse.ts";
 
 /**
  * Drafts and draft rehearsals: UTF-8 with PostgreSQL 18's builtin `C.UTF-8`
@@ -216,10 +217,6 @@ function linesBefore(text: string, position: string | undefined): number {
   return Array.from(text)
     .slice(0, index - 1)
     .filter((character) => character === "\n").length;
-}
-
-function quoteIdentifier(name: string): string {
-  return `"${name.replaceAll('"', '""')}"`;
 }
 
 async function adapterCall<T>(

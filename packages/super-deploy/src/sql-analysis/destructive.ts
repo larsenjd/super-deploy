@@ -36,8 +36,9 @@ import {
 } from "./pg-catalog-names.ts";
 import { objectTypeName } from "./statement-names.ts";
 import {
-  isObject,
+  alterTableCommands,
   type Json,
+  statementBody,
   stringList,
   unwrap,
   walkNodes,
@@ -182,7 +183,7 @@ export class ChangeTracker {
 
   /** Updates what the migration has created and the column types after a statement. */
   remember(statement: ParsedStatement): void {
-    const body = bodyOf(statement);
+    const body = statementBody(statement);
     for (const key of createdKeys(statement, body)) {
       this.#created.add(key);
       for (const drop of this.#found) {
@@ -203,7 +204,7 @@ export class ChangeTracker {
   }
 
   #destructiveIn(statement: ParsedStatement): Drop[] {
-    const body = bodyOf(statement);
+    const body = statementBody(statement);
     const drops: Drop[] = [];
     const add = (
       kind: DestructiveKind,
@@ -253,7 +254,7 @@ export class ChangeTracker {
       const relation = body.relation as RangeVar | undefined;
       const table = this.#relationName(relation);
       const isType = body.objtype === "OBJECT_TYPE";
-      for (const cmd of commands(body)) {
+      for (const cmd of alterTableCommands(body)) {
         const cascade = cmd.behavior === "DROP_CASCADE";
         if (table !== undefined && cmd.subtype === "AT_DropColumn") {
           add(
@@ -341,7 +342,7 @@ export class ChangeTracker {
   }
 
   #warningsIn(statement: ParsedStatement): LockWarning[] {
-    const body = bodyOf(statement);
+    const body = statementBody(statement);
     const warnings: LockWarning[] = [];
     const warn = (
       kind: LockWarningKind,
@@ -373,7 +374,7 @@ export class ChangeTracker {
       const relation = body.relation as RangeVar | undefined;
       const table = existing(relation);
       const prefix = `ALTER TABLE ${display(relation)}`;
-      for (const cmd of table === undefined ? [] : commands(body)) {
+      for (const cmd of table === undefined ? [] : alterTableCommands(body)) {
         const column = unwrap(cmd.def, "ColumnDef") as ColumnDef | undefined;
         const constraint = unwrap(cmd.def, "Constraint") as
           | Constraint
@@ -542,7 +543,7 @@ export class ChangeTracker {
     if (statement.nodeType === "AlterTableStmt") {
       const table = this.#relationName(body.relation as RangeVar | undefined);
       const columns = table === undefined ? undefined : this.columns.get(table);
-      for (const cmd of commands(body)) {
+      for (const cmd of alterTableCommands(body)) {
         const column = unwrap(cmd.def, "ColumnDef") as ColumnDef | undefined;
         if (cmd.subtype === "AT_AddColumn" && column?.colname !== undefined) {
           if (column.typeName !== undefined) {
@@ -628,7 +629,7 @@ function createdKeys(statement: ParsedStatement, body: Json): string[] {
       return [`type:${relation("typevar")}`];
     case "AlterTableStmt": {
       const table = relation("relation");
-      return commands(body).flatMap((cmd) => {
+      return alterTableCommands(body).flatMap((cmd) => {
         const column = unwrap(cmd.def, "ColumnDef") as ColumnDef | undefined;
         const constraint = unwrap(cmd.def, "Constraint") as
           | Constraint
@@ -976,16 +977,4 @@ function display(relation: RangeVar | undefined): string {
   return [relation?.schemaname, relation?.relname]
     .filter((part) => part !== undefined)
     .join(".");
-}
-
-function bodyOf(statement: ParsedStatement): Json {
-  const body = (statement.node as unknown as Json)[statement.nodeType];
-  return isObject(body) ? body : {};
-}
-
-function commands(body: Json): AlterTableCmd[] {
-  return ((body.cmds as Node[] | undefined) ?? []).flatMap((item) => {
-    const cmd = unwrap(item, "AlterTableCmd") as AlterTableCmd | undefined;
-    return cmd === undefined ? [] : [cmd];
-  });
 }

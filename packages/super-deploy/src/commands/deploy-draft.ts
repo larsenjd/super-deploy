@@ -7,7 +7,9 @@
 // change, post-migration script, in one transaction with the pinned settings
 // and the target's timeouts), after its seed data only with `withSeed`. It is
 // not rehearsed first: the target is disposable and the transaction rolls
-// back on any failure.
+// back on any failure. An ordinary draft goes on top of the newest finalized
+// migration; a Recovery draft of migration N goes on top of N-1, since it
+// runs N's schema change between its scripts.
 //
 // What the target records: the draft is not a finalized migration, so no
 // migrations row is written. Instead the history schema's `deployed_draft`
@@ -28,6 +30,7 @@ import { preflightChecks, refusesDeployment } from "../deploy/preflight.ts";
 import {
   NoDraftError,
   PreflightFailedError,
+  RecoveryBaseMismatchError,
   TargetBehindError,
   TargetNotDisposableError,
 } from "../errors.ts";
@@ -35,18 +38,12 @@ import { runGuarded } from "../guard/guard.ts";
 import type { Project } from "../project.ts";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
 import { runUnit } from "../rehearsal/replay.ts";
-import {
-  readSeededUnit,
-  type SeededUnit,
-  seededFiles,
-} from "../rehearsal/seed-data.ts";
-import { analyseDesiredSchema } from "../sql-analysis/index.ts";
-import { asSqlFiles, readDesiredSchemaFiles } from "../store/desired-schema.ts";
+import type { SeededUnit } from "../rehearsal/seed-data.ts";
 import { readDraft } from "../store/draft.ts";
 import { sha256 } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { migrationFolderName } from "../store/migrations.ts";
-import { newestSnapshot, refuseRuleViolations } from "./check-rules.ts";
+import { checkDraft, checkRecoveryDraft } from "./rehearse.ts";
 
 export interface DeployDraftOptions {
   /** The target's name in config. */
@@ -59,6 +56,8 @@ export interface DeployDraftResult {
   readonly target: string;
   /** The draft's name. */
   readonly name: string;
+  /** For a Recovery draft: the folder of the migration it recovers (e.g. `00002-require-email`). */
+  readonly recoveryOf: string | undefined;
   /** The recorded migration the draft went on top of (e.g. `00001-add-customers`); undefined when there was none. */
   readonly baseMigration: string | undefined;
   /** Whether seed data was loaded (false when the draft has none). */
@@ -69,6 +68,7 @@ export interface DeployDraftResult {
 
 interface Plan {
   readonly name: string;
+  readonly recoveryOf: string | undefined;
   /** The units to run, in order: the seed data (if loaded), then the draft. */
   readonly units: readonly ReplayUnit[];
   readonly seedData: boolean;
@@ -87,7 +87,9 @@ interface Plan {
  * SqlRuleViolationError for the draft's files; PreflightFailedError when a
  * role or external schema is missing, the recorded history doesn't match the
  * repo, or the target already holds a draft; TargetBehindError when it has
- * pending migrations.
+ * pending migrations. A Recovery draft of migration N goes on top of N-1
+ * instead (RecoveryBaseMismatchError otherwise), after the checks rehearse
+ * makes (UnknownMigrationError, RecoverySchemaChangeEditedError).
  */
 export async function deployDraft(
   project: Project,
@@ -103,17 +105,18 @@ export async function deployDraft(
       if (!view.disposable) {
         throw new TargetNotDisposableError("deploy-draft", target);
       }
-      const metadata = await readDraft(paths);
+      const metadata = await readDraft(root, paths);
       if (metadata === undefined) {
         throw new NoDraftError("deploy");
       }
       const migrations = await verifiedMigrations(root, paths);
-      const seeded = await readSeededUnit(
-        root,
-        paths.draft,
-        `draft ${metadata.name}`,
-      );
-      await refuseDraftRuleViolations(project, migrations, seeded);
+      const { seeded, migration: recovered } =
+        metadata.recoveryOf === undefined
+          ? {
+              ...(await checkDraft(project, metadata, migrations)),
+              migration: undefined,
+            }
+          : await checkRecoveryDraft(project, metadata, migrations);
       const units = [
         ...(withSeed && seeded.seedData !== undefined ? [seeded.seedData] : []),
         seeded.migration,
@@ -128,22 +131,40 @@ export async function deployDraft(
       if (refusesDeployment(findings)) {
         throw new PreflightFailedError(target, findings);
       }
-      const pending = pendingMigrations(migrations, view.recorded);
-      if (pending.length > 0) {
-        throw new TargetBehindError(
-          target,
-          pending.map((migration) => migration.folder),
-        );
-      }
-
       const last = view.recorded.at(-1);
       const base =
         last === undefined
           ? undefined
           : migrationFolderName(last.number, last.name);
+      if (recovered !== undefined) {
+        // A Recovery of N runs N's schema change: the target must be at N-1.
+        const baseNumber = recovered.number - 1;
+        if ((last?.number ?? 0) !== baseNumber) {
+          throw new RecoveryBaseMismatchError(
+            target,
+            recovered.folder,
+            migrations[baseNumber - 1]?.folder,
+            base,
+            baseNumber,
+          );
+        }
+      } else {
+        const pending = pendingMigrations(migrations, view.recorded);
+        if (pending.length > 0) {
+          throw new TargetBehindError(
+            target,
+            pending.map((migration) => migration.folder),
+          );
+        }
+      }
+
       const files = units.flatMap((unit) => unit.files.map((f) => f.file));
+      const what =
+        recovered === undefined
+          ? `draft ${metadata.name}`
+          : `the Recovery draft of migration ${recovered.folder}`;
       return {
-        action: `Deploy draft ${metadata.name} to target ${target}`,
+        action: `Deploy ${what} to target ${target}`,
         details: [
           `Runs in one transaction, on top of ${base ?? "no recorded migration"}:`,
           ...files.map((file) => `  ${file}`),
@@ -152,6 +173,7 @@ export async function deployDraft(
         ],
         plan: {
           name: metadata.name,
+          recoveryOf: recovered?.folder,
           units,
           seedData: units.length > 1,
           baseMigration: last?.number,
@@ -185,35 +207,12 @@ export async function deployDraft(
       return {
         target: target.name,
         name: plan.name,
+        recoveryOf: plan.recoveryOf,
         baseMigration: plan.baseFolder,
         seedData: plan.seedData,
         attemptId: attempt.id,
       };
     },
-  });
-}
-
-/** The draft's files must pass the same deploy-time rules as at rehearse. */
-async function refuseDraftRuleViolations(
-  project: Project,
-  migrations: Awaited<ReturnType<typeof verifiedMigrations>>,
-  seeded: SeededUnit,
-): Promise<void> {
-  const { root, paths, config } = project;
-  const desiredSchema = await readDesiredSchemaFiles(root, paths.desiredSchema);
-  const statements = await analyseDesiredSchema(
-    asSqlFiles(root, paths.desiredSchema, desiredSchema),
-    {
-      managedSchema: config.managedSchema,
-      externalSchemas: config.externalSchemas,
-    },
-  );
-  const previous = await newestSnapshot(root, migrations);
-  await refuseRuleViolations(seededFiles(seeded), {
-    managedSchema: config.managedSchema,
-    externalSchemas: config.externalSchemas,
-    schemas: [previous, statements],
-    previous,
   });
 }
 

@@ -5,6 +5,11 @@ import type { Override } from "./overrides.ts";
 import type { ParsedStatement, SqlFile } from "./parse.ts";
 import { analyseFile, type RuleContext } from "./rules.ts";
 
+export {
+  type AdoptedFile,
+  type AdoptionOptions,
+  adoptedDesiredSchema,
+} from "./adoption.ts";
 export { denylistReason } from "./denylist.ts";
 export {
   analyseMigration,
@@ -15,7 +20,10 @@ export {
   identityColumnsOf,
   type MigrationAnalysis,
 } from "./deploy-time.ts";
-export { isAlreadyInstalled } from "./desired-schema-rules.ts";
+export {
+  catalogObjectFinding,
+  isAlreadyInstalled,
+} from "./desired-schema-rules.ts";
 export {
   type ColumnTypes,
   columnTypesOf,

@@ -1,14 +1,12 @@
 // A draft rehearsal: load the desired schema into one throwaway database
 // (and again in another valid order, to prove the result doesn't depend on
 // order); replay every finalized migration plus the draft into another;
-// require an empty diff from both pg-delta and our own pg_catalog comparison.
-import { pgDeltaDiffer } from "../differ/pg-delta.ts";
-import { RehearsalMismatchError } from "../errors.ts";
+// require the same structure from both (rehearsal/same-structure.ts).
 import type { Project } from "../project.ts";
-import type { ParsedStatement } from "../sql-analysis/parse.ts";
-import { catalogDifferences } from "../verification/catalog.ts";
+import type { ParsedStatement } from "../sql-analysis/index.ts";
 import { checkOrderIndependence } from "./order-independence.ts";
 import { type ReplayUnit, replay } from "./replay.ts";
+import { requireSameStructure } from "./same-structure.ts";
 import {
   draftDatabaseRequest,
   ensureManagedSchema,
@@ -50,17 +48,7 @@ export async function rehearseDraft(
         async (replayed) => {
           await ensureManagedSchema(replayed, config.managedSchema);
           await replay(replayed, units, config.managedSchema);
-          const differences = [
-            ...(await pgDeltaDiffer.diff(replayed, desired)).map(
-              (statement) => `pg-delta: ${statement.sql}`,
-            ),
-            ...(
-              await catalogDifferences(replayed, desired, config.managedSchema)
-            ).map((line) => `catalog: ${line}`),
-          ];
-          if (differences.length > 0) {
-            throw new RehearsalMismatchError(differences);
-          }
+          await requireSameStructure(replayed, desired, config.managedSchema);
           return { serverVersion: await replayed.serverVersion() };
         },
       );

@@ -19,6 +19,7 @@ import {
 import { InvalidDraftNameError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { normaliseDraftName } from "../store/draft-name.ts";
+import { migrationFolderName } from "../store/migrations.ts";
 import {
   type CommandDefinition,
   commandGroups,
@@ -185,7 +186,7 @@ async function askOption(
             ...(option.required ? [] : [{ value: none, label: "(none)" }]),
             ...migrations.map((migration) => ({
               value: String(migration.number),
-              label: `${String(migration.number).padStart(5, "0")}-${migration.name}`,
+              label: migrationFolderName(migration.number, migration.name),
             })),
           ],
         }),

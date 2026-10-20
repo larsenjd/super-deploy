@@ -3,10 +3,11 @@
 // all through the real binary with the scaffolded config loaded natively.
 //
 // Installing: tests run offline, so instead of `pnpm install` the project's
-// node_modules links each devDependency to the copy this library already has
-// installed (super-deploy itself to this package, whose dist/ the integration
-// globalSetup builds). The test checks that every linked copy has exactly the
-// version the project's package.json pins, so this matches a real install.
+// node_modules links each devDependency to the copy the workspace's template
+// package already has installed (super-deploy itself to this package, whose
+// dist/ the integration globalSetup builds). The test checks that every
+// linked copy has exactly the version the project's package.json pins, so
+// this matches a real install.
 import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import {
@@ -23,6 +24,7 @@ import { describe, expect, onTestFinished, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 
 const packageDir = join(import.meta.dirname, "..", "..");
+const templateDir = join(packageDir, "..", "template");
 
 async function emptyDirectory(): Promise<string> {
   const base = await mkdtemp(join(tmpdir(), "super-deploy-test-cli-init-"));
@@ -41,7 +43,7 @@ async function linkDependencies(root: string): Promise<void> {
     const installed =
       name === "super-deploy"
         ? packageDir
-        : realpathSync(join(packageDir, "node_modules", ...name.split("/")));
+        : realpathSync(join(templateDir, "node_modules", ...name.split("/")));
     if (name !== "super-deploy") {
       const { version } = JSON.parse(
         await readFile(join(installed, "package.json"), "utf8"),
@@ -115,6 +117,60 @@ describe("init", () => {
       exitCode: 0,
     });
   });
+
+  test.skipIf(process.platform === "win32")(
+    "once it is a Git repo and its dependencies are installed, a commit runs pnpm precommit",
+    async () => {
+      const root = await emptyDirectory();
+      expect(await runCli(["init"], { cwd: root })).toMatchObject({
+        exitCode: 0,
+      });
+      await linkDependencies(root);
+      // A stand-in pnpm that records how it was called and fails, so the
+      // commit only succeeds if the hook never ran it.
+      const bin = join(root, "..", "bin");
+      await mkdir(bin);
+      await writeFile(
+        join(bin, "pnpm"),
+        `#!/bin/sh\necho "$@" > "${join(root, "..", "pnpm-args")}"\nexit 1\n`,
+        { mode: 0o755 },
+      );
+      const env: NodeJS.ProcessEnv = {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([name]) => !name.startsWith("GIT_") && name !== "HUSKY",
+          ),
+        ),
+        PATH: `${bin}:${process.env.PATH}`,
+      };
+      const run = (command: string, args: readonly string[]) =>
+        spawnSync(command, args, { cwd: root, encoding: "utf8", env });
+
+      expect(run("git", ["init", "--quiet"]).status).toBe(0);
+      // What `pnpm install` runs: the project's prepare script.
+      const manifest = JSON.parse(
+        await readFile(join(root, "package.json"), "utf8"),
+      );
+      expect(manifest.scripts.prepare).toBe("husky");
+      expect(runTool(root, "husky/bin.js", [])).toMatchObject({ exitCode: 0 });
+      expect(run("git", ["add", "-A"]).status).toBe(0);
+      const commit = run("git", [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "init",
+      ]);
+
+      expect(commit.status).not.toBe(0);
+      expect(
+        (await readFile(join(root, "..", "pnpm-args"), "utf8")).trim(),
+      ).toBe("precommit");
+    },
+  );
 
   test("refuses to overwrite existing files (exit 1)", async () => {
     const root = await emptyDirectory();

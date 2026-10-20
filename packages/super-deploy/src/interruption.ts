@@ -91,7 +91,7 @@ export function interruptibleRehearsal(
         name: database.name,
         async connect() {
           throwIfInterrupted(signal);
-          return interruptibleSession(
+          return refusingOnceInterrupted(
             await guarded(signal, () => database.connect()),
             signal,
           );
@@ -108,7 +108,10 @@ export function interruptibleRehearsal(
 }
 
 /** A session that refuses statements once `signal` aborts, and reports failures caused by the interruption as InterruptedError. */
-function interruptibleSession(session: Session, signal: AbortSignal): Session {
+function refusingOnceInterrupted(
+  session: Session,
+  signal: AbortSignal,
+): Session {
   return {
     query: <Row>(sql: string, values?: readonly unknown[]) => {
       throwIfInterrupted(signal);
