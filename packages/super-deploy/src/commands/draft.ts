@@ -83,7 +83,7 @@ export async function draft(
 ): Promise<DraftResult> {
   const requested =
     options.name === undefined ? undefined : normaliseDraftName(options.name);
-  const existing = await readDraft(project.paths);
+  const existing = await readDraft(project.root, project.paths);
   if (existing?.recoveryOf !== undefined) {
     throw new RecoveryDraftError(existing.recoveryOf);
   }

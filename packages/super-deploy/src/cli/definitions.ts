@@ -280,7 +280,8 @@ const draftCommand: CommandDefinition = {
       kind: "name",
       description:
         "Name for a new draft, or a new name for the existing draft (spaces become hyphens)",
-      initial: async (project) => (await readDraft(project.paths))?.name,
+      initial: async (project) =>
+        (await readDraft(project.root, project.paths))?.name,
     },
   ],
   async run(project, values, context) {

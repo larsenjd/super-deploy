@@ -146,6 +146,32 @@ describe("draft", () => {
     ]);
   });
 
+  test("a broken draft.json is named relative to the project root", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: { "data-model/draft/draft.json": '{"recoveryOf": 1}\n' },
+    });
+
+    const noName = await runCli(["rehearse"], { cwd: dir.root });
+    expect(noName.exitCode).toBe(1);
+    expect(noName.stderr).toBe(
+      'Error: data-model/draft/draft.json has no "name"\n',
+    );
+
+    await dir.write(
+      "data-model/draft/draft.json",
+      '{"name": "x", "recoveryOf": 0}',
+    );
+    expect((await runCli(["rehearse"], { cwd: dir.root })).stderr).toBe(
+      'Error: data-model/draft/draft.json has a "recoveryOf" that is not a migration number\n',
+    );
+
+    await dir.write("data-model/draft/draft.json", "{");
+    expect((await runCli(["rehearse"], { cwd: dir.root })).stderr).toMatch(
+      /^Error: data-model\/draft\/draft\.json is not valid JSON \(.+\)\n$/,
+    );
+  });
+
   test("--debug adds the stack trace", async () => {
     const dir = await createTestProject();
 

@@ -105,7 +105,7 @@ export async function deployDraft(
       if (!view.disposable) {
         throw new TargetNotDisposableError("deploy-draft", target);
       }
-      const metadata = await readDraft(paths);
+      const metadata = await readDraft(root, paths);
       if (metadata === undefined) {
         throw new NoDraftError("deploy");
       }

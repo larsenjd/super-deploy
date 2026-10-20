@@ -101,7 +101,7 @@ export async function rehearseCurrentDraft(
   ) => Promise<void>,
 ): Promise<RehearsedDraft> {
   const { root, paths } = project;
-  const draft = await readDraft(paths);
+  const draft = await readDraft(root, paths);
   if (draft === undefined) {
     throw new NoDraftError(action);
   }

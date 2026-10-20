@@ -79,7 +79,7 @@ export async function validate(
     problems.push({ severity: "warning", code, message, path });
   };
 
-  const draft = await readDraft(paths);
+  const draft = await readDraft(root, paths);
   // A Recovery draft (of migration N) never covers desired-schema changes.
   const recoveryOf =
     draft?.recoveryOf === undefined
