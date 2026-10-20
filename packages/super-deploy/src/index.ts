@@ -43,6 +43,8 @@ export {
   draft,
 } from "./commands/draft.ts";
 export {
+  type DestructiveAcknowledgement,
+  type FinalizeOptions,
   type FinalizeResult,
   finalize,
   type MigrationMetadata,
@@ -92,6 +94,7 @@ export {
   CommitOutcomeUnknownError,
   ConfigError,
   DesiredSchemaLoadError,
+  DestructiveNotAcknowledgedError,
   DifferError,
   DraftNameRequiredError,
   type ErrorCode,
@@ -130,6 +133,8 @@ export {
 } from "./project.ts";
 export type {
   Confirm,
+  DestructiveOptions,
+  DestructiveQuestion,
   OverwriteOptions,
   OverwriteQuestion,
   Question,
@@ -138,6 +143,12 @@ export type {
   ScriptCoverage,
   ScriptCoverageKind,
 } from "./rehearsal/script-coverage.ts";
+export type {
+  DestructiveKind,
+  DestructiveStatement,
+  LockWarning,
+  LockWarningKind,
+} from "./sql-analysis/destructive.ts";
 export { maxDraftNameLength, normaliseDraftName } from "./store/draft-name.ts";
 export type { ProjectPaths } from "./store/layout.ts";
 export { toolVersion } from "./version.ts";

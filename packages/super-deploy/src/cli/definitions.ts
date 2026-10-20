@@ -16,13 +16,14 @@ import { unfinalize } from "../commands/unfinalize.ts";
 import { validate } from "../commands/validate.ts";
 import type { AttemptRecord } from "../deploy/history.ts";
 import {
+  DestructiveNotAcknowledgedError,
   OverwriteNotAcknowledgedError,
   ValidationFailedError,
   type ValidationProblem,
 } from "../errors.ts";
 import type { Project } from "../project.ts";
-import type { OverwriteOptions, Question } from "../questions.ts";
-import type { Override } from "../sql-analysis/index.ts";
+import type { Confirm, OverwriteOptions, Question } from "../questions.ts";
+import type { LockWarning, Override } from "../sql-analysis/index.ts";
 import { readDraft } from "../store/draft.ts";
 
 export type CommandGroup =
@@ -236,25 +237,66 @@ const rehearseCommand: CommandDefinition = {
   options: [],
   async run(project, _values, context) {
     const result = await rehearse(project);
+    reportWarnings(result.warnings, context);
+    for (const statement of result.destructive) {
+      context.warn(
+        `destructive: ${statement.file}:${statement.line}: ${statement.message} (finalize needs it acknowledged)`,
+      );
+    }
     context.result(
       `Rehearsed draft ${result.name} after ${plural(result.migrationsReplayed, "migration")}: matches the desired schema`,
     );
   },
 };
 
+/** One warning line per statement that rewrites or scans an existing table. */
+function reportWarnings(
+  warnings: readonly LockWarning[],
+  context: CommandContext,
+): void {
+  for (const warning of warnings) {
+    context.warn(
+      `warning: ${warning.file}:${warning.line}: ${warning.message}`,
+    );
+  }
+}
+
 const finalizeCommand: CommandDefinition = {
   name: "finalize",
   group: "Author",
   summary:
     "Rehearse the draft, then freeze it as the next numbered, read-only, hash-chained migration",
-  options: [],
-  async run(project, _values, context) {
-    const result = await finalize(project);
+  options: [
+    {
+      name: "acknowledge-destructive",
+      kind: "flag",
+      acknowledgement: true,
+      description:
+        "Finalize without asking when the draft drops structure or deletes data (required without a terminal); recorded in the migration's metadata",
+    },
+  ],
+  async run(project, values, context) {
+    const confirm = confirmCallback(context);
+    const result = await unlessDeclined(context, () =>
+      finalize(project, {
+        acknowledgeDestructive: values["acknowledge-destructive"] === true,
+        ...(confirm === undefined ? {} : { confirm }),
+      }),
+    );
+    if (result === undefined) {
+      return;
+    }
+    reportWarnings(result.warnings, context);
     context.result(
       `Finalized migration ${result.folder} in ${context.displayPath(result.path)}`,
     );
     for (const override of result.metadata.overrides) {
       context.result(describeOverride(override, result.path, context));
+    }
+    if (result.destructive.length > 0) {
+      context.result(
+        `Recorded the acknowledgement of ${plural(result.destructive.length, "destructive statement")} in its metadata.json`,
+      );
     }
   },
 };
@@ -306,33 +348,45 @@ const acknowledgeOverwriteOption: FlagOption = {
 };
 
 /**
- * The API's overwrite options: the flag, and the terminal's yes/no question
- * (listing what would be lost) as the confirm callback.
+ * The API's confirm callback: the terminal's yes/no question, listing what
+ * would be lost. Undefined without a terminal.
  */
+function confirmCallback(context: CommandContext): Confirm | undefined {
+  const { confirm } = context;
+  if (confirm === undefined) {
+    return undefined;
+  }
+  return (question: Question) =>
+    confirm(
+      [
+        question.message,
+        ...(question.kind === "acknowledge-overwrite"
+          ? question.paths
+          : question.statements.map(
+              (statement) =>
+                `${statement.file}:${statement.line}: ${statement.message}`,
+            )
+        ).map((line) => `  ${line}`),
+      ].join("\n"),
+    );
+}
+
+/** The API's overwrite options: the flag, and the terminal's question as the confirm callback. */
 function overwriteOptions(
   values: OptionValues,
   context: CommandContext,
 ): OverwriteOptions {
-  const { confirm } = context;
+  const confirm = confirmCallback(context);
   return {
     acknowledgeOverwrite: values["acknowledge-overwrite"] === true,
-    ...(confirm === undefined
-      ? {}
-      : {
-          confirm: (question: Question) =>
-            confirm(
-              [
-                question.message,
-                ...question.paths.map((path) => `  ${path}`),
-              ].join("\n"),
-            ),
-        }),
+    ...(confirm === undefined ? {} : { confirm }),
   };
 }
 
 /**
- * Runs an overwriting command; answering no at the terminal is not a failure:
- * it prints a result line and nothing changes (exit 0).
+ * Runs a command that asks before discarding work or finalizing destructive
+ * statements; answering no at the terminal is not a failure: it prints a
+ * result line and nothing changes (exit 0).
  */
 async function unlessDeclined<T>(
   context: CommandContext,
@@ -341,7 +395,11 @@ async function unlessDeclined<T>(
   try {
     return await run();
   } catch (error) {
-    if (error instanceof OverwriteNotAcknowledgedError && error.declined) {
+    if (
+      (error instanceof OverwriteNotAcknowledgedError ||
+        error instanceof DestructiveNotAcknowledgedError) &&
+      error.declined
+    ) {
       context.result("Nothing changed");
       return undefined;
     }
