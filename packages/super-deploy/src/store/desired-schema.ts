@@ -1,12 +1,12 @@
 // The desired schema on disk: every *.sql file under the desired-schema
 // folder (or a migration's snapshot of it), any names and folders. Files must
 // be UTF-8 without a BOM, because finalize hashes them into the snapshot.
-import { mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
+import { readFile, rm, rmdir } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import type { SqlFile } from "../sql-analysis/index.ts";
 import { type HashedFile, normaliseLineEndings } from "./hashing.ts";
 import { projectRelative } from "./layout.ts";
-import { listFiles, readHashedFiles } from "./migrations.ts";
+import { listFiles, readHashedFiles, writeFiles } from "./migrations.ts";
 
 export function isSqlFile(path: string): boolean {
   return path.toLowerCase().endsWith(".sql");
@@ -86,11 +86,10 @@ export async function restoreFromSnapshot(
   differences: SnapshotDifferences,
 ): Promise<void> {
   const restore = new Set(differences.restore);
-  for (const file of snapshot.filter((f) => restore.has(f.path))) {
-    const target = join(folder, file.path);
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, file.text);
-  }
+  await writeFiles(
+    folder,
+    snapshot.filter((f) => restore.has(f.path)),
+  );
   for (const path of differences.delete) {
     await rm(join(folder, path), { force: true });
     for (

@@ -48,7 +48,11 @@ import {
   type LockWarning,
 } from "./destructive.ts";
 import { schemaGrantBeyondUsage } from "./grants.ts";
-import { applyMarker, type Override, scanMarkers } from "./overrides.ts";
+import {
+  checkMarkedStatements,
+  type Override,
+  violationOf,
+} from "./overrides.ts";
 import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 import { pgCatalogFunctions, pgCatalogRelations } from "./pg-catalog-names.ts";
 import { plpgsqlFindings, sqlBodyFindings } from "./routine-bodies.ts";
@@ -144,45 +148,27 @@ export async function analyseMigration(
       violations.push(parsed.violation);
       continue;
     }
-    const scan = scanMarkers(file, parsed.statements);
-    const pending = [...scan.violations];
-    parsed.statements.forEach((statement, index) => {
-      while (pending[0] !== undefined && pending[0].line < statement.line) {
-        violations.push(pending.shift() as RuleViolation);
-      }
-      const found: RuleViolation[] = [];
-      const seen = new Set<string>();
-      for (const { line, ...finding } of checkStatement(
-        statement,
-        file.kind,
-        state,
-      )) {
-        const key = `${line}\n${finding.rule}\n${finding.message}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          found.push({
-            file: statement.file,
-            line: line ?? statement.line,
-            statement: statement.text,
-            ...finding,
-          });
+    const checked = checkMarkedStatements(
+      file,
+      parsed.statements,
+      state.managedSchema,
+      (statement) => {
+        const found: RuleViolation[] = [];
+        const seen = new Set<string>();
+        for (const finding of checkStatement(statement, file.kind, state)) {
+          const key = `${finding.line}\n${finding.rule}\n${finding.message}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            found.push(violationOf(statement, finding));
+          }
         }
-      }
-      const marked = applyMarker(
-        statement,
-        index,
-        scan,
-        found,
-        state.managedSchema,
-      );
-      violations.push(...marked.violations);
-      if (marked.override !== undefined) {
-        overrides.push(marked.override);
-      }
-      remember(statement, state);
-      changes.statement(statement);
-    });
-    violations.push(...pending);
+        remember(statement, state);
+        changes.statement(statement);
+        return found;
+      },
+    );
+    violations.push(...checked.violations);
+    overrides.push(...checked.overrides);
   }
   return {
     violations,

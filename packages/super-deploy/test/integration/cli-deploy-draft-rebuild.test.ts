@@ -32,17 +32,8 @@ const customers = (city: string) => `create table customers (
  * Migration 1 (customers, city optional) deployed to `dev`, which holds a
  * customer without a city and is disposable unless `disposable` is false.
  */
-async function deployedProject({
-  disposable = true,
-  adapter,
-}: {
-  disposable?: boolean;
-  adapter?: string;
-} = {}) {
-  const { config, database } = deployConfig(
-    server,
-    adapter === undefined ? {} : { adapter },
-  );
+/** A project with `config` whose migration 1 (customers) is deployed to target dev. */
+async function customersDeployed(config: string): Promise<TestProject> {
   const dir = await createTestProject({
     config,
     files: { "data-model/desired-schema/customers.sql": customers("") },
@@ -55,6 +46,21 @@ async function deployedProject({
   } finally {
     await project.close();
   }
+  return dir;
+}
+
+async function deployedProject({
+  disposable = true,
+  adapter,
+}: {
+  disposable?: boolean;
+  adapter?: string;
+} = {}) {
+  const { config, database } = deployConfig(
+    server,
+    adapter === undefined ? {} : { adapter },
+  );
+  const dir = await customersDeployed(config);
   await server.query(
     "insert into customers (id, name) values (1, 'Ada')",
     [],
@@ -729,18 +735,7 @@ const asDeployer = {
 };`,
       adapter: "asDeployer",
     });
-    const dir = await createTestProject({
-      config,
-      files: { "data-model/desired-schema/customers.sql": customers("") },
-    });
-    const project = await loadProject({ cwd: dir.root });
-    try {
-      await draft(project, { name: "add customers" });
-      await finalize(project);
-      await deploy(project, { target: "dev" });
-    } finally {
-      await project.close();
-    }
+    const dir = await customersDeployed(config);
     for (const sql of [
       "insert into app.customers (id, name) values (1, 'Ada')",
       "update deployment_history.settings set disposable = true",
@@ -883,9 +878,7 @@ unix("from the menu", () => {
     const terminal = spawnTerminal([], { cwd: dir.root });
 
     await terminal.waitFor("quit");
-    // The menu starts on draft; Up passes init and wraps round to quit, and
-    // deploy-draft is above rebuild.
-    terminal.type(`${keys.up}${keys.up}${keys.up}${keys.up}${keys.enter}`);
+    await terminal.chooseMenuItem("deploy-draft");
     await terminal.waitFor("The target to use");
     terminal.type(keys.enter);
     await terminal.waitFor("Load the draft's seed data first");
@@ -914,8 +907,7 @@ unix("from the menu", () => {
     const terminal = spawnTerminal([], { cwd: dir.root });
 
     await terminal.waitFor("quit");
-    // rebuild is the last command, just above quit.
-    terminal.type(`${keys.up}${keys.up}${keys.up}${keys.enter}`);
+    await terminal.chooseMenuItem("rebuild");
     await terminal.waitFor("The target to use");
     terminal.type(keys.enter);
     await terminal.waitFor("The last migration to replay");

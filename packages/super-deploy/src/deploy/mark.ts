@@ -32,11 +32,7 @@ import {
 } from "../rehearsal/replica.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { driftBetween } from "../verification/drift.ts";
-import {
-  commitRecorded,
-  deploymentSettings,
-  type LockedTarget,
-} from "./engine.ts";
+import { inDeployTransaction, type LockedTarget } from "./engine.ts";
 import {
   type DeployedDraft,
   type RecordedMigration,
@@ -131,25 +127,20 @@ export async function recordMarked(
 ): Promise<void> {
   const { session, target, attempt } = locked;
   const { managedSchema, historySchema } = project.config;
-  await session.execute("BEGIN");
-  try {
-    await session.execute(
-      deploymentSettings(managedSchema, target).join(";\n"),
-    );
-    await recordMigration(session, historySchema, {
-      number: migration.number,
-      name: migration.name,
-      contentHash: migration.contentHash,
-      chainHash: migration.chainHash,
-      recovery: undefined,
-      attemptId: attempt.id,
-      recordedHow: "marked",
-    });
-  } catch (error) {
-    await session.execute("ROLLBACK").catch(() => {});
-    throw error;
-  }
-  await commitRecorded(session, target.name, attempt.id);
+  await inDeployTransaction(
+    session,
+    { managedSchema, historySchema, target, attemptId: attempt.id },
+    () =>
+      recordMigration(session, historySchema, {
+        number: migration.number,
+        name: migration.name,
+        contentHash: migration.contentHash,
+        chainHash: migration.chainHash,
+        recovery: undefined,
+        attemptId: attempt.id,
+        recordedHow: "marked",
+      }),
+  );
 }
 
 /**
@@ -176,7 +167,7 @@ export async function markNextPending(
     recorded,
     await readDeployedDraft(locked.session, project.config.historySchema),
   );
-  await locked.attempt.setRange(next.number, next.number);
+  await locked.attempt.setRange([next]);
   await requireReplicaMatch(project, locked.target, locked.session, {
     migrations,
     recorded,

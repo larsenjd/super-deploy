@@ -8,6 +8,7 @@ import type {
   RehearsalAdapter,
   Session,
 } from "../adapters/types.ts";
+import type { ResolvedConfig } from "../config/config.ts";
 import { DesiredSchemaLoadError, OrderDependenceError } from "../errors.ts";
 import type { ParsedStatement } from "../sql-analysis/index.ts";
 import { alternativeOrder } from "../sql-analysis/index.ts";
@@ -16,7 +17,11 @@ import {
   factDifferences,
   factLine,
 } from "../verification/catalog.ts";
-import { loadDesiredSchema, withThrowawayDatabase } from "./throwaway.ts";
+import {
+  draftDatabaseRequest,
+  loadDesiredSchema,
+  withThrowawayDatabase,
+} from "./throwaway.ts";
 
 export interface OrderIndependenceCheck {
   readonly rehearsal: RehearsalAdapter;
@@ -30,12 +35,37 @@ export interface OrderIndependenceCheck {
 }
 
 /**
+ * Loads the ordered desired schema into `session`, a draft's throwaway
+ * database, then checks that another valid order gives the same catalog
+ * (checkOrderIndependence).
+ */
+export async function loadDesiredSchemaCheckingOrder(
+  config: ResolvedConfig,
+  session: Session,
+  statements: readonly ParsedStatement[],
+): Promise<void> {
+  await loadDesiredSchema(
+    session,
+    statements,
+    config.managedSchema,
+    config.externalSchemas,
+  );
+  await checkOrderIndependence({
+    rehearsal: config.rehearsal,
+    request: draftDatabaseRequest,
+    managedSchema: config.managedSchema,
+    statements,
+    loaded: session,
+  });
+}
+
+/**
  * Loads `statements` in another valid order into a second throwaway database
  * (always dropped) and compares its catalog with `loaded`'s. Throws
  * OrderDependenceError naming the objects that differ, or the statement that
  * failed to load.
  */
-export async function checkOrderIndependence(
+async function checkOrderIndependence(
   check: OrderIndependenceCheck,
 ): Promise<void> {
   const { managedSchema, statements } = check;

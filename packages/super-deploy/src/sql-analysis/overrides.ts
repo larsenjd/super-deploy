@@ -24,8 +24,9 @@ import {
 } from "./parse.ts";
 import { statementFacts } from "./references.ts";
 import { ruleCatalogue, ruleDefinition } from "./rule-catalogue.ts";
+import type { RuleFinding } from "./rule-types.ts";
 import { objectTypeName, statementName } from "./statement-names.ts";
-import { isObject, unwrap } from "./syntax-tree.ts";
+import { isObject, statementBody } from "./syntax-tree.ts";
 
 /** One accepted override: a marker and the risk rules it overrode. */
 export interface Override {
@@ -150,6 +151,54 @@ export function isOverridable(rule: string): boolean {
   return ruleDefinition(rule)?.overridable === true;
 }
 
+/** A finding of `statement` as a violation (at the finding's own line, if it has one). */
+export function violationOf(
+  statement: ParsedStatement,
+  { line, ...finding }: RuleFinding,
+): RuleViolation {
+  return {
+    file: statement.file,
+    line: line ?? statement.line,
+    statement: statement.text,
+    ...finding,
+  };
+}
+
+/**
+ * Checks a parsed file's statements in order: each statement's violations
+ * (`violationsOf`) go through its override marker (applyMarker), and the
+ * markers' own violations land in line order among them.
+ */
+export function checkMarkedStatements(
+  file: SqlFile,
+  statements: readonly ParsedStatement[],
+  managedSchema: string,
+  violationsOf: (statement: ParsedStatement) => RuleViolation[],
+): { violations: RuleViolation[]; overrides: Override[] } {
+  const scan = scanMarkers(file, statements);
+  const violations: RuleViolation[] = [];
+  const overrides: Override[] = [];
+  const pending = [...scan.violations];
+  statements.forEach((statement, index) => {
+    while (pending[0] !== undefined && pending[0].line < statement.line) {
+      violations.push(pending.shift() as RuleViolation);
+    }
+    const marked = applyMarker(
+      statement,
+      index,
+      scan,
+      violationsOf(statement),
+      managedSchema,
+    );
+    violations.push(...marked.violations);
+    if (marked.override !== undefined) {
+      overrides.push(marked.override);
+    }
+  });
+  violations.push(...pending);
+  return { violations, overrides };
+}
+
 /**
  * Applies a statement's marker to the statement's violations: risk-rule
  * violations become an override; every other violation stands. A marker
@@ -222,7 +271,7 @@ export function overrideObject(
   statement: ParsedStatement,
   managedSchema: string,
 ): string {
-  const body = unwrap(statement.node, statement.nodeType) ?? {};
+  const body = statementBody(statement);
   const relation = (value: unknown) =>
     isObject(value) && typeof value.relname === "string"
       ? value.relname

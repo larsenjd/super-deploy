@@ -7,7 +7,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "prepare": "husky",
+    "prepare": "husky && pnpm build",
     "build": "pnpm -r build",
     "format": "biome format --write && pnpm -r format",
     "format:file": "biome format --write --no-errors-on-unmatched",

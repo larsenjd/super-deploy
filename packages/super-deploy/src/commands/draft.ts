@@ -8,7 +8,7 @@ import { differ, type PlannedStatement } from "../differ/index.ts";
 import { DraftNameRequiredError, RecoveryDraftError } from "../errors.ts";
 import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
-import { checkOrderIndependence } from "../rehearsal/order-independence.ts";
+import { loadDesiredSchemaCheckingOrder } from "../rehearsal/order-independence.ts";
 import {
   readMigrationUnits,
   readReplayUnit,
@@ -26,7 +26,6 @@ import {
 import {
   draftDatabaseRequest,
   ensureManagedSchema,
-  loadDesiredSchema,
   withThrowawayDatabase,
 } from "../rehearsal/throwaway.ts";
 import {
@@ -137,19 +136,7 @@ export async function draft(
     config.rehearsal,
     draftDatabaseRequest,
     async (desired) => {
-      await loadDesiredSchema(
-        desired,
-        statements,
-        config.managedSchema,
-        config.externalSchemas,
-      );
-      await checkOrderIndependence({
-        rehearsal: config.rehearsal,
-        request: draftDatabaseRequest,
-        managedSchema: config.managedSchema,
-        statements,
-        loaded: desired,
-      });
+      await loadDesiredSchemaCheckingOrder(config, desired, statements);
       return withThrowawayDatabase(
         config.rehearsal,
         draftDatabaseRequest,

@@ -93,11 +93,7 @@ export async function deploy(
           folder,
         })),
       };
-      const [first] = pending;
-      const last = pending.at(-1);
-      if (first !== undefined && last !== undefined) {
-        await attempt.setRange(first.number, last.number);
-      }
+      await attempt.setRange(pending);
 
       await rehearseDeployment(project, {
         targetConfig: target,
@@ -124,24 +120,12 @@ export async function deploy(
         return result;
       }
 
-      await applyMigrations(
-        session,
-        pending.map((migration) => ({
-          number: migration.number,
-          name: migration.name,
-          contentHash: migration.contentHash,
-          chainHash: migration.chainHash,
-          recovery: migration.recovery,
-          recoveryChainHash: migration.recoveryChainHash,
-          unit: migration.unit,
-        })),
-        {
-          managedSchema: config.managedSchema,
-          historySchema: config.historySchema,
-          target,
-          attemptId: attempt.id,
-        },
-      );
+      await applyMigrations(session, pending, {
+        managedSchema: config.managedSchema,
+        historySchema: config.historySchema,
+        target,
+        attemptId: attempt.id,
+      });
       return result;
     },
   );

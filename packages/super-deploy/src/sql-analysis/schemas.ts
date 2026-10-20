@@ -11,6 +11,7 @@ import {
   type Json,
   list,
   schemaQualifier,
+  statementBody,
   stringList,
   unwrap,
 } from "./syntax-tree.ts";
@@ -20,7 +21,7 @@ export function schemaFindings(
   statement: ParsedStatement,
   context: RuleContext,
 ): RuleFinding[] {
-  const node = unwrap(statement.node, statement.nodeType) ?? {};
+  const node = statementBody(statement);
   const targets = targetNames(statement.nodeType, node);
   const findings: RuleFinding[] = [];
   const reported = new Set<string>();

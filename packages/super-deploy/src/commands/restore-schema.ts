@@ -20,15 +20,19 @@ import { draftName } from "./discard-draft.ts";
 
 export type RestoreSchemaOptions = OverwriteOptions;
 
-export interface RestoreSchemaResult {
-  /** The migration whose snapshot was restored, e.g. `00001-add-customers`. */
-  readonly migration: string;
+/** What restoring a snapshot over the desired schema (and any draft) changed. */
+export interface RestoredDesiredSchema {
   /** Project-relative paths of desired-schema files written from the snapshot. */
   readonly restored: readonly string[];
   /** Project-relative paths of desired-schema files deleted (not in the snapshot). */
   readonly deleted: readonly string[];
-  /** Name of the draft that was deleted, if there was one. */
+  /** Name of the draft that was deleted or replaced, if there was one. */
   readonly discardedDraft: string | undefined;
+}
+
+export interface RestoreSchemaResult extends RestoredDesiredSchema {
+  /** The migration whose snapshot was restored, e.g. `00001-add-customers`. */
+  readonly migration: string;
 }
 
 export async function restoreSchema(

@@ -9,6 +9,7 @@
 // all) rather than the managed schema.
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
+import { targetTimeouts } from "../deploy/target.ts";
 import {
   type CatalogFact,
   catalogFacts,
@@ -61,16 +62,6 @@ export interface DriftOptions {
    * otherwise make the drift check hang.
    */
   readonly target?: ResolvedTarget;
-}
-
-/** `SET LOCAL` statements for a target's lock and statement timeouts. */
-export function targetTimeouts(target: ResolvedTarget): string[] {
-  return [
-    `SET LOCAL lock_timeout TO '${target.lockTimeoutMs}ms'`,
-    ...(target.statementTimeoutMs === undefined
-      ? []
-      : [`SET LOCAL statement_timeout TO '${target.statementTimeoutMs}ms'`]),
-  ];
 }
 
 /** Groups fact differences (target = actual, replica = expected) by object. */

@@ -16,6 +16,7 @@
 // edges (the overload a view or default calls, the table a function body
 // reads) and the index each foreign key uses. The order-independence check
 // (ADR-0004) compares them; rehearsals don't.
+import { inTransaction } from "../adapters/transaction.ts";
 import type { Session } from "../adapters/types.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
 import { schemaSetupRoles } from "./schema-setup.ts";
@@ -259,30 +260,27 @@ export async function catalogFacts(
 ): Promise<CatalogFact[]> {
   const facts: CatalogFact[] = [];
   const all = options.bindings ? { ...queries, ...bindingQueries } : queries;
-  await session.execute(
+  await inTransaction(
+    session,
+    async () => {
+      for (const [kind, sql] of Object.entries(all)) {
+        const result = await session.query<{ object: string; line: string }>(
+          `select object, line from (${sql}) as snapshot(object, line)`,
+          [schema],
+        );
+        for (const row of result.rows) {
+          // A view's query is its _RETURN rule; name the view instead.
+          const object = row.object.replace(/^rule _RETURN on /, "");
+          facts.push({ kind, object, line: row.line });
+        }
+      }
+    },
     [
       "BEGIN READ ONLY",
       ...readSettings(schema),
       ...(options.settings ?? []),
     ].join(";\n"),
   );
-  try {
-    for (const [kind, sql] of Object.entries(all)) {
-      const result = await session.query<{ object: string; line: string }>(
-        `select object, line from (${sql}) as snapshot(object, line)`,
-        [schema],
-      );
-      for (const row of result.rows) {
-        // A view's query is its _RETURN rule; name the view instead.
-        const object = row.object.replace(/^rule _RETURN on /, "");
-        facts.push({ kind, object, line: row.line });
-      }
-    }
-    await session.execute("COMMIT");
-  } catch (error) {
-    await session.execute("ROLLBACK").catch(() => {});
-    throw error;
-  }
   return facts.sort((a, b) => compare(factLine(a), factLine(b)));
 }
 

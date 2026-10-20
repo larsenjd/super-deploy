@@ -29,6 +29,7 @@ import {
   isObject,
   type Json,
   list,
+  statementBody,
   stringList,
   unwrap,
 } from "./syntax-tree.ts";
@@ -225,7 +226,7 @@ export function desiredSchemaFindings(
   statement: ParsedStatement,
   context: RuleContext,
 ): RuleFinding[] {
-  const node = unwrap(statement.node, statement.nodeType) ?? {};
+  const node = statementBody(statement);
   const refusal = refused[statement.nodeType];
   if (refusal !== undefined) {
     return [refusal(node)];

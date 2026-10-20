@@ -4,13 +4,12 @@
 // require the same structure from both (rehearsal/same-structure.ts).
 import type { Project } from "../project.ts";
 import type { ParsedStatement } from "../sql-analysis/index.ts";
-import { checkOrderIndependence } from "./order-independence.ts";
+import { loadDesiredSchemaCheckingOrder } from "./order-independence.ts";
 import { type ReplayUnit, replay } from "./replay.ts";
 import { requireSameStructure } from "./same-structure.ts";
 import {
   draftDatabaseRequest,
   ensureManagedSchema,
-  loadDesiredSchema,
   withThrowawayDatabase,
 } from "./throwaway.ts";
 
@@ -29,19 +28,7 @@ export async function rehearseDraft(
     config.rehearsal,
     draftDatabaseRequest,
     async (desired) => {
-      await loadDesiredSchema(
-        desired,
-        desiredSchema,
-        config.managedSchema,
-        config.externalSchemas,
-      );
-      await checkOrderIndependence({
-        rehearsal: config.rehearsal,
-        request: draftDatabaseRequest,
-        managedSchema: config.managedSchema,
-        statements: desiredSchema,
-        loaded: desired,
-      });
+      await loadDesiredSchemaCheckingOrder(config, desired, desiredSchema);
       return withThrowawayDatabase(
         config.rehearsal,
         draftDatabaseRequest,

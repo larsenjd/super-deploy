@@ -32,7 +32,7 @@ describe.skipIf(process.platform === "win32")("menu", () => {
 
     const menu = await terminal.waitFor("quit");
     expect(menu).toMatch(/Author\s*\n.*draft/);
-    terminal.type(keys.enter);
+    await terminal.chooseMenuItem("draft");
     await terminal.waitFor("Name");
     terminal.type("Add customers");
     // The normalised name is previewed as it is typed.
@@ -68,7 +68,7 @@ describe.skipIf(process.platform === "win32")("menu", () => {
     const terminal = spawnTerminal([], { cwd: dir.root });
 
     await terminal.waitFor("quit");
-    terminal.type(keys.enter);
+    await terminal.chooseMenuItem("draft");
     await terminal.waitFor("Name");
     terminal.type(`add customers${keys.enter}`);
 
@@ -76,8 +76,7 @@ describe.skipIf(process.platform === "win32")("menu", () => {
       /Error: data-model\/desired-schema\/customers\.sql:1: .*moneyamount/,
     );
     await terminal.waitFor("quit");
-    // The menu starts on draft; Up passes init and wraps round to quit.
-    terminal.type(`${keys.up}${keys.up}${keys.enter}`);
+    await terminal.chooseMenuItem("quit");
     expect(await terminal.exited).toBe(0);
     expect(dir.exists("data-model/draft")).toBe(false);
   });
@@ -90,7 +89,7 @@ describe.skipIf(process.platform === "win32")("menu", () => {
     const terminal = spawnTerminal([], { cwd: dir.root });
 
     await terminal.waitFor("quit");
-    terminal.type(keys.enter);
+    await terminal.chooseMenuItem("draft");
     await terminal.waitFor("Name");
     terminal.type("add customers");
     terminal.type(keys.escape);
@@ -114,7 +113,7 @@ describe.skipIf(process.platform === "win32")("menu", () => {
     });
 
     await terminal.waitFor("quit");
-    terminal.type(keys.enter);
+    await terminal.chooseMenuItem("draft");
     await terminal.waitFor("Name");
     terminal.type(`add customers${keys.enter}`);
     await waitForFile(marker);

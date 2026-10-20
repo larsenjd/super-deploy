@@ -46,12 +46,13 @@ import { type Attempt, openAttempt, settleAttempts } from "./attempts.ts";
 import {
   type AttemptOutcome,
   ensureHistorySchema,
+  type MigrationVariantIdentity,
   quoteIdentifier,
   recordMigration,
 } from "./history.ts";
 import { interruptibleSession } from "./interruptible-session.ts";
 import { acquireTargetLock, type TargetLock } from "./lock.ts";
-import { connectTarget, resolveTarget } from "./target.ts";
+import { connectTarget, resolveTarget, targetTimeouts } from "./target.ts";
 
 /** What a command body gets: the target, its two sessions and its attempt. */
 export interface LockedTarget {
@@ -163,15 +164,7 @@ function interruption(signal: AbortSignal | undefined): string {
 }
 
 /** A pending migration as the deploy transaction applies it. */
-export interface MigrationToApply {
-  readonly number: number;
-  readonly name: string;
-  readonly contentHash: string;
-  readonly chainHash: string;
-  /** Undefined for the original scripts, K for Recovery K. */
-  readonly recovery: number | undefined;
-  /** Recovery K's chain hash, recorded with it; undefined for the original. */
-  readonly recoveryChainHash?: string | undefined;
+export interface MigrationToApply extends MigrationVariantIdentity {
   /** Its deploy-time files, in the order they run. */
   readonly unit: ReplayUnit;
 }
@@ -188,13 +181,7 @@ export function deploymentSettings(
   managedSchema: string,
   target: ResolvedTarget,
 ): string[] {
-  return [
-    ...pinnedSettings(managedSchema),
-    `SET LOCAL lock_timeout TO '${target.lockTimeoutMs}ms'`,
-    ...(target.statementTimeoutMs === undefined
-      ? []
-      : [`SET LOCAL statement_timeout TO '${target.statementTimeoutMs}ms'`]),
-  ];
+  return [...pinnedSettings(managedSchema), ...targetTimeouts(target)];
 }
 
 /**
@@ -288,12 +275,7 @@ export async function runMigrations(
   for (const migration of migrations) {
     await runUnit(session, migration.unit);
     await recordMigration(session, options.historySchema, {
-      number: migration.number,
-      name: migration.name,
-      contentHash: migration.contentHash,
-      chainHash: migration.chainHash,
-      recovery: migration.recovery,
-      recoveryChainHash: migration.recoveryChainHash,
+      ...migration,
       attemptId: options.attemptId,
       recordedHow: "deployed",
     });
