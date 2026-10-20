@@ -33,7 +33,11 @@ import type { Project } from "../project.ts";
 import type { Confirm, OverwriteOptions, Question } from "../questions.ts";
 import type { LockWarning, Override } from "../sql-analysis/index.ts";
 import { readDraft } from "../store/draft.ts";
-import { parseMigrationFolderName, readIndex } from "../store/migrations.ts";
+import {
+  migrationFolderName,
+  parseMigrationFolderName,
+  readIndex,
+} from "../store/migrations.ts";
 
 export type CommandGroup =
   | "Start"
@@ -318,7 +322,7 @@ const rehearseCommand: CommandDefinition = {
     context.result(
       result.recoveryOf === undefined
         ? `Rehearsed draft ${result.name} after ${plural(result.migrationsReplayed, "migration")}: matches the desired schema`
-        : `Rehearsed the Recovery draft of migration ${migrationFolder(result.recoveryOf, result.name)}: it ends in the same structure as the original`,
+        : `Rehearsed the Recovery draft of migration ${migrationFolderName(result.recoveryOf, result.name)}: it ends in the same structure as the original`,
     );
   },
 };
@@ -861,11 +865,6 @@ function describeOverride(
 
 function plural(count: number, noun: string, nouns = `${noun}s`): string {
   return `${count} ${count === 1 ? noun : nouns}`;
-}
-
-/** `00002-require-email` from 2 and `require-email`. */
-function migrationFolder(number: number, name: string): string {
-  return `${String(number).padStart(5, "0")}-${name}`;
 }
 
 export const commands: readonly CommandDefinition[] = [
