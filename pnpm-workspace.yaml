@@ -1,0 +1,7 @@
+packages:
+  - packages/*
+  - examples/*
+
+# Every dependency is pinned to an exact version.
+saveExact: true
+engineStrict: true

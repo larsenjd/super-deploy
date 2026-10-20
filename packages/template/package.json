@@ -1,0 +1,23 @@
+{
+  "name": "super-deploy-template",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The project template that super-deploy init copies; bundled into the library build.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "format": "biome format --write",
+    "format:file": "biome format --write --no-errors-on-unmatched",
+    "lint": "biome check",
+    "typecheck": "tsc --noEmit",
+    "precommit": "biome check && tsc --noEmit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/node": "24.19.2",
+    "super-deploy": "workspace:*",
+    "typescript": "7.0.2"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "super-deploy",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Immutable, all-or-nothing PostgreSQL 18 migrations generated from a desired schema.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "super-deploy": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "format": "biome format --write",
+    "format:file": "biome format --write --no-errors-on-unmatched",
+    "lint": "biome check",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration --passWithNoTests",
+    "precommit": "biome check && tsc --noEmit && vitest run --project unit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}

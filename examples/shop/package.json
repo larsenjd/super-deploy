@@ -1,0 +1,23 @@
+{
+  "name": "super-deploy-example-shop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Example super-deploy project showing a realistic migration history.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "format": "biome format --write",
+    "format:file": "biome format --write --no-errors-on-unmatched",
+    "lint": "biome check",
+    "typecheck": "tsc --noEmit",
+    "precommit": "biome check && tsc --noEmit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/node": "24.19.2",
+    "super-deploy": "workspace:*",
+    "typescript": "7.0.2"
+  }
+}
