@@ -24,7 +24,9 @@ export type RuleCategory =
   /** An object type or feature that super-deploy V1 does not support. */
   | "unsupported"
   /** The desired schema could not be loaded in a deterministic order (ticket 09). */
-  | "ordering";
+  | "ordering"
+  /** An override marker is malformed, misplaced or overrides nothing. */
+  | "override";
 
 export interface RuleDefinition {
   readonly id: string;
@@ -73,6 +75,20 @@ const definitions = {
   "plpgsql-dynamic-sql": [
     "risk",
     "EXECUTE in a PL/pgSQL body runs SQL the rules cannot check",
+  ],
+  // Override markers themselves (ticket 10).
+  "override-malformed": [
+    "override",
+    'An override marker must read exactly "-- OVERRIDE DANGEROUS COMMAND: <reason>"',
+  ],
+  "override-without-reason": ["override", "An override marker needs a reason"],
+  "override-misplaced": [
+    "override",
+    "An override marker must be on its own line, directly before one statement",
+  ],
+  "override-unused": [
+    "override",
+    "An override marker must override at least one risk rule of its statement",
   ],
   // Scope.
   "outside-managed-schema": [

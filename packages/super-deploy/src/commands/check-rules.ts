@@ -9,6 +9,7 @@ import {
   type DeployTimeFile,
   type IdentityColumns,
   identityColumnsOf,
+  type MigrationAnalysis,
   type ParsedStatement,
   parseSqlFile,
   type SqlFile,
@@ -22,6 +23,8 @@ import {
 
 export interface MigrationRuleContext {
   readonly managedSchema: string;
+  /** Schemas PL/pgSQL bodies may reference. */
+  readonly externalSchemas: readonly string[];
   /**
    * The desired schemas on either side of the migration (the previous
    * migration's snapshot and its own, or the current desired schema for the
@@ -38,26 +41,38 @@ export async function checkReplayUnit(
   unit: ReplayUnit,
   context: MigrationRuleContext,
 ): Promise<readonly RuleViolation[]> {
+  return (await analyseReplayUnit(unit, context)).violations;
+}
+
+/** The rule analysis of a unit's deploy-time files: violations and overrides. */
+export async function analyseReplayUnit(
+  unit: ReplayUnit,
+  context: MigrationRuleContext,
+): Promise<MigrationAnalysis> {
   const files: DeployTimeFile[] = unit.files.flatMap(({ file, sql }) => {
     const kind = deployTimeFileKinds[posix.basename(file)];
     return kind === undefined ? [] : [{ path: file, text: sql, kind }];
   });
-  const analysis = await analyseMigration(files, {
+  return analyseMigration(files, {
     managedSchema: context.managedSchema,
+    externalSchemas: context.externalSchemas,
     identityColumns: await identityColumnsIn(context.schemas),
   });
-  return analysis.violations;
 }
 
-/** Throws SqlRuleViolationError listing every violation in the unit's files. */
+/**
+ * Throws SqlRuleViolationError listing every violation in the unit's files;
+ * otherwise returns the analysis, with the overrides accepted.
+ */
 export async function refuseRuleViolations(
   unit: ReplayUnit,
   context: MigrationRuleContext,
-): Promise<void> {
-  const violations = await checkReplayUnit(unit, context);
-  if (violations.length > 0) {
-    throw new SqlRuleViolationError(violations);
+): Promise<MigrationAnalysis> {
+  const analysis = await analyseReplayUnit(unit, context);
+  if (analysis.violations.length > 0) {
+    throw new SqlRuleViolationError(analysis.violations);
   }
+  return analysis;
 }
 
 /** The desired-schema snapshot of the newest migration (none before migration 1). */

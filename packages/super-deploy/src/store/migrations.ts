@@ -3,7 +3,9 @@
 //   <directory>/migrations/
 //     index.json                    the hash-chain index (writable; rewritten by finalize)
 //     00001-add-customers/          five-digit number, hyphen, kebab-case name
+//       pre-migration.sql           (optional) hand-written, runs before the schema change
 //       schema-change.sql           every file copied from the draft except draft.json
+//       post-migration.sql          (optional) hand-written, runs after the schema change
 //       metadata.json               tool, differ, parser and rehearsal server versions
 //       desired-schema/**/*.sql     snapshot of the desired schema at finalize
 //
@@ -27,20 +29,32 @@ import { type ProjectPaths, projectRelative } from "./layout.ts";
 export const indexFileName = "index.json";
 export const metadataFileName = "metadata.json";
 export const schemaChangeFileName = "schema-change.sql";
+/** Hand-written SQL run before the schema change (and before `draft` diffs). */
+export const preMigrationFileName = "pre-migration.sql";
+/** Hand-written SQL run after the schema change: data only. */
+export const postMigrationFileName = "post-migration.sql";
 /** The desired-schema snapshot inside each migration folder. */
 export const snapshotFolderName = "desired-schema";
 /**
- * The deploy-time SQL files of a migration, in the order they run. Ticket 07
- * adds the pre- and post-migration scripts around the schema change.
+ * The deploy-time SQL files of a migration, in the order they run; each is
+ * optional except the schema change. Seed data (ticket 15) is not here: it
+ * never runs when migrations are replayed or deployed. A Recovery (ticket 17)
+ * replaces the two scripts and keeps the schema change.
  */
-export const deployTimeFileNames: readonly string[] = [schemaChangeFileName];
+export const deployTimeFileNames: readonly string[] = [
+  preMigrationFileName,
+  schemaChangeFileName,
+  postMigrationFileName,
+];
 
 /**
- * The rule set (file kind) each deploy-time file is checked against. Tickets
- * 07 and 15 add the pre-/post-migration scripts and seed data here.
+ * The rule set (file kind) each deploy-time file is checked against. Ticket
+ * 15 adds seed data here.
  */
 export const deployTimeFileKinds: Readonly<Record<string, DeployTimeKind>> = {
+  [preMigrationFileName]: "pre-migration",
   [schemaChangeFileName]: "schema-change",
+  [postMigrationFileName]: "post-migration",
 };
 
 export const maxMigrationNumber = 99_999;

@@ -8,6 +8,7 @@ import { discardDraft } from "../commands/discard-draft.ts";
 import { disposable } from "../commands/disposable.ts";
 import { draft } from "../commands/draft.ts";
 import { finalize } from "../commands/finalize.ts";
+import { init } from "../commands/init.ts";
 import { rehearse } from "../commands/rehearse.ts";
 import { restoreSchema } from "../commands/restore-schema.ts";
 import { status } from "../commands/status.ts";
@@ -22,6 +23,7 @@ import {
 } from "../errors.ts";
 import type { Project } from "../project.ts";
 import type { OverwriteOptions, Question } from "../questions.ts";
+import type { Override } from "../sql-analysis/index.ts";
 import { readDraft } from "../store/draft.ts";
 
 export type CommandGroup =
@@ -116,17 +118,40 @@ export interface CommandContext {
   readonly confirm: ((question: string) => Promise<boolean>) | undefined;
 }
 
-export interface CommandDefinition {
+interface CommandBase {
   readonly name: string;
   readonly group: CommandGroup;
   readonly summary: string;
   readonly options: readonly OptionDefinition[];
+}
+
+/** A command on the project found from the working directory (most commands). */
+export interface ProjectCommandDefinition extends CommandBase {
+  readonly needsProject?: true;
   run(
     project: Project,
     values: OptionValues,
     context: CommandContext,
   ): Promise<void>;
 }
+
+/**
+ * A command that runs in the working directory without loading a project
+ * (`init`). Its options must not need one: no `target` or `migration` kinds,
+ * and no `initial` on `name` options.
+ */
+export interface DirectoryCommandDefinition extends CommandBase {
+  readonly needsProject: false;
+  run(
+    directory: string,
+    values: OptionValues,
+    context: CommandContext,
+  ): Promise<void>;
+}
+
+export type CommandDefinition =
+  | ProjectCommandDefinition
+  | DirectoryCommandDefinition;
 
 /** A command refused to go ahead (exit 1). */
 export class RefusedError extends Error {
@@ -155,6 +180,24 @@ export async function acknowledge(
   return context.confirm(question);
 }
 
+const initCommand: DirectoryCommandDefinition = {
+  name: "init",
+  group: "Start",
+  summary:
+    "Create a project here from the bundled template, with a local embedded PostgreSQL and a dev target",
+  needsProject: false,
+  options: [],
+  async run(directory, _values, context) {
+    const result = await init({ directory });
+    context.result(
+      `Initialised a super-deploy project in ${context.displayPath(result.root)}`,
+    );
+    context.result(
+      "Next: pnpm install, add CREATE statements under data-model/desired-schema/, then run draft",
+    );
+  },
+};
+
 const draftCommand: CommandDefinition = {
   name: "draft",
   group: "Author",
@@ -180,6 +223,9 @@ const draftCommand: CommandDefinition = {
         ? `Renamed draft ${result.renamedFrom} to ${result.name}`
         : `Regenerated draft ${result.name}`;
     context.result(`${what}: ${count} in ${where}`);
+    for (const item of result.toCover) {
+      context.warn(`warning: ${item.message}`);
+    }
   },
 };
 
@@ -208,6 +254,9 @@ const finalizeCommand: CommandDefinition = {
     context.result(
       `Finalized migration ${result.folder} in ${context.displayPath(result.path)}`,
     );
+    for (const override of result.metadata.overrides) {
+      context.result(describeOverride(override, result.path, context));
+    }
   },
 };
 
@@ -231,6 +280,9 @@ const validateCommand: CommandDefinition = {
         strict: values.strict === true,
       });
       result.problems.forEach(report);
+      for (const override of result.overrides) {
+        context.result(describeOverride(override, project.root, context));
+      }
       if (result.readOnlyRestored.length > 0) {
         context.warn(
           `Made ${plural(result.readOnlyRestored.length, "finalized file")} read-only again`,
@@ -510,11 +562,22 @@ function describeAttempt(attempt: AttemptRecord): string {
   return `#${attempt.id} ${attempt.command} ${attempt.outcome}${range} by ${attempt.osUser} at ${attempt.startedAt.toISOString()}${error}`;
 }
 
+/** `override: <file>:<line>: <object> [<rules>]: <reason>`; `file` is relative to `base`. */
+function describeOverride(
+  override: Override,
+  base: string,
+  context: CommandContext,
+): string {
+  const file = context.displayPath(join(base, override.file));
+  return `override: ${file}:${override.line}: ${override.object} [${override.rules.join(", ")}]: ${override.reason}`;
+}
+
 function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 export const commands: readonly CommandDefinition[] = [
+  initCommand,
   draftCommand,
   rehearseCommand,
   finalizeCommand,

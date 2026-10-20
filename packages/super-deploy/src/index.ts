@@ -47,6 +47,7 @@ export {
   finalize,
   type MigrationMetadata,
 } from "./commands/finalize.ts";
+export { type InitOptions, type InitResult, init } from "./commands/init.ts";
 export { type RehearseResult, rehearse } from "./commands/rehearse.ts";
 export {
   type RestoreSchemaOptions,
@@ -96,6 +97,7 @@ export {
   DriftError,
   type ErrorCode,
   type GuardedCommand,
+  InitConflictError,
   InterruptedError,
   InvalidDraftNameError,
   InvalidEncodingError,
@@ -134,6 +136,10 @@ export type {
   OverwriteQuestion,
   Question,
 } from "./questions.ts";
+export type {
+  ScriptCoverage,
+  ScriptCoverageKind,
+} from "./rehearsal/script-coverage.ts";
 export { maxDraftNameLength, normaliseDraftName } from "./store/draft-name.ts";
 export type { ProjectPaths } from "./store/layout.ts";
 export type { DriftChange, DriftedObject } from "./verification/drift.ts";

@@ -42,6 +42,12 @@ export async function runCli(
       return exitCodes.success;
     case "run": {
       const { command, values } = invocation;
+      if (command.needsProject === false) {
+        return runCommand(io, command, invocation.debug, async () => ({
+          project: undefined,
+          values,
+        }));
+      }
       return runCommand(io, command, invocation.debug, async () => {
         const project = await loadProject({ cwd: io.cwd, signal: io.signal });
         try {

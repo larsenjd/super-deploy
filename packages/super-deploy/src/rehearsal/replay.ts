@@ -1,7 +1,7 @@
 // Replaying migrations: every migration's deploy-time SQL files, in order,
 // in ONE transaction with the pinned session settings, exactly as a
 // deployment of all of them would run (ADR-0001). Each file is its own batch,
-// so a failure names the file.
+// so a failure names the file; each migration ends at a boundary (runUnit).
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
@@ -97,22 +97,50 @@ export async function replay(
  * Runs one unit's files inside the caller's transaction, each file as its own
  * batch so a failure names the file. Shared by rehearsals and deployments
  * (deploy/engine.ts), so both run deploy-time SQL identically.
+ *
+ * Each unit ends at a migration boundary, which behaves like the COMMIT the
+ * migration would get if deployed on its own: deferred constraints are
+ * checked (`SET CONSTRAINTS ALL IMMEDIATE`; a violation is blamed on the
+ * unit's last file), and the migration's `ON COMMIT DROP` staging tables are
+ * dropped (`DISCARD TEMP`), so the next migration may reuse their names.
+ * Deferrable constraints then stay immediate for the rest of the transaction.
  */
 export async function runUnit(
   session: Session,
   unit: ReplayUnit,
 ): Promise<void> {
   for (const { file, sql } of unit.files) {
-    try {
-      await session.execute(sql);
-    } catch (error) {
-      throw new SqlFileFailedError(
-        file,
-        lineAt(sql, (error as { position?: string }).position),
-        error instanceof Error ? error.message : String(error),
-        { cause: error },
-      );
-    }
+    await runFile(session, file, sql);
+  }
+  const last = unit.files.at(-1);
+  if (last !== undefined) {
+    await runFile(
+      session,
+      last.file,
+      "SET CONSTRAINTS ALL IMMEDIATE",
+      "deferred constraints checked at the end of the migration: ",
+    );
+    await session.execute("DISCARD TEMP");
+  }
+}
+
+async function runFile(
+  session: Session,
+  file: string,
+  sql: string,
+  context = "",
+): Promise<void> {
+  try {
+    await session.execute(sql);
+  } catch (error) {
+    throw new SqlFileFailedError(
+      file,
+      context === ""
+        ? lineAt(sql, (error as { position?: string }).position)
+        : undefined,
+      `${context}${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 }
 

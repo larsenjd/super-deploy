@@ -4,7 +4,7 @@
 // nothing; quit, Escape or Ctrl+C at the menu leaves (exit 0). An
 // interruption while a command runs cleans up and exits like any other.
 import { cancel, intro, outro } from "@clack/prompts";
-import { loadProject } from "../project.ts";
+import { findConfig, loadProject } from "../project.ts";
 import { toolVersion } from "../version.ts";
 import { type CommandDefinition, commands } from "./definitions.ts";
 import { askOptions, type PromptIo, pickCommand } from "./prompts.ts";
@@ -20,7 +20,11 @@ export async function runMenu(io: CliIo, debug: boolean): Promise<number> {
   intro(`super-deploy ${toolVersion}`, output);
   let current: CommandDefinition | undefined;
   for (;;) {
-    const command = await pickCommand(prompts, commands, current);
+    const command = await pickCommand(
+      prompts,
+      commands,
+      current ?? startingCommand(io.cwd),
+    );
     if (io.signal.aborted) {
       return exitCodes.failure;
     }
@@ -30,6 +34,13 @@ export async function runMenu(io: CliIo, debug: boolean): Promise<number> {
     }
     current = command;
     await runCommand(io, command, debug, async () => {
+      if (command.needsProject === false) {
+        const values = await askOptions(prompts, command, undefined);
+        if (values === undefined && !io.signal.aborted) {
+          cancel("Cancelled: nothing ran", output);
+        }
+        return { project: undefined, values };
+      }
       const project = await loadProject({
         cwd: io.cwd,
         signal: io.signal,
@@ -50,4 +61,15 @@ export async function runMenu(io: CliIo, debug: boolean): Promise<number> {
       return exitCodes.failure;
     }
   }
+}
+
+/**
+ * Where the cursor starts: on the first command that needs no project
+ * (init) when there is none, otherwise on the first one that does (draft).
+ */
+function startingCommand(cwd: string): CommandDefinition | undefined {
+  const inProject = findConfig(cwd) !== undefined;
+  return commands.find(
+    (command) => (command.needsProject !== false) === inProject,
+  );
 }
