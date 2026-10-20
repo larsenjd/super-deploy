@@ -5,6 +5,7 @@
 import { pgDeltaDiffer } from "../differ/pg-delta.ts";
 import type { PlannedStatement } from "../differ/types.ts";
 import { DraftNameRequiredError } from "../errors.ts";
+import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import {
   draftDatabaseRequest,
@@ -72,6 +73,7 @@ export async function draft(
     },
   );
 
+  throwIfInterrupted(project.signal);
   await writeDraft(paths, { name }, renderSchemaChange(planned));
   return {
     name,

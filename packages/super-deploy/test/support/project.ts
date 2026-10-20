@@ -76,6 +76,56 @@ export async function createTestProject(
 }
 
 /**
+ * A config whose rehearsal adapter wraps the embedded one to stall on demand,
+ * for interruption tests. Environment variables (read when the command runs):
+ * - `TEST_STALL=query`: every throwaway session's first `execute` first runs
+ *   `pg_sleep(60)`, after writing the file named by `TEST_MARKER`.
+ * - `TEST_STALL=drop`: as `query`, and dropping a throwaway database never finishes.
+ * `dataDir` is a JS expression (a string literal or `new URL(...)`).
+ */
+export function stallingConfig(dataDir: string): string {
+  return `import { writeFileSync } from "node:fs";
+import { defineConfig } from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
+
+const postgres = embeddedPostgres({ dataDir: ${dataDir} });
+const stall = process.env.TEST_STALL;
+
+const rehearsal = {
+  async createDatabase(request) {
+    const database = await postgres.rehearsal.createDatabase(request);
+    return {
+      name: database.name,
+      drop: stall === "drop" ? () => new Promise(() => {}) : () => database.drop(),
+      async connect() {
+        const session = await database.connect();
+        let stalled = false;
+        return {
+          ...session,
+          async execute(sql) {
+            if (stall !== undefined && !stalled) {
+              stalled = true;
+              writeFileSync(process.env.TEST_MARKER, "");
+              await session.query("select pg_sleep(60)");
+            }
+            return session.execute(sql);
+          },
+        };
+      },
+    };
+  },
+  close: () => postgres.rehearsal.close(),
+};
+
+export default defineConfig({
+  postgresVersion: 18,
+  rehearsal,
+  targets: { dev: { adapter: postgres.target("dev") } },
+});
+`;
+}
+
+/**
  * A config using the embedded-postgres adapter on the test server, with a
  * `dev` target. `settings` is spliced into the defineConfig() object literal.
  */

@@ -11,7 +11,8 @@ export type ErrorCode =
   | "desired-schema-load-failed"
   | "unsupported-server"
   | "adapter-failed"
-  | "differ-failed";
+  | "differ-failed"
+  | "interrupted";
 
 export class SuperDeployError extends Error {
   readonly code: ErrorCode;
@@ -145,5 +146,16 @@ export class AdapterError extends SuperDeployError {
 export class DifferError extends SuperDeployError {
   constructor(message: string, options?: ErrorOptions) {
     super("differ-failed", message, options);
+  }
+}
+
+/**
+ * The project's interruption signal aborted while a command was running. The
+ * command has cleaned up (rolled back, dropped throwaway databases) by the
+ * time this is thrown; `cause` is the signal's abort reason.
+ */
+export class InterruptedError extends SuperDeployError {
+  constructor(options?: ErrorOptions) {
+    super("interrupted", "Interrupted", options);
   }
 }
