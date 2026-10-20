@@ -21,6 +21,17 @@ export {
   draft,
 } from "./commands/draft.ts";
 export {
+  type FinalizeResult,
+  finalize,
+  type MigrationMetadata,
+} from "./commands/finalize.ts";
+export { type RehearseResult, rehearse } from "./commands/rehearse.ts";
+export {
+  type ValidateOptions,
+  type ValidationReport,
+  validate,
+} from "./commands/validate.ts";
+export {
   type Duration,
   defineConfig,
   type ResolvedConfig,
@@ -37,11 +48,19 @@ export {
   DraftNameRequiredError,
   type ErrorCode,
   InvalidDraftNameError,
+  InvalidEncodingError,
+  MigrationIntegrityError,
+  NoDraftError,
   ProjectNotFoundError,
+  RehearsalMismatchError,
   type RuleViolation,
+  SqlFileFailedError,
   SqlRuleViolationError,
   SuperDeployError,
   UnsupportedServerError,
+  ValidationFailedError,
+  type ValidationProblem,
+  type ValidationSeverity,
 } from "./errors.ts";
 export {
   type LoadProjectOptions,

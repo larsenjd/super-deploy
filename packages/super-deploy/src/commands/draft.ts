@@ -6,6 +6,7 @@ import { pgDeltaDiffer } from "../differ/pg-delta.ts";
 import type { PlannedStatement } from "../differ/types.ts";
 import { DraftNameRequiredError } from "../errors.ts";
 import type { Project } from "../project.ts";
+import { readMigrationUnits, replay } from "../rehearsal/replay.ts";
 import {
   draftDatabaseRequest,
   ensureManagedSchema,
@@ -13,9 +14,11 @@ import {
   withThrowawayDatabase,
 } from "../rehearsal/throwaway.ts";
 import { analyseDesiredSchema } from "../sql-analysis/index.ts";
-import { readDesiredSchema } from "../store/desired-schema.ts";
+import { asSqlFiles, readDesiredSchemaFiles } from "../store/desired-schema.ts";
 import { readDraft, writeDraft } from "../store/draft.ts";
 import { normaliseDraftName } from "../store/draft-name.ts";
+import { desiredSchemaHash } from "../store/hashing.ts";
+import { verifiedMigrations } from "../store/integrity.ts";
 
 export interface DraftOptions {
   /**
@@ -51,8 +54,14 @@ export async function draft(
   }
 
   const { config, paths } = project;
-  const files = await readDesiredSchema(project.root, paths.desiredSchema);
-  const statements = await analyseDesiredSchema(files);
+  const files = await readDesiredSchemaFiles(project.root, paths.desiredSchema);
+  const statements = await analyseDesiredSchema(
+    asSqlFiles(project.root, paths.desiredSchema, files),
+  );
+  const migrations = await readMigrationUnits(
+    project.root,
+    await verifiedMigrations(project.root, paths),
+  );
 
   const planned = await withThrowawayDatabase(
     config.rehearsal,
@@ -63,16 +72,21 @@ export async function draft(
         config.rehearsal,
         draftDatabaseRequest,
         async (source) => {
-          // The starting point. Ticket 03 replays the finalized migrations here,
-          // ticket 07 then runs the draft's pre-migration script.
+          // The starting point: every finalized migration replayed. Ticket 07
+          // then runs the draft's pre-migration script.
           await ensureManagedSchema(source, config.managedSchema);
+          await replay(source, migrations, config.managedSchema);
           return pgDeltaDiffer.diff(source, desired);
         },
       );
     },
   );
 
-  await writeDraft(paths, { name }, renderSchemaChange(planned));
+  await writeDraft(
+    paths,
+    { name, desiredSchemaHash: desiredSchemaHash(files) },
+    renderSchemaChange(planned),
+  );
   return {
     name,
     created: existing === undefined,
