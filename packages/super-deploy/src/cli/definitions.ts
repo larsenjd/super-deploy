@@ -1,10 +1,13 @@
 // One set of command definitions drives both direct CLI mode (util.parseArgs
 // flags) and the interactive menu (ticket 05). Each command's `run` calls the
 // exported API function and prints its result.
+import { deploy } from "../commands/deploy.ts";
 import { draft } from "../commands/draft.ts";
 import { finalize } from "../commands/finalize.ts";
 import { rehearse } from "../commands/rehearse.ts";
+import { status } from "../commands/status.ts";
 import { validate } from "../commands/validate.ts";
+import type { AttemptRecord } from "../deploy/history.ts";
 import { ValidationFailedError, type ValidationProblem } from "../errors.ts";
 import type { Project } from "../project.ts";
 
@@ -157,6 +160,65 @@ const validateCommand: CommandDefinition = {
   },
 };
 
+const targetOption: OptionDefinition = {
+  name: "target",
+  kind: "target",
+  description: "The target to use, by its name in super-deploy.config.ts",
+  required: true,
+};
+
+const deployCommand: CommandDefinition = {
+  name: "deploy",
+  group: "Deploy",
+  summary:
+    "Rehearse every pending migration, then apply them all to the target in one transaction",
+  options: [targetOption],
+  async run(project, values, context) {
+    const result = await deploy(project, { target: String(values.target) });
+    context.result(
+      result.deployed.length === 0
+        ? `Target ${result.target} is up to date: nothing to deploy`
+        : `Deployed ${plural(result.deployed.length, "migration")} to ${result.target}: ${result.deployed.map((m) => m.folder).join(", ")}`,
+    );
+  },
+};
+
+const statusCommand: CommandDefinition = {
+  name: "status",
+  group: "Deploy",
+  summary: "Show the target's pending migrations and recent attempts",
+  options: [targetOption],
+  async run(project, values, context) {
+    const report = await status(project, { target: String(values.target) });
+    context.result(
+      `Target ${report.target}${report.disposable ? " (disposable)" : ""}: ${plural(report.recorded.length, "migration")} recorded, ${report.pending.length} pending`,
+    );
+    if (report.pending.length > 0) {
+      context.result("Pending:");
+      for (const migration of report.pending) {
+        context.result(`  ${migration.folder}`);
+      }
+    }
+    if (report.attempts.length > 0) {
+      context.result("Recent attempts:");
+      for (const attempt of report.attempts) {
+        context.result(`  ${describeAttempt(attempt)}`);
+      }
+    }
+  },
+};
+
+function describeAttempt(attempt: AttemptRecord): string {
+  const range =
+    attempt.fromMigration === undefined
+      ? ""
+      : attempt.fromMigration === attempt.toMigration
+        ? ` migration ${attempt.fromMigration}`
+        : ` migrations ${attempt.fromMigration}-${attempt.toMigration}`;
+  const error = attempt.error === undefined ? "" : `: ${attempt.error}`;
+  return `#${attempt.id} ${attempt.command} ${attempt.outcome}${range} by ${attempt.osUser} at ${attempt.startedAt.toISOString()}${error}`;
+}
+
 function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
@@ -166,4 +228,6 @@ export const commands: readonly CommandDefinition[] = [
   rehearseCommand,
   finalizeCommand,
   validateCommand,
+  deployCommand,
+  statusCommand,
 ];
