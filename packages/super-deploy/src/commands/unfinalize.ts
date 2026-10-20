@@ -79,7 +79,10 @@ export async function unfinalize(
   if (options.recoveryOf !== undefined) {
     const migration = migrations[options.recoveryOf - 1];
     if (migration === undefined) {
-      throw new UnknownMigrationError(options.recoveryOf, migrations.length);
+      throw new UnknownMigrationError(
+        options.recoveryOf,
+        migrations.at(-1)?.number,
+      );
     }
     const recovery = migration.recoveries.at(-1);
     if (recovery === undefined) {

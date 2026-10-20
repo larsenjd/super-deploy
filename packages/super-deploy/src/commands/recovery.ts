@@ -53,7 +53,10 @@ export async function recovery(
   const migrations = await verifiedMigrations(root, paths);
   const migration = migrations.find((m) => m.number === options.migration);
   if (migration === undefined) {
-    throw new UnknownMigrationError(options.migration, migrations.length);
+    throw new UnknownMigrationError(
+      options.migration,
+      migrations.at(-1)?.number,
+    );
   }
   const newest = migration.recoveries.at(-1);
   const source = newest?.path ?? migration.path;

@@ -159,7 +159,7 @@ async function rehearseRecoveryDraft(
   const number = draft.recoveryOf as number;
   const migration = migrations[number - 1];
   if (migration === undefined) {
-    throw new UnknownMigrationError(number, migrations.length);
+    throw new UnknownMigrationError(number, migrations.at(-1)?.number);
   }
   await requireOriginalSchemaChange(project, migration);
   const earlier = migrations.slice(0, number - 1);

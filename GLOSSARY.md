@@ -56,6 +56,9 @@ A schema outside the managed schema that routines in the desired schema may refe
 The schema the system keeps inside each target to record which migrations it has run, every deployment attempt, and whether it is disposable.
 _Avoid_: Deployment schema, metadata schema
 
+**Deployed draft**:
+A draft that `deploy-draft` ran on a disposable target. The target records it beside its migrations, not as one, and refuses deployments until `rebuild` resets it.
+
 **Pending migration**:
 A migration that a given target has not yet recorded as deployed.
 
