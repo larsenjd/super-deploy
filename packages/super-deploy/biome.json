@@ -6,5 +6,88 @@
   },
   "formatter": {
     "indentStyle": "space"
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["src/**", "!src/differ/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@supabase/pg-delta": "Only src/differ/ may import pg-delta: reach it through src/differ/index.ts."
+                },
+                "patterns": [
+                  {
+                    "group": ["@supabase/pg-delta/**"],
+                    "message": "Only src/differ/ may import pg-delta: reach it through src/differ/index.ts."
+                  },
+                  {
+                    "group": ["**/differ/**", "!**/differ/index.ts"],
+                    "message": "Outside src/differ/, reach the differ only through src/differ/index.ts."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "test/integration/**",
+        "test/support/**",
+        "test/fixtures/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/src/**",
+                      "**/dist/**",
+                      "super-deploy/**",
+                      "!super-deploy/embedded-postgres"
+                    ],
+                    "message": "Integration tests import the library only by its package name (super-deploy, super-deploy/embedded-postgres), so they test the public API."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["test/unit/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/src/**",
+                      "!**/src/sql-analysis/index.ts",
+                      "**/dist/**",
+                      "super-deploy/**"
+                    ],
+                    "message": "Unit tests reach src/ only through src/sql-analysis/index.ts (or the package name super-deploy)."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

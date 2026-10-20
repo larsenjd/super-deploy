@@ -112,7 +112,7 @@ export type {
   HistoryMismatch,
   PreflightFindings,
 } from "./deploy/preflight.ts";
-export type { PlannedStatement } from "./differ/types.ts";
+export type { PlannedStatement } from "./differ/index.ts";
 export {
   AdapterError,
   AdoptCancelledError,
