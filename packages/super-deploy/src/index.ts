@@ -21,10 +21,15 @@ export type {
   Session,
   ThrowawayDatabase,
 } from "./adapters/types.ts";
+export { AdapterError } from "./adapters/types.ts";
 export {
+  AdoptCancelledError,
+  AdoptConflictError,
   type AdoptOptions,
   type AdoptResult,
+  AdoptUnsupportedError,
   adopt,
+  type UnsupportedObject,
 } from "./commands/adopt.ts";
 export {
   type DeployedMigration,
@@ -36,6 +41,8 @@ export {
   type DeployDraftOptions,
   type DeployDraftResult,
   deployDraft,
+  RecoveryBaseMismatchError,
+  TargetBehindError,
 } from "./commands/deploy-draft.ts";
 export {
   type DiscardDraftOptions,
@@ -48,6 +55,7 @@ export {
   disposable,
 } from "./commands/disposable.ts";
 export {
+  DraftNameRequiredError,
   type DraftOptions,
   type DraftResult,
   draft,
@@ -57,9 +65,15 @@ export {
   type FinalizeOptions,
   type FinalizeResult,
   finalize,
+  MigrationLimitError,
   type MigrationMetadata,
 } from "./commands/finalize.ts";
-export { type InitOptions, type InitResult, init } from "./commands/init.ts";
+export {
+  InitConflictError,
+  type InitOptions,
+  type InitResult,
+  init,
+} from "./commands/init.ts";
 export { type MarkOptions, type MarkResult, mark } from "./commands/mark.ts";
 export {
   type RebuildOptions,
@@ -67,8 +81,12 @@ export {
   rebuild,
 } from "./commands/rebuild.ts";
 export {
+  DraftExistsError,
+  NoRecoveryError,
+  RecoveryDraftError,
   type RecoveryOptions,
   type RecoveryResult,
+  RecoverySchemaChangeEditedError,
   recovery,
 } from "./commands/recovery.ts";
 export { type RehearseResult, rehearse } from "./commands/rehearse.ts";
@@ -90,10 +108,12 @@ export {
 } from "./commands/unfinalize.ts";
 export {
   type ValidateOptions,
+  ValidationFailedError,
   type ValidationReport,
   validate,
 } from "./commands/validate.ts";
 export {
+  ConfigError,
   type Duration,
   defineConfig,
   type ResolvedConfig,
@@ -101,6 +121,7 @@ export {
   type SuperDeployConfig,
   type TargetConfig,
 } from "./config/config.ts";
+export { CommitOutcomeUnknownError } from "./deploy/engine.ts";
 export type {
   AttemptOutcome,
   AttemptRecord,
@@ -108,73 +129,37 @@ export type {
   MigrationVariantIdentity,
   RecordedMigration,
 } from "./deploy/history.ts";
+export { type LockHolder, TargetLockedError } from "./deploy/lock.ts";
+export {
+  HistoryMismatchError,
+  MarkMismatchError,
+  NothingToMarkError,
+} from "./deploy/mark.ts";
 export type {
   HistoryMismatch,
   PreflightFindings,
 } from "./deploy/preflight.ts";
-export type { PlannedStatement } from "./differ/index.ts";
+export { PreflightFailedError } from "./deploy/preflight.ts";
 export {
-  AdapterError,
-  AdoptCancelledError,
-  AdoptConflictError,
-  AdoptUnsupportedError,
-  CommitOutcomeUnknownError,
-  ConfigError,
-  DesiredSchemaLoadError,
-  DestructiveNotAcknowledgedError,
-  DifferError,
-  DraftExistsError,
-  DraftNameRequiredError,
-  DriftError,
-  type ErrorCode,
-  type GuardedCommand,
-  HistoryMismatchError,
-  InitConflictError,
-  InterruptedError,
-  InvalidDraftError,
-  InvalidDraftNameError,
-  InvalidEncodingError,
-  type LockHolder,
-  MarkMismatchError,
-  MigrationIntegrityError,
-  MigrationLimitError,
-  NoDraftError,
-  NoMigrationError,
-  NoRecoveryError,
-  NotConfirmedError,
-  NothingToMarkError,
-  OrderDependenceError,
-  OverwriteNotAcknowledgedError,
-  PreflightFailedError,
-  ProjectNotFoundError,
-  RecoveryBaseMismatchError,
-  RecoveryDraftError,
-  RecoverySchemaChangeEditedError,
-  RehearsalMismatchError,
-  type RuleViolation,
-  SqlFileFailedError,
-  SqlRuleViolationError,
-  SuperDeployError,
-  TargetBehindError,
-  TargetChangedError,
-  TargetLockedError,
   TargetNotDisposableError,
-  TerminalRequiredError,
-  UnknownMigrationError,
-  UnknownRecordedMigrationError,
   UnknownTargetError,
-  type UnrevokedGrant,
-  type UnsupportedObject,
-  UnsupportedServerError,
-  ValidationFailedError,
-  type ValidationProblem,
-  type ValidationSeverity,
-  WipeFailedError,
-} from "./errors.ts";
+} from "./deploy/target.ts";
+export { type UnrevokedGrant, WipeFailedError } from "./deploy/wipe.ts";
+export type { PlannedStatement } from "./differ/index.ts";
+export { DifferError } from "./differ/index.ts";
+export { type ErrorCode, SuperDeployError } from "./errors.ts";
+export {
+  type GuardedCommand,
+  NotConfirmedError,
+  TargetChangedError,
+  TerminalRequiredError,
+} from "./guard/guard.ts";
+export { InterruptedError } from "./interruption.ts";
 export {
   type LoadProjectOptions,
   loadProject,
   type Project,
+  ProjectNotFoundError,
 } from "./project.ts";
 export type {
   AskOverrideReason,
@@ -187,18 +172,47 @@ export type {
   OverwriteQuestion,
   Question,
 } from "./questions.ts";
+export {
+  DestructiveNotAcknowledgedError,
+  OverwriteNotAcknowledgedError,
+} from "./questions.ts";
+export { OrderDependenceError } from "./rehearsal/order-independence.ts";
+export { SqlFileFailedError } from "./rehearsal/replay.ts";
+export { UnknownRecordedMigrationError } from "./rehearsal/replica.ts";
+export { RehearsalMismatchError } from "./rehearsal/same-structure.ts";
 export type {
   ScriptCoverage,
   ScriptCoverageKind,
 } from "./rehearsal/script-coverage.ts";
+export {
+  DesiredSchemaLoadError,
+  UnsupportedServerError,
+} from "./rehearsal/throwaway.ts";
 export type {
   DestructiveKind,
   DestructiveStatement,
   LockWarning,
   LockWarningKind,
 } from "./sql-analysis/destructive.ts";
+export {
+  type RuleViolation,
+  SqlRuleViolationError,
+} from "./sql-analysis/index.ts";
 export type { Override } from "./sql-analysis/overrides.ts";
-export { maxDraftNameLength, normaliseDraftName } from "./store/draft-name.ts";
+export { InvalidDraftError, NoDraftError } from "./store/draft.ts";
+export {
+  InvalidDraftNameError,
+  maxDraftNameLength,
+  normaliseDraftName,
+} from "./store/draft-name.ts";
+export { InvalidEncodingError } from "./store/hashing.ts";
+export {
+  MigrationIntegrityError,
+  type ValidationProblem,
+  type ValidationSeverity,
+} from "./store/integrity.ts";
 export type { ProjectPaths } from "./store/layout.ts";
+export { NoMigrationError, UnknownMigrationError } from "./store/migrations.ts";
 export type { DriftChange, DriftedObject } from "./verification/drift.ts";
+export { DriftError } from "./verification/drift.ts";
 export { toolVersion } from "./version.ts";

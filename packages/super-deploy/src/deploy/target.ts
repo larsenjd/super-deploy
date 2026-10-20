@@ -1,9 +1,12 @@
 // Reaching a target: resolve its name from config, connect through its
 // deployment adapter (only when a command actually touches it), check the
 // server, and read the locale its rehearsals must match.
+
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
+import { AdapterError } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
-import { AdapterError, UnknownTargetError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
+import type { GuardedCommand } from "../guard/guard.ts";
 import type { Project } from "../project.ts";
 import { adapterCall, requirePostgres18 } from "../rehearsal/throwaway.ts";
 
@@ -85,5 +88,40 @@ export async function targetDatabaseRequest(
         locale: row.collate,
         collationProvider: "libc",
       };
+  }
+}
+
+/** A command named a target that isn't in the config. */
+export class UnknownTargetError extends SuperDeployError {
+  readonly code = "unknown-target";
+  readonly target: string;
+  /** The targets the config does define. */
+  readonly known: readonly string[];
+
+  constructor(target: string, known: readonly string[]) {
+    super(
+      `There is no target ${JSON.stringify(target)} in super-deploy.config.ts (${known.length === 0 ? "no targets are defined" : `targets: ${known.join(", ")}`})`,
+    );
+    this.target = target;
+    this.known = known;
+  }
+}
+
+/**
+ * deploy-draft or rebuild was refused because the target's own history
+ * schema doesn't flag it as disposable (`disposable --set yes`). Nothing was
+ * asked or changed.
+ */
+export class TargetNotDisposableError extends SuperDeployError {
+  readonly code = "target-not-disposable";
+  readonly command: GuardedCommand;
+  readonly target: string;
+
+  constructor(command: GuardedCommand, target: string) {
+    super(
+      `${command} only runs on disposable targets, and target ${target} is not disposable (flag it with disposable --target ${target} --set yes if it is safe to wipe): nothing changed`,
+    );
+    this.command = command;
+    this.target = target;
   }
 }

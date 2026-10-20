@@ -15,11 +15,6 @@
 // Recovery instead, for a Recovery of an older migration.
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  NoMigrationError,
-  NoRecoveryError,
-  UnknownMigrationError,
-} from "../errors.ts";
 import type { Project } from "../project.ts";
 import { acknowledgeOverwrite, type OverwriteOptions } from "../questions.ts";
 import { restoreFromSnapshot } from "../store/desired-schema.ts";
@@ -34,15 +29,18 @@ import {
   isRecoveryPath,
   makeWritable,
   metadataFileName,
+  NoMigrationError,
   readHashedFiles,
   readIndex,
   recoveriesFolderName,
   schemaChangeFileName,
   snapshotFolderName,
+  UnknownMigrationError,
   writeFiles,
   writeIndex,
 } from "../store/migrations.ts";
 import { draftName } from "./discard-draft.ts";
+import { NoRecoveryError } from "./recovery.ts";
 import {
   discarding,
   pendingRestore,

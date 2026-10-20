@@ -3,7 +3,7 @@
 // calls the exported API function and prints its result. To add a command,
 // define it here and append it to `commands`.
 import { join } from "node:path";
-import { adopt } from "../commands/adopt.ts";
+import { AdoptUnsupportedError, adopt } from "../commands/adopt.ts";
 import { deploy } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
@@ -18,17 +18,9 @@ import { rehearse } from "../commands/rehearse.ts";
 import { restoreSchema } from "../commands/restore-schema.ts";
 import { status } from "../commands/status.ts";
 import { unfinalize } from "../commands/unfinalize.ts";
-import { validate } from "../commands/validate.ts";
+import { ValidationFailedError, validate } from "../commands/validate.ts";
 import type { AttemptRecord } from "../deploy/history.ts";
-import {
-  AdoptUnsupportedError,
-  DestructiveNotAcknowledgedError,
-  DriftError,
-  MarkMismatchError,
-  OverwriteNotAcknowledgedError,
-  ValidationFailedError,
-  type ValidationProblem,
-} from "../errors.ts";
+import { MarkMismatchError } from "../deploy/mark.ts";
 import type { Project } from "../project.ts";
 import type {
   AskOverrideReason,
@@ -37,16 +29,22 @@ import type {
   Question,
 } from "../questions.ts";
 import {
+  DestructiveNotAcknowledgedError,
+  OverwriteNotAcknowledgedError,
+} from "../questions.ts";
+import {
   isOverridable,
   type LockWarning,
   type Override,
 } from "../sql-analysis/index.ts";
 import { readDraft } from "../store/draft.ts";
+import type { ValidationProblem } from "../store/integrity.ts";
 import {
   migrationFolderName,
   parseMigrationFolderName,
   readIndex,
 } from "../store/migrations.ts";
+import { DriftError } from "../verification/drift.ts";
 
 export type CommandGroup =
   | "Start"

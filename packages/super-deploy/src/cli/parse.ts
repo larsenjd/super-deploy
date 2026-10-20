@@ -1,8 +1,10 @@
 // Direct CLI mode: argv to an invocation. Unknown, repeated, missing or
 // invalid options are usage errors, and nothing runs.
 import { parseArgs } from "node:util";
-import { InvalidDraftNameError } from "../errors.ts";
-import { normaliseDraftName } from "../store/draft-name.ts";
+import {
+  InvalidDraftNameError,
+  normaliseDraftName,
+} from "../store/draft-name.ts";
 import type {
   CommandDefinition,
   OptionDefinition,

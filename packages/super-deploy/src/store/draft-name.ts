@@ -1,4 +1,4 @@
-import { InvalidDraftNameError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 
 export const maxDraftNameLength = 60;
 
@@ -35,4 +35,19 @@ export function normaliseDraftName(input: string): string {
     );
   }
   return normalised;
+}
+
+export class InvalidDraftNameError extends SuperDeployError {
+  readonly code = "invalid-draft-name";
+  readonly input: string;
+  /** The input after trimming, lowercasing and collapsing spaces. */
+  readonly normalised: string;
+
+  constructor(input: string, normalised: string, reason: string) {
+    super(
+      `Invalid draft name ${JSON.stringify(input)} (normalised: ${JSON.stringify(normalised)}): ${reason}`,
+    );
+    this.input = input;
+    this.normalised = normalised;
+  }
 }

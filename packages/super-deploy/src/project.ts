@@ -1,11 +1,16 @@
 // Loading a project: find super-deploy.config.ts from the working directory
 // or a parent, import it with Node's built-in TypeScript support, and validate
 // it. Every command function takes the resulting Project.
+
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { type ResolvedConfig, resolveConfig } from "./config/config.ts";
-import { ConfigError, ProjectNotFoundError } from "./errors.ts";
+import {
+  ConfigError,
+  type ResolvedConfig,
+  resolveConfig,
+} from "./config/config.ts";
+import { SuperDeployError } from "./errors.ts";
 import { interruptibleRehearsal } from "./interruption.ts";
 import { type ProjectPaths, projectPaths } from "./store/layout.ts";
 
@@ -117,5 +122,18 @@ async function closeAdapters(config: ResolvedConfig): Promise<void> {
   }
   if (errors.length > 0) {
     throw new AggregateError(errors, "Closing the project's adapters failed");
+  }
+}
+
+/** No super-deploy.config.ts in the working directory or any parent. */
+export class ProjectNotFoundError extends SuperDeployError {
+  readonly code = "project-not-found";
+  readonly searchedFrom: string;
+
+  constructor(searchedFrom: string) {
+    super(
+      `No super-deploy.config.ts found in ${searchedFrom} or any parent directory`,
+    );
+    this.searchedFrom = searchedFrom;
   }
 }

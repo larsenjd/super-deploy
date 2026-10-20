@@ -5,10 +5,11 @@
 // `init --adopt <target>` doesn't scaffold: it needs the target's connection
 // from config, so it runs in a project initialised (and configured) already,
 // and is the `adopt` API function (commands/adopt.ts).
+
 import { constants, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { InitConflictError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import {
   libraryPackageDirectory,
   renamedOnInit,
@@ -101,4 +102,20 @@ function packageName(folder: string): string {
     .replace(/^[._-]+/, "")
     .replace(/-+$/, "");
   return name === "" ? "super-deploy-project" : name;
+}
+
+/** `init` would overwrite existing files; nothing was written. */
+export class InitConflictError extends SuperDeployError {
+  readonly code = "init-conflict";
+  readonly directory: string;
+  /** Paths relative to `directory`, sorted. */
+  readonly paths: readonly string[];
+
+  constructor(directory: string, paths: readonly string[]) {
+    super(
+      `Cannot initialise a project in ${directory}: it already has ${paths.join(", ")}`,
+    );
+    this.directory = directory;
+    this.paths = paths;
+  }
 }

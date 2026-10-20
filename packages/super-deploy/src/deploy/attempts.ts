@@ -4,7 +4,7 @@
 // and ends exactly once as succeeded, failed, abandoned or unknown.
 import { userInfo } from "node:os";
 import type { Session } from "../adapters/types.ts";
-import { SqlFileFailedError } from "../errors.ts";
+import { SqlFileFailedError } from "../rehearsal/replay.ts";
 import { toolVersion } from "../version.ts";
 import { type AttemptOutcome, historyTable } from "./history.ts";
 

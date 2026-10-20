@@ -7,3 +7,4 @@ import type { Differ } from "./types.ts";
 export type { Differ, PlannedStatement } from "./types.ts";
 
 export const differ: Differ = pgDeltaDiffer;
+export { DifferError } from "./types.ts";

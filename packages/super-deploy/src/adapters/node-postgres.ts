@@ -6,7 +6,6 @@
 import { randomBytes } from "node:crypto";
 import pg from "pg";
 import { parseIntoClientConfig } from "pg-connection-string";
-import { AdapterError } from "../errors.ts";
 import type {
   DatabaseRequest,
   DeploymentAdapter,
@@ -15,6 +14,7 @@ import type {
   Session,
   ThrowawayDatabase,
 } from "./types.ts";
+import { AdapterError } from "./types.ts";
 
 /** Where to find the connection string: inline, or in an environment variable. */
 export type ConnectionSource = { connectionString: string } | { env: string };

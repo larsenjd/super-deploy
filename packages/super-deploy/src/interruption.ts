@@ -18,12 +18,13 @@
 //
 // `settleCleanups(signal)` waits for every cleanup the abort started; the CLI
 // calls it before closing the project and exiting.
+
 import type {
   RehearsalAdapter,
   Session,
   ThrowawayDatabase,
 } from "./adapters/types.ts";
-import { InterruptedError } from "./errors.ts";
+import { SuperDeployError } from "./errors.ts";
 
 const started = new WeakMap<AbortSignal, Set<Promise<void>>>();
 
@@ -138,5 +139,18 @@ async function guarded<T>(
       throw new InterruptedError({ cause: error });
     }
     throw error;
+  }
+}
+
+/**
+ * The project's interruption signal aborted while a command was running. The
+ * command has cleaned up (rolled back, dropped throwaway databases) by the
+ * time this is thrown; `cause` is the signal's abort reason.
+ */
+export class InterruptedError extends SuperDeployError {
+  readonly code = "interrupted";
+
+  constructor(options?: ErrorOptions) {
+    super("Interrupted", options);
   }
 }

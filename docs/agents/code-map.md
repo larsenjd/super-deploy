@@ -24,7 +24,7 @@ The template and example devDepend on `super-deploy: workspace:*`; their `tsc` a
 |---|---|
 | `commands/` | One file per command: the API function behind it. `check-rules.ts` gathers a migration's or draft's files from disk for the deploy-time rules (`analyseReplayUnit`, `refuseRuleViolations`). `rehearse.ts` also holds `rehearseCurrentDraft`, the front half shared with `finalize`. |
 | `cli/` | `definitions.ts`: the `commands` list that drives direct mode, help and the menu (`CommandDefinition`, option kinds, `acknowledge`, `needsProject`). `parse.ts` argv, `main.ts` the shell, `menu.ts`, `prompts.ts` (clack), `run.ts` (one command, exit codes 0/1/2), `process.ts` (signals, exit codes 129–149). |
-| `errors.ts` | `SuperDeployError`, every subclass, and `ErrorCode`, the union of stable codes computed from the exported classes. |
+| `errors.ts` | The base `SuperDeployError`, `ErrorCode` (the union of stable codes, computed from the error classes `index.ts` exports) and `listed`. Each error class lives in the module that throws it, next to its payload types; errors several modules throw live with their concept (`NoDraftError` in `store/draft.ts`, the Recovery errors in `commands/recovery.ts`). |
 | `config/config.ts` | `defineConfig`, the config types, `resolveConfig` (defaults applied, unknown keys refused). |
 | `project.ts` | `loadProject` → `Project` (root, config, paths, signal, `close()`); `findConfig`. |
 | `questions.ts` | The `Question` union and callback types (`Confirm`, `AskOverrideReason`), `acknowledgeOverwrite`. |
@@ -44,7 +44,7 @@ Tests are mapped in `docs/agents/testing.md`.
 ## Where a change goes
 
 - **Command**: the API function in `commands/<name>.ts`, exported from `index.ts`, plus a `CommandDefinition` appended to `commands` in `cli/definitions.ts`; help, parsing and the menu follow from it. A command without a project sets `needsProject: false`.
-- **Error**: a `SuperDeployError` subclass in `errors.ts` declaring its own `readonly code = "<kebab-case>"`, exported from `index.ts`; `ErrorCode` picks the code up from the export, and an unexported error fails to compile. The message is one line, with project-relative paths (`projectRelative`).
+- **Error**: a `SuperDeployError` subclass in the module that throws it, declaring its own `readonly code = "<kebab-case>"`, exported from `index.ts`; `ErrorCode` picks the code up from the export, and an unexported error fails to compile. The message is one line, with project-relative paths (`projectRelative`).
 - **Question**: a member of the `Question` union in `questions.ts`, asked through the command's callback option; `cli/definitions.ts` answers it at the terminal.
 - **Rule id**: an entry in `sql-analysis/rule-catalogue.ts`. Only `risk` rules are overridable.
 - **Allowed desired-schema statement form**: the allowlist in `desired-schema-rules.ts`, and an extractor in `references.ts` (`statementFacts`), which ordering needs for every form.

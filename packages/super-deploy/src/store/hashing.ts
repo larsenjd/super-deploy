@@ -23,8 +23,9 @@
 //                                  file lines as above)
 //   recovery chain hash     recovery[K] = sha256(recovery[K-1] + content[K]),
 //                           with recovery[0] = the migration's chain hash
+
 import { createHash } from "node:crypto";
-import { InvalidEncodingError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 
 /** A file to hash: its path relative to the folder being hashed (forward slashes) and its text. */
 export interface HashedFile {
@@ -102,4 +103,19 @@ export function chainHash(
 /** A hash of a desired schema's files (paths relative to the desired-schema folder). */
 export function desiredSchemaHash(files: readonly HashedFile[]): string {
   return sha256(`super-deploy desired schema 1\n${fileLines(files)}`);
+}
+
+/** A file that is hashed (finalized migrations, the draft, the desired schema) isn't UTF-8 without a BOM. */
+export class InvalidEncodingError extends SuperDeployError {
+  readonly code = "invalid-encoding";
+  /** Project-relative path with forward slashes. */
+  readonly file: string;
+
+  constructor(file: string, reason: string, options?: ErrorOptions) {
+    super(
+      `${file} ${reason}; save it as UTF-8 without a byte-order mark`,
+      options,
+    );
+    this.file = file;
+  }
 }

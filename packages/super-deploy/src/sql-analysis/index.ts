@@ -1,9 +1,13 @@
 // SQL analysis (database-free): rules and ordering, sharing one splitter.
-import { SqlRuleViolationError } from "../errors.ts";
+
 import { orderDesiredSchema } from "./ordering.ts";
 import type { Override } from "./overrides.ts";
 import type { ParsedStatement, SqlFile } from "./parse.ts";
-import { analyseFile, type RuleContext } from "./rules.ts";
+import {
+  analyseFile,
+  type RuleContext,
+  SqlRuleViolationError,
+} from "./rules.ts";
 
 export {
   type AdoptedFile,
@@ -112,3 +116,4 @@ export async function desiredSchemaAnalysis(
   }
   return { statements: ordering.statements, overrides };
 }
+export { type RuleViolation, SqlRuleViolationError } from "./rules.ts";

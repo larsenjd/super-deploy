@@ -39,7 +39,6 @@ import type {
   TypeName,
   UpdateStmt,
 } from "@pgsql/types";
-import type { RuleViolation } from "../errors.ts";
 import { denylistedCall } from "./denylist.ts";
 import {
   ChangeTracker,
@@ -58,6 +57,7 @@ import { pgCatalogFunctions, pgCatalogRelations } from "./pg-catalog-names.ts";
 import { plpgsqlFindings, sqlBodyFindings } from "./routine-bodies.ts";
 import type { RuleId } from "./rule-catalogue.ts";
 import type { RuleContext } from "./rule-types.ts";
+import type { RuleViolation } from "./rules.ts";
 import {
   objectTypeKeyword,
   objectTypeName,

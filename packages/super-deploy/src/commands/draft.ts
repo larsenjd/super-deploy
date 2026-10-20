@@ -3,9 +3,10 @@
 // database and read back from the catalogs (ADR-0003); the starting point is
 // built in another (the finalized migrations replayed, then the draft's seed
 // data and pre-migration script); the differ compares the two.
+
 import { posix } from "node:path";
 import { differ, type PlannedStatement } from "../differ/index.ts";
-import { DraftNameRequiredError, RecoveryDraftError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { loadDesiredSchemaCheckingOrder } from "../rehearsal/order-independence.ts";
@@ -47,6 +48,7 @@ import {
   newestSnapshot,
   refuseRuleViolations,
 } from "./check-rules.ts";
+import { RecoveryDraftError } from "./recovery.ts";
 
 export interface DraftOptions {
   /**
@@ -214,4 +216,14 @@ async function renderSchemaChange(
   );
   const body = carried.join("\n\n");
   return body === "" ? `${header}\n` : `${header}\n\n${body}\n`;
+}
+
+export class DraftNameRequiredError extends SuperDeployError {
+  readonly code = "draft-name-required";
+
+  constructor() {
+    super(
+      "There is no draft yet, so a name is required to create one (--name)",
+    );
+  }
 }

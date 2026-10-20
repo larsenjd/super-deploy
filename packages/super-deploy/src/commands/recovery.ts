@@ -5,9 +5,10 @@
 // variant (its newest Recovery, else the original), for the developer to
 // change. `finalize` freezes it as N's next Recovery once its rehearsal
 // proves it ends in the same structure as the original.
+
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { DraftExistsError, UnknownMigrationError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { writeDraftMetadata } from "../store/draft.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
@@ -16,6 +17,7 @@ import {
   exists,
   recoveryFileNames,
   schemaChangeFileName,
+  UnknownMigrationError,
 } from "../store/migrations.ts";
 import { draftName } from "./discard-draft.ts";
 
@@ -88,4 +90,58 @@ export async function recovery(
     draftPath: paths.draft,
     files: files.sort(),
   };
+}
+
+/** One draft at a time: the command would create one while another exists. Nothing was changed. */
+export class DraftExistsError extends SuperDeployError {
+  readonly code = "draft-exists";
+  /** The existing draft's name, if its draft.json is readable. */
+  readonly draft: string | undefined;
+
+  constructor(action: string, draft: string | undefined) {
+    super(
+      `Cannot ${action} while draft ${draft ?? "(unnamed)"} exists: finalize it or run discard-draft first`,
+    );
+    this.draft = draft;
+  }
+}
+
+/**
+ * The draft is a Recovery draft, whose schema change is its migration's and
+ * is never regenerated, and the command would regenerate it.
+ */
+export class RecoveryDraftError extends SuperDeployError {
+  readonly code = "recovery-draft";
+  /** The migration the Recovery draft recovers. */
+  readonly migration: number;
+
+  constructor(migration: number) {
+    super(
+      `The draft is a Recovery of migration ${migration}: its schema change is migration ${migration}'s and is never regenerated. Edit its scripts and seed data, then rehearse or finalize it (or discard-draft)`,
+    );
+    this.migration = migration;
+  }
+}
+
+/** A Recovery draft's schema-change.sql is no longer a copy of its migration's. */
+export class RecoverySchemaChangeEditedError extends SuperDeployError {
+  readonly code = "recovery-schema-change-edited";
+  /** Project-relative path of the draft's schema change. */
+  readonly file: string;
+
+  constructor(file: string, migration: string) {
+    super(
+      `${file} must stay an exact copy of ${migration}'s schema change: a Recovery replaces only the scripts and seed data`,
+    );
+    this.file = file;
+  }
+}
+
+/** `unfinalize` was asked for a migration's newest Recovery and it has none. */
+export class NoRecoveryError extends SuperDeployError {
+  readonly code = "no-recovery";
+
+  constructor(migration: string) {
+    super(`Migration ${migration} has no Recovery to unfinalize`);
+  }
 }

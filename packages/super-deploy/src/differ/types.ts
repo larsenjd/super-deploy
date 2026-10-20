@@ -1,7 +1,9 @@
 // The Differ interface (ADR-0003): two live databases in, the ordered
 // statements that turn the first into the second out. V1 wraps pg-delta;
 // the fallback is our own pg_catalog/pg_depend differ behind this interface.
+
 import type { Session } from "../adapters/types.ts";
+import { SuperDeployError } from "../errors.ts";
 
 export interface PlannedStatement {
   /** One statement, terminated with a semicolon. */
@@ -23,4 +25,12 @@ export interface Differ {
    * anything else must throw instead).
    */
   diff(source: Session, desired: Session): Promise<readonly PlannedStatement[]>;
+}
+
+export class DifferError extends SuperDeployError {
+  readonly code = "differ-failed";
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+  }
 }

@@ -1,8 +1,9 @@
 // The typed project configuration (super-deploy.config.ts) and its validation.
 // Never in config: credentials, the disposable flag, migration state.
+
 import { isAbsolute, normalize } from "node:path";
 import type { DeploymentAdapter, RehearsalAdapter } from "../adapters/types.ts";
-import { ConfigError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 
 /** A duration: milliseconds as a number, or a string such as `"500ms"`, `"5s"`, `"2min"`. */
 export type Duration = number | string;
@@ -266,4 +267,16 @@ function describe(value: unknown): string {
   return value === undefined
     ? "nothing"
     : (JSON.stringify(value) ?? String(value));
+}
+
+/** The config file failed to load or a setting is invalid. */
+export class ConfigError extends SuperDeployError {
+  readonly code = "invalid-config";
+  /** Dotted path of the offending setting, e.g. `targets.dev.lockTimeout`. */
+  readonly setting: string | undefined;
+
+  constructor(message: string, setting?: string, options?: ErrorOptions) {
+    super(message, options);
+    this.setting = setting;
+  }
 }

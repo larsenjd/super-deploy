@@ -3,11 +3,6 @@
 // finalizing anything.
 import { readFile } from "node:fs/promises";
 import { join, posix } from "node:path";
-import {
-  NoDraftError,
-  RecoverySchemaChangeEditedError,
-  UnknownMigrationError,
-} from "../errors.ts";
 import type { Project } from "../project.ts";
 import { rehearseDraft } from "../rehearsal/rehearse-draft.ts";
 import { rehearseRecovery } from "../rehearsal/rehearse-recovery.ts";
@@ -31,7 +26,7 @@ import {
   readDesiredSchema,
   readDesiredSchemaFiles,
 } from "../store/desired-schema.ts";
-import { type DraftMetadata, readDraft } from "../store/draft.ts";
+import { type DraftMetadata, NoDraftError, readDraft } from "../store/draft.ts";
 import { type HashedFile, normaliseLineEndings } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
@@ -39,8 +34,10 @@ import {
   type FinalizedMigration,
   schemaChangeFileName,
   snapshotFolderName,
+  UnknownMigrationError,
 } from "../store/migrations.ts";
 import { newestSnapshot, refuseRuleViolations } from "./check-rules.ts";
+import { RecoverySchemaChangeEditedError } from "./recovery.ts";
 
 export interface RehearseResult {
   /** The draft's name. */

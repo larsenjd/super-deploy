@@ -22,6 +22,7 @@
 // migration's chain hash, so adding a Recovery never changes the hashes a
 // target recorded for the migration. A Recovery never has a schema change:
 // it always runs its migration's.
+
 import { constants, type Dirent } from "node:fs";
 import {
   access,
@@ -33,6 +34,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { SuperDeployError } from "../errors.ts";
 import type { DeployTimeKind } from "../sql-analysis/index.ts";
 import { maxDraftNameLength } from "./draft-name.ts";
 import { decodeHashedText, type HashedFile } from "./hashing.ts";
@@ -366,5 +368,30 @@ export async function exists(path: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** The command needs a finalized migration and there is none. */
+export class NoMigrationError extends SuperDeployError {
+  readonly code = "no-migration";
+
+  constructor(action: string) {
+    super(`There is no finalized migration to ${action}`);
+  }
+}
+
+/** A command was given a migration number the repo has no finalized migration for. */
+export class UnknownMigrationError extends SuperDeployError {
+  readonly code = "unknown-migration";
+  readonly number: number;
+  /** The repo's newest migration number; undefined when there is none. */
+  readonly newest: number | undefined;
+
+  constructor(number: number, newest: number | undefined) {
+    super(
+      `There is no finalized migration ${number}${newest === undefined ? " (there are none yet)" : ` (the newest is ${newest})`}`,
+    );
+    this.number = number;
+    this.newest = newest;
   }
 }

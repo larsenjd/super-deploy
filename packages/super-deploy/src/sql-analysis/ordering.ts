@@ -7,7 +7,6 @@
 // names and statement positions never decide the order; they only label
 // byte-identical duplicates, whose relative order cannot matter.
 import { createHash } from "node:crypto";
-import type { RuleViolation } from "../errors.ts";
 import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 import {
   pgCatalogFunctions,
@@ -21,6 +20,7 @@ import {
   type StatementKind,
   statementFacts,
 } from "./references.ts";
+import type { RuleViolation } from "./rules.ts";
 
 export interface OrderingResult {
   /** Every statement once, in load order; empty when there are errors. */

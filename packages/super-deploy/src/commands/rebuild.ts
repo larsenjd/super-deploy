@@ -17,8 +17,8 @@ import {
   runMigrations,
 } from "../deploy/engine.ts";
 import { historyTable } from "../deploy/history.ts";
+import { TargetNotDisposableError } from "../deploy/target.ts";
 import { wipeManagedSchema } from "../deploy/wipe.ts";
-import { TargetNotDisposableError, UnknownMigrationError } from "../errors.ts";
 import { runGuarded } from "../guard/guard.ts";
 import type { Project } from "../project.ts";
 import {
@@ -26,7 +26,10 @@ import {
   readMigrationsWithUnits,
 } from "../rehearsal/replica.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
-import { migrationFolderName } from "../store/migrations.ts";
+import {
+  migrationFolderName,
+  UnknownMigrationError,
+} from "../store/migrations.ts";
 import type { DeployedMigration } from "./deploy.ts";
 
 export interface RebuildOptions {

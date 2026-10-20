@@ -4,6 +4,7 @@
 // The library validates what adapters return (e.g. it refuses a server that
 // isn't PostgreSQL 18), so adapters stay thin.
 
+import { SuperDeployError } from "../errors.ts";
 export interface QueryResult<Row = Record<string, unknown>> {
   rows: Row[];
 }
@@ -61,4 +62,13 @@ export interface RehearsalAdapter {
   createDatabase(request: DatabaseRequest): Promise<ThrowawayDatabase>;
   /** Releases anything the adapter holds (pools, servers it started). */
   close?(): Promise<void>;
+}
+
+/** An adapter failed to provide a database or connection. */
+export class AdapterError extends SuperDeployError {
+  readonly code = "adapter-failed";
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+  }
 }

@@ -11,29 +11,30 @@
 // finalized files. A writable file whose migration still verifies is made
 // read-only again and listed in `readOnlyRestored`; integrity itself rests
 // on the hashes, which catch any edit.
+
 import { join, posix } from "node:path";
-import {
-  InvalidEncodingError,
-  RecoverySchemaChangeEditedError,
-  type RuleViolation,
-  SqlRuleViolationError,
-  ValidationFailedError,
-  type ValidationProblem,
-} from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { readSeededUnit, seededFiles } from "../rehearsal/seed-data.ts";
 import {
   desiredSchemaAnalysis,
   type Override,
+  type RuleViolation,
   type SqlFile,
+  SqlRuleViolationError,
 } from "../sql-analysis/index.ts";
 import {
   readDesiredSchema,
   readDesiredSchemaFiles,
 } from "../store/desired-schema.ts";
 import { type DraftMetadata, readDraft } from "../store/draft.ts";
-import { desiredSchemaHash } from "../store/hashing.ts";
-import { checkMigrations, type IntegrityReport } from "../store/integrity.ts";
+import { desiredSchemaHash, InvalidEncodingError } from "../store/hashing.ts";
+import {
+  checkMigrations,
+  type IntegrityReport,
+  summarise,
+  type ValidationProblem,
+} from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
   makeReadOnly,
@@ -42,6 +43,7 @@ import {
   writableFiles,
 } from "../store/migrations.ts";
 import { analyseReplayUnit } from "./check-rules.ts";
+import { RecoverySchemaChangeEditedError } from "./recovery.ts";
 import { requireOriginalSchemaChange } from "./rehearse.ts";
 
 export interface ValidateOptions {
@@ -341,4 +343,28 @@ async function ruleProblems(
     });
   }
   return { problems, overrides };
+}
+
+/** `validate` found errors, or warnings under `--strict`. */
+export class ValidationFailedError extends SuperDeployError {
+  readonly code = "validation-failed";
+  /** Every finding, errors and warnings, in report order. */
+  readonly problems: readonly ValidationProblem[];
+  readonly strict: boolean;
+
+  constructor(problems: readonly ValidationProblem[], strict: boolean) {
+    const errors = problems.filter((p) => p.severity === "error").length;
+    const warnings = problems.length - errors;
+    const counts = [
+      errors > 0 ? `${errors} error${errors === 1 ? "" : "s"}` : "",
+      warnings > 0
+        ? `${warnings} warning${warnings === 1 ? "" : "s"}${strict ? " (--strict)" : ""}`
+        : "",
+    ]
+      .filter((part) => part !== "")
+      .join(", ");
+    super(`Validation failed with ${counts}: ${summarise(problems)}`);
+    this.problems = problems;
+    this.strict = strict;
+  }
 }

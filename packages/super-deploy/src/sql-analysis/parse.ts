@@ -7,7 +7,7 @@
 // skipped; JSON omits default values (0, false, "").
 import type { Node } from "@pgsql/types";
 import { loadModule, parseSync } from "libpg-query";
-import type { RuleViolation } from "../errors.ts";
+import type { RuleViolation } from "./rules.ts";
 
 export interface SqlFile {
   /** Project-relative path with forward slashes, as shown in messages. */

@@ -17,9 +17,11 @@ import {
   text,
   unicodeOr,
 } from "@clack/prompts";
-import { InvalidDraftNameError } from "../errors.ts";
 import type { Project } from "../project.ts";
-import { normaliseDraftName } from "../store/draft-name.ts";
+import {
+  InvalidDraftNameError,
+  normaliseDraftName,
+} from "../store/draft-name.ts";
 import { migrationFolderName } from "../store/migrations.ts";
 import {
   type CommandDefinition,

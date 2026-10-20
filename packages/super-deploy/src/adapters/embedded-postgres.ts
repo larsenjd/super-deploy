@@ -16,7 +16,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type EmbeddedPostgresServer from "embedded-postgres";
 import pg from "pg";
-import { AdapterError } from "../errors.ts";
 import {
   connectSession,
   rehearsalDatabasePrefix,
@@ -24,6 +23,7 @@ import {
   targetOver,
 } from "./node-postgres.ts";
 import type { DeploymentAdapter, RehearsalAdapter } from "./types.ts";
+import { AdapterError } from "./types.ts";
 
 export interface EmbeddedPostgresOptions {
   /**

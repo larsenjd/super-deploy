@@ -2,10 +2,11 @@
 // migration: the draft's files, metadata and a desired-schema snapshot,
 // read-only, hashed and chained in the index. A Recovery draft becomes its
 // migration's next Recovery (store/migrations.ts) instead.
+
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { differ } from "../differ/index.ts";
-import { MigrationLimitError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import {
   acknowledgeDestructive,
@@ -257,4 +258,15 @@ async function finalizedPlace(
           : existing,
       ),
   };
+}
+
+/** Finalizing would number a migration past the last number folders allow. */
+export class MigrationLimitError extends SuperDeployError {
+  readonly code = "migration-limit";
+  readonly limit: number;
+
+  constructor(limit: number) {
+    super(`Migration numbers stop at ${limit}`);
+    this.limit = limit;
+  }
 }

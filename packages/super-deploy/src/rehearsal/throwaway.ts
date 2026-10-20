@@ -7,13 +7,9 @@ import type {
   RehearsalAdapter,
   Session,
 } from "../adapters/types.ts";
+import { AdapterError } from "../adapters/types.ts";
 import { quoteIdentifier } from "../deploy/history.ts";
-import {
-  AdapterError,
-  DesiredSchemaLoadError,
-  SuperDeployError,
-  UnsupportedServerError,
-} from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import type { ParsedStatement } from "../sql-analysis/index.ts";
 import {
   externalSchemasBoundAtCreate,
@@ -253,5 +249,46 @@ export async function adapterCall<T>(
     throw new AdapterError(`${adapter} failed to ${action}: ${reason}`, {
       cause: error,
     });
+  }
+}
+
+/** PostgreSQL refused a desired-schema statement while loading it into a throwaway database. */
+export class DesiredSchemaLoadError extends SuperDeployError {
+  readonly code = "desired-schema-load-failed";
+  readonly file: string;
+  readonly line: number;
+  /** PostgreSQL's own message. */
+  readonly detail: string;
+  /** Our explanation of the likely cause, when we know one. */
+  readonly hint: string | undefined;
+
+  constructor(
+    file: string,
+    line: number,
+    detail: string,
+    options?: ErrorOptions & { hint?: string | undefined },
+  ) {
+    const hint = options?.hint;
+    super(
+      `${file}:${line}: PostgreSQL refused the desired schema: ${detail}${hint === undefined ? "" : `. Hint: ${hint}`}`,
+      options,
+    );
+    this.file = file;
+    this.line = line;
+    this.detail = detail;
+    this.hint = hint;
+  }
+}
+
+/** An adapter connected to a server that isn't PostgreSQL 18. */
+export class UnsupportedServerError extends SuperDeployError {
+  readonly code = "unsupported-server";
+  readonly serverVersion: string;
+
+  constructor(source: string, serverVersion: string) {
+    super(
+      `${source} is PostgreSQL ${serverVersion}, but super-deploy requires PostgreSQL 18`,
+    );
+    this.serverVersion = serverVersion;
   }
 }

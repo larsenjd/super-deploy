@@ -11,10 +11,9 @@
 //      request (rehearsal/same-structure.ts, as in draft rehearsals)
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
-import { DriftError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import type { ParsedStatement } from "../sql-analysis/index.ts";
-import { driftBetween } from "../verification/drift.ts";
+import { DriftError, driftBetween } from "../verification/drift.ts";
 import { type ReplayUnit, replay } from "./replay.ts";
 import { withReplica } from "./replica.ts";
 import { requireSameStructure } from "./same-structure.ts";

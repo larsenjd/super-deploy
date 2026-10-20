@@ -14,7 +14,6 @@
 // can carry the desired schema's marker to the statement for that object
 // (`carryOverrides`).
 import { scanSync } from "libpg-query";
-import type { RuleViolation } from "../errors.ts";
 import { analyseMigration, type DeployTimeOptions } from "./deploy-time.ts";
 import {
   lineAtByte,
@@ -25,6 +24,7 @@ import {
 import { statementFacts } from "./references.ts";
 import { ruleCatalogue, ruleDefinition } from "./rule-catalogue.ts";
 import type { RuleFinding } from "./rule-types.ts";
+import type { RuleViolation } from "./rules.ts";
 import { objectTypeName, statementName } from "./statement-names.ts";
 import { isObject, statementBody } from "./syntax-tree.ts";
 

@@ -5,8 +5,8 @@ import { ENGINE_VERSION, type FactBase, plan } from "@supabase/pg-delta";
 import { extract } from "@supabase/pg-delta/extract";
 import type pg from "pg";
 import type { QueryResult, Session } from "../adapters/types.ts";
-import { DifferError } from "../errors.ts";
 import type { Differ, PlannedStatement } from "./types.ts";
+import { DifferError } from "./types.ts";
 
 export const pgDeltaVersion = "1.0.0-alpha.59";
 

@@ -7,8 +7,9 @@
 // `"recoveryOf": N` in draft.json and the name of migration N; its
 // schema-change.sql is a copy of migration N's, never regenerated, and its
 // scripts and seed data become the next Recovery of migration N at finalize.
+
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { InvalidDraftError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import { normaliseDraftName } from "./draft-name.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";
 
@@ -101,4 +102,25 @@ export async function writeDraftMetadata(
     paths.draftMetadata,
     `${JSON.stringify({ name: metadata.name, desiredSchemaHash: metadata.desiredSchemaHash, recoveryOf: metadata.recoveryOf }, null, 2)}\n`,
   );
+}
+
+/** The command needs a draft and there is none. */
+export class NoDraftError extends SuperDeployError {
+  readonly code = "no-draft";
+
+  constructor(action: string) {
+    super(`There is no draft to ${action}; run draft first`);
+  }
+}
+
+/** draft.json can't be read as a draft's metadata. */
+export class InvalidDraftError extends SuperDeployError {
+  readonly code = "invalid-draft";
+  /** Project-relative path of draft.json. */
+  readonly file: string;
+
+  constructor(file: string, problem: string, options?: ErrorOptions) {
+    super(`${file} ${problem}`, options);
+    this.file = file;
+  }
 }

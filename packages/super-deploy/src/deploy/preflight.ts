@@ -9,8 +9,10 @@
 //   - what the target's history schema records matches the repo, and the
 //     target holds no draft (deploy-draft's), which is not a migration
 // `status` runs the same checks and reports them.
+
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
+import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
 import { rolesNamedInFiles } from "../sql-analysis/index.ts";
@@ -291,4 +293,35 @@ async function deployRoleWarnings(
       `${who} holds ${privileged.join(", ")} (it can ${allows}): deploy with a role that doesn't`,
     ];
   });
+}
+
+/**
+ * The deploy pre-flight refused the target: a role the deployment grants to
+ * or a declared external schema is missing, or its recorded history doesn't
+ * match the repo. Nothing was rehearsed or changed; the attempt is logged as
+ * failed.
+ */
+export class PreflightFailedError extends SuperDeployError {
+  readonly code = "preflight-failed";
+  readonly target: string;
+  readonly findings: PreflightFindings;
+
+  constructor(target: string, findings: PreflightFindings) {
+    const roles = findings.missingRoles.map(
+      (role) =>
+        `role "${role}" does not exist (the desired schema grants to it; create it on the target)`,
+    );
+    const schemas = findings.missingExternalSchemas.map(
+      (schema) =>
+        `external schema "${schema}" does not exist (it is declared in externalSchemas)`,
+    );
+    const history = findings.historyMismatches.map(
+      (mismatch) => mismatch.message,
+    );
+    super(
+      `Target ${target} failed the deploy pre-flight checks: ${[...roles, ...schemas, ...history].join("; ")}`,
+    );
+    this.target = target;
+    this.findings = findings;
+  }
 }

@@ -20,26 +20,26 @@
 // a history mismatch that refuses deployment, drift is not checked against
 // the recorded migrations, and deploy-draft itself refuses a second draft.
 // Only `rebuild` resets the target and deletes that row.
+
 import {
   ensureManagedSchemaInTransaction,
   inDeployTransaction,
 } from "../deploy/engine.ts";
 import { recordDeployedDraft } from "../deploy/history.ts";
 import { pendingMigrations } from "../deploy/pending.ts";
-import { preflightChecks, refusesDeployment } from "../deploy/preflight.ts";
 import {
-  NoDraftError,
   PreflightFailedError,
-  RecoveryBaseMismatchError,
-  TargetBehindError,
-  TargetNotDisposableError,
-} from "../errors.ts";
+  preflightChecks,
+  refusesDeployment,
+} from "../deploy/preflight.ts";
+import { TargetNotDisposableError } from "../deploy/target.ts";
+import { SuperDeployError } from "../errors.ts";
 import { runGuarded } from "../guard/guard.ts";
 import type { Project } from "../project.ts";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
 import { runUnit } from "../rehearsal/replay.ts";
 import type { SeededUnit } from "../rehearsal/seed-data.ts";
-import { readDraft } from "../store/draft.ts";
+import { NoDraftError, readDraft } from "../store/draft.ts";
 import { sha256 } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { migrationFolderName } from "../store/migrations.ts";
@@ -232,4 +232,59 @@ export function draftContentHash(units: readonly ReplayUnit[]): string {
       units.flatMap((unit) => unit.files.map((file) => [file.file, file.sql])),
     ),
   );
+}
+
+/**
+ * deploy-draft was refused because the target has pending migrations: the
+ * draft's schema change was generated on top of the newest migration, so
+ * the target must be there first. Nothing was asked or changed.
+ */
+export class TargetBehindError extends SuperDeployError {
+  readonly code = "target-behind";
+  readonly target: string;
+  /** The pending migrations' folder names, in order. */
+  readonly pending: readonly string[];
+
+  constructor(target: string, pending: readonly string[]) {
+    super(
+      `Target ${target} has pending migrations (${pending.join(", ")}): deploy them first, because the draft goes on top of the newest migration`,
+    );
+    this.target = target;
+    this.pending = pending;
+  }
+}
+
+/**
+ * deploy-draft of a Recovery draft of migration N needs a target whose last
+ * recorded migration is N-1: the Recovery runs N's schema change.
+ */
+export class RecoveryBaseMismatchError extends SuperDeployError {
+  readonly code = "recovery-base-mismatch";
+  readonly target: string;
+  /** The recovered migration's folder name. */
+  readonly migration: string;
+  /** The folder of migration N-1; undefined when N is 1. */
+  readonly base: string | undefined;
+  /** The target's last recorded migration's folder; undefined when none is recorded. */
+  readonly recorded: string | undefined;
+
+  constructor(
+    target: string,
+    migration: string,
+    base: string | undefined,
+    recorded: string | undefined,
+    baseNumber: number,
+  ) {
+    const fix =
+      baseNumber === 0
+        ? "use a target with no recorded migrations"
+        : `run rebuild --to ${baseNumber} first`;
+    super(
+      `The Recovery draft of migration ${migration} runs on top of ${base ?? "no recorded migration"}, but target ${target} is at ${recorded ?? "no recorded migration"}: ${fix}`,
+    );
+    this.target = target;
+    this.migration = migration;
+    this.base = base;
+    this.recorded = recorded;
+  }
 }

@@ -2,7 +2,6 @@
 // rehearse, finalize and validate. The analysis itself is database-free and
 // lives in sql-analysis/; this module only gathers its inputs from disk.
 import { join, posix } from "node:path";
-import { type RuleViolation, SqlRuleViolationError } from "../errors.ts";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
 import {
   analyseMigration,
@@ -13,7 +12,9 @@ import {
   type MigrationAnalysis,
   type ParsedStatement,
   parseSqlFile,
+  type RuleViolation,
   type SqlFile,
+  SqlRuleViolationError,
 } from "../sql-analysis/index.ts";
 import { readDesiredSchema } from "../store/desired-schema.ts";
 import {

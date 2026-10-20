@@ -16,9 +16,10 @@
 // PostgreSQL revokes only what the revoking role (or, for a superuser or a
 // member of the owner, the owner) granted, so a grant the owner made on a
 // schema the deploy role doesn't own stays.
+
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
-import { type UnrevokedGrant, WipeFailedError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import { schemaSetupRoles } from "../verification/schema-setup.ts";
 import { quoteIdentifier } from "./history.ts";
 
@@ -192,3 +193,64 @@ SELECT privilege_type AS privilege, grantee_name AS grantee,
   FROM (${otherGrants}) g
  WHERE NOT (grantee = 0 AND privilege_type = 'USAGE' AND $2::boolean)
  ORDER BY grantee_name, privilege_type, grantor`;
+
+/** A grant on the managed schema that rebuild's deploy role couldn't revoke. */
+export interface UnrevokedGrant {
+  /** E.g. `USAGE`. */
+  readonly privilege: string;
+  /** The role it is granted to (quoted if need be), or `PUBLIC`. */
+  readonly grantee: string;
+  /** The role that granted it (quoted if need be). */
+  readonly grantor: string;
+  /** Whether the grantor is the schema's owner. */
+  readonly byOwner: boolean;
+}
+
+/**
+ * rebuild dropped everything it knows how to drop in the managed schema, but
+ * objects are left (e.g. members of an extension that lives elsewhere), or
+ * grants on the schema that only their grantor can revoke (e.g. the owner's,
+ * when the deploy role doesn't own the schema). The transaction rolled back:
+ * nothing changed.
+ */
+export class WipeFailedError extends SuperDeployError {
+  readonly code = "wipe-failed";
+  readonly target: string;
+  readonly schema: string;
+  /** PostgreSQL's descriptions of what is left, e.g. `function public.f(integer)`. */
+  readonly objects: readonly string[];
+  /** The grants on the schema left, which the deploy role can't revoke. */
+  readonly grants: readonly UnrevokedGrant[];
+
+  constructor(
+    target: string,
+    schema: string,
+    objects: readonly string[],
+    grants: readonly UnrevokedGrant[] = [],
+  ) {
+    const left = [
+      ...(objects.length > 0
+        ? [`it still holds ${objects.join(", ")}; drop them by hand`]
+        : []),
+      ...(grants.length > 0
+        ? [
+            `the deploy role can't revoke ${grants.map(unrevokedGrant).join(", ")}; revoke them as their grantor`,
+          ]
+        : []),
+    ];
+    super(
+      `Could not wipe schema ${schema} on target ${target}: ${left.join("; ")}, then run rebuild again (nothing changed)`,
+    );
+    this.target = target;
+    this.schema = schema;
+    this.objects = objects;
+    this.grants = grants;
+  }
+}
+
+function unrevokedGrant(grant: UnrevokedGrant): string {
+  const who = grant.byOwner
+    ? `${grant.grantor}, the schema's owner: only the owner`
+    : `${grant.grantor}: only ${grant.grantor}`;
+  return `${grant.privilege} to ${grant.grantee} (granted by ${who} or a superuser can revoke it)`;
+}

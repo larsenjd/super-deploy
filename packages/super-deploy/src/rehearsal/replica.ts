@@ -4,9 +4,10 @@
 // compares it with the target; the deployment rehearsal then runs the
 // pending migrations on the same database; `mark` (ticket 20) builds one up
 // to migration N and requires an empty diff.
+
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
 import type { RecordedMigration } from "../deploy/history.ts";
-import { UnknownRecordedMigrationError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import type { FinalizedMigration } from "../store/migrations.ts";
 import {
@@ -123,4 +124,19 @@ export function withReplica<T>(
     }
     return use(replica);
   });
+}
+
+/** The target records migrations the project doesn't have, so no replica of it can be built. */
+export class UnknownRecordedMigrationError extends SuperDeployError {
+  readonly code = "unknown-recorded-migration";
+  readonly target: string;
+  readonly numbers: readonly number[];
+
+  constructor(target: string, numbers: readonly number[]) {
+    super(
+      `Target ${target} records migration${numbers.length === 1 ? "" : "s"} ${numbers.join(", ")}, which the project doesn't have`,
+    );
+    this.target = target;
+    this.numbers = numbers;
+  }
 }

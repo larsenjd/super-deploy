@@ -3,10 +3,7 @@
 // the menu does the same; scripts answer however they like). With neither
 // `confirm` nor the acknowledgement flag it refuses, so nothing is lost when
 // there is nobody to ask.
-import {
-  DestructiveNotAcknowledgedError,
-  OverwriteNotAcknowledgedError,
-} from "./errors.ts";
+import { SuperDeployError } from "./errors.ts";
 import type { OverrideNeeded } from "./sql-analysis/adoption-overrides.ts";
 import type { DestructiveStatement } from "./sql-analysis/destructive.ts";
 
@@ -119,5 +116,52 @@ export async function acknowledgeDestructive(
   }
   if (!(await options.confirm(question))) {
     throw new DestructiveNotAcknowledgedError(question, true);
+  }
+}
+
+/**
+ * A command would discard work and was not allowed to: nobody could be asked
+ * and `acknowledgeOverwrite` wasn't set, or the question was answered no.
+ * Nothing was changed.
+ */
+export class OverwriteNotAcknowledgedError extends SuperDeployError {
+  readonly code = "overwrite-not-acknowledged";
+  readonly question: OverwriteQuestion;
+  /** True when the question was asked and answered no. */
+  readonly declined: boolean;
+
+  constructor(question: OverwriteQuestion, declined: boolean) {
+    super(
+      declined
+        ? `${question.message} Answered no: nothing changed`
+        : `${question.message} Refused without a terminal: pass --acknowledge-overwrite to delete or overwrite ${question.paths.join(", ")}`,
+    );
+    this.question = question;
+    this.declined = declined;
+  }
+}
+
+/**
+ * `finalize` found statements that drop structure or delete data, and they
+ * were not acknowledged: no `acknowledgeDestructive`, and `confirm` was
+ * missing or answered no. Nothing was changed.
+ */
+export class DestructiveNotAcknowledgedError extends SuperDeployError {
+  readonly code = "destructive-not-acknowledged";
+  readonly question: DestructiveQuestion;
+  /** True when the question was asked and answered no. */
+  readonly declined: boolean;
+
+  constructor(question: DestructiveQuestion, declined: boolean) {
+    const statements = question.statements
+      .map((s) => `${s.file}:${s.line}: ${s.message}`)
+      .join("; ");
+    super(
+      declined
+        ? `${question.message} Answered no: nothing changed`
+        : `${question.message} ${statements}. Refused without a terminal: pass --acknowledge-destructive to finalize it anyway`,
+    );
+    this.question = question;
+    this.declined = declined;
   }
 }

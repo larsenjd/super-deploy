@@ -36,9 +36,11 @@
 // BEGIN and COMMIT when it creates the history schema: a wrapper finds the
 // deploy transaction as the first batch containing `lock_timeout` and not
 // `READ ONLY`.
+
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
-import { CommitOutcomeUnknownError, InterruptedError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
+import { InterruptedError } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { type ReplayUnit, runUnit } from "../rehearsal/replay.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
@@ -299,4 +301,30 @@ function refusedByServer(error: unknown): boolean {
     !code.startsWith("08") &&
     !code.startsWith("57P")
   );
+}
+
+/**
+ * The connection to a target was lost while its deploy transaction was
+ * committing, so whether the deployment landed is unknown. The attempt is
+ * recorded as `unknown`; the next `status` or `deploy` settles it as
+ * succeeded or failed from the migrations rows the transaction wrote.
+ */
+export class CommitOutcomeUnknownError extends SuperDeployError {
+  readonly code = "commit-outcome-unknown";
+  readonly target: string;
+  readonly attemptId: number;
+
+  constructor(target: string, attemptId: number, options?: ErrorOptions) {
+    const cause = options?.cause;
+    const reason =
+      cause === undefined
+        ? ""
+        : ` (${cause instanceof Error ? cause.message : String(cause)})`;
+    super(
+      `Lost the connection to target ${target} during COMMIT, so it is unknown whether attempt #${attemptId} landed; the next status or deploy settles it${reason}`,
+      options,
+    );
+    this.target = target;
+    this.attemptId = attemptId;
+  }
 }

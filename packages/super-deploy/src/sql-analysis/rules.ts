@@ -5,7 +5,7 @@
 // deploy-time kinds (schema change, pre- and post-migration scripts, seed
 // data) are checked by deploy-time.ts (ticket 06), which also analyses a
 // migration's files together (analyseMigration).
-import type { RuleViolation } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import {
   analyseMigration,
   type DeployTimeKind,
@@ -75,4 +75,32 @@ export async function analyseFile(
         violationOf(statement, finding),
       ),
   );
+}
+
+export interface RuleViolation {
+  /** Project-relative path with forward slashes. */
+  file: string;
+  /** 1-based line where the statement (or syntax error) starts. */
+  line: number;
+  /** The offending statement's text (empty for syntax errors). */
+  statement: string;
+  /** Stable rule identifier, e.g. `desired-schema-statement`. */
+  rule: string;
+  message: string;
+}
+
+export class SqlRuleViolationError extends SuperDeployError {
+  readonly code = "sql-rule-violation";
+  readonly violations: readonly RuleViolation[];
+
+  constructor(violations: readonly RuleViolation[]) {
+    const [first] = violations;
+    const where = first
+      ? `${first.file}:${first.line}: ${first.message} [${first.rule}]`
+      : "";
+    const more =
+      violations.length > 1 ? ` (and ${violations.length - 1} more)` : "";
+    super(`${where}${more}`);
+    this.violations = violations;
+  }
 }

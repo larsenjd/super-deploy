@@ -2,10 +2,11 @@
 // in ONE transaction with the pinned session settings, exactly as a
 // deployment of all of them would run (ADR-0001). Each file is its own batch,
 // so a failure names the file; each migration ends at a boundary (runUnit).
+
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
-import { SqlFileFailedError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import { rolesNamedInFiles } from "../sql-analysis/index.ts";
 import { decodeHashedText } from "../store/hashing.ts";
 import { projectRelative } from "../store/layout.ts";
@@ -199,4 +200,30 @@ function lineAt(
       .slice(0, index - 1)
       .filter((character) => character === "\n").length
   );
+}
+
+/** PostgreSQL refused a deploy-time SQL file while a rehearsal replayed it. */
+export class SqlFileFailedError extends SuperDeployError {
+  readonly code = "sql-file-failed";
+  /** Project-relative path with forward slashes. */
+  readonly file: string;
+  /** 1-based line of the error, when PostgreSQL reported a position. */
+  readonly line: number | undefined;
+  /** PostgreSQL's own message. */
+  readonly detail: string;
+
+  constructor(
+    file: string,
+    line: number | undefined,
+    detail: string,
+    options?: ErrorOptions,
+  ) {
+    super(
+      `${file}${line === undefined ? "" : `:${line}`}: PostgreSQL refused it: ${detail}`,
+      options,
+    );
+    this.file = file;
+    this.line = line;
+    this.detail = detail;
+  }
 }

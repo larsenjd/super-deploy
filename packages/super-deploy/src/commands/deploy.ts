@@ -10,9 +10,12 @@ import { join } from "node:path";
 import { applyMigrations, withLockedTarget } from "../deploy/engine.ts";
 import { readRecordedMigrations } from "../deploy/history.ts";
 import { pendingMigrations } from "../deploy/pending.ts";
-import { preflightChecks, refusesDeployment } from "../deploy/preflight.ts";
+import {
+  PreflightFailedError,
+  preflightChecks,
+  refusesDeployment,
+} from "../deploy/preflight.ts";
 import { targetDatabaseRequest } from "../deploy/target.ts";
-import { PreflightFailedError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { rehearseDeployment } from "../rehearsal/rehearse-deployment.ts";
 import {

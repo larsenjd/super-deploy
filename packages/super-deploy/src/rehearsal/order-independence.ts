@@ -3,13 +3,14 @@
 // difference means the result depends on load order in a way the ordering
 // can't see, so the desired schema is refused rather than loaded by luck.
 // It samples one other order; it does not prove independence (REFINEMENTS.md).
+
 import type {
   DatabaseRequest,
   RehearsalAdapter,
   Session,
 } from "../adapters/types.ts";
 import type { ResolvedConfig } from "../config/config.ts";
-import { DesiredSchemaLoadError, OrderDependenceError } from "../errors.ts";
+import { listed, SuperDeployError } from "../errors.ts";
 import type { ParsedStatement } from "../sql-analysis/index.ts";
 import { alternativeOrder } from "../sql-analysis/index.ts";
 import {
@@ -18,6 +19,7 @@ import {
   factLine,
 } from "../verification/catalog.ts";
 import {
+  DesiredSchemaLoadError,
   draftDatabaseRequest,
   loadDesiredSchema,
   withThrowawayDatabase,
@@ -107,4 +109,38 @@ async function checkOrderIndependence(
       }
     },
   );
+}
+
+/**
+ * The desired schema gives a different catalog, or fails to load, when its
+ * statements load in another valid order (the order-independence check).
+ */
+export class OrderDependenceError extends SuperDeployError {
+  readonly code = "order-dependent-desired-schema";
+  /** The objects whose catalog entries differ, e.g. `view which_pick`, sorted. */
+  readonly objects: readonly string[];
+  /**
+   * The differing catalog facts, as `- <kind>: <line>` when loaded in the
+   * normal order and `+ <kind>: <line>` when loaded in the other order.
+   */
+  readonly differences: readonly string[];
+  /** Set when the other order failed to load instead. */
+  readonly failure: { file: string; line: number; detail: string } | undefined;
+
+  constructor(
+    objects: readonly string[],
+    differences: readonly string[],
+    failure?: { file: string; line: number; detail: string },
+    options?: ErrorOptions,
+  ) {
+    super(
+      failure === undefined
+        ? `The desired schema depends on load order: loaded in another valid order, it gives a different catalog for ${listed(objects)}`
+        : `The desired schema depends on load order: it loads in one valid order but not in another, where ${failure.file}:${failure.line} fails: ${failure.detail}. super-deploy may not see a reference this statement makes; please report it`,
+      options,
+    );
+    this.objects = objects;
+    this.differences = differences;
+    this.failure = failure;
+  }
 }

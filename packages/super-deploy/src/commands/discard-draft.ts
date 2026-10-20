@@ -1,10 +1,9 @@
 // `discard-draft [--acknowledge-overwrite]`: delete the draft, leaving the
 // desired schema alone, so the next `draft` starts from scratch.
 import { rm } from "node:fs/promises";
-import { NoDraftError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { acknowledgeOverwrite, type OverwriteOptions } from "../questions.ts";
-import { readDraft } from "../store/draft.ts";
+import { NoDraftError, readDraft } from "../store/draft.ts";
 import { projectRelative } from "../store/layout.ts";
 import { exists } from "../store/migrations.ts";
 

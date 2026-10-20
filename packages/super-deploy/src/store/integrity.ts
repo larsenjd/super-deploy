@@ -2,14 +2,12 @@
 // index, folder names, numbering, content hashes and the hash chains. `validate` reports its
 // findings; every command that builds on the migrations (draft, rehearse,
 // finalize) refuses to run while it finds errors.
+
 import { join } from "node:path";
-import {
-  InvalidEncodingError,
-  MigrationIntegrityError,
-  type ValidationProblem,
-} from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import {
   chainHash,
+  InvalidEncodingError,
   migrationContentHash,
   recoveryContentHash,
 } from "./hashing.ts";
@@ -299,4 +297,43 @@ export async function verifiedMigrations(
 
 function hashes(entry: { contentHash: string; chainHash: string }) {
   return { contentHash: entry.contentHash, chainHash: entry.chainHash };
+}
+
+export type ValidationSeverity = "error" | "warning";
+
+/** One finding of `validate` (or of the integrity check other commands run first). */
+export interface ValidationProblem {
+  readonly severity: ValidationSeverity;
+  /**
+   * Stable identifier: `index-invalid`, `invalid-folder-name`,
+   * `unexpected-entry`, `migration-missing`, `migration-unindexed`,
+   * `migration-renamed`, `numbering-gap`, `invalid-encoding`,
+   * `content-hash-mismatch`, `chain-hash-mismatch`, `sql-rule-violation`,
+   * `recovery-schema-change-edited`, `unknown-migration` (errors);
+   * `unfinalized-draft`, `undrafted-changes` (warnings).
+   */
+  readonly code: string;
+  readonly message: string;
+  /** Project-relative path with forward slashes, when the problem has one. */
+  readonly path?: string;
+  /** For `sql-rule-violation`: the 1-based line and the rule id. */
+  readonly line?: number;
+  readonly rule?: string;
+}
+
+export function summarise(problems: readonly ValidationProblem[]): string {
+  const [first] = problems;
+  const more = problems.length > 1 ? ` (and ${problems.length - 1} more)` : "";
+  return `${first?.message ?? ""}${more}`;
+}
+
+/** The finalized migrations failed their integrity check, so nothing builds on them. */
+export class MigrationIntegrityError extends SuperDeployError {
+  readonly code = "migration-integrity";
+  readonly problems: readonly ValidationProblem[];
+
+  constructor(problems: readonly ValidationProblem[]) {
+    super(`The finalized migrations failed validation: ${summarise(problems)}`);
+    this.problems = problems;
+  }
 }

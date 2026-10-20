@@ -3,7 +3,6 @@
 // any draft. Only *.sql files in the desired-schema folder are touched.
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { NoMigrationError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { acknowledgeOverwrite, type OverwriteOptions } from "../questions.ts";
 import {
@@ -15,7 +14,11 @@ import {
 import type { HashedFile } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
-import { exists, snapshotFolderName } from "../store/migrations.ts";
+import {
+  exists,
+  NoMigrationError,
+  snapshotFolderName,
+} from "../store/migrations.ts";
 import { draftName } from "./discard-draft.ts";
 
 export type RestoreSchemaOptions = OverwriteOptions;

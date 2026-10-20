@@ -16,13 +16,10 @@
 // ...), execute("COMMIT") (or "ROLLBACK" after a failure before it). Because
 // it writes a `migrations` row with the attempt's id, a lost COMMIT or a
 // crashed mark settles like a deployment: succeeded if the row is there.
+
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
-import {
-  HistoryMismatchError,
-  MarkMismatchError,
-  NothingToMarkError,
-} from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import {
   type MigrationWithUnit,
@@ -31,7 +28,11 @@ import {
   withReplica,
 } from "../rehearsal/replica.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
-import { driftBetween } from "../verification/drift.ts";
+import {
+  type DriftedObject,
+  driftBetween,
+  listedDrift,
+} from "../verification/drift.ts";
 import { inDeployTransaction, type LockedTarget } from "./engine.ts";
 import {
   type DeployedDraft,
@@ -41,6 +42,7 @@ import {
   recordMigration,
 } from "./history.ts";
 import { pendingMigrations } from "./pending.ts";
+import type { HistoryMismatch } from "./preflight.ts";
 import { historyMismatches } from "./preflight.ts";
 import { targetDatabaseRequest } from "./target.ts";
 
@@ -175,4 +177,63 @@ export async function markNextPending(
   });
   await recordMarked(project, locked, next);
   return next;
+}
+
+/** `mark` found no pending migration on the target: there is nothing to record. */
+export class NothingToMarkError extends SuperDeployError {
+  readonly code = "nothing-to-mark";
+  readonly target: string;
+
+  constructor(target: string) {
+    super(
+      `Target ${target} has no pending migration to mark: it records every migration in the project`,
+    );
+    this.target = target;
+  }
+}
+
+/**
+ * What the target records disagrees with the project's migrations (see
+ * HistoryMismatch), so no faithful replica of it can be built. Nothing changed.
+ */
+export class HistoryMismatchError extends SuperDeployError {
+  readonly code = "history-mismatch";
+  readonly target: string;
+  /** Never empty. */
+  readonly mismatches: readonly HistoryMismatch[];
+
+  constructor(target: string, mismatches: readonly HistoryMismatch[]) {
+    super(
+      `Target ${target}'s recorded migrations don't match the project's: ${mismatches.map((m) => m.message).join("; ")}`,
+    );
+    this.target = target;
+    this.mismatches = mismatches;
+  }
+}
+
+/**
+ * `mark` refused: the target's managed schema differs from a replica of its
+ * migrations up to the one being marked (column order and ownership aside).
+ * Nothing was recorded.
+ */
+export class MarkMismatchError extends SuperDeployError {
+  readonly code = "mark-mismatch";
+  readonly target: string;
+  /** The migration that was to be marked, e.g. `00002-add-orders`. */
+  readonly migration: string;
+  /** How the target differs from the replica, sorted by object; never empty. */
+  readonly objects: readonly DriftedObject[];
+
+  constructor(
+    target: string,
+    migration: string,
+    objects: readonly DriftedObject[],
+  ) {
+    super(
+      `Target ${target} does not match a replica of its migrations up to ${migration}: ${listedDrift(objects)}. Nothing was recorded; fix the target until it matches, then mark again`,
+    );
+    this.target = target;
+    this.migration = migration;
+    this.objects = objects;
+  }
 }

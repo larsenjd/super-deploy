@@ -8,9 +8,10 @@
 //
 // Advisory locks are per database, so the key only has to tell projects
 // apart that share one database with different history schemas.
+
 import { createHash } from "node:crypto";
 import type { Session } from "../adapters/types.ts";
-import { type LockHolder, TargetLockedError } from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import { readRunningAttemptOf } from "./history.ts";
 
 export type LockPurpose = "target" | "create-history";
@@ -102,4 +103,41 @@ export async function lockHolder(
             startedAt: attempt.startedAt,
           },
   };
+}
+
+/** The holder of a target's lock, as recorded in its history schema. */
+export interface LockHolder {
+  /** The server process holding the lock. */
+  readonly pid: number | undefined;
+  /** The running attempt that process recorded, if one is found. */
+  readonly attempt:
+    | {
+        readonly id: number;
+        readonly command: string;
+        readonly osUser: string;
+        readonly startedAt: Date;
+      }
+    | undefined;
+}
+
+/** Another command holds the target's lock (deploy, mark, rebuild, deploy-draft, disposable). */
+export class TargetLockedError extends SuperDeployError {
+  readonly code = "target-locked";
+  readonly target: string;
+  readonly holder: LockHolder;
+
+  constructor(target: string, holder: LockHolder) {
+    const { attempt, pid } = holder;
+    const who =
+      attempt !== undefined
+        ? `attempt #${attempt.id} (${attempt.command} by ${attempt.osUser}, started ${attempt.startedAt.toISOString()})`
+        : pid !== undefined
+          ? `another session (server process ${pid})`
+          : "another session";
+    super(
+      `Target ${target} is locked by ${who}; try again when it has finished`,
+    );
+    this.target = target;
+    this.holder = holder;
+  }
 }

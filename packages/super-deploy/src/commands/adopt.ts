@@ -35,11 +35,15 @@
 // If steps 3-4 fail, every file adoption wrote is removed again, so the
 // project is as it was; except when the target's COMMIT outcome is unknown
 // (the record may be there: the next status or deploy settles it).
+
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
-import { withLockedTarget } from "../deploy/engine.ts";
+import {
+  CommitOutcomeUnknownError,
+  withLockedTarget,
+} from "../deploy/engine.ts";
 import { readRecordedMigrations } from "../deploy/history.ts";
 import { markNextPending, readMarkableMigrations } from "../deploy/mark.ts";
 import {
@@ -49,14 +53,7 @@ import {
   targetTimeouts,
 } from "../deploy/target.ts";
 import { differ } from "../differ/index.ts";
-import {
-  AdoptCancelledError,
-  AdoptConflictError,
-  AdoptUnsupportedError,
-  CommitOutcomeUnknownError,
-  SqlRuleViolationError,
-  type UnsupportedObject,
-} from "../errors.ts";
+import { SuperDeployError } from "../errors.ts";
 import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import type { AskOverrideReason } from "../questions.ts";
@@ -77,6 +74,7 @@ import {
   type ParsedStatement,
   type RuleContext,
   type SqlFile,
+  SqlRuleViolationError,
   withOverrideMarkers,
 } from "../sql-analysis/index.ts";
 import type { Override } from "../sql-analysis/overrides.ts";
@@ -539,5 +537,93 @@ async function undoAdoption(
     await rm(indexPath, { force: true });
   } else {
     await writeFile(indexPath, index);
+  }
+}
+
+/**
+ * `init --adopt` needs a project with no migrations, draft or desired
+ * schema yet, and a target that records no migrations; nothing was written.
+ */
+export class AdoptConflictError extends SuperDeployError {
+  readonly code = "adopt-conflict";
+  readonly target: string;
+  /** Each reason, e.g. `the project already has a draft`. */
+  readonly reasons: readonly string[];
+
+  constructor(target: string, reasons: readonly string[]) {
+    super(`Cannot adopt target ${target}: ${reasons.join("; ")}`);
+    this.target = target;
+    this.reasons = reasons;
+  }
+}
+
+/** Something V1 doesn't support, found by `init --adopt`. */
+export interface UnsupportedObject {
+  /**
+   * The object as PostgreSQL describes it (`statistics object st`), or the
+   * first line of the statement the target's schema needs.
+   */
+  readonly object: string;
+  /** The rule id that refuses it, e.g. `unsupported-object`. */
+  readonly rule: string;
+  /** Why, in the rules' words. */
+  readonly reason: string;
+}
+
+/**
+ * `init --adopt` found objects in the target's managed schema that V1
+ * doesn't support (or can't reproduce); nothing was written anywhere.
+ */
+export class AdoptUnsupportedError extends SuperDeployError {
+  readonly code = "adopt-unsupported";
+  readonly target: string;
+  /** Every one found; never empty. */
+  readonly objects: readonly UnsupportedObject[];
+  /**
+   * With an override-reason callback: the objects that break only risk
+   * rules, whose reasons will be asked once nothing else is refused (they
+   * aren't in `objects`). Empty without the callback.
+   */
+  readonly overridesNeeded: readonly OverrideNeeded[];
+
+  constructor(
+    target: string,
+    objects: readonly UnsupportedObject[],
+    overridesNeeded: readonly OverrideNeeded[] = [],
+  ) {
+    const shown = objects
+      .slice(0, 5)
+      .map((o) => o.object)
+      .join("; ");
+    const more = objects.length > 5 ? `; and ${objects.length - 5} more` : "";
+    const later =
+      overridesNeeded.length === 0
+        ? ""
+        : `. Once nothing else is refused, an override reason will be asked for ${overridesNeeded.map((needed) => needed.object).join(", ")}`;
+    super(
+      `Cannot adopt target ${target}: its managed schema has ${objects.length} thing${objects.length === 1 ? "" : "s"} V1 doesn't support: ${shown}${more}. Nothing was written; change the target first, then adopt again${later}`,
+    );
+    this.target = target;
+    this.objects = objects;
+    this.overridesNeeded = overridesNeeded;
+  }
+}
+
+/**
+ * `init --adopt` asked for an override reason and got none (an empty
+ * answer); nothing was written anywhere.
+ */
+export class AdoptCancelledError extends SuperDeployError {
+  readonly code = "adopt-cancelled";
+  readonly target: string;
+  /** What the reason was asked for, e.g. `function load_staging(text)`. */
+  readonly object: string;
+
+  constructor(target: string, object: string) {
+    super(
+      `Adoption of target ${target} cancelled: no override reason given for ${object}. Nothing was written`,
+    );
+    this.target = target;
+    this.object = object;
   }
 }

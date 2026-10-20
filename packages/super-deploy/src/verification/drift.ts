@@ -7,9 +7,11 @@
 // which never compares column order and normalises ownership. pg-delta isn't
 // used here: it would read the whole target database (history schema and
 // all) rather than the managed schema.
+
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { targetTimeouts } from "../deploy/target.ts";
+import { listed, SuperDeployError } from "../errors.ts";
 import {
   type CatalogFact,
   catalogFacts,
@@ -125,4 +127,29 @@ export function driftedObjects(
       ],
     }))
     .sort((a, b) => (a.object < b.object ? -1 : a.object > b.object ? 1 : 0));
+}
+
+/** Up to five drifted objects with their change, e.g. `table t (changed)`. */
+export function listedDrift(objects: readonly DriftedObject[]): string {
+  return listed(objects.map((o) => `${o.object} (${o.change})`));
+}
+
+/**
+ * The target's managed schema differs from what its recorded migrations
+ * produce on a replica (column order and ownership aside). Deployments
+ * refuse until the target matches again; `status` lists the objects.
+ */
+export class DriftError extends SuperDeployError {
+  readonly code = "target-drifted";
+  readonly target: string;
+  /** Sorted by object; never empty. */
+  readonly objects: readonly DriftedObject[];
+
+  constructor(target: string, objects: readonly DriftedObject[]) {
+    super(
+      `Target ${target} has drifted from its recorded migrations: ${listedDrift(objects)}. Deployments refuse until it matches them again (status --target ${target} lists the differences)`,
+    );
+    this.target = target;
+    this.objects = objects;
+  }
 }
