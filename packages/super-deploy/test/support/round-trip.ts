@@ -53,7 +53,11 @@ export function describeRoundTrips(scenarios: readonly RoundTrip[]): void {
           await dir.write("data-model/desired-schema/schema.sql", sql);
           const drafted = await draft(project, { name: step });
           expect(drafted.statements.length, step).toBeGreaterThan(0);
-          const finalized = await finalize(project);
+          // The alter and drop steps drop structure: acknowledged, as a
+          // developer would after reading the question.
+          const finalized = await finalize(project, {
+            acknowledgeDestructive: true,
+          });
           const deployed = await deploy(project, { target: "dev" });
           expect(
             deployed.deployed.map((m) => m.number),

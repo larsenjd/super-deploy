@@ -6,6 +6,7 @@ import { type RuleViolation, SqlRuleViolationError } from "../errors.ts";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
 import {
   analyseMigration,
+  columnTypesOf,
   type DeployTimeFile,
   type IdentityColumns,
   identityColumnsOf,
@@ -30,11 +31,16 @@ export interface MigrationRuleContext {
    * migration's snapshot and its own, or the current desired schema for the
    * draft): their identity columns are protected from explicit values.
    */
-  readonly schemas: readonly (
-    | readonly SqlFile[]
-    | readonly ParsedStatement[]
-  )[];
+  readonly schemas: readonly DesiredSchema[];
+  /**
+   * The desired schema before the migration (the previous migration's
+   * snapshot): its column types tell a lossy type change from a widening.
+   * Without it every type change counts as destructive.
+   */
+  readonly previous?: DesiredSchema;
 }
+
+type DesiredSchema = readonly SqlFile[] | readonly ParsedStatement[];
 
 /** Every rule violation in a migration's or the draft's deploy-time files, in the order they run. */
 export async function checkReplayUnit(
@@ -44,7 +50,10 @@ export async function checkReplayUnit(
   return (await analyseReplayUnit(unit, context)).violations;
 }
 
-/** The rule analysis of a unit's deploy-time files: violations and overrides. */
+/**
+ * The rule analysis of a unit's deploy-time files: violations, overrides,
+ * destructive statements and lock warnings.
+ */
 export async function analyseReplayUnit(
   unit: ReplayUnit,
   context: MigrationRuleContext,
@@ -57,12 +66,16 @@ export async function analyseReplayUnit(
     managedSchema: context.managedSchema,
     externalSchemas: context.externalSchemas,
     identityColumns: await identityColumnsIn(context.schemas),
+    ...(context.previous === undefined
+      ? {}
+      : { columnTypes: columnTypesOf(await statementsOf(context.previous)) }),
   });
 }
 
 /**
  * Throws SqlRuleViolationError listing every violation in the unit's files;
- * otherwise returns the analysis, with the overrides accepted.
+ * otherwise returns the analysis (overrides accepted, destructive statements
+ * and lock warnings).
  */
 export async function refuseRuleViolations(
   unit: ReplayUnit,
@@ -91,19 +104,25 @@ async function identityColumnsIn(
 ): Promise<IdentityColumns> {
   const merged = new Map<string, Set<string>>();
   for (const schema of schemas) {
-    const statements: ParsedStatement[] = [];
-    for (const item of schema) {
-      if ("nodeType" in item) {
-        statements.push(item);
-      } else {
-        const parsed = await parseSqlFile(item);
-        // Syntax errors are reported by the desired-schema rules.
-        statements.push(...(parsed.ok ? parsed.statements : []));
-      }
-    }
-    for (const [table, columns] of identityColumnsOf(statements)) {
+    for (const [table, columns] of identityColumnsOf(
+      await statementsOf(schema),
+    )) {
       merged.set(table, new Set([...(merged.get(table) ?? []), ...columns]));
     }
   }
   return merged;
+}
+
+async function statementsOf(schema: DesiredSchema): Promise<ParsedStatement[]> {
+  const statements: ParsedStatement[] = [];
+  for (const item of schema) {
+    if ("nodeType" in item) {
+      statements.push(item);
+    } else {
+      const parsed = await parseSqlFile(item);
+      // Syntax errors are reported by the desired-schema rules.
+      statements.push(...(parsed.ok ? parsed.statements : []));
+    }
+  }
+  return statements;
 }
