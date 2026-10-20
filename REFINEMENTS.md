@@ -154,6 +154,16 @@ Also refused, though the spec's first list didn't name them: temporary tables an
 
 **Research:** `.scratch/super-deploy/research/pg-delta-prototype.md`.
 
+## Attribute order of composite types
+
+**V1:** Composite types are supported, but reordering their attributes goes undetected. pg-delta doesn't diff attribute order (pg-toolbelt #330/#332), and our `pg_catalog` comparison (`verification/catalog.ts`) never compares attribute position. If the desired schema changes `app.size AS (width integer, height integer)` to `(height integer, width integer)`, the draft gets no statement for the type and the rehearsal passes. Targets keep `(width, height)`, while any database built fresh from the desired schema has `(height, width)`. Code that builds the value by position, such as `ROW(1080, 1920)::app.size`, the text form `'(1080,1920)'` or `(s).*`, then gives swapped values on one and not the other. Attributes of the same type swap silently; attributes of different types raise errors on one database only.
+
+**Why narrow:** It is a gap, not a choice. Ignoring column order is deliberate for tables: PostgreSQL can't reorder a table's columns without rebuilding the table, and code names columns rather than relying on their position. Composite values are routinely built by position, so their attribute order is part of the type's meaning. The catalog comparison applies the table rule to every relation kind.
+
+**Revisit when:** Before relying on composite types in a real project. The fix: compare attribute position for composite types only (relkind `c` in the `column` query), so the rehearsal refuses a reordered type. PostgreSQL can't reorder attributes in place either, so the author then has to drop and recreate the type, and whatever uses it, in the migration's scripts.
+
+**Research:** `.scratch/super-deploy/research/pg-delta-prototype.md` §1 and §8.
+
 ## Order-independence: proof instead of sampling
 
 **V1:** The desired schema is loaded in one extra valid order and the catalogs compared. Known causes of order dependence are refused statically (unnamed indexes and constraints, duplicate unique keys under a foreign key, function calls in column syntax).

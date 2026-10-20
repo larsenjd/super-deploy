@@ -158,7 +158,7 @@ Added 2026-10-20 from the V1 build, against the same pinned `1.0.0-alpha.59`. Wh
 | PG18 NOT NULL constraint names are ignored (F3). A column rename keeps its generated name (`t_old_not_null`), and a custom name is never applied. | `verification/catalog.ts` compares constraint names, so `rehearse` and `finalize` refuse the draft until a pre-migration script runs `ALTER TABLE … RENAME CONSTRAINT`. Adoption refuses a target with a custom name (`not-reproduced`, `commands/adopt.ts`). |
 | Comments on indexes that back a constraint (`COMMENT ON INDEX t_pkey`) are not extracted (F4). | The catalog comparison catches them; adoption refuses them as `not-reproduced`. |
 | Virtual generated columns come out `STORED` (F1). | The desired-schema rules refuse a generated column without `STORED` (`sql-analysis/desired-schema-rules.ts`). |
-| Composite-type attribute order is not diffed (pg-toolbelt #330/#332). | **Not handled.** `verification/catalog.ts` doesn't compare attribute position for any relation kind, so neither check catches a reordered composite type. |
+| Composite-type attribute order is not diffed (pg-toolbelt #330/#332). | **Not handled.** `verification/catalog.ts` doesn't compare attribute position for any relation kind, so neither check catches a reordered composite type. See REFINEMENTS "Attribute order of composite types". |
 
 **Loud failures: the run stops with an error**
 
