@@ -9,6 +9,11 @@
       "folder": "00002-add-orders",
       "contentHash": "42a7c390a0ccf4637048b32ca531de2c4b7316df1b3a14931bc9dfe135b705da",
       "chainHash": "7362e4e652690c36bd3ec300a180a5b9fe62363736baca4f31931f4beb16220e"
+    },
+    {
+      "folder": "00003-rename-customer-name-to-full-name",
+      "contentHash": "42d7f9e31a3c7b4af2f976aa5bd065c3ae4aee8d1d9a7b6224c16fbc6cc5c62d",
+      "chainHash": "c248795b1b901ad7dcfce31bdcaa0f31fcbdd574794048038c15e756736f6658"
     }
   ]
 }
