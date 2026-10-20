@@ -4,7 +4,7 @@
 
 **Blocked by:** 20, 21
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Spec:** `../spec.md`
 
