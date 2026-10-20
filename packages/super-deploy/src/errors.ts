@@ -23,6 +23,7 @@ export type ErrorCode =
   | "validation-failed"
   | "unknown-target"
   | "target-locked"
+  | "commit-outcome-unknown"
   | "no-migration"
   | "overwrite-not-acknowledged";
 
@@ -426,5 +427,31 @@ export class TargetLockedError extends SuperDeployError {
     );
     this.target = target;
     this.holder = holder;
+  }
+}
+
+/**
+ * The connection to a target was lost while its deploy transaction was
+ * committing, so whether the deployment landed is unknown. The attempt is
+ * recorded as `unknown`; the next `status` or `deploy` settles it as
+ * succeeded or failed from the migrations rows the transaction wrote.
+ */
+export class CommitOutcomeUnknownError extends SuperDeployError {
+  readonly target: string;
+  readonly attemptId: number;
+
+  constructor(target: string, attemptId: number, options?: ErrorOptions) {
+    const cause = options?.cause;
+    const reason =
+      cause === undefined
+        ? ""
+        : ` (${cause instanceof Error ? cause.message : String(cause)})`;
+    super(
+      "commit-outcome-unknown",
+      `Lost the connection to target ${target} during COMMIT, so it is unknown whether attempt #${attemptId} landed; the next status or deploy settles it${reason}`,
+      options,
+    );
+    this.target = target;
+    this.attemptId = attemptId;
   }
 }

@@ -73,6 +73,7 @@ export type {
 export type { PlannedStatement } from "./differ/types.ts";
 export {
   AdapterError,
+  CommitOutcomeUnknownError,
   ConfigError,
   DesiredSchemaLoadError,
   DifferError,
