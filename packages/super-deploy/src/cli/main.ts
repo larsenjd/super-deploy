@@ -1,33 +1,14 @@
-// The CLI shell: parse argv, load the project, run the command, map the
-// outcome to an exit code. Exit codes: 0 success; 1 failed or refused;
-// 2 usage error (nothing ran). Interruptions (130, 141, 143) are decided by
-// the process watcher (process.ts); after one, runCli returns as soon as
-// cleanup is done and its own code is ignored.
-import { relative } from "node:path";
-import { settleCleanups } from "../interruption.ts";
+// The CLI shell: parse argv, then show help, open the menu (no arguments at a
+// terminal) or run one command from its flags.
 import { loadProject, type Project } from "../project.ts";
 import { toolVersion } from "../version.ts";
-import {
-  type CommandContext,
-  type CommandDefinition,
-  commands,
-  type OptionValues,
-} from "./definitions.ts";
+import { commands, type OptionValues } from "./definitions.ts";
 import { commandHelp, usage } from "./help.ts";
+import { runMenu } from "./menu.ts";
 import { type Invocation, parseInvocation, UsageError } from "./parse.ts";
+import { type CliIo, exitCodes, runCommand } from "./run.ts";
 
-export interface CliIo {
-  readonly cwd: string;
-  readonly stdin: NodeJS.ReadableStream & { isTTY?: boolean };
-  readonly stdout: NodeJS.WritableStream & { isTTY?: boolean };
-  readonly stderr: NodeJS.WritableStream;
-  /** A terminal on stdin and stdout, outside CI: the menu and questions are allowed. */
-  readonly interactive: boolean;
-  /** Aborts when the process is interrupted. */
-  readonly signal: AbortSignal;
-}
-
-export const exitCodes = { success: 0, failure: 1, usage: 2 } as const;
+export type { CliIo } from "./run.ts";
 
 export async function runCli(
   argv: readonly string[],
@@ -46,6 +27,9 @@ export async function runCli(
 
   switch (invocation.kind) {
     case "no-command":
+      if (io.interactive) {
+        return runMenu(io, invocation.debug);
+      }
       io.stderr.write(usage(commands));
       return exitCodes.usage;
     case "help":
@@ -56,78 +40,39 @@ export async function runCli(
     case "version":
       io.stdout.write(`super-deploy ${toolVersion}\n`);
       return exitCodes.success;
-    case "run":
-      return runCommand(io, invocation.command, invocation.debug, async () => {
+    case "run": {
+      const { command, values } = invocation;
+      return runCommand(io, command, invocation.debug, async () => {
         const project = await loadProject({ cwd: io.cwd, signal: io.signal });
-        return { project, values: invocation.values };
+        try {
+          checkTargets(project, command.options, values);
+        } catch (error) {
+          await project.close().catch(() => {});
+          throw error;
+        }
+        return { project, values };
       });
+    }
   }
 }
 
-/**
- * Loads the project, gets the option values (`prepare` may ask for them, or
- * return undefined when a question was cancelled: nothing runs), runs the
- * command and prints any failure. Returns the exit code.
- */
-export async function runCommand(
-  io: CliIo,
-  command: CommandDefinition,
-  debug: boolean,
-  prepare: () => Promise<
-    { project: Project; values: OptionValues | undefined } | undefined
-  >,
-): Promise<number> {
-  const report = (error: unknown): number => {
-    if (io.signal.aborted) {
-      // The interruption notice is the only message.
-      return exitCodes.failure;
-    }
-    io.stderr.write(describeError(error, debug));
-    return error instanceof UsageError ? exitCodes.usage : exitCodes.failure;
-  };
-  let project: Project | undefined;
-  let code: number = exitCodes.success;
-  try {
-    const prepared = await prepare();
-    project = prepared?.project;
-    if (prepared?.values !== undefined) {
-      await command.run(prepared.project, prepared.values, commandContext(io));
-    }
-  } catch (error) {
-    code = report(error);
-  }
-  await settleCleanups(io.signal);
-  try {
-    await project?.close();
-  } catch (error) {
-    if (code === exitCodes.success) {
-      code = report(error);
-    }
-  }
-  return code;
-}
-
-function commandContext(io: CliIo): CommandContext {
-  return {
-    result: (line) => io.stdout.write(`${line}\n`),
-    warn: (line) => io.stderr.write(`${line}\n`),
-    displayPath: (path) => relative(io.cwd, path).split("\\").join("/") || ".",
-  };
-}
-
-export function describeError(error: unknown, debug: boolean): string {
-  const message = error instanceof Error ? error.message : String(error);
-  const lines = [`Error: ${message.replace(/\s*\n\s*/g, " ")}`];
-  if (debug) {
-    for (let cause: unknown = error; cause !== undefined; ) {
-      lines.push(
-        cause instanceof Error ? (cause.stack ?? String(cause)) : String(cause),
+/** Target names can only be checked once the config is loaded; unknown ones are usage errors. */
+function checkTargets(
+  project: Project,
+  options: (typeof commands)[number]["options"],
+  values: OptionValues,
+): void {
+  for (const option of options) {
+    const value = values[option.name];
+    if (
+      option.kind === "target" &&
+      typeof value === "string" &&
+      !Object.hasOwn(project.config.targets, value)
+    ) {
+      const known = Object.keys(project.config.targets);
+      throw new UsageError(
+        `Unknown target "${value}" for --${option.name}; super-deploy.config.ts has ${known.length === 0 ? "no targets" : known.join(", ")}`,
       );
-      cause = cause instanceof Error ? cause.cause : undefined;
-      if (cause !== undefined) {
-        lines.push("Caused by:");
-      }
     }
   }
-  return `${lines.join("\n")}\n`;
 }

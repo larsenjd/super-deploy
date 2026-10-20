@@ -36,6 +36,7 @@ export {
   DifferError,
   DraftNameRequiredError,
   type ErrorCode,
+  InterruptedError,
   InvalidDraftNameError,
   ProjectNotFoundError,
   type RuleViolation,
