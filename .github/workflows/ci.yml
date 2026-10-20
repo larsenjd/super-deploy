@@ -27,8 +27,8 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      # The root prepare script installs the Git hooks and builds dist/.
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test

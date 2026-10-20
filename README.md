@@ -17,8 +17,8 @@ Open `super-deploy.code-workspace` in VS Code for per-package settings.
 ## Development
 
 ```
-pnpm install
-pnpm build
+pnpm install           # also installs the Git hooks and builds dist/
+pnpm build             # rebuild dist/ after changing the library
 pnpm lint              # Biome check, every package
 pnpm typecheck
 pnpm test              # unit and integration tests

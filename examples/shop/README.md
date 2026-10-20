@@ -8,8 +8,8 @@ data.
 
 ## Running it
 
-From the repository root, run `pnpm install` and `pnpm build`. Then, in this
-folder:
+From the repository root, run `pnpm install` (it also builds the library). Then,
+in this folder:
 
 ```sh
 pnpm precommit                                # what the Git hook and CI run
