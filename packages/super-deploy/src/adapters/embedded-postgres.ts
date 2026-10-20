@@ -9,6 +9,13 @@
 // when the project is closed. If the data directory's server is already
 // running (another command, or a test harness), the adapter attaches to it
 // and leaves it running.
+//
+// Ctrl+C in a terminal reaches the whole process group, so the server may
+// have stopped before the command closes it. Stopping it is then a no-op: the
+// library's `stop()` waits for an `exit` event that has already fired. Of the
+// library's exit hooks, the `beforeExit` one is removed on import: it would
+// end a process whose event loop drains with exit code 0.
+import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -79,7 +86,7 @@ export function embeddedPostgres(
       log.push(String(message).trim());
       log.splice(0, log.length - 20);
     };
-    const { default: EmbeddedPostgresClass } = await importDeferringSignals();
+    const { default: EmbeddedPostgresClass } = await importDeferringExitHooks();
     const pgFlags = [
       "-c",
       `listen_addresses=${host}`,
@@ -149,7 +156,9 @@ export function embeddedPostgres(
     owned = undefined;
     running = undefined;
     swept = undefined;
-    await server?.stop();
+    if (server !== undefined && !hasExited(server)) {
+      await server.stop();
+    }
   }
 
   // Throwaway databases left behind on a server only this process uses, e.g.
@@ -223,6 +232,19 @@ export function embeddedPostgres(
   };
 }
 
+/**
+ * Whether the server's postmaster has exited. The library keeps its process
+ * private (the peer dependency is pinned to one version); if that ever
+ * changes, this answers false and `stop()` is called as before.
+ */
+function hasExited(server: EmbeddedPostgresServer): boolean {
+  const child = (server as unknown as { process?: ChildProcess }).process;
+  return (
+    child !== undefined &&
+    (child.exitCode !== null || child.signalCode !== null)
+  );
+}
+
 const hookedSignals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] as const;
 
 /**
@@ -232,13 +254,18 @@ const hookedSignals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] as const;
  * roll back and drop throwaway databases first), the new handler is removed
  * again and the process's own handler stays in charge; the server is then
  * stopped by `close()` or, failing that, by the hook's `exit` handler.
+ *
+ * The hook's `beforeExit` handler is always removed: it calls
+ * `process.exit(0)`, so a process whose event loop drains would exit 0
+ * whatever its own exit code, e.g. after an interruption.
  */
-async function importDeferringSignals(): Promise<
+async function importDeferringExitHooks(): Promise<
   typeof import("embedded-postgres")
 > {
   const before = new Map(
     hookedSignals.map((signal) => [signal, process.listeners(signal)]),
   );
+  const beforeExit = process.listeners("beforeExit");
   const module = await import("embedded-postgres");
   for (const [signal, existing] of before) {
     if (existing.length > 0) {
@@ -247,6 +274,11 @@ async function importDeferringSignals(): Promise<
           process.removeListener(signal, listener);
         }
       }
+    }
+  }
+  for (const listener of process.listeners("beforeExit")) {
+    if (!beforeExit.includes(listener)) {
+      process.removeListener("beforeExit", listener);
     }
   }
   return module;

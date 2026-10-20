@@ -14,8 +14,8 @@ const code = await runCli(process.argv.slice(2), {
   signal: interruptions.signal,
 });
 
-// Exit explicitly once output is flushed: embedded-postgres installs an
-// async-exit-hook whose `beforeExit` handler would otherwise exit with 0.
+// Exit explicitly once output is flushed, rather than waiting for whatever
+// handles a command left open (e.g. stdin after a prompt).
 await Promise.all(
   [process.stdout, process.stderr].map(
     (stream) =>

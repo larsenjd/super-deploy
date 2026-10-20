@@ -2,7 +2,8 @@
 // prints one notice and aborts `signal` (the running command then cleans up
 // and the CLI exits with the interruption's code); a second signal exits at
 // once. Exit codes: 129 SIGHUP, 130 SIGINT, 141 closed output, 143 SIGTERM,
-// 149 SIGBREAK.
+// 149 SIGBREAK. The code is also set as `process.exitCode` at once, so the
+// process exits with it even if its event loop drains before the command ends.
 
 const signalExitCodes = {
   SIGHUP: 129,
@@ -35,6 +36,7 @@ export function watchInterruptions(): ProcessInterruptions {
 
   const interrupt = (code: number, reason: string, text: string) => {
     exitCode = code;
+    process.exitCode = code;
     notice(text);
     controller.abort(new Error(reason));
   };

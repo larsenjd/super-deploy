@@ -1,7 +1,8 @@
 // CLI process seam: a signal during a real `deploy` rolls back, records the
 // attempt as abandoned, releases the target lock, drops throwaway databases
-// and exits with the signal's code. A process killed outright leaves its
-// attempt running, and the next `status` settles it.
+// and exits with the signal's code, promptly even when Ctrl+C also stopped the
+// project's own embedded server. A process killed outright leaves its attempt
+// running, and the next `status` settles it.
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli, spawnCli, waitForFile } from "../support/cli.ts";
@@ -20,8 +21,9 @@ afterAll(async () => {
 // With TEST_STALL=rehearsal the deployment's rehearsal stalls in its first
 // throwaway session; with TEST_STALL=transaction the deploy transaction stalls
 // on the target before its first migration file. Either way the file named by
-// TEST_MARKER is written first, then `pg_sleep(60)` runs.
-const stalling = `
+// TEST_MARKER is written first, then `pg_sleep(60)` runs. `rehearsal` is the
+// real rehearsal adapter's expression.
+const stalling = (rehearsal: string) => `
 import { writeFileSync } from "node:fs";
 const stall = process.env.TEST_STALL;
 async function stallOn(session) {
@@ -30,7 +32,7 @@ async function stallOn(session) {
 }
 const stallingRehearsal = {
   async createDatabase(request) {
-    const database = await postgres.rehearsal.createDatabase(request);
+    const database = await ${rehearsal}.createDatabase(request);
     if (stall !== "rehearsal") return database;
     return {
       name: database.name,
@@ -51,7 +53,7 @@ const stallingRehearsal = {
       },
     };
   },
-  close: () => postgres.rehearsal.close(),
+  close: () => ${rehearsal}.close(),
 };
 const stallingTarget = {
   async connect() {
@@ -74,9 +76,17 @@ const stallingTarget = {
 };
 `;
 
-async function finalizedProject() {
+/**
+ * A project with one finalized migration pending on `dev`, a database on the
+ * test server. With `ownRehearsalServer` its rehearsals run on the project's
+ * own embedded server, which the CLI starts and so owns.
+ */
+async function finalizedProject({ ownRehearsalServer = false } = {}) {
+  const own = `const own = embeddedPostgres({ dataDir: new URL(".super-deploy/postgres/", import.meta.url) });`;
   const { config, database } = deployConfig(server, {
-    preamble: stalling,
+    preamble: ownRehearsalServer
+      ? `${own}\n${stalling("own.rehearsal")}`
+      : stalling("postgres.rehearsal"),
     adapter: "stallingTarget",
     rehearsal: "stallingRehearsal",
   });
@@ -160,6 +170,45 @@ describe.each([
     );
   });
 });
+
+// Ctrl+C in a terminal reaches the whole process group, so it also stops the
+// project's own embedded server before the CLI has cleaned up.
+describe.each([
+  ["SIGINT", 130, "rehearsal"],
+  ["SIGTERM", 143, "transaction"],
+] as const)(
+  "%s (exit %i) to the process group during a deployment's %s, while the CLI runs its own embedded server",
+  (signal, exitCode, stage) => {
+    test("exits promptly with that code, nothing recorded and the server stopped", async () => {
+      const { dir, marker } = await finalizedProject({
+        ownRehearsalServer: true,
+      });
+      const cli = spawnCli(["deploy", "--target", "dev"], {
+        cwd: dir.root,
+        env: { TEST_STALL: stage, TEST_MARKER: marker },
+        detached: true,
+      });
+      await waitForFile(marker);
+      const started = Date.now();
+
+      cli.signalGroup(signal);
+      const result = await cli.result;
+
+      expect(result.exitCode).toBe(exitCode);
+      // Not after the 10 s an exit hook waits for a server that has already stopped.
+      expect(Date.now() - started).toBeLessThan(8_000);
+      expect(dir.exists(".super-deploy/postgres/postmaster.pid")).toBe(false);
+      const status = await runCli(["status", "--target", "dev"], {
+        cwd: dir.root,
+      });
+      expect(status.stdout).toContain(
+        "Target dev: 0 migrations recorded, 1 pending\n",
+      );
+      expect(status.stdout).toContain("#1 deploy abandoned migration 1 by ");
+      expect(status.stdout).toContain(`Interrupted (${signal})`);
+    });
+  },
+);
 
 test("a deployment killed outright leaves its attempt running, and the next status settles it as abandoned", async () => {
   const { dir, database, marker } = await finalizedProject();
