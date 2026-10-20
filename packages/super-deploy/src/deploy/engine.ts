@@ -1,5 +1,5 @@
 // The deployment engine, shared by every command that changes a target
-// (deploy now; mark, rebuild, deploy-draft and disposable later).
+// (deploy, disposable, deploy-draft, rebuild; mark later).
 //
 // `withLockedTarget` runs a command body against a target:
 //   1. connect the command session (adapter.connect() call #1): it takes the
@@ -27,6 +27,10 @@
 //     ALL IMMEDIATE"), execute("DISCARD TEMP"), then query(INSERT INTO
 //     <history>.migrations ...)
 //   execute("COMMIT")            or execute("ROLLBACK") after a failure
+// Its frame (BEGIN, the SET LOCALs, COMMIT or ROLLBACK, a lost COMMIT's
+// classification) is `inDeployTransaction`, which deploy-draft and rebuild
+// also use with bodies of their own, so fault-injection wrappers see the
+// same statements from them.
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { CommitOutcomeUnknownError, InterruptedError } from "../errors.ts";
@@ -197,34 +201,30 @@ export async function applyMigrations(
   migrations: readonly MigrationToApply[],
   options: ApplyOptions,
 ): Promise<void> {
+  await inDeployTransaction(session, options, async () => {
+    await ensureManagedSchemaInTransaction(session, options.managedSchema);
+    await runMigrations(session, migrations, options);
+  });
+}
+
+/**
+ * Runs `body` in one deploy transaction on the command session: BEGIN, the
+ * pinned settings and the target's timeouts, `body`, COMMIT (ROLLBACK if
+ * `body` throws). A COMMIT whose result never arrived becomes
+ * CommitOutcomeUnknownError, so `body` must write rows that settleAttempts
+ * reads (migrations or deployed_draft) with the attempt's id.
+ */
+export async function inDeployTransaction(
+  session: Session,
+  options: ApplyOptions,
+  body: () => Promise<void>,
+): Promise<void> {
   await session.execute("BEGIN");
   try {
     await session.execute(
       deploymentSettings(options.managedSchema, options.target).join(";\n"),
     );
-    // Checked first: CREATE SCHEMA IF NOT EXISTS needs the CREATE privilege
-    // on the database even when the schema exists.
-    const managed = await session.query(
-      "SELECT 1 FROM pg_namespace WHERE nspname = $1",
-      [options.managedSchema],
-    );
-    if (managed.rows.length === 0) {
-      await session.execute(
-        `CREATE SCHEMA ${quoteIdentifier(options.managedSchema)}`,
-      );
-    }
-    for (const migration of migrations) {
-      await runUnit(session, migration.unit);
-      await recordMigration(session, options.historySchema, {
-        number: migration.number,
-        name: migration.name,
-        contentHash: migration.contentHash,
-        chainHash: migration.chainHash,
-        recovery: migration.recovery,
-        attemptId: options.attemptId,
-        recordedHow: "deployed",
-      });
-    }
+    await body();
   } catch (error) {
     await session.execute("ROLLBACK").catch(() => {});
     throw error;
@@ -240,6 +240,42 @@ export async function applyMigrations(
       options.attemptId,
       { cause: error },
     );
+  }
+}
+
+/** Inside a deploy transaction: creates the managed schema if the target lacks it. */
+export async function ensureManagedSchemaInTransaction(
+  session: Session,
+  managedSchema: string,
+): Promise<void> {
+  // Checked first: CREATE SCHEMA IF NOT EXISTS needs the CREATE privilege
+  // on the database even when the schema exists.
+  const managed = await session.query(
+    "SELECT 1 FROM pg_namespace WHERE nspname = $1",
+    [managedSchema],
+  );
+  if (managed.rows.length === 0) {
+    await session.execute(`CREATE SCHEMA ${quoteIdentifier(managedSchema)}`);
+  }
+}
+
+/** Inside a deploy transaction: runs each migration's files and records it as deployed. */
+export async function runMigrations(
+  session: Session,
+  migrations: readonly MigrationToApply[],
+  options: ApplyOptions,
+): Promise<void> {
+  for (const migration of migrations) {
+    await runUnit(session, migration.unit);
+    await recordMigration(session, options.historySchema, {
+      number: migration.number,
+      name: migration.name,
+      contentHash: migration.contentHash,
+      chainHash: migration.chainHash,
+      recovery: migration.recovery,
+      attemptId: options.attemptId,
+      recordedHow: "deployed",
+    });
   }
 }
 

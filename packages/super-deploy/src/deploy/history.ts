@@ -32,6 +32,17 @@
 //   settings     exactly one row
 //     disposable     boolean   false for new targets (ticket 18 sets it)
 //     layout_version integer   1; bump with an upgrade step when columns change
+//   deployed_draft  at most one row: the draft `deploy-draft` put on this
+//                (disposable) target. Written INSIDE that command's
+//                transaction, deleted inside `rebuild`'s. While it exists the
+//                target's structure is no longer that of a recorded
+//                migration, so deploy and mark refuse it (deploy/preflight.ts).
+//     name           text      the draft's name
+//     content_hash   text      sha256 of the files it ran (draftContentHash)
+//     base_migration integer   the last recorded migration it went on top of (null: none)
+//     seed_data      boolean   whether its seed data was loaded
+//     attempt_id     bigint    the deploy-draft attempt (settles a lost COMMIT)
+//     deployed_at    timestamptz
 //
 // Every statement schema-qualifies its tables: deploy transactions pin
 // search_path to the managed schema and pg_catalog.
@@ -85,7 +96,7 @@ export function quoteIdentifier(name: string): string {
 /** `"<schema>"."<table>"` for one of the history tables. */
 export function historyTable(
   schema: string,
-  table: "migrations" | "attempts" | "settings",
+  table: "migrations" | "attempts" | "settings" | "deployed_draft",
 ): string {
   return `${quoteIdentifier(schema)}.${quoteIdentifier(table)}`;
 }
@@ -119,6 +130,7 @@ export async function ensureHistorySchema(
   const migrations = historyTable(schema, "migrations");
   const attempts = historyTable(schema, "attempts");
   const settings = historyTable(schema, "settings");
+  const deployedDraft = historyTable(schema, "deployed_draft");
   await session.execute("BEGIN");
   try {
     await session.query("SELECT pg_advisory_xact_lock($1::bigint)", [
@@ -155,6 +167,15 @@ CREATE TABLE IF NOT EXISTS ${settings} (
   singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
   disposable boolean NOT NULL DEFAULT false,
   layout_version integer NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ${deployedDraft} (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  name text NOT NULL,
+  content_hash text NOT NULL,
+  base_migration integer,
+  seed_data boolean NOT NULL,
+  attempt_id bigint NOT NULL REFERENCES ${attempts} (id),
+  deployed_at timestamptz NOT NULL DEFAULT now()
 );
 INSERT INTO ${settings} (layout_version) VALUES (${historyLayoutVersion})
   ON CONFLICT (singleton) DO NOTHING`);
@@ -315,4 +336,69 @@ export async function readTargetSettings(
     `SELECT disposable FROM ${historyTable(schema, "settings")}`,
   );
   return { disposable: rows[0]?.disposable === true };
+}
+
+/** The draft `deploy-draft` left on a target, as its history schema records it. */
+export interface DeployedDraft {
+  readonly name: string;
+  /** sha256 of the files it ran, in order (draftContentHash). */
+  readonly contentHash: string;
+  /** The last recorded migration it was deployed on top of; undefined when there was none. */
+  readonly baseMigration: number | undefined;
+  /** Whether its seed data was loaded. */
+  readonly seedData: boolean;
+  readonly attemptId: number;
+  readonly deployedAt: Date;
+}
+
+/** The draft the target holds, if `deploy-draft` left one (and nothing has rebuilt it since). */
+export async function readDeployedDraft(
+  session: Session,
+  schema: string,
+): Promise<DeployedDraft | undefined> {
+  if (!(await historySchemaExists(session, schema))) {
+    return undefined;
+  }
+  const { rows } = await session.query<{
+    name: string;
+    content_hash: string;
+    base_migration: number | null;
+    seed_data: boolean;
+    attempt_id: string;
+    deployed_at: Date;
+  }>(
+    `SELECT name, content_hash, base_migration, seed_data, attempt_id, deployed_at
+       FROM ${historyTable(schema, "deployed_draft")}`,
+  );
+  const [row] = rows;
+  return row === undefined
+    ? undefined
+    : {
+        name: row.name,
+        contentHash: row.content_hash,
+        baseMigration: row.base_migration ?? undefined,
+        seedData: row.seed_data,
+        attemptId: Number(row.attempt_id),
+        deployedAt: row.deployed_at,
+      };
+}
+
+/** Inside deploy-draft's transaction: records the draft the target now holds. */
+export async function recordDeployedDraft(
+  session: Session,
+  schema: string,
+  draft: Omit<DeployedDraft, "deployedAt">,
+): Promise<void> {
+  await session.query(
+    `INSERT INTO ${historyTable(schema, "deployed_draft")}
+       (name, content_hash, base_migration, seed_data, attempt_id)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      draft.name,
+      draft.contentHash,
+      draft.baseMigration ?? null,
+      draft.seedData,
+      draft.attemptId,
+    ],
+  );
 }
