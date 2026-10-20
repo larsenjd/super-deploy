@@ -43,6 +43,7 @@ export type ErrorCode =
   | "adopt-unsupported"
   | "target-not-disposable"
   | "target-behind"
+  | "recovery-base-mismatch"
   | "unknown-migration"
   | "wipe-failed"
   | "draft-exists"
@@ -672,6 +673,41 @@ export class TargetBehindError extends SuperDeployError {
     );
     this.target = target;
     this.pending = pending;
+  }
+}
+
+/**
+ * deploy-draft of a Recovery draft of migration N needs a target whose last
+ * recorded migration is N-1: the Recovery runs N's schema change.
+ */
+export class RecoveryBaseMismatchError extends SuperDeployError {
+  readonly target: string;
+  /** The recovered migration's folder name. */
+  readonly migration: string;
+  /** The folder of migration N-1; undefined when N is 1. */
+  readonly base: string | undefined;
+  /** The target's last recorded migration's folder; undefined when none is recorded. */
+  readonly recorded: string | undefined;
+
+  constructor(
+    target: string,
+    migration: string,
+    base: string | undefined,
+    recorded: string | undefined,
+    baseNumber: number,
+  ) {
+    const fix =
+      baseNumber === 0
+        ? "use a target with no recorded migrations"
+        : `run rebuild --to ${baseNumber} first`;
+    super(
+      "recovery-base-mismatch",
+      `The Recovery draft of migration ${migration} runs on top of ${base ?? "no recorded migration"}, but target ${target} is at ${recorded ?? "no recorded migration"}: ${fix}`,
+    );
+    this.target = target;
+    this.migration = migration;
+    this.base = base;
+    this.recorded = recorded;
   }
 }
 

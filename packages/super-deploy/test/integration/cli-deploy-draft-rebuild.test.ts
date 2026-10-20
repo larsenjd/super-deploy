@@ -4,7 +4,7 @@
 // ahead only once YES is typed. Their API refusal in CI is in
 // deploy-draft-rebuild.test.ts.
 import { userInfo } from "node:os";
-import { deploy, draft, finalize, loadProject } from "super-deploy";
+import { deploy, draft, finalize, loadProject, recovery } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import { deployConfig } from "../support/deploy.ts";
@@ -311,6 +311,110 @@ unix("deploy-draft", () => {
       cwd: dir.root,
     });
     expect(status.stdout).not.toContain("holds draft");
+  });
+});
+
+/**
+ * Migration 1 deployed to a disposable `dev` holding Ada without a city;
+ * migration 2 (require city) finalized but deployed only if `deployed`; and
+ * a Recovery draft of migration 2 whose pre-migration script fills in
+ * 'Recovered' and whose seed data adds Cy.
+ */
+async function recoveryDraftProject({ deployed }: { deployed: boolean }) {
+  const { dir, database } = await deployedProject();
+  await requireCityDraft(dir);
+  await dir.write("data-model/draft/seed-data.sql", "");
+  const project = await loadProject({ cwd: dir.root });
+  try {
+    await finalize(project);
+    if (deployed) {
+      await deploy(project, { target: "dev" });
+    }
+    await recovery(project, { migration: 2 });
+  } finally {
+    await project.close();
+  }
+  await dir.write(
+    "data-model/draft/pre-migration.sql",
+    "update customers set city = 'Recovered' where city is null;\n",
+  );
+  await dir.write(
+    "data-model/draft/seed-data.sql",
+    "insert into customers (id, name) values (3, 'Cy');\n",
+  );
+  return { dir, database };
+}
+
+unix("deploy-draft of a Recovery draft", () => {
+  test("tries the Recovery of migration N on a target at N-1: its seed data (if asked), its scripts around N's schema change; recorded as a deployed draft", async () => {
+    const { dir, database } = await recoveryDraftProject({ deployed: false });
+
+    const terminal = spawnTerminal(
+      ["deploy-draft", "--target", "dev", "--with-seed"],
+      { cwd: dir.root },
+    );
+    const shown = await terminal.waitFor("Type YES");
+    expect(shown).toContain(
+      "deploy-draft: Deploy the Recovery draft of migration 00002-require-city to target dev",
+    );
+    expect(shown).toContain("on top of 00001-add-customers");
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor(
+      "Deployed the Recovery draft of migration 00002-require-city to dev on top of 00001-add-customers, with seed data",
+    );
+    expect(await terminal.exited).toBe(0);
+
+    expect(
+      await server.query(
+        "select id, name, city from customers order by id",
+        [],
+        database,
+      ),
+    ).toEqual([
+      { id: "1", name: "Ada", city: "Recovered" },
+      { id: "3", name: "Cy", city: "Recovered" },
+    ]);
+    expect(
+      await server.query(
+        "select is_nullable from information_schema.columns where table_name = 'customers' and column_name = 'city'",
+        [],
+        database,
+      ),
+    ).toEqual([{ is_nullable: "NO" }]);
+    // Not recorded as migration 2 or its Recovery: a deployed draft.
+    expect(
+      await server.query(
+        "select number, recovery from deployment_history.migrations",
+        [],
+        database,
+      ),
+    ).toEqual([{ number: 1, recovery: null }]);
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).toContain(
+      "the target holds draft require-city (deployed by attempt #2 on top of 00001-add-customers, with seed data), not a finalized migration: reset it with rebuild --to 1",
+    );
+  });
+
+  test("refuses, without asking, a target whose last recorded migration isn't N-1", async () => {
+    const { dir, database } = await recoveryDraftProject({ deployed: true });
+
+    const terminal = spawnTerminal(["deploy-draft", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    await terminal.waitFor(
+      "Error: The Recovery draft of migration 00002-require-city runs on top of 00001-add-customers, but target dev is at 00002-require-city: run rebuild --to 1 first",
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    expect(
+      await server.query(
+        "select command from deployment_history.attempts order by id",
+        [],
+        database,
+      ),
+    ).toEqual([{ command: "deploy" }, { command: "deploy" }]);
   });
 });
 

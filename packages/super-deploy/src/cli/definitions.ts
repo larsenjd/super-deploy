@@ -783,8 +783,12 @@ const deployDraftCommand: CommandDefinition = {
       target: String(values.target),
       withSeed: values["with-seed"] === true,
     });
+    const what =
+      result.recoveryOf === undefined
+        ? `draft ${result.name}`
+        : `the Recovery draft of migration ${result.recoveryOf}`;
     context.result(
-      `Deployed draft ${result.name} to ${result.target} on top of ${result.baseMigration ?? "no recorded migration"}, ${result.seedData ? "with" : "without"} seed data`,
+      `Deployed ${what} to ${result.target} on top of ${result.baseMigration ?? "no recorded migration"}, ${result.seedData ? "with" : "without"} seed data`,
     );
   },
 };
