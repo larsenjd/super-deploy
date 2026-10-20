@@ -5,6 +5,7 @@ import type {
   RehearsalAdapter,
   Session,
 } from "../adapters/types.ts";
+import { quoteIdentifier } from "../deploy/history.ts";
 import {
   AdapterError,
   DesiredSchemaLoadError,
@@ -216,10 +217,6 @@ function linesBefore(text: string, position: string | undefined): number {
   return Array.from(text)
     .slice(0, index - 1)
     .filter((character) => character === "\n").length;
-}
-
-function quoteIdentifier(name: string): string {
-  return `"${name.replaceAll('"', '""')}"`;
 }
 
 async function adapterCall<T>(

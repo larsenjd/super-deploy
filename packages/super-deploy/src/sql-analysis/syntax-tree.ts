@@ -2,19 +2,47 @@
 // default values (false, 0, "", empty lists) and wrap most nodes as
 // `{ NodeType: {...} }` but embed some unwrapped (e.g. `CreateStmt.relation`).
 
+import type { AlterTableCmd } from "@pgsql/types";
+import type { ParsedStatement } from "./parse.ts";
+
 export type Json = { readonly [key: string]: unknown };
 
 export function isObject(value: unknown): value is Json {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The inner object of a wrapped node `{ [type]: inner }`, if it is one. */
-export function unwrap(node: unknown, type: string): Json | undefined {
+/**
+ * The inner object of a wrapped node `{ [type]: inner }`, if it is one,
+ * typed as `T` (e.g. `unwrap<Constraint>(item, "Constraint")`).
+ */
+export function unwrap<T = Json>(node: unknown, type: string): T | undefined {
   if (!isObject(node)) {
     return undefined;
   }
   const inner = node[type];
-  return isObject(inner) ? inner : undefined;
+  return isObject(inner) ? (inner as T) : undefined;
+}
+
+/** A parsed statement's own node, e.g. the inner `AlterTableStmt`. */
+export function statementBody(statement: ParsedStatement): Json {
+  const body = (statement.node as unknown as Json)[statement.nodeType];
+  return isObject(body) ? body : {};
+}
+
+/** The subcommands of an `AlterTableStmt` body. */
+export function alterTableCommands(body: Json): AlterTableCmd[] {
+  return list(body.cmds).flatMap((item) => {
+    const cmd = unwrap<AlterTableCmd>(item, "AlterTableCmd");
+    return cmd === undefined ? [] : [cmd];
+  });
+}
+
+/** The schema of a dotted name with at least `parts` parts (its first part). */
+export function schemaQualifier(
+  names: readonly string[],
+  parts: number,
+): string | undefined {
+  return names.length >= parts ? names[0] : undefined;
 }
 
 /** The single key of a wrapped node, e.g. `CreateStmt`. */

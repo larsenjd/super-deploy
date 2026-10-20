@@ -10,6 +10,7 @@ import {
   isObject,
   type Json,
   list,
+  schemaQualifier,
   stringList,
   unwrap,
 } from "./syntax-tree.ts";
@@ -119,24 +120,17 @@ function qualifierOf(object: Json): string | undefined {
   if ("names" in object && "typemod" in object) {
     const names = stringList(object.names);
     const parts = object.pct_type === true ? 3 : 2;
-    return names.length >= parts ? names[0] : undefined;
+    return schemaQualifier(names, parts);
   }
   const call = unwrap(object, "FuncCall");
   if (call !== undefined) {
-    return qualifier(stringList(call.funcname), 2);
+    return schemaQualifier(stringList(call.funcname), 2);
   }
   const routine = unwrap(object, "ObjectWithArgs");
   if (routine !== undefined) {
-    return qualifier(stringList(routine.objname), 2);
+    return schemaQualifier(stringList(routine.objname), 2);
   }
   return undefined;
-}
-
-function qualifier(
-  names: readonly string[],
-  parts: number,
-): string | undefined {
-  return names.length >= parts ? names[0] : undefined;
 }
 
 /** The schemas a statement's own object names are in, and their nodes. */
@@ -155,7 +149,7 @@ function targetNames(
     }
   };
   const named = (value: unknown, parts = 2) => {
-    const schema = qualifier(stringList(value), parts);
+    const schema = schemaQualifier(stringList(value), parts);
     if (schema !== undefined) {
       schemas.push(schema);
     }
@@ -220,7 +214,7 @@ const commentNameParts: Record<string, number> = {
 function ownReferences(nodeType: string, node: Json): string[] {
   const schema =
     nodeType === "CreateTrigStmt"
-      ? qualifier(stringList(node.funcname), 2)
+      ? schemaQualifier(stringList(node.funcname), 2)
       : undefined;
   return schema === undefined ? [] : [schema];
 }
