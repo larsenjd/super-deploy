@@ -70,23 +70,35 @@ export async function replay(
   try {
     await session.execute(pinnedSettings(managedSchema).join(";\n"));
     for (const unit of units) {
-      for (const { file, sql } of unit.files) {
-        try {
-          await session.execute(sql);
-        } catch (error) {
-          throw new SqlFileFailedError(
-            file,
-            lineAt(sql, (error as { position?: string }).position),
-            error instanceof Error ? error.message : String(error),
-            { cause: error },
-          );
-        }
-      }
+      await runUnit(session, unit);
     }
     await session.execute("COMMIT");
   } catch (error) {
     await session.execute("ROLLBACK").catch(() => {});
     throw error;
+  }
+}
+
+/**
+ * Runs one unit's files inside the caller's transaction, each file as its own
+ * batch so a failure names the file. Shared by rehearsals and deployments
+ * (deploy/engine.ts), so both run deploy-time SQL identically.
+ */
+export async function runUnit(
+  session: Session,
+  unit: ReplayUnit,
+): Promise<void> {
+  for (const { file, sql } of unit.files) {
+    try {
+      await session.execute(sql);
+    } catch (error) {
+      throw new SqlFileFailedError(
+        file,
+        lineAt(sql, (error as { position?: string }).position),
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
+    }
   }
 }
 

@@ -16,6 +16,12 @@ export type {
   ThrowawayDatabase,
 } from "./adapters/types.ts";
 export {
+  type DeployedMigration,
+  type DeployOptions,
+  type DeployResult,
+  deploy,
+} from "./commands/deploy.ts";
+export {
   type DiscardDraftOptions,
   type DiscardDraftResult,
   discardDraft,
@@ -37,6 +43,11 @@ export {
   restoreSchema,
 } from "./commands/restore-schema.ts";
 export {
+  type StatusOptions,
+  type StatusReport,
+  status,
+} from "./commands/status.ts";
+export {
   type UnfinalizeOptions,
   type UnfinalizeResult,
   unfinalize,
@@ -54,6 +65,11 @@ export {
   type SuperDeployConfig,
   type TargetConfig,
 } from "./config/config.ts";
+export type {
+  AttemptOutcome,
+  AttemptRecord,
+  RecordedMigration,
+} from "./deploy/history.ts";
 export type { PlannedStatement } from "./differ/types.ts";
 export {
   AdapterError,
@@ -65,6 +81,7 @@ export {
   InterruptedError,
   InvalidDraftNameError,
   InvalidEncodingError,
+  type LockHolder,
   MigrationIntegrityError,
   NoDraftError,
   NoMigrationError,
@@ -76,6 +93,8 @@ export {
   SqlFileFailedError,
   SqlRuleViolationError,
   SuperDeployError,
+  TargetLockedError,
+  UnknownTargetError,
   UnsupportedServerError,
   ValidationFailedError,
   type ValidationProblem,

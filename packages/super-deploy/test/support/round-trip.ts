@@ -3,15 +3,18 @@
 // Finalize rehearses every step (pg-delta re-diff and our catalog comparison
 // must both be empty), so a finalized step is a proven round trip.
 //
-// The deploy leg is added when ticket 04 (deploy) is available.
+// The deploy leg: every finalized step is deployed to target `dev` as soon
+// as it is finalized, and all of them at once (one transaction) to target
+// `fresh` at the end. Ticket 12 can add "status reports no drift" to both.
 //
 // Not test.concurrent: createTestProject's cleanup uses the global
 // onTestFinished, which can't tell concurrent tests apart.
-import { draft, finalize, loadProject } from "super-deploy";
+import { deploy, draft, finalize, loadProject, status } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { type RoundTrip, roundTripRoles } from "../fixtures/round-trips.ts";
+import { deployConfig, targetDatabaseName } from "./deploy.ts";
 import { startTestServer, type TestServer } from "./postgres.ts";
-import { createTestProject, embeddedConfig } from "./project.ts";
+import { createTestProject } from "./project.ts";
 
 export function describeRoundTrips(scenarios: readonly RoundTrip[]): void {
   let server: TestServer;
@@ -25,18 +28,21 @@ export function describeRoundTrips(scenarios: readonly RoundTrip[]): void {
     await server?.stop();
   });
 
-  describe("round trips through draft and finalize", () => {
+  describe("round trips through draft, finalize and deploy", () => {
     test.each(scenarios.map((s) => [s.name, s] as const))(
       "%s",
       async (_name, scenario) => {
         const dir = await createTestProject({
-          config: embeddedConfig(server),
+          config: deployConfig(server, {
+            otherTargets: `fresh: { adapter: postgres.target(${JSON.stringify(targetDatabaseName())}) },`,
+          }).config,
           files: { "data-model/desired-schema/schema.sql": scenario.a },
         });
         const project = await loadProject({ cwd: dir.root });
         if (scenario.a.trim() !== "") {
           await draft(project, { name: "start" });
           await finalize(project);
+          await deploy(project, { target: "dev" });
         }
         for (const [step, sql] of [
           ["create", scenario.b],
@@ -46,7 +52,17 @@ export function describeRoundTrips(scenarios: readonly RoundTrip[]): void {
           await dir.write("data-model/desired-schema/schema.sql", sql);
           const drafted = await draft(project, { name: step });
           expect(drafted.statements.length, step).toBeGreaterThan(0);
-          await finalize(project);
+          const finalized = await finalize(project);
+          const deployed = await deploy(project, { target: "dev" });
+          expect(
+            deployed.deployed.map((m) => m.number),
+            step,
+          ).toEqual([finalized.number]);
+        }
+        const all = await deploy(project, { target: "fresh" });
+        expect(all.deployed).toHaveLength(scenario.a.trim() === "" ? 3 : 4);
+        for (const target of ["dev", "fresh"]) {
+          expect((await status(project, { target })).pending).toEqual([]);
         }
       },
     );
