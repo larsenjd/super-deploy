@@ -453,7 +453,10 @@ async function twoMigrations() {
     "create type mood as enum ('happy', 'sad')",
     "create function twice(x int) returns int language sql return x * 2",
     "create sequence counter",
+    // Grants on the schema itself: rebuild leaves only what the migrations
+    // declare, and public's default USAGE for PUBLIC counts as declared.
     "grant usage on schema public to rebuild_reader",
+    "revoke usage on schema public from public",
     // On functions: the migrations create none, so it causes no drift.
     "alter default privileges in schema public grant execute on functions to rebuild_reader",
     "comment on schema public is 'kept by rebuild'",
@@ -475,9 +478,16 @@ const publicObjects = `select kind, name from (
   ) o order by kind, name`;
 
 unix("rebuild", () => {
-  test("wipes the managed schema and replays migrations up to N without seed data, keeping the schema's own privileges and the attempt log", async () => {
+  test("wipes the managed schema and replays migrations up to N without seed data, keeping the schema's owner, comment and default privileges and the attempt log", async () => {
     const { dir, database } = await twoMigrations();
-    const setup = await server.query(schemaSetup, [], database);
+    const [setup] = await server.query<{ acl: string }>(
+      schemaSetup,
+      [],
+      database,
+    );
+    expect(setup?.acl).toBe(
+      "{pg_database_owner=UC/pg_database_owner,rebuild_reader=U/pg_database_owner}",
+    );
 
     const terminal = spawnTerminal(
       ["rebuild", "--target", "dev", "--to", "1"],
@@ -508,7 +518,12 @@ unix("rebuild", () => {
         database,
       ),
     ).toEqual([{ count: 0 }]);
-    expect(await server.query(schemaSetup, [], database)).toEqual(setup);
+    expect(await server.query(schemaSetup, [], database)).toEqual([
+      {
+        ...setup,
+        acl: "{pg_database_owner=UC/pg_database_owner,=U/pg_database_owner}",
+      },
+    ]);
     expect(
       await server.query(
         "select m.number, m.recorded_how, a.command from deployment_history.migrations m join deployment_history.attempts a on a.id = m.attempt_id",

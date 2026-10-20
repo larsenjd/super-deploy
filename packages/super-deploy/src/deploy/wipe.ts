@@ -1,13 +1,18 @@
 // Wiping the managed schema for `rebuild`, inside its deploy transaction.
 // Everything IN the schema is dropped (with CASCADE, so objects elsewhere
 // that depend on it go too, as with DROP SCHEMA ... CASCADE), but the schema
-// itself stays: its owner, privileges, comment and default privileges belong
-// to the target's setup, not to the migrations, and dropping the schema
-// would lose them (and, for `public`, the access every role has to it).
+// itself stays: its owner, comment and default privileges belong to the
+// target's setup, not to the migrations, and dropping the schema would lose
+// them. Its grants go back to what a new schema has, so after the replay
+// they are exactly what the migrations declare (stories 98-99): every grant
+// is revoked except the owner's and the deploy role's own (target setup, as
+// in the catalog comparison), and `public` gets back its default USAGE for
+// PUBLIC, which the migrations declare by not revoking it.
 //
 // The drops cover every kind of object a schema can hold. Afterwards the
-// schema's dependents in pg_depend (what DROP SCHEMA would have dropped) must
-// be gone; anything left refuses the rebuild with WipeFailedError.
+// schema's dependents in pg_depend (what DROP SCHEMA would have dropped) and
+// any grant the deploy role couldn't revoke must be gone; anything left
+// refuses the rebuild with WipeFailedError.
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { WipeFailedError } from "../errors.ts";
@@ -34,13 +39,24 @@ export async function wipeManagedSchema(
   for (const { statement } of drops.rows) {
     await session.execute(statement);
   }
+  const revokes = await session.query<{ statement: string }>(revokeStatements, [
+    namespace,
+  ]);
+  for (const { statement } of revokes.rows) {
+    await session.execute(statement);
+  }
+  if (schema === "public") {
+    await session.execute("GRANT USAGE ON SCHEMA public TO PUBLIC");
+  }
   const left = await session.query<{ object: string }>(
     `SELECT pg_catalog.pg_describe_object(classid, objid, objsubid) AS object
        FROM pg_catalog.pg_depend
       WHERE refclassid = 'pg_catalog.pg_namespace'::regclass AND refobjid = $1
         AND classid <> 'pg_catalog.pg_default_acl'::regclass
+     UNION ALL
+     SELECT object FROM (${grantsLeft}) grants
       ORDER BY 1`,
-    [namespace],
+    [namespace, schema === "public"],
   );
   if (left.rows.length > 0) {
     throw new WipeFailedError(
@@ -146,3 +162,26 @@ SELECT statement FROM (
    WHERE t.tmplnamespace = $1 AND ${notExtensionMember("pg_ts_template", "t")}
 ) drops
 ORDER BY step, name COLLATE "C", statement COLLATE "C"`;
+
+// The schema's grants to anyone but its owner and the deploy role, $1 the
+// schema's oid. `grantsLeft` also takes $2: whether PUBLIC's USAGE is the
+// default (schema public).
+const otherGrants = `
+  SELECT e.grantee, e.grantor, e.privilege_type, n.nspname
+    FROM pg_catalog.pg_namespace n,
+         pg_catalog.aclexplode(COALESCE(n.nspacl, pg_catalog.acldefault('n', n.nspowner))) e
+   WHERE n.oid = $1 AND e.grantee <> n.nspowner
+     AND e.grantee <> (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)`;
+
+const revokeStatements = `
+SELECT DISTINCT format('REVOKE ALL ON SCHEMA %I FROM %s CASCADE', nspname,
+         CASE grantee WHEN 0 THEN 'PUBLIC' ELSE quote_ident(pg_catalog.pg_get_userbyid(grantee)) END) AS statement
+  FROM (${otherGrants}) g
+ ORDER BY 1`;
+
+const grantsLeft = `
+SELECT format('grant of %s on schema %I to %s by %s', privilege_type, nspname,
+         CASE grantee WHEN 0 THEN 'PUBLIC' ELSE quote_ident(pg_catalog.pg_get_userbyid(grantee)) END,
+         quote_ident(pg_catalog.pg_get_userbyid(grantor))) AS object
+  FROM (${otherGrants}) g
+ WHERE NOT (grantee = 0 AND privilege_type = 'USAGE' AND $2::boolean)`;
