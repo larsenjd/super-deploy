@@ -5,6 +5,7 @@
 import { join } from "node:path";
 import { deploy } from "../commands/deploy.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
+import { disposable } from "../commands/disposable.ts";
 import { draft } from "../commands/draft.ts";
 import { finalize } from "../commands/finalize.ts";
 import { rehearse } from "../commands/rehearse.ts";
@@ -14,6 +15,7 @@ import { unfinalize } from "../commands/unfinalize.ts";
 import { validate } from "../commands/validate.ts";
 import type { AttemptRecord } from "../deploy/history.ts";
 import {
+  DriftError,
   OverwriteNotAcknowledgedError,
   ValidationFailedError,
   type ValidationProblem,
@@ -392,7 +394,10 @@ const deployCommand: CommandDefinition = {
     "Rehearse every pending migration, then apply them all to the target in one transaction",
   options: [targetOption],
   async run(project, values, context) {
-    const result = await deploy(project, { target: String(values.target) });
+    const result = await deploy(project, {
+      target: String(values.target),
+      onWarning: (warning) => context.warn(`warning: ${warning}`),
+    });
     context.result(
       result.deployed.length === 0
         ? `Target ${result.target} is up to date: nothing to deploy`
@@ -404,13 +409,47 @@ const deployCommand: CommandDefinition = {
 const statusCommand: CommandDefinition = {
   name: "status",
   group: "Deploy",
-  summary: "Show the target's pending migrations and recent attempts",
+  summary:
+    "Show the target's pending migrations, recent attempts and drift (exit 1 on drift)",
   options: [targetOption],
   async run(project, values, context) {
     const report = await status(project, { target: String(values.target) });
+    const { preflight } = report;
+    for (const warning of preflight.warnings) {
+      context.warn(`warning: ${warning}`);
+    }
     context.result(
       `Target ${report.target}${report.disposable ? " (disposable)" : ""}: ${plural(report.recorded.length, "migration")} recorded, ${report.pending.length} pending`,
     );
+    const refusals = [
+      ...preflight.missingRoles.map((role) => `role "${role}" does not exist`),
+      ...preflight.missingExternalSchemas.map(
+        (schema) => `external schema "${schema}" does not exist`,
+      ),
+      ...preflight.historyMismatches.map((mismatch) => mismatch.message),
+    ];
+    if (refusals.length > 0) {
+      context.result("Deploy would refuse:");
+      for (const refusal of refusals) {
+        context.result(`  ${refusal}`);
+      }
+    }
+    if (report.drift === undefined) {
+      context.result(
+        "Drift: not checked (the recorded history doesn't match the project's migrations)",
+      );
+    } else if (report.drift.length > 0) {
+      // `-` lines are on the target only, `+` lines what its recorded migrations produce.
+      context.result(
+        "Drift (the target differs from its recorded migrations):",
+      );
+      for (const drifted of report.drift) {
+        context.result(`  ${drifted.change}: ${drifted.object}`);
+        for (const line of drifted.differences) {
+          context.result(`    ${line}`);
+        }
+      }
+    }
     if (report.pending.length > 0) {
       context.result("Pending:");
       for (const migration of report.pending) {
@@ -423,6 +462,40 @@ const statusCommand: CommandDefinition = {
         context.result(`  ${describeAttempt(attempt)}`);
       }
     }
+    if (report.drift !== undefined && report.drift.length > 0) {
+      // Exit 1, so a scheduled status alerts on drift.
+      throw new DriftError(report.target, report.drift);
+    }
+  },
+};
+
+const disposableCommand: CommandDefinition = {
+  name: "disposable",
+  group: "Disposable",
+  summary:
+    "Flag the target as disposable (or not) in its own history schema; asks you to type YES",
+  options: [
+    targetOption,
+    {
+      name: "set",
+      kind: "choice",
+      choices: ["yes", "no"],
+      description:
+        "yes to make the target disposable, no to make it not disposable",
+      required: true,
+    },
+  ],
+  async run(project, values, context) {
+    const result = await disposable(project, {
+      target: String(values.target),
+      set: values.set === "yes",
+    });
+    const what = result.disposable ? "disposable" : "not disposable";
+    context.result(
+      result.changed
+        ? `Target ${result.target} is now ${what}`
+        : `Target ${result.target} is already ${what}: nothing changed`,
+    );
   },
 };
 
@@ -451,4 +524,5 @@ export const commands: readonly CommandDefinition[] = [
   validateCommand,
   deployCommand,
   statusCommand,
+  disposableCommand,
 ];

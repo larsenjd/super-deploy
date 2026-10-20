@@ -6,9 +6,14 @@ import {
   deploy,
   RehearsalMismatchError,
   status,
+  unfinalize,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { deployProject, finalizeMigration } from "../support/deploy.ts";
+import {
+  deployProject,
+  finalizeMigration,
+  testSession,
+} from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
 let server: TestServer;
@@ -52,7 +57,7 @@ describe("status", () => {
 
     const { drift } = await status(project, { target: "dev" });
 
-    expect(drift.map(({ object, change }) => ({ object, change }))).toEqual([
+    expect(drift?.map(({ object, change }) => ({ object, change }))).toEqual([
       { object: "column name of table customers", change: "changed" },
       { object: "column note of table customers", change: "extra" },
       { object: "index audit_pkey", change: "extra" },
@@ -79,10 +84,49 @@ create index orders_customer_idx on orders (customer_id);
         object: "index orders_customer_idx",
         change: "missing",
         differences: [
-          "+ index: CREATE INDEX orders_customer_idx ON public.orders USING btree (customer_id)",
+          "+ index: CREATE INDEX orders_customer_idx ON public.orders USING btree (customer_id) valid=true clustered=false replident=false",
         ],
       },
     ]);
+  });
+
+  test("counts grants and every other kind of object a schema can hold", async () => {
+    const { project, database } = await deployedProject();
+    const reader = `drift_reader_${database}`;
+    await server.query(
+      `create role ${reader} nologin;
+       grant select on customers to ${reader};
+       create rule customers_no_delete as on delete to customers do instead nothing;
+       create statistics customers_stats on id, name from customers;
+       create aggregate total (bigint) (sfunc = int8pl, stype = bigint);`,
+      [],
+      database,
+    );
+
+    const { drift } = await status(project, { target: "dev" });
+
+    expect(drift?.map(({ object, change }) => ({ object, change }))).toEqual([
+      { object: "function total(bigint)", change: "extra" },
+      {
+        object: "rule customers_no_delete on table customers",
+        change: "extra",
+      },
+      { object: "statistics object customers_stats", change: "extra" },
+      { object: "table customers", change: "changed" },
+    ]);
+    expect(drift?.at(-1)?.differences).toContainEqual(
+      expect.stringContaining(`${reader}:SELECT/<owner>`),
+    );
+  });
+
+  test("is not checked when the recorded history doesn't match the project", async () => {
+    const { project } = await deployedProject();
+    await unfinalize(project, { acknowledgeOverwrite: true });
+
+    const report = await status(project, { target: "dev" });
+
+    expect(report.preflight.historyMismatches).not.toEqual([]);
+    expect(report.drift).toBeUndefined();
   });
 
   test("ignores column order and ownership", async () => {
@@ -195,8 +239,8 @@ describe("deploy", () => {
     expect((error as Error).message).toContain(
       "The deployment rehearsal does not match the desired-schema snapshot of 00002-add-orders",
     );
-    expect((error as RehearsalMismatchError).differences).toContain(
-      "catalog: + relation: r not_in_migrations rls=false force=false persistence=p options=-",
+    expect((error as RehearsalMismatchError).differences).toContainEqual(
+      expect.stringMatching(/^catalog: \+ relation: r not_in_migrations /),
     );
     expect(
       await server.query(
@@ -205,5 +249,31 @@ describe("deploy", () => {
         database,
       ),
     ).toEqual([{ orders: null }]);
+  });
+
+  test("reads the target's catalogs under its lock timeout, so a table locked by someone else fails the drift check fast", async () => {
+    const { project, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { target: 'lockTimeout: "200ms",' },
+    );
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    const holder = await testSession(server, database);
+    try {
+      await holder.execute(
+        "BEGIN; LOCK TABLE customers IN ACCESS EXCLUSIVE MODE",
+      );
+
+      await expect(deploy(project, { target: "dev" })).rejects.toThrow(
+        /lock timeout/,
+      );
+      await expect(status(project, { target: "dev" })).rejects.toThrow(
+        /lock timeout/,
+      );
+    } finally {
+      await holder.close();
+    }
+    expect((await status(project, { target: "dev" })).drift).toEqual([]);
   });
 });

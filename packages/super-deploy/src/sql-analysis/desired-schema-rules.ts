@@ -15,6 +15,7 @@ import type { ParsedStatement } from "./parse.ts";
 import { plpgsqlFindings, sqlBodyFindings } from "./routine-bodies.ts";
 import type { RuleContext, RuleFinding } from "./rule-types.ts";
 import { schemaFindings } from "./schemas.ts";
+import { statementName } from "./statement-names.ts";
 import {
   defElemString,
   defElems,
@@ -538,41 +539,4 @@ function objectTypeName(objtype: unknown): string {
  */
 export function isAlreadyInstalled(statement: ParsedStatement): boolean {
   return unwrap(statement.node, "CreateExtensionStmt")?.extname === "plpgsql";
-}
-
-// --- names -------------------------------------------------------------------
-
-const names: Record<string, string> = {
-  CreateStmt: "CREATE TABLE",
-  CreateTableAsStmt: "CREATE TABLE AS",
-  ViewStmt: "CREATE VIEW",
-  IndexStmt: "CREATE INDEX",
-  CreateFunctionStmt: "CREATE FUNCTION",
-  CreateTrigStmt: "CREATE TRIGGER",
-  CreateDomainStmt: "CREATE DOMAIN",
-  CompositeTypeStmt: "CREATE TYPE",
-  CreateEnumStmt: "CREATE TYPE ... AS ENUM",
-  CreateSchemaStmt: "CREATE SCHEMA",
-  CreateSeqStmt: "CREATE SEQUENCE",
-  CreateExtensionStmt: "CREATE EXTENSION",
-  CreatePolicyStmt: "CREATE POLICY",
-  AlterTableStmt: "ALTER TABLE",
-  DropStmt: "DROP",
-  InsertStmt: "INSERT",
-  UpdateStmt: "UPDATE",
-  DeleteStmt: "DELETE",
-  MergeStmt: "MERGE",
-  SelectStmt: "SELECT",
-  TruncateStmt: "TRUNCATE",
-  GrantStmt: "GRANT / REVOKE",
-  CommentStmt: "COMMENT",
-  TransactionStmt: "Transaction control",
-  DoStmt: "DO",
-  CallStmt: "CALL",
-  VariableSetStmt: "SET",
-  CopyStmt: "COPY",
-};
-
-export function statementName(nodeType: string): string {
-  return names[nodeType] ?? `A ${nodeType} statement`;
 }

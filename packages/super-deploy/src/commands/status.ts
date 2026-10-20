@@ -1,9 +1,11 @@
-// `status --target X`: what a deployment to the target would do. Read-only:
-// one session, no lock, nothing written (a target without a history schema
-// simply has every migration pending). Drift: the target's managed schema is
-// compared with a replica of its recorded migrations, built on a throwaway
-// database matching its locale (the CLI exits 1 on drift). Tickets 13-14 add
-// pre-flight findings and settling attempts whose COMMIT outcome was lost.
+// `status --target X`: what a deployment to the target would do. One session,
+// no lock. It writes only to settle attempts whose outcome was never recorded
+// (`settleAttempts`: a lost COMMIT, a command that died); a target without a
+// history schema is not written to and simply has every migration pending. It
+// reports the deploy pre-flight's findings, and drift: the target's managed
+// schema compared with a replica of its recorded migrations, built on a
+// throwaway database matching its locale (the CLI exits 1 on drift).
+import { settleAttempts } from "../deploy/attempts.ts";
 import {
   type AttemptRecord,
   historySchemaExists,
@@ -13,6 +15,10 @@ import {
   readTargetSettings,
 } from "../deploy/history.ts";
 import { pendingMigrations } from "../deploy/pending.ts";
+import {
+  type PreflightFindings,
+  preflightChecks,
+} from "../deploy/preflight.ts";
 import {
   connectTarget,
   resolveTarget,
@@ -43,11 +49,15 @@ export interface StatusReport {
   /** The newest attempts first. */
   readonly attempts: readonly AttemptRecord[];
   readonly disposable: boolean;
+  /** What the deploy pre-flight finds now; a deployment would refuse on anything but warnings. */
+  readonly preflight: PreflightFindings;
   /**
    * How the target's managed schema differs from what its recorded
    * migrations produce (column order and ownership aside). Empty: no drift.
+   * Undefined when the recorded history doesn't match the project's
+   * migrations (`preflight.historyMismatches`), so no replica can be built.
    */
-  readonly drift: readonly DriftedObject[];
+  readonly drift: readonly DriftedObject[] | undefined;
 }
 
 export async function status(
@@ -58,36 +68,53 @@ export async function status(
   const target = resolveTarget(project, options.target);
   const migrations = await verifiedMigrations(root, paths);
   const units = await readMigrationUnits(root, migrations);
+  const withUnits = migrations.map((migration, index) => ({
+    ...migration,
+    unit: units[index] ?? { label: migration.folder, files: [] },
+  }));
   const session = await connectTarget(target);
   try {
     const schema = config.historySchema;
+    const exists = await historySchemaExists(session, schema);
+    if (exists) {
+      await settleAttempts(session, schema);
+    }
     const recorded = await readRecordedMigrations(session, schema);
-    const drift = await withReplica(
-      project,
-      await targetDatabaseRequest(session),
-      replicaUnits(
-        target.name,
-        migrations.map((migration, index) => ({
-          ...migration,
-          unit: units[index] ?? { label: migration.folder, files: [] },
-        })),
-        recorded,
-      ),
-      (replica) => driftBetween(session, replica, config.managedSchema),
-    );
+    const pending = pendingMigrations(withUnits, recorded);
+    const preflight = await preflightChecks(session, project, {
+      targetName: target.name,
+      migrations,
+      recorded,
+      pending: pending.map((migration) => migration.unit),
+    });
+    const drift =
+      preflight.historyMismatches.length > 0
+        ? undefined
+        : await withReplica(
+            project,
+            await targetDatabaseRequest(session),
+            replicaUnits(target.name, withUnits, recorded),
+            (replica) =>
+              driftBetween(session, replica, config.managedSchema, {
+                target,
+              }),
+          );
     return {
       target: target.name,
-      historySchemaExists: await historySchemaExists(session, schema),
+      historySchemaExists: exists,
       recorded,
-      pending: pendingMigrations(migrations, recorded).map(
-        ({ number, name, folder }) => ({ number, name, folder }),
-      ),
+      pending: pending.map(({ number, name, folder }) => ({
+        number,
+        name,
+        folder,
+      })),
       attempts: await readRecentAttempts(
         session,
         schema,
         options.attempts ?? 10,
       ),
       disposable: (await readTargetSettings(session, schema)).disposable,
+      preflight,
       drift,
     };
   } finally {

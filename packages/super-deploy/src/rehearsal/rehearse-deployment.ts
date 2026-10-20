@@ -10,6 +10,7 @@
 //      snapshot, loaded into a second throwaway database with the same
 //      request (pg-delta and our catalog comparison, as in draft rehearsals)
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
+import type { ResolvedTarget } from "../config/config.ts";
 import { pgDeltaDiffer } from "../differ/pg-delta.ts";
 import { DriftError, RehearsalMismatchError } from "../errors.ts";
 import type { Project } from "../project.ts";
@@ -21,8 +22,8 @@ import { withReplica } from "./replica.ts";
 import { loadDesiredSchema, withThrowawayDatabase } from "./throwaway.ts";
 
 export interface DeploymentRehearsalInput {
-  /** The target's name, for messages. */
-  readonly targetName: string;
+  /** The target, for messages and its timeouts. */
+  readonly targetConfig: ResolvedTarget;
   /** A session to the target, read here (catalogs only). */
   readonly target: Session;
   /** The target's encoding, locale and collation provider. */
@@ -57,9 +58,11 @@ export async function rehearseDeployment(
     input.request,
     input.recorded,
     async (replica) => {
-      const drift = await driftBetween(input.target, replica, managedSchema);
+      const drift = await driftBetween(input.target, replica, managedSchema, {
+        target: input.targetConfig,
+      });
       if (drift.length > 0) {
-        throw new DriftError(input.targetName, drift);
+        throw new DriftError(input.targetConfig.name, drift);
       }
       if (input.pending.length > 0) {
         await replay(replica, input.pending, managedSchema);

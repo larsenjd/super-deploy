@@ -8,6 +8,7 @@
 // used here: it would read the whole target database (history schema and
 // all) rather than the managed schema.
 import type { Session } from "../adapters/types.ts";
+import type { ResolvedTarget } from "../config/config.ts";
 import {
   type CatalogFact,
   catalogFacts,
@@ -41,11 +42,33 @@ export async function driftBetween(
   target: Session,
   replica: Session,
   managedSchema: string,
+  options: DriftOptions = {},
 ): Promise<DriftedObject[]> {
   return driftedObjects(
-    await catalogFacts(target, managedSchema),
+    await catalogFacts(target, managedSchema, {
+      settings: options.target === undefined ? [] : timeouts(options.target),
+    }),
     await catalogFacts(replica, managedSchema),
   );
+}
+
+export interface DriftOptions {
+  /**
+   * The target `target` connects to: its catalogs are read under its lock
+   * and statement timeouts. Reading a definition (e.g. pg_get_indexdef)
+   * waits for a lock on the table, so a table locked ACCESS EXCLUSIVE would
+   * otherwise make the drift check hang.
+   */
+  readonly target?: ResolvedTarget;
+}
+
+function timeouts(target: ResolvedTarget): string[] {
+  return [
+    `SET LOCAL lock_timeout TO '${target.lockTimeoutMs}ms'`,
+    ...(target.statementTimeoutMs === undefined
+      ? []
+      : [`SET LOCAL statement_timeout TO '${target.statementTimeoutMs}ms'`]),
+  ];
 }
 
 /** Groups fact differences (target = actual, replica = expected) by object. */
@@ -109,9 +132,4 @@ export function driftedObjects(
       ],
     }))
     .sort((a, b) => (a.object < b.object ? -1 : a.object > b.object ? 1 : 0));
-}
-
-/** e.g. `table audit (extra), column name of table customers (changed)`. */
-export function describeDrift(objects: readonly DriftedObject[]): string {
-  return objects.map((o) => `${o.object} (${o.change})`).join(", ");
 }

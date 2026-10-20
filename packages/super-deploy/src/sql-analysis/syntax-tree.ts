@@ -73,3 +73,74 @@ export function defElemString(arg: unknown): string | undefined {
   const items = stringList(arg);
   return items.length === 1 ? items[0] : undefined;
 }
+
+/** `{ Type: body }` as `["Type", body]`, or undefined if `value` is not a wrapped node. */
+export function wrapped(value: unknown): [string, Json] | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+  const keys = Object.keys(value);
+  const [type] = keys;
+  if (keys.length !== 1 || type === undefined || !/^[A-Z]/.test(type)) {
+    return undefined;
+  }
+  const body = value[type];
+  return isObject(body) ? [type, body] : undefined;
+}
+
+export interface NodeVisit {
+  /** Node type, e.g. `FuncCall`; unwrapped RangeVar and TypeName nodes are recognised by shape. */
+  readonly type: string;
+  readonly node: Json;
+  /** The field this node was found in (`relation`, `sortClause`, ...). */
+  readonly key: string | undefined;
+}
+
+/**
+ * Like `walk`, but reports typed nodes only: wrapped nodes by their type, and
+ * the unwrapped RangeVar and TypeName nodes some fields embed (e.g.
+ * `InsertStmt.relation`) by their shape. Parents come before children;
+ * returning `false` skips a node's children.
+ */
+export function walkNodes(
+  root: unknown,
+  visit: (visit: NodeVisit) => boolean | undefined,
+): void {
+  const descend = (value: unknown, key: string | undefined): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        descend(item, key);
+      }
+      return;
+    }
+    if (!isObject(value)) {
+      return;
+    }
+    const node = wrapped(value);
+    if (node !== undefined) {
+      if (visit({ type: node[0], node: node[1], key }) !== false) {
+        children(node[1]);
+      }
+      return;
+    }
+    const shape =
+      "relname" in value && "relpersistence" in value
+        ? "RangeVar"
+        : "names" in value && "typemod" in value
+          ? "TypeName"
+          : undefined;
+    if (
+      shape !== undefined &&
+      visit({ type: shape, node: value, key }) === false
+    ) {
+      return;
+    }
+    children(value);
+  };
+  const children = (body: Json): void => {
+    for (const [key, child] of Object.entries(body)) {
+      descend(child, key);
+    }
+  };
+  descend(root, undefined);
+}

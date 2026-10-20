@@ -14,6 +14,7 @@ import {
 import {
   externalSchemasBoundAtCreate,
   isAlreadyInstalled,
+  rolesNamedIn,
 } from "../sql-analysis/index.ts";
 import type { ParsedStatement } from "../sql-analysis/parse.ts";
 
@@ -95,10 +96,43 @@ export async function ensureManagedSchema(
 }
 
 /**
+ * Creates every role in `roles` that the rehearsal server lacks, as NOLOGIN,
+ * outside any transaction. Roles are server-wide and never dropped: a
+ * rehearsal must not remove a role something else on the server relies on.
+ * Another rehearsal creating the same role at the same moment is fine.
+ */
+export async function ensureRoles(
+  session: Session,
+  roles: readonly string[],
+): Promise<void> {
+  if (roles.length === 0) {
+    return;
+  }
+  const { rows } = await session.query<{ rolname: string }>(
+    "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
+    [roles],
+  );
+  const existing = new Set(rows.map((row) => row.rolname));
+  for (const role of roles.filter((name) => !existing.has(name))) {
+    try {
+      await session.execute(`CREATE ROLE ${quoteIdentifier(role)} NOLOGIN`);
+    } catch (error) {
+      // 42710 duplicate_object, or 23505 when a concurrent CREATE ROLE wins
+      // the race on pg_authid's unique index.
+      const code = (error as { code?: string }).code;
+      if (code !== "42710" && code !== "23505") {
+        throw error;
+      }
+    }
+  }
+}
+
+/**
  * Loads ordered desired-schema statements in one transaction, one statement
  * at a time so a failure names its file and line. A failing statement that
  * binds to a declared external schema at CREATE gets a hint: rehearsals never
- * contain external schemas.
+ * contain external schemas. Roles the statements grant to are created first
+ * if the server lacks them (ensureRoles).
  */
 export async function loadDesiredSchema(
   session: Session,
@@ -107,6 +141,7 @@ export async function loadDesiredSchema(
   externalSchemas: readonly string[] = [],
 ): Promise<void> {
   await ensureManagedSchema(session, managedSchema);
+  await ensureRoles(session, rolesNamedIn(statements));
   await session.execute("BEGIN");
   try {
     await session.execute(pinnedSettings(managedSchema).join(";\n"));
