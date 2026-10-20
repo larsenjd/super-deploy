@@ -1,5 +1,5 @@
 // The deployment engine, shared by every command that changes a target
-// (deploy, disposable, deploy-draft, rebuild; mark later).
+// (deploy, disposable, deploy-draft, rebuild, mark, init --adopt).
 //
 // `withLockedTarget` runs a command body against a target:
 //   1. connect the command session (adapter.connect() call #1): it takes the
@@ -30,7 +30,12 @@
 // Its frame (BEGIN, the SET LOCALs, COMMIT or ROLLBACK, a lost COMMIT's
 // classification) is `inDeployTransaction`, which deploy-draft and rebuild
 // also use with bodies of their own, so fault-injection wrappers see the
-// same statements from them.
+// same statements from them. Before it, the drift check (deploy, mark) reads
+// the catalogs on the same session, opening with one batch of `BEGIN READ
+// ONLY` and the same timeouts, and the attempt-log session sends its own
+// BEGIN and COMMIT when it creates the history schema: a wrapper finds the
+// deploy transaction as the first batch containing `lock_timeout` and not
+// `READ ONLY`.
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { CommitOutcomeUnknownError, InterruptedError } from "../errors.ts";

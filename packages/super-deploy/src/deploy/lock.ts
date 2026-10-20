@@ -2,9 +2,9 @@
 // command's own session (the one that runs the deploy transaction), keyed
 // from the history schema name. Session-level, so it outlives the deploy
 // transaction's ROLLBACK and is released explicitly (or when the session
-// closes). Every command that changes a target takes it: deploy, and later
-// mark, rebuild, deploy-draft and disposable. Contention fails at once,
-// naming the holder's running attempt.
+// closes). Every command that changes a target takes it: deploy, mark,
+// rebuild, deploy-draft, disposable and init --adopt. Contention fails at
+// once, naming the holder's running attempt.
 //
 // Advisory locks are per database, so the key only has to tell projects
 // apart that share one database with different history schemas.
