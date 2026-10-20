@@ -206,7 +206,7 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 **Differ** (Q3, Q17, ADR-0003)
 - The desired schema is read by loading it into a throwaway database and reading the catalogs; SQL is never modelled by parsing.
 - Behind our own `Differ` interface. V1 wraps `@supabase/pg-delta`, pinned to exactly `1.0.0-alpha.59`, calling its extract and plan operations directly. Its directory loader and `@supabase/pg-topo` are never used. Every upgrade re-runs the prototype. Fallback: our own `pg_catalog`/`pg_depend` differ behind the same interface.
-- Column order is never a difference; ownership is not diffed; grants are, including the managed schema's own grants.
+- Table column order is never a difference, but a composite type's attribute order is (its values are built by position); ownership is not diffed; grants are, including the managed schema's own grants.
 - Verification, independent of engine: apply the generated migration to a fresh database, read it back, and require an empty diff against the desired schema using both pg-delta and our own `pg_catalog` comparison (pg-delta's own re-diff misses some of its errors).
 - Known pg-delta gaps (prototype `prototype/pg-delta`, `9d619fe`): `BETWEEN` in a check never converges (upstream #544, tracked); PG18 NOT NULL constraint names and comments on constraint-backed indexes are lost (our catalog comparison must catch these); changing an in-use domain's base type is refused.
 
@@ -244,7 +244,7 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 - Unknown COMMIT outcome: recorded as unknown, settled on the next `status` or `deploy` by checking the migrations rows written inside the transaction.
 
 **Guarded and recovery commands** (Q14, Q27, Q52)
-- `mark`: next pending migration only; builds a locale-matched replica of migrations up to N and requires an empty diff (column order and ownership ignored); records the original variant; writes only to the target's history schema.
+- `mark`: next pending migration only; builds a locale-matched replica of migrations up to N and requires an empty diff (table column order and ownership ignored); records the original variant; writes only to the target's history schema.
 - `disposable --set yes|no`, `deploy-draft [--with-seed]` (disposable targets only), `rebuild --to N` (disposable only, no seed data; afterwards the managed schema's grants are exactly those the replayed migrations declare: a grant on it the deploy role can't revoke, such as one the schema's owner made when the deploy role doesn't own it, fails the rebuild inside its transaction, naming each such grant and its grantor).
 - Guard sequence: refuse in CI or without a terminal on stdin and stdout; check preconditions; show the action plus the target's name, host, database and last recorded migration; require typing `YES` exactly; record a manual attempt under the OS username. Nothing skips it.
 

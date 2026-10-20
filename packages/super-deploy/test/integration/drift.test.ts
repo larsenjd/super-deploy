@@ -143,6 +143,37 @@ create index orders_customer_idx on orders (customer_id);
 
     expect((await status(project, { target: "dev" })).drift).toEqual([]);
   });
+
+  test("counts the order of a composite type's attributes, ignoring dropped ones", async () => {
+    const { project, database } = await deployProject(server, {
+      "size.sql": "create type size as (width integer, height integer);\n",
+    });
+    await finalizeMigration(project, "add size");
+    await deploy(project, { target: "dev" });
+
+    // Drop and re-add the last attribute: the order stays (width, height).
+    await server.query(
+      `alter type size drop attribute height;
+       alter type size add attribute height integer;`,
+      [],
+      database,
+    );
+    expect((await status(project, { target: "dev" })).drift).toEqual([]);
+
+    // Drop and re-add the first: the order becomes (height, width).
+    await server.query(
+      `alter type size drop attribute width;
+       alter type size add attribute width integer;`,
+      [],
+      database,
+    );
+    const { drift } = await status(project, { target: "dev" });
+
+    expect(drift?.map(({ object, change }) => ({ object, change }))).toEqual([
+      { object: "column height of composite type size", change: "changed" },
+      { object: "column width of composite type size", change: "changed" },
+    ]);
+  });
 });
 
 describe("deploy", () => {

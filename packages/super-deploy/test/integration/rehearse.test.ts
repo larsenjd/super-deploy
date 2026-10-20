@@ -8,6 +8,7 @@ import {
   SqlFileFailedError,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { finalizeMigration } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject, embeddedConfig } from "../support/project.ts";
 
@@ -90,6 +91,35 @@ describe("rehearse", () => {
     expect((error as RehearsalMismatchError).differences).toEqual([
       "catalog: - constraint: customers customers_name_not_null n NOT NULL name deferrable=false deferred=false validated=true",
       "catalog: + constraint: customers customers_name_required n NOT NULL name deferrable=false deferred=false validated=true",
+    ]);
+  });
+
+  test("our own catalog comparison catches what pg-delta misses: reordered composite type attributes", async () => {
+    // pg-delta 1.0.0-alpha.59 doesn't diff attribute order, so the swap
+    // generates nothing and its re-diff is empty.
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: {
+        "data-model/desired-schema/size.sql":
+          "create type size as (width integer, height integer);\n",
+      },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    await finalizeMigration(project, "Add size");
+    await dir.write(
+      "data-model/desired-schema/size.sql",
+      "create type size as (height integer, width integer);\n",
+    );
+    await draft(project, { name: "Swap size" });
+
+    const error = await rehearse(project).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RehearsalMismatchError);
+    expect((error as RehearsalMismatchError).differences).toEqual([
+      expect.stringMatching(/^catalog: - column: size\.height .* position=2$/),
+      expect.stringMatching(/^catalog: - column: size\.width .* position=1$/),
+      expect.stringMatching(/^catalog: \+ column: size\.height .* position=1$/),
+      expect.stringMatching(/^catalog: \+ column: size\.width .* position=2$/),
     ]);
   });
 

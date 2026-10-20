@@ -7,8 +7,11 @@
 // One query per object kind, each returning one text line per object with no
 // OIDs (names, pg_get_*def, format_type), plus the object it describes
 // (pg_describe_object, also OID-free) so differences can name objects.
-// Column order (attnum) is never compared, and ACLs are normalised with
-// acldefault() so implicit and explicit default grants compare equal.
+// Column order (attnum) is never compared, except for composite types:
+// their values are built by position (ROW(...), '(a,b)'), so an attribute's
+// position among the live ones is part of the type (pg-delta doesn't diff
+// it). ACLs are normalised with acldefault() so implicit and explicit default
+// grants compare equal.
 // Ownership is never compared: ACLs name the owner `<owner>` (so a target
 // owned by its deploy role matches a replica owned by the rehearsal login).
 //
@@ -78,6 +81,7 @@ const queries: Readonly<Record<string, string>> = {
       || ' collation=' || coalesce(nullif(a.attcollation, 0)::regcollation::text, '-')
       || ' storage=' || a.attstorage::text || ' compression=' || coalesce(nullif(a.attcompression::text, ''), '-')
       || ' stattarget=' || coalesce(a.attstattarget::text, '-') || ' local=' || a.attislocal
+      || case when c.relkind = 'c' then ' position=' || row_number() over (partition by a.attrelid order by a.attnum) else '' end
     from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
     left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
     where n.nspname = $1 and a.attnum > 0 and not a.attisdropped and c.relkind in ('r','v','m','c','p','f')`,
