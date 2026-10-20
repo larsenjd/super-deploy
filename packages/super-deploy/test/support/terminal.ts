@@ -24,7 +24,11 @@ export interface Terminal {
   readonly screen: string;
   /** Types into the terminal. */
   type(text: string): void;
-  /** Waits until `text` appears after everything already waited for, and returns the screen up to it. */
+  /**
+   * Waits until `text` appears after everything already waited for, and
+   * returns the screen up to it. Gives up after 20 s by default, inside the
+   * 30 s test timeout, so the failure shows the screen.
+   */
   waitFor(text: string | RegExp, timeoutMs?: number): Promise<string>;
   /**
    * Runs the menu item labelled `label` (e.g. `deploy-draft`, `quit`): moves
@@ -81,7 +85,7 @@ export function spawnTerminal(
   const until = <T>(
     description: string,
     found: (text: string) => T | undefined,
-    timeoutMs = 30_000,
+    timeoutMs = 20_000,
   ) =>
     new Promise<T>((resolve, reject) => {
       const fail = (why: string) => {

@@ -71,10 +71,10 @@ export function runCli(
   return spawnCli(args, options).result;
 }
 
-/** Waits until `path` exists (e.g. a marker file a test config writes). */
+/** Waits until `path` exists (e.g. a marker file a test config writes); 20 s by default, inside the test timeout. */
 export async function waitForFile(
   path: string,
-  timeoutMs = 30_000,
+  timeoutMs = 20_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!existsSync(path)) {

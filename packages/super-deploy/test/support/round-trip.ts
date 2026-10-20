@@ -72,6 +72,8 @@ export function describeRoundTrips(scenarios: readonly RoundTrip[]): void {
           expect(report.drift, target).toEqual([]);
         }
       },
+      // Four draft, finalize and deploy cycles each: the slowest tests.
+      60_000,
     );
   });
 }
