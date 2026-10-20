@@ -10,6 +10,12 @@ export {
   type AdoptionOptions,
   adoptedDesiredSchema,
 } from "./adoption.ts";
+export {
+  type OverrideCandidate,
+  oneLine,
+  overrideCandidates,
+  withOverrideMarkers,
+} from "./adoption-overrides.ts";
 export { denylistReason } from "./denylist.ts";
 export {
   analyseMigration,

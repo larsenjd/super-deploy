@@ -14,6 +14,7 @@ import {
   S_RADIO_INACTIVE,
   select,
   symbol,
+  text,
   unicodeOr,
 } from "@clack/prompts";
 import { InvalidDraftNameError } from "../errors.ts";
@@ -298,6 +299,15 @@ async function askName(
   }
   const input = answer ?? "";
   return input.trim() === "" ? undefined : input;
+}
+
+/** A free-text question. Cancelling (or an interruption) answers undefined. */
+export async function askAtTerminal(
+  io: PromptIo,
+  question: string,
+): Promise<string | undefined> {
+  const answer = await text({ ...streams(io), message: question });
+  return isCancel(answer) ? undefined : answer;
 }
 
 /** A yes/no question, default no. Cancelling (or an interruption) answers no. */

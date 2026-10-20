@@ -30,8 +30,17 @@ import {
   type ValidationProblem,
 } from "../errors.ts";
 import type { Project } from "../project.ts";
-import type { Confirm, OverwriteOptions, Question } from "../questions.ts";
-import type { LockWarning, Override } from "../sql-analysis/index.ts";
+import type {
+  AskOverrideReason,
+  Confirm,
+  OverwriteOptions,
+  Question,
+} from "../questions.ts";
+import {
+  type LockWarning,
+  type Override,
+  ruleDefinition,
+} from "../sql-analysis/index.ts";
 import { readDraft } from "../store/draft.ts";
 import {
   migrationFolderName,
@@ -129,6 +138,11 @@ export interface CommandContext {
    * unless the acknowledgement flag was given. See `acknowledge`.
    */
   readonly confirm: ((question: string) => Promise<boolean>) | undefined;
+  /**
+   * Asks for free text at the terminal; undefined if cancelled. Undefined
+   * without a terminal (or in CI), like `confirm`.
+   */
+  readonly ask: ((question: string) => Promise<string | undefined>) | undefined;
 }
 
 interface CommandBase {
@@ -246,7 +260,10 @@ const initCommand: DirectoryCommandDefinition = {
     option: "adopt",
     async run(project, values, context) {
       try {
-        const result = await adopt(project, { target: String(values.adopt) });
+        const result = await adopt(project, {
+          target: String(values.adopt),
+          overrideReason: overrideReasonCallback(context),
+        });
         for (const file of result.files) {
           context.result(
             `Wrote ${context.displayPath(join(project.root, file))}`,
@@ -255,6 +272,11 @@ const initCommand: DirectoryCommandDefinition = {
         context.result(
           `Adopted target ${result.target}: migration ${result.migration.folder} in ${context.displayPath(result.migration.path)}, recorded on it as marked (attempt #${result.attemptId})`,
         );
+        for (const override of result.overrides) {
+          context.result(
+            describeOverride(override, result.migration.path, context),
+          );
+        }
       } catch (error) {
         if (error instanceof AdoptUnsupportedError) {
           context.warn(
@@ -264,6 +286,16 @@ const initCommand: DirectoryCommandDefinition = {
             context.warn(`  ${item.object}`);
             context.warn(`    ${item.rule}: ${item.reason}`);
           }
+          if (
+            context.ask === undefined &&
+            error.objects.some(
+              (item) => ruleDefinition(item.rule)?.overridable === true,
+            )
+          ) {
+            context.warn(
+              "In a terminal, adoption asks for an override reason for each function that breaks only risk rules, and writes its override marker",
+            );
+          }
         } else if (error instanceof MarkMismatchError) {
           reportMarkMismatch(error, context);
         }
@@ -272,6 +304,34 @@ const initCommand: DirectoryCommandDefinition = {
     },
   },
 };
+
+/**
+ * `init --adopt`'s override reasons, asked at the terminal after listing
+ * every object that needs one. Undefined without a terminal: adoption then
+ * refuses them.
+ */
+function overrideReasonCallback(
+  context: CommandContext,
+): AskOverrideReason | undefined {
+  const { ask } = context;
+  if (ask === undefined) {
+    return undefined;
+  }
+  return (question) => {
+    if (question.index === 0) {
+      context.warn(
+        `Target ${question.target} has ${plural(question.needed.length, "object")} that need${question.needed.length === 1 ? "s" : ""} an override marker:`,
+      );
+      for (const item of question.needed) {
+        context.warn(`  ${item.object}`);
+        for (const finding of item.findings) {
+          context.warn(`    ${finding.rule}: ${finding.message}`);
+        }
+      }
+    }
+    return ask(`${question.message} (empty cancels the adoption)`);
+  };
+}
 
 const draftCommand: CommandDefinition = {
   name: "draft",

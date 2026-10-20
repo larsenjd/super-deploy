@@ -33,8 +33,47 @@ export interface DestructiveQuestion {
   readonly statements: readonly DestructiveStatement[];
 }
 
-/** Every question a command can ask. */
+/** Every yes/no question a command can ask. */
 export type Question = OverwriteQuestion | DestructiveQuestion;
+
+/** Something `init --adopt` can only write with an override marker. */
+export interface OverrideNeeded {
+  /** What it is, e.g. `function load_staging(text)`. */
+  readonly object: string;
+  /** The risk rules it breaks, sorted, e.g. `plpgsql-dynamic-sql`. */
+  readonly rules: readonly string[];
+  /** Each rule's refusal, in the rules' words. */
+  readonly findings: readonly {
+    readonly rule: string;
+    readonly message: string;
+  }[];
+  /** The desired-schema file the marker goes in (project-relative). */
+  readonly file: string;
+}
+
+/**
+ * Asked by `init --adopt` once nothing else is refused, for each object in
+ * `needed` in turn (this one is `needed[index]`): the reason written into
+ * its override marker (`-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`).
+ */
+export interface OverrideReasonQuestion extends OverrideNeeded {
+  readonly kind: "override-reason";
+  readonly command: "init --adopt";
+  readonly target: string;
+  /** One line for people, ending in a question mark. */
+  readonly message: string;
+  /** Every object a reason is asked for, in the order asked. */
+  readonly needed: readonly OverrideNeeded[];
+  readonly index: number;
+}
+
+/**
+ * Answers an OverrideReasonQuestion with the reason (kept to one line).
+ * An empty answer (or undefined) cancels the adoption.
+ */
+export type AskOverrideReason = (
+  question: OverrideReasonQuestion,
+) => string | undefined | Promise<string | undefined>;
 
 /** Answers a yes/no question: true goes ahead, false refuses and nothing changes. */
 export type Confirm = (question: Question) => boolean | Promise<boolean>;

@@ -41,6 +41,7 @@ export type ErrorCode =
   | "mark-mismatch"
   | "adopt-conflict"
   | "adopt-unsupported"
+  | "adopt-cancelled"
   | "target-not-disposable"
   | "target-behind"
   | "recovery-base-mismatch"
@@ -950,5 +951,24 @@ export class AdoptUnsupportedError extends SuperDeployError {
     );
     this.target = target;
     this.objects = objects;
+  }
+}
+
+/**
+ * `init --adopt` asked for an override reason and got none (an empty
+ * answer); nothing was written anywhere.
+ */
+export class AdoptCancelledError extends SuperDeployError {
+  readonly target: string;
+  /** What the reason was asked for, e.g. `function load_staging(text)`. */
+  readonly object: string;
+
+  constructor(target: string, object: string) {
+    super(
+      "adopt-cancelled",
+      `Adoption of target ${target} cancelled: no override reason given for ${object}. Nothing was written`,
+    );
+    this.target = target;
+    this.object = object;
   }
 }
