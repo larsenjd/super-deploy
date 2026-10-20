@@ -14,6 +14,11 @@
       "folder": "00003-rename-customer-name-to-full-name",
       "contentHash": "42d7f9e31a3c7b4af2f976aa5bd065c3ae4aee8d1d9a7b6224c16fbc6cc5c62d",
       "chainHash": "c248795b1b901ad7dcfce31bdcaa0f31fcbdd574794048038c15e756736f6658"
+    },
+    {
+      "folder": "00004-unique-customer-emails",
+      "contentHash": "ef5a4736f5659903872f6c8c7748b702e2d8b5afbad6f67d4c0feb582d8a0ad5",
+      "chainHash": "14086f2ba0ae17b906cc43b33ede3387ef5c158f5c9b97b298de3ed5fbe9e887"
     }
   ]
 }
