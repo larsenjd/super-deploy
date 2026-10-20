@@ -1,0 +1,14 @@
+{
+  // Formatting runs through this package's own `format:file` script (Biome),
+  // never through the editor's formatter. SQL is never formatted automatically.
+  "editor.formatOnSave": false,
+  "emeraldwalk.runonsave": {
+    "commands": [
+      {
+        // Runs in the saved file's workspace folder, i.e. the nearest package.
+        "match": "\\.(ts|json|jsonc)$",
+        "cmd": "pnpm run format:file \"${file}\""
+      }
+    ]
+  }
+}

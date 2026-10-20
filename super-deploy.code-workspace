@@ -1,0 +1,30 @@
+{
+  "folders": [
+    { "name": "repo", "path": "." },
+    { "name": "super-deploy", "path": "packages/super-deploy" },
+    { "name": "template", "path": "packages/template" },
+    { "name": "example-shop", "path": "examples/shop" }
+  ],
+  "settings": {
+    // Run On Save reads its commands from window-level settings only, so in a
+    // multi-root window the command lives here; each folder repeats it in its
+    // own .vscode/settings.json for when it is opened on its own. The command
+    // runs with the saved file's (innermost) workspace folder as its cwd.
+    "editor.formatOnSave": false,
+    "emeraldwalk.runonsave": {
+      "commands": [
+        {
+          "match": "\\.(ts|json|jsonc)$",
+          "cmd": "pnpm run format:file \"${file}\""
+        }
+      ]
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "biomejs.biome",
+      "supabase.postgrestools",
+      "emeraldwalk.runonsave"
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "super-deploy-repo",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.14.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "prepare": "husky",
+    "build": "pnpm -r build",
+    "format": "biome format --write && pnpm -r format",
+    "format:file": "biome format --write --no-errors-on-unmatched",
+    "lint": "biome check && pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:unit": "pnpm -r test:unit",
+    "test:integration": "pnpm -r test:integration",
+    "precommit": "biome check && pnpm -r precommit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "husky": "9.1.7"
+  }
+}
