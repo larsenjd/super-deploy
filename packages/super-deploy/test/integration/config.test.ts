@@ -1,0 +1,148 @@
+import { ConfigError, loadProject, ProjectNotFoundError } from "super-deploy";
+import { describe, expect, test } from "vitest";
+import { createTestProject, embeddedConfig } from "../support/project.ts";
+
+// The adapter starts its server lazily, so loading a project never needs one.
+const unusedServer = { dataDir: "/nonexistent/super-deploy-config-test" };
+
+function configWith(settings: string): string {
+  return `import { defineConfig } from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
+
+const postgres = embeddedPostgres({ dataDir: ${JSON.stringify(unusedServer.dataDir)} });
+
+export default {
+  rehearsal: postgres.rehearsal,
+  ${settings}
+};
+`;
+}
+
+async function loadError(config: string): Promise<ConfigError> {
+  const dir = await createTestProject({ config });
+  const error = await loadProject({ cwd: dir.root }).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(ConfigError);
+  return error as ConfigError;
+}
+
+describe("loadProject", () => {
+  test("finds super-deploy.config.ts from a subdirectory and applies defaults", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(unusedServer),
+      files: { "data-model/desired-schema/customers.sql": "" },
+    });
+
+    const project = await loadProject({
+      cwd: dir.path("data-model/desired-schema"),
+    });
+
+    expect(project.root).toBe(dir.root);
+    expect(project.config).toMatchObject({
+      postgresVersion: 18,
+      managedSchema: "public",
+      historySchema: "deployment_history",
+      externalSchemas: [],
+      directory: "data-model",
+    });
+    expect(project.config.targets.dev).toMatchObject({
+      name: "dev",
+      lockTimeoutMs: 5000,
+      statementTimeoutMs: undefined,
+    });
+  });
+
+  test("reads every setting", async () => {
+    const dir = await createTestProject({
+      config: configWith(`postgresVersion: 18,
+  managedSchema: "app",
+  historySchema: "app_history",
+  externalSchemas: ["loader"],
+  directory: "database",
+  targets: { qa: { adapter: postgres.target("qa"), lockTimeout: "2s", statementTimeout: "1min" } },`),
+    });
+
+    const project = await loadProject({ cwd: dir.root });
+
+    expect(project.config).toMatchObject({
+      managedSchema: "app",
+      historySchema: "app_history",
+      externalSchemas: ["loader"],
+      directory: "database",
+    });
+    expect(project.config.targets.qa).toMatchObject({
+      lockTimeoutMs: 2000,
+      statementTimeoutMs: 60_000,
+    });
+    expect(project.paths.desiredSchema).toBe(
+      dir.path("database/desired-schema"),
+    );
+  });
+
+  test("fails when there is no config in the directory or any parent", async () => {
+    const dir = await createTestProject();
+
+    await expect(loadProject({ cwd: dir.root })).rejects.toBeInstanceOf(
+      ProjectNotFoundError,
+    );
+  });
+
+  test.each([
+    ["postgresVersion: 17,", "postgresVersion", "must be 18"],
+    ["", "postgresVersion", "must be 18"],
+    [
+      "postgresVersion: 18, managedSchema: 'My Schema',",
+      "managedSchema",
+      "lowercase PostgreSQL identifier",
+    ],
+    [
+      "postgresVersion: 18, historySchema: 'public',",
+      "historySchema",
+      "must differ from managedSchema",
+    ],
+    [
+      "postgresVersion: 18, externalSchemas: 'loader',",
+      "externalSchemas",
+      "array",
+    ],
+    [
+      "postgresVersion: 18, directory: '../elsewhere',",
+      "directory",
+      "inside the project",
+    ],
+    [
+      "postgresVersion: 18, targets: { dev: {} },",
+      "targets.dev.adapter",
+      "deployment adapter",
+    ],
+    [
+      "postgresVersion: 18, targets: { dev: { adapter: postgres.target('dev'), lockTimeout: 'soon' } },",
+      "targets.dev.lockTimeout",
+      "positive duration",
+    ],
+    [
+      "postgresVersion: 18, managedSchemas: 'app',",
+      "managedSchemas",
+      "Unknown setting",
+    ],
+  ])("refuses %s naming the setting", async (settings, setting, problem) => {
+    const error = await loadError(configWith(settings));
+
+    expect(error.setting).toBe(setting);
+    expect(error.message).toContain(`"${setting}"`);
+    expect(error.message).toContain(problem);
+  });
+
+  test("refuses a config without a rehearsal adapter", async () => {
+    const error = await loadError(
+      `import { defineConfig } from "super-deploy";\nexport default defineConfig({ postgresVersion: 18 } as never);\n`,
+    );
+
+    expect(error.setting).toBe("rehearsal");
+  });
+
+  test("reports a config file that fails to load", async () => {
+    const error = await loadError(`export default {;\n`);
+
+    expect(error.message).toContain("Failed to load");
+  });
+});
