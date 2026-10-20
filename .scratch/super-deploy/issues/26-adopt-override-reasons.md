@@ -4,7 +4,7 @@
 
 **Blocked by:** 24
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Spec:** `../spec.md` (story 100, "`init`")
 

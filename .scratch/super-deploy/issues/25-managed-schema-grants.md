@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Spec:** `../spec.md` (stories 98–99, "Rules: desired schema", "Differ", "Deployment engine and history schema", "Guarded and recovery commands")
 
