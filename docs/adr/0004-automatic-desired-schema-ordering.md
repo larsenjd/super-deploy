@@ -5,4 +5,5 @@ Desired-schema files load into a throwaway database in an order our own utility 
 ## Consequences
 
 - Every index and constraint must be named; foreign keys over duplicate unique keys and function calls in column syntax are refused, because no ordering can make them deterministic.
+- Two exceptions to the naming rule: an unnamed `PRIMARY KEY` and a column's `NOT NULL` are accepted, because PostgreSQL generates their names (`<table>_pkey`, `<table>_<column>_not_null`) from the table and column alone, so load order cannot change them.
 - The ordering utility shares its parser with the rules engine, so it adds no dependency, but it is ours to maintain (about 2k lines plus fixtures).
