@@ -1,0 +1,195 @@
+// The guard: what every guarded command (disposable, deploy-draft, rebuild,
+// mark) goes through before it changes a target. In order:
+//   1. refuse in CI or without a terminal on stdin and stdout (before the
+//      target is touched at all)
+//   2. connect and read the target's view (host, database, recorded
+//      migrations, disposable flag); the command checks its preconditions
+//      on it and says what it is about to do (or that there is nothing to do)
+//   3. show the action plus the target's name, host, database and last
+//      recorded migration at the terminal
+//   4. require YES, typed exactly (anything else, Escape or Ctrl+C refuses)
+//   5. withLockedTarget: open the manual attempt (command name, OS username),
+//      take the target lock
+//   6. re-read the view under the lock: if what was shown has changed, refuse
+//   7. run the command's body; the attempt ends as withLockedTarget decides
+//
+// Terminal-only by design: the guard reads this process's own stdin and
+// stdout and asks there itself. There is no answer callback and no option,
+// flag or environment variable that skips it, so a program can call a
+// guarded command but a person still has to type YES.
+
+import type { Session } from "../adapters/types.ts";
+import { isCI } from "../cli/environment.ts";
+import type { ResolvedTarget } from "../config/config.ts";
+import { type LockedTarget, withLockedTarget } from "../deploy/engine.ts";
+import {
+  type RecordedMigration,
+  readRecordedMigrations,
+  readTargetSettings,
+} from "../deploy/history.ts";
+import { connectTarget, resolveTarget } from "../deploy/target.ts";
+import {
+  type GuardedCommand,
+  NotConfirmedError,
+  TargetChangedError,
+  TerminalRequiredError,
+} from "../errors.ts";
+import type { Project } from "../project.ts";
+import { migrationFolderName } from "../store/migrations.ts";
+import { askForYes } from "./prompt.ts";
+
+/** What the guard shows about a target, and what preconditions are checked on. */
+export interface TargetView {
+  readonly target: ResolvedTarget;
+  /** The server's address as it reports it (`inet_server_addr`), or `local socket`. */
+  readonly host: string;
+  readonly database: string;
+  /** In number order. */
+  readonly recorded: readonly RecordedMigration[];
+  readonly disposable: boolean;
+}
+
+/** The command goes ahead: `action` is shown, `plan` is handed to `run`. */
+export interface Proceed<P> {
+  /** One line, e.g. `Mark target dev as disposable`. */
+  readonly action: string;
+  /** More lines shown under the target's details, if any. */
+  readonly details?: readonly string[];
+  readonly plan: P;
+}
+
+/** Nothing to do: the guard returns `result` without asking or locking. */
+export interface NothingToDo<T> {
+  readonly nothingToDo: T;
+}
+
+export interface GuardedAction<P, T> {
+  readonly command: GuardedCommand;
+  /** The target's name in config. */
+  readonly target: string;
+  /**
+   * Preconditions, before asking. Throw a typed error to refuse (nothing has
+   * been written yet). `session` is the guard's read-only session.
+   */
+  check(
+    view: TargetView,
+    session: Session,
+  ): Promise<Proceed<P> | NothingToDo<T>>;
+  /** The command itself, under the lock and the manual attempt. `view` was re-read under the lock. */
+  run(locked: LockedTarget, plan: P, view: TargetView): Promise<T>;
+}
+
+export async function runGuarded<P, T>(
+  project: Project,
+  action: GuardedAction<P, T>,
+): Promise<T> {
+  requireTerminal(action.command);
+  const target = resolveTarget(project, action.target);
+
+  const session = await connectTarget(target);
+  let shown: TargetView;
+  let decision: Proceed<P> | NothingToDo<T>;
+  try {
+    shown = await readTargetView(project, target, session);
+    decision = await action.check(shown, session);
+  } finally {
+    await session.close().catch(() => {});
+  }
+  if ("nothingToDo" in decision) {
+    return decision.nothingToDo;
+  }
+  const proceed = decision;
+
+  const answer = await askForYes(
+    {
+      title: `${action.command}: ${proceed.action}`,
+      lines: [
+        ...describeTarget(shown),
+        ...(proceed.details === undefined ? [] : ["", ...proceed.details]),
+      ],
+      question: `Type YES to ${lowerFirst(proceed.action)}`,
+    },
+    project.signal,
+  );
+  if (answer !== "YES") {
+    throw new NotConfirmedError(action.command, target.name, answer);
+  }
+
+  return withLockedTarget(
+    project,
+    target.name,
+    action.command,
+    async (locked) => {
+      const view = await readTargetView(project, target, locked.session);
+      if (fingerprint(view) !== fingerprint(shown)) {
+        throw new TargetChangedError(action.command, target.name);
+      }
+      return action.run(locked, proceed.plan, view);
+    },
+  );
+}
+
+/** Step 1: CI first (a CI runner may well have a terminal), then the terminal itself. */
+function requireTerminal(command: GuardedCommand): void {
+  if (isCI()) {
+    throw new TerminalRequiredError(command, "ci");
+  }
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
+    throw new TerminalRequiredError(command, "no-terminal");
+  }
+}
+
+async function readTargetView(
+  project: Project,
+  target: ResolvedTarget,
+  session: Session,
+): Promise<TargetView> {
+  const schema = project.config.historySchema;
+  const { rows } = await session.query<{
+    database: string;
+    address: string | null;
+    port: number | null;
+  }>(
+    "SELECT current_database() AS database, host(inet_server_addr()) AS address, inet_server_port() AS port",
+  );
+  const server = rows[0];
+  const host =
+    server?.address == null
+      ? "local socket"
+      : `${server.address.includes(":") ? `[${server.address}]` : server.address}:${server.port}`;
+  return {
+    target,
+    host,
+    database: server?.database ?? "",
+    recorded: await readRecordedMigrations(session, schema),
+    disposable: (await readTargetSettings(session, schema)).disposable,
+  };
+}
+
+function describeTarget(view: TargetView): string[] {
+  const last = view.recorded.at(-1);
+  return [
+    `Target:    ${view.target.name}`,
+    `Host:      ${view.host}`,
+    `Database:  ${view.database}`,
+    `Last recorded migration: ${last === undefined ? "none" : migrationFolderName(last.number, last.name)}`,
+  ];
+}
+
+/** What must not change between showing the target and taking its lock. */
+function fingerprint(view: TargetView): string {
+  return JSON.stringify({
+    host: view.host,
+    database: view.database,
+    disposable: view.disposable,
+    recorded: view.recorded.map((m) => [
+      m.number,
+      m.chainHash,
+      m.recovery ?? null,
+    ]),
+  });
+}
+
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}

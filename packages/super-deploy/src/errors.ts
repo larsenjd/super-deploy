@@ -26,7 +26,10 @@ export type ErrorCode =
   | "target-locked"
   | "no-migration"
   | "overwrite-not-acknowledged"
-  | "preflight-failed";
+  | "preflight-failed"
+  | "terminal-required"
+  | "not-confirmed"
+  | "target-changed";
 
 export class SuperDeployError extends Error {
   readonly code: ErrorCode;
@@ -462,5 +465,66 @@ export class PreflightFailedError extends SuperDeployError {
     );
     this.target = target;
     this.findings = findings;
+  }
+}
+
+/** The commands that go through the guard (they ask for YES at a terminal). */
+export type GuardedCommand = "disposable" | "deploy-draft" | "rebuild" | "mark";
+
+/**
+ * A guarded command was run in CI or without a terminal on stdin and stdout.
+ * Nothing was read from or written to the target.
+ */
+export class TerminalRequiredError extends SuperDeployError {
+  readonly command: GuardedCommand;
+  readonly reason: "ci" | "no-terminal";
+
+  constructor(command: GuardedCommand, reason: "ci" | "no-terminal") {
+    super(
+      "terminal-required",
+      `${command} ${reason === "ci" ? "never runs in CI" : "needs a terminal on stdin and stdout"}: run it yourself at a terminal, where it asks you to type YES`,
+    );
+    this.command = command;
+    this.reason = reason;
+  }
+}
+
+/** The person at the terminal did not type YES (or cancelled). Nothing changed. */
+export class NotConfirmedError extends SuperDeployError {
+  readonly command: GuardedCommand;
+  readonly target: string;
+  /** What was typed instead of YES; undefined when the question was cancelled. */
+  readonly typed: string | undefined;
+
+  constructor(
+    command: GuardedCommand,
+    target: string,
+    typed: string | undefined,
+  ) {
+    super(
+      "not-confirmed",
+      `${command} on target ${target} was not confirmed (${typed === undefined ? "cancelled" : `typed ${JSON.stringify(typed)}, not YES`}): nothing changed`,
+    );
+    this.command = command;
+    this.target = target;
+    this.typed = typed;
+  }
+}
+
+/**
+ * The target's recorded migrations or disposable flag changed between showing
+ * them and taking the lock. Nothing changed; run the command again.
+ */
+export class TargetChangedError extends SuperDeployError {
+  readonly command: GuardedCommand;
+  readonly target: string;
+
+  constructor(command: GuardedCommand, target: string) {
+    super(
+      "target-changed",
+      `Target ${target} changed while ${command} waited for YES (its recorded migrations or disposable flag): nothing changed; run ${command} again to see the new details`,
+    );
+    this.command = command;
+    this.target = target;
   }
 }
