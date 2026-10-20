@@ -111,6 +111,53 @@ describe("validate", () => {
   });
 });
 
+describe("pre- and post-migration scripts", () => {
+  test("a marker in the draft's post-migration script is accepted and listed by finalize and validate", async () => {
+    const scriptReason = "move the sequence past imported ids";
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: {
+        "data-model/desired-schema/counters.sql": `create table orders (id bigint generated always as identity primary key);
+
+create table counters (name text primary key, value bigint);
+`,
+      },
+    });
+    const p = await loadProject({ cwd: dir.root });
+    await draft(p, { name: "add counters" });
+    await dir.write(
+      "data-model/draft/post-migration.sql",
+      `insert into counters (name, value) values ('orders', 0);
+-- OVERRIDE DANGEROUS COMMAND: ${scriptReason}
+update counters set value = setval('orders_id_seq', 1000) where name = 'orders';
+`,
+    );
+    const override = {
+      line: 2,
+      object: "UPDATE counters",
+      rules: ["denylisted-call"],
+      reason: scriptReason,
+    };
+
+    expect((await validate(p)).overrides).toEqual([
+      { file: "data-model/draft/post-migration.sql", ...override },
+    ]);
+
+    const result = await finalize(p);
+    expect(result.metadata.overrides).toEqual([
+      { file: "post-migration.sql", ...override },
+    ]);
+    const migration = "data-model/migrations/00001-add-counters";
+    expect(
+      JSON.parse(await dir.read(`${migration}/metadata.json`)).overrides,
+    ).toEqual([{ file: "post-migration.sql", ...override }]);
+
+    expect((await validate(p)).overrides).toEqual([
+      { file: `${migration}/post-migration.sql`, ...override },
+    ]);
+  });
+});
+
 describe("CLI", () => {
   test("finalize and validate print every override on stdout", async () => {
     const { dir } = await project();
