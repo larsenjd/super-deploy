@@ -75,7 +75,8 @@ describe.skipIf(process.platform === "win32")("menu", () => {
       /Error: data-model\/desired-schema\/customers\.sql:1: .*moneyamount/,
     );
     await terminal.waitFor("quit");
-    terminal.type(`${keys.down}${keys.enter}`);
+    // Up from the first command wraps round to quit, the last entry.
+    terminal.type(`${keys.up}${keys.enter}`);
     expect(await terminal.exited).toBe(0);
     expect(dir.exists("data-model/draft")).toBe(false);
   });

@@ -3,6 +3,10 @@
 // calls the exported API function and prints its result. To add a command,
 // define it here and append it to `commands`.
 import { draft } from "../commands/draft.ts";
+import { finalize } from "../commands/finalize.ts";
+import { rehearse } from "../commands/rehearse.ts";
+import { validate } from "../commands/validate.ts";
+import { ValidationFailedError, type ValidationProblem } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { readDraft } from "../store/draft.ts";
 
@@ -165,4 +169,76 @@ const draftCommand: CommandDefinition = {
   },
 };
 
-export const commands: readonly CommandDefinition[] = [draftCommand];
+const rehearseCommand: CommandDefinition = {
+  name: "rehearse",
+  group: "Author",
+  summary:
+    "Replay every migration plus the draft on a throwaway database and prove it matches the desired schema",
+  options: [],
+  async run(project, _values, context) {
+    const result = await rehearse(project);
+    context.result(
+      `Rehearsed draft ${result.name} after ${plural(result.migrationsReplayed, "migration")}: matches the desired schema`,
+    );
+  },
+};
+
+const finalizeCommand: CommandDefinition = {
+  name: "finalize",
+  group: "Author",
+  summary:
+    "Rehearse the draft, then freeze it as the next numbered, read-only, hash-chained migration",
+  options: [],
+  async run(project, _values, context) {
+    const result = await finalize(project);
+    context.result(
+      `Finalized migration ${result.folder} in ${context.displayPath(result.path)}`,
+    );
+  },
+};
+
+const validateCommand: CommandDefinition = {
+  name: "validate",
+  group: "Author",
+  summary:
+    "Check the finalized migrations' hashes, chain and read-only state, and warn about unfinished work",
+  options: [
+    {
+      name: "strict",
+      kind: "flag",
+      description: "Fail on warnings too (for pre-commit hooks and CI)",
+    },
+  ],
+  async run(project, values, context) {
+    const report = (problem: ValidationProblem) =>
+      context.warn(`${problem.severity}: ${problem.message}`);
+    try {
+      const result = await validate(project, {
+        strict: values.strict === true,
+      });
+      result.problems.forEach(report);
+      if (result.readOnlyRestored.length > 0) {
+        context.warn(
+          `Made ${plural(result.readOnlyRestored.length, "finalized file")} read-only again`,
+        );
+      }
+      context.result(`Validated ${plural(result.migrations, "migration")}`);
+    } catch (error) {
+      if (error instanceof ValidationFailedError) {
+        error.problems.forEach(report);
+      }
+      throw error;
+    }
+  },
+};
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+export const commands: readonly CommandDefinition[] = [
+  draftCommand,
+  rehearseCommand,
+  finalizeCommand,
+  validateCommand,
+];
