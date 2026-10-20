@@ -1,464 +1,303 @@
-# super-deploy V1 spec
+# super-deploy V1
 
 Status: ready-for-agent
 
-A deterministic, declarative schema deployment system for PostgreSQL 18. Developers edit a desired schema; the system generates the schema change, freezes it with hand-written scripts into an immutable migration, and deploys every pending migration to a target in one all-or-nothing transaction. A SQL parser enforces an allowlist so nothing in a deployment can break that transaction.
-
-Vocabulary is defined in `GLOSSARY.md` and used exactly as defined here. Architectural decisions are in `docs/adr/`. Deliberate V1 narrowings, and what would justify revisiting them, are in `REFINEMENTS.md`. Research backing the rules is in `.scratch/super-deploy/research/`. `(Qn)` tags trace each decision to the design session.
-
----
-
-## 1. Goals and guarantees
-
-1. **Immutable migrations.** A finalized migration never changes. Its files are hash-chained; any edit fails `validate`. (Q10, Q36)
-2. **All-or-nothing deployments.** Every pending migration on a target deploys in one transaction. (ADR-0001)
-3. **Declarative authoring.** Developers edit the desired schema; the system generates the schema change. (Q3, ADR-0003)
-4. **Structural determinism.** (Q2)
-   - Deploying runs only frozen SQL. The differ never runs at deploy time; a newer differ only affects new drafts.
-   - Given the same migrations and the same starting structure, a target ends in the same structure. Rehearsals and drift checks verify it.
-   - Data is **not** required to be deterministic. Volatile functions (`now()`, `gen_random_uuid()`, …) are allowed and produce different values per target. (Q41)
-5. **Cross-platform.** Windows, macOS and Linux. Repo scripts are TypeScript run by pnpm, never bash or PowerShell.
-
----
-
-## 2. Architecture
-
-| Concern | Decision |
-|---|---|
-| Language/runtime | TypeScript, Node ≥ 24 LTS, ESM only, strict. Built with plain `tsc` (JS + `.d.ts`), no bundler. (Q1, Q59) |
-| Reading the desired schema | Apply its SQL to an empty throwaway database and read PostgreSQL's catalogs. Never model the schema by parsing SQL. (Q3, ADR-0003) |
-| Differ | Behind our own `Differ` interface. V1 wraps `@supabase/pg-delta`, pinned to exactly `1.0.0-alpha.59` (verdict: `research/pg-delta-prototype.md`). We call its `extract` and `plan` directly; we never use its directory loader, and never install `@supabase/pg-topo`. Every upgrade re-runs the prototype. Fallback: our own `pg_catalog`/`pg_depend` differ behind the same interface. Column order is never a difference. (Q7, Q17) |
-| Differ verification | Independent of engine: apply the generated migration to a fresh database, read it back, require an empty diff against the desired schema, using both pg-delta and our own engine-independent `pg_catalog` comparison (pg-delta's own re-diff misses some of its errors). (Q17) |
-| SQL parser | `libpg-query@18` (WASM, PG18 grammar) with `@pgsql/types`, pinned to exact versions. Used only to enforce rules. PL/pgSQL bodies are parsed with its PL/pgSQL parser. (Q18, Q29, ADR-0002) |
-| Throwaway databases | Supplied by the rehearsal adapter (§10). |
-| CLI | `@clack/prompts` for the menu and prompts; Node's `util.parseArgs` for flags. One set of command definitions drives both. (Q57) |
-
----
-
-## 3. Project layout
-
-```
-<project>/
-  super-deploy.config.ts
-  data-model/                       # configurable: `directory`
-    schema/                         # desired schema (*.sql)
-    draft/
-      draft.json                    # draft name; kind (migration | recovery of N)
-      pre.sql
-      schema-change.sql             # generated, never hand-edited
-      post.sql
-      seed.sql
-    migrations/
-      index.json                    # hash chain
-      00001-adopt/
-        pre.sql  schema-change.sql  post.sql  seed.sql  meta.json
-        schema/                     # desired-schema snapshot at finalize
-      00003-add-orders/
-        ...
-        recoveries/
-          00001-fix-null-emails/
-            pre.sql  post.sql  seed.sql  meta.json
-```
-
-- The snapshot is what `unfinalize` and `restore-schema` restore from. Diffing replays migrations instead (§5.2). (Q34)
-- **One draft at a time**: either a normal draft or a Recovery draft, never both. (Q50)
-
-### 3.1 Naming (Q34, Q39)
-
-- Folder name: `<5-digit zero-padded number>-<kebab-case description>`, e.g. `00001-add-orders-table`. Recoveries use the same pattern under their migration's `recoveries/`.
-- Description: `[a-z0-9]+(-[a-z0-9]+)*`, at most 60 characters.
-- Set by `draft --name <name>` or asked for interactively; editable until `finalize`.
-- Input normalisation (interactive and `--name` alike): trim → lowercase → collapse runs of spaces into one hyphen → refuse any remaining character outside `a-z0-9-`, showing the offending characters. The interactive prompt previews the result before anything is created.
-- The number is the identity; the description is a label. The hash covers the folder name, so renaming a finalized folder fails `validate`.
-
-### 3.2 Desired-schema load order (Q35, ADR-0004)
-
-Automatic and deterministic; files need no naming convention. Research: `research/schema-ordering.md`, `research/pg-topo-pg18.md`.
-
-- Our own ordering utility on `libpg-query@18`, sharing the parser and syntax-tree walker with the rules engine. No pg-topo, no pg-delta loader.
-- Splits every desired-schema file into statements, works out what each statement creates and what it needs, and orders **statements**, not files, by object-kind priority and dependencies.
-- Ties are broken only by object identity and a hash of the statement text, never by file path or locale.
-- Circular foreign keys are closed by the allowed `ALTER TABLE … ADD CONSTRAINT`.
-- Only references bound at `CREATE` count: PL/pgSQL bodies are late-bound and ignored for ordering (they are still parsed for rules, §4.3).
-- A call waits for every overload of its function name; a genuinely ambiguous overload fails with PostgreSQL's own error.
-- Unknown references and cycles are reported with `file:line` before anything loads.
-- **Order-independence check:** during `draft`, `rehearse` and `finalize`, the desired schema is also loaded in a different valid order (ignoring kind priority) and the two catalogs are compared, including what each view, default and function body is bound to. Any difference fails, naming the objects. It samples orders, so it is strong evidence rather than proof; known causes of order dependence are refused statically (§4.1).
-
----
-
-## 4. Rules
-
-Two rule sets, both enforced by the parser as **allowlists**: anything not explicitly approved is refused, including syntax from later PostgreSQL versions. (Q4, Q5, ADR-0002)
-
-### 4.1 Desired-schema rules (Q5, Q8, Q22, Q28, Q31, Q40, Q48, Q49, Q65)
-
-Allowed statements:
-- `CREATE` for supported object types (below).
-- `COMMENT ON` and `GRANT` on managed objects.
-- Exactly these `ALTER TABLE` forms: `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`, `ADD CONSTRAINT` (for circular foreign keys).
-- `CREATE EXTENSION plpgsql` only (it is present anyway).
-
-No DML, no `DO` blocks, no other `ALTER`.
-
-**Supported object types:** tables (incl. stored generated columns); constraints: primary key, foreign key, unique, check, exclusion, NOT NULL; indexes; views; materialized views; identity sequences (`GENERATED … AS IDENTITY`); functions; procedures; triggers; domains; composite types; row-level security policies; comments; grants.
-
-**Refused:** enums; partitioned tables; every extension except `plpgsql`; `CREATE RULE`; event triggers; foreign tables and foreign data wrappers; publications and subscriptions; custom casts, operators, aggregates (`CREATE AGGREGATE`; using built-in aggregates in queries is fine), collations and text-search configurations; standalone sequences; `CREATE STATISTICS`; `serial`/`bigserial` columns; `NOT ENFORCED` constraints; `VIRTUAL` generated columns, including PG18's keyword-less default (pg-delta emits them as `STORED`). (Q67)
-
-**Refused because the result would depend on load order (Q35):**
-- Unnamed indexes and constraints: every index and constraint must be named explicitly.
-- A foreign key whose referenced columns are covered by more than one unique index or constraint (PostgreSQL binds to whichever was created first).
-- Calling a function with column syntax (`c.order_count` meaning `order_count(c)`).
-
-**Schemas:** objects live in the managed schema. They may reference `pg_catalog` and nothing else, **except** that PL/pgSQL routine bodies may reference **external schemas** declared in config. (Q22, Q28)
-- Only PL/pgSQL bodies resolve names at run time, so only they can reference objects absent from rehearsals. `LANGUAGE sql` bodies, `BEGIN ATOMIC` bodies, views, foreign keys, defaults and triggers bind at `CREATE` and will fail in rehearsal if they reference an external schema.
-- `check_function_bodies` stays **on**.
-- References in PL/pgSQL bodies to schemas not declared in `externalSchemas` are refused (catches typos).
-
-### 4.2 Deploy-time SQL rules
-
-Apply to every file that runs against a target: generated schema changes, pre-migration scripts, post-migration scripts and seed data. Checking the generated schema change means a differ bug cannot bypass the rules. (Q5)
-
-**Never allowed (break or escape the transaction):** every statement PostgreSQL refuses inside a transaction block (`CREATE/DROP/REINDEX … CONCURRENTLY`, `DETACH PARTITION CONCURRENTLY`, `VACUUM`, `CREATE/DROP DATABASE`, tablespaces, `ALTER SYSTEM`, `DISCARD ALL`, `CLUSTER` without a table, subscription commands, prepared transactions, …); `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `ROLLBACK TO`, `RELEASE`; `CALL`; `DO`. The full list with sources: `research/transactional-hazards.md` §1, §4. (Q1, Q6, Q12)
-
-**Functions:** only functions in `pg_catalog`, minus a denylist of built-ins whose effects escape the transaction: `setval`, `pg_notify`, advisory lock functions, `dblink*`, `lo_import`/`lo_export` and other large-object server functions, `pg_terminate_backend`/`pg_cancel_backend` and other signal/admin functions, replication-slot functions, `set_config`, file-access functions (`pg_read_file`, …). User-defined functions may not be called directly. Triggers firing from DML is accepted. Volatile built-ins are allowed. (Q6, Q41; `research/transactional-hazards.md` §2)
-
-**Column order (Q7):** refused: `INSERT` without a column list; `SELECT *` and `t.*` (including `RETURNING *`, `RETURNING old.*/new.*`); `ORDER BY`/`GROUP BY` ordinals; `NATURAL JOIN`; whole-row references to a table's row type; `COPY` in any form. Full list: `research/transactional-hazards.md` §7.
-
-**Identity columns (Q40):** no explicit values into identity columns (`OVERRIDING SYSTEM VALUE`, or explicit values into `BY DEFAULT` identities). Reference-data tables use natural keys.
-
-**DML (Q42):**
-
-| Statement | Rule |
-|---|---|
-| `INSERT` (with column list), `UPDATE`, `MERGE` | Allowed |
-| `DELETE`, `TRUNCATE` | Allowed, destructive (§4.5) |
-| `CREATE TEMP TABLE … ON COMMIT DROP` (incl. `AS SELECT …`) | Allowed (Q44) |
-| Any other temp table; `SELECT INTO` / `CREATE TABLE AS` creating a permanent table | Refused |
-| `COPY` | Refused |
-| Standalone `SELECT` | Refused |
-
-**Other statements (Q47):**
-
-| Statement | Rule |
-|---|---|
-| `SET`, `RESET`, `SET CONSTRAINTS` | Refused (the tool pins session settings, §7.4) |
-| `GRANT`, `REVOKE`, `COMMENT` | Refused in scripts (the desired schema owns them; allowed in generated schema changes) |
-| `LISTEN`, `NOTIFY`, `PREPARE`, `DECLARE`, `LOAD` | Refused |
-| `LOCK TABLE` | Allowed |
-| `ANALYZE` | Allowed |
-| `REFRESH MATERIALIZED VIEW` | Allowed; `CONCURRENTLY` refused |
-
-**References (Q45):** deploy-time SQL may read and write only the managed schema and its own temp tables, and read `pg_catalog`. No external schemas: rehearsals cannot contain them.
-
-**Per-file restrictions:**
-- **Pre-migration script:** DDL on managed objects (anything the desired-schema and deploy-time rules allow, plus `ALTER … RENAME`, column type changes, etc.) and DML. It runs before the diff (§5.2), so it is where renames, data-preserving type changes and add–backfill–`SET NOT NULL` go. (Q16)
-- **Post-migration script:** DML only. No DDL, so it cannot move structure away from the desired schema. (Q16)
-- **Seed data:** `INSERT` with column lists only. (Q15)
-
-### 4.3 PL/pgSQL body rules (Q29)
-
-Every PL/pgSQL function/procedure body in the desired schema (and therefore in generated schema changes) is parsed. Refused:
-- `EXECUTE` (dynamic SQL), unless overridden (§4.4).
-- `COMMIT` / `ROLLBACK` in procedures. Never overridable.
-- Calls to the deploy-time function denylist (§4.2), unless overridden.
-- References to schemas other than the managed schema, `pg_catalog` and declared external schemas.
-
-### 4.4 Override marker (Q24, Q30)
-
-- Exact form, on the line immediately before the statement: `-- OVERRIDE DANGEROUS COMMAND: <reason>`. Reason required.
-- Read from the raw file text between statements: PG18's parser excludes leading comments from a statement's location, so the marker is never inside the parsed statement.
-- Scope: that one statement.
-- Recorded against the object's identity (e.g. `function load_orders(int)`), not its position, so it survives the differ regenerating the object in a schema change.
-- May override only risk rules (dynamic SQL, denylisted functions). Never rules that would break the transaction (`COMMIT`, `CONCURRENTLY`, `VACUUM`, …).
-- Every override is listed in the migration's `meta.json`, printed by `finalize`, and reported by `validate`.
-
-### 4.5 Destructive changes (Q25)
-
-`finalize` refuses a draft whose deploy-time SQL drops structure or deletes data — `DROP …`, dropping a column, lossy column type changes, `DELETE`, `TRUNCATE` — unless `--acknowledge-destructive` is passed or confirmed at the prompt. The acknowledgement and the statements it covers are recorded in `meta.json`.
-
-### 4.6 Warnings (Q46)
-
-`finalize` warns (does not fail) for each statement that rewrites or fully scans an **existing** table: `ALTER COLUMN TYPE`, volatile default, `SET NOT NULL`, validating a foreign key or check, `CREATE INDEX`, `TRUNCATE`. Tables created in the same migration are exempt. Every lock is held until commit (ADR-0001). No warnings for volatile functions (Q41).
-
----
-
-## 5. Authoring
-
-### 5.1 Workflow
-
-1. Edit the desired schema in `schema/`.
-2. `draft [--name <name>]` creates the draft or regenerates its schema change, and reports what scripts must cover.
-3. Fill in `pre.sql`, `post.sql`, `seed.sql` as needed. Re-run `draft` whenever the desired schema or pre-migration script changes.
-4. `rehearse` (optional): replay every migration plus the draft on a throwaway database and check the result matches the desired schema.
-5. `finalize [--acknowledge-destructive]`: rehearse again, then freeze the draft as the next migration (or Recovery).
-6. Commit. Pre-commit runs `validate --strict`.
-
-### 5.2 How `draft` generates the schema change (Q16)
-
-1. Load the desired schema into throwaway database **D**.
-2. In throwaway database **R**, replay every finalized migration (each with its newest variant), then load the draft's seed data, then run the draft's pre-migration script.
-3. Diff R → D. The result is the schema change.
-4. Report anything unresolved, e.g. a column dropped from a table that has data, or a table whose change needs a rename the pre-migration script hasn't done.
-
-### 5.3 Rehearsal
-
-A rehearsal replays migrations on a throwaway database and checks the result. For a draft:
-1. Replay finalized migrations (newest variant each).
-2. Load the draft's seed data.
-3. Run pre-migration script → schema change → post-migration script.
-4. Read back and require an empty diff against the desired schema.
-
-Throwaway databases are created to match the target's (or config default) encoding, locale and collation provider. (Q19)
-
-### 5.4 Seed data (Q11, Q14, Q15, Q27)
-
-- Reproduces a real target's problem conditions so a rehearsal proves the scripts handle them.
-- Belongs to one migration (or Recovery). Frozen with it at finalize as an audit record.
-- Loaded **only**: in rehearsals of the draft it belongs to (including `finalize`'s), and in `deploy-draft --with-seed` (opt-in, off by default).
-- **Never** loaded: when finalized migrations are replayed, in `deploy`'s rehearsal, in `rebuild`, or on any non-disposable target.
-- Committed to git: must be synthetic or anonymised. The tool cannot enforce this; the template and `init` docs must say so.
-
-### 5.5 Other authoring commands
-
-| Command | Does |
-|---|---|
-| `unfinalize [--acknowledge-overwrite]` | Moves the newest migration or Recovery back into the draft; restores the desired schema from the previous snapshot. |
-| `restore-schema [--acknowledge-overwrite]` | Resets the desired schema to the newest migration's snapshot and deletes any draft. |
-| `discard-draft [--acknowledge-overwrite]` | Deletes the draft; leaves the desired schema alone. |
-| `validate [--strict]` | Checks the index, hashes, chain, read-only state, rules and overrides of finalized files; warns about the draft and undrafted desired-schema changes. `--strict` turns warnings into failures. |
-
----
-
-## 6. Migrations and integrity
-
-### 6.1 Hashing (Q36)
-
-- Files are read as UTF-8; a BOM is refused. Line endings are normalised to LF before hashing.
-- SHA-256. `content_hash[n]` covers every file in the migration folder, including its folder name and `meta.json`.
-- `chain[n] = sha256(chain[n-1] + content_hash[n])`, stored in `migrations/index.json`.
-- Finalized files are made read-only with `fs.chmod(0o444)` (sets the read-only attribute on Windows).
-- The template ships `.gitattributes`: `*.sql text eol=lf`, `*.json text eol=lf`.
-
-### 6.2 `meta.json` (Q17, Q33)
-
-Frozen and hashed. Contains: tool version; differ name and version; parser version; PostgreSQL server version the rehearsal ran on; destructive acknowledgement and the statements it covered; overrides with reasons and object identities. **No** timestamps or usernames (git has them; leaving them out keeps files reproducible).
-
-### 6.3 Recoveries (Q10, Q13)
-
-- `recovery --migration <N>` creates a Recovery draft for N; `finalize` freezes it as `NNNNN-…/recoveries/NNNNN-…/`.
-- Replaces N's pre-migration script, post-migration script and seed data. **Never** the schema change.
-- Newest Recovery wins for targets that have not recorded N. Targets that recorded N are never affected; their history says which variant they ran.
-- Rehearsal guarantees the original and every Recovery end in structurally identical results; only data may differ.
-
----
-
-## 7. Deploying
-
-### 7.1 History schema (Q37, Q55)
-
-Created by the first `deploy` to a target, inside its transaction. Default name `deployment_history` (configurable).
-
-| Table | Contents | Written |
-|---|---|---|
-| `migrations` | number, name, variant (original or Recovery K), content hash, chain hash, attempt id, how recorded (`deployed` / `marked`) | Inside the deploy transaction |
-| `attempts` | command, target, migration range, OS username, tool version, start/end time, outcome (`running`, `succeeded`, `failed`, `abandoned`, `unknown`), error | On a second connection, outside the transaction |
-| `settings` | disposable flag (new targets: not disposable) | By the guarded `disposable` command |
-
-### 7.2 Locking (Q54)
-
-`deploy`, `mark`, `rebuild`, `deploy-draft` and `disposable` take a session-level advisory lock with `pg_try_advisory_lock` on their own connection, keyed from the history schema name. A second command fails immediately: "target is locked by attempt #N". Scripts still may not use advisory locks.
-
-### 7.3 `deploy --target X` sequence (Q53)
-
-1. Open the attempt (`running`) on the attempt connection.
-2. Take the advisory lock.
-3. Pre-flight checks:
-   - Every role granted to in the desired schema exists on the target; refuse if any is missing. (Q66)
-   - Every declared external schema exists on the target. (Q28)
-   - Warn if the deploy role is superuser or holds `pg_write_server_files`, `pg_execute_server_program` or `pg_signal_backend`. (Q24, Q32)
-   - Verify the target's recorded migrations match the repo's hashes.
-4. **Drift check:** replay the target's recorded migrations (each with its recorded variant) on a throwaway database matching the target's encoding/locale/collation provider. Any structural difference from the target's managed schema (ignoring column order and ownership) is drift → refuse. No exceptions. (Q38)
-5. **Rehearsal:** apply the pending migrations (newest Recovery where one exists) to that database. The result must match the newest migration's desired-schema snapshot.
-6. **Real run:** one transaction on the target (§7.4). Each migration's history row is written inside it.
-7. Close the attempt: `succeeded` / `failed`.
-
-### 7.4 Inside the deploy transaction (Q20)
-
-- `SET LOCAL search_path = <managed schema>, pg_catalog`; `TimeZone = 'UTC'`; fixed `DateStyle` and `IntervalStyle`; `lock_timeout` (per target, default `5s`); `statement_timeout` (per target, default unset). Identical in rehearsals.
-- Per migration: pre-migration script → schema change → post-migration script, each file as its own statement batch so errors name the file. `SET CONSTRAINTS ALL IMMEDIATE` at each migration boundary.
-- No savepoints. No automatic retry.
-
-### 7.5 Unknown outcome at COMMIT (Q21)
-
-If the connection drops during COMMIT, the attempt is marked `unknown`. The next `status` or `deploy` settles it by reading the `migrations` rows (written inside the transaction): present → `succeeded`, absent → `failed`.
-
-### 7.6 Recovery ladder
-
-1. **Retry:** fix the cause and deploy again.
-2. **Recovery:** replace the failed migration's scripts for targets that haven't run it (§6.3).
-3. **Mark:** someone fixed the target by hand; record the migration as deployed (§7.7).
-
-### 7.7 `mark` 🔒 (Q52)
-
-- Only the target's **next** pending migration; repeat to mark several.
-- Builds a replica of 00001..N on a throwaway database matching the target's locale; proceeds only on an empty diff against the target's managed schema (ignoring column order and ownership).
-- Records the original variant of N.
-- Writes **only** to the target's history schema (`migrations` row recorded as `marked`; manual `attempts` row under the OS username). Nothing in the repo changes.
-
-### 7.8 `status --target X`
-
-Reports pending migrations, drift, the disposable flag, recent attempts (settling any `unknown`), missing roles and external schemas, and deploy-role privilege warnings. Exits 1 on drift or refusal, so scheduled jobs fail.
-
----
-
-## 8. Disposable targets (Q14, Q27)
-
-The disposable flag lives in the target's history schema, never in config, so editing config can't make `prod` disposable. All four commands are guarded (§9.4).
-
-| Command | Does |
-|---|---|
-| `disposable --target X --set yes\|no` | Sets the flag. |
-| `deploy-draft --target X [--with-seed]` | Deploys the current draft to a disposable target. Seed data only with `--with-seed`. |
-| `rebuild --target X --to N` | Wipes the managed schema and replays migrations 00001..N. Never loads seed data. |
-
----
-
-## 9. Command line
-
-### 9.1 Commands (Q50)
-
-| Section | Command | Options |
-|---|---|---|
-| **Start** | `init` | `--adopt <target>` |
-| **Author** | `draft` | `--name <name>` |
-| | `rehearse` | — |
-| | `finalize` | `--acknowledge-destructive` |
-| | `unfinalize` | `--acknowledge-overwrite` |
-| | `restore-schema` | `--acknowledge-overwrite` |
-| | `discard-draft` | `--acknowledge-overwrite` |
-| | `validate` | `--strict` |
-| **Deploy** | `status` | `--target <name>` |
-| | `deploy` | `--target <name>` |
-| **Recover** | `recovery` | `--migration <N>` |
-| | `mark` 🔒 | `--target <name> --migration <N>` |
-| **Disposable** | `deploy-draft` 🔒 | `--target <name>` `--with-seed` |
-| | `disposable` 🔒 | `--target <name> --set yes\|no` |
-| | `rebuild` 🔒 | `--target <name> --to <N>` |
-
-No `setup` command: embedded PG binaries arrive as an npm dependency of the template. (Q50)
-
-### 9.2 Two ways to run
-
-- **Direct:** `super-deploy <command> [options]`. Fully scriptable; nothing prompts unless a terminal is attached.
-- **Interactive:** no arguments in a terminal → menu grouped by section. After a command, the menu returns on that command. Failures print and return to the menu. Cancelling a question runs nothing. `quit`, Escape or Ctrl+C leaves. No arguments and no terminal → usage text, exit 2.
-
-### 9.3 Option kinds
-
-- **Target:** must exist in config; the menu picks from configured targets.
-- **Migration** (`--migration`, `--to`): a finalized migration's number; the menu shows a searchable list, newest first.
-- **Choice** (`--set`): fixed values with labels.
-- **Name** (`--name`): normalised per §3.1.
-- **Flag** (`--acknowledge-*`, `--strict`, `--with-seed`): off by default. The menu never sets `--acknowledge-*`; the command asks yes/no (default no) at the moment it matters. Without a terminal the flag is the only way to say yes. The menu asks for `--with-seed` explicitly, default no.
-
-Unknown, repeated, missing or invalid options are usage errors; nothing runs.
-
-### 9.4 Guarded commands 🔒
-
-`mark`, `rebuild`, `deploy-draft`, `disposable`:
-1. Refuse in CI, or when stdin or stdout isn't a terminal.
-2. Check preconditions (e.g. target is disposable).
-3. Show the exact action plus the target's name, host, database and last recorded migration.
-4. Proceed only if the user types `YES` exactly.
-5. Record a manual attempt under the OS username.
-
-Nothing skips this: no flag, environment variable or API option.
-
-### 9.5 Shared behaviour
-
-- `--help` lists commands; `<command> --help` describes its options.
-- Results to stdout; warnings and progress ("Rehearsing 3 (3 of 5)") to stderr.
-- Failures print one line `Error: <message>` naming the command or target. `--debug` adds stack traces and causes.
-- Project discovery: find `super-deploy.config.ts` in the current directory or the nearest parent. Paths written are shown relative to the cwd; paths in errors relative to the project root.
-- Interruption (Ctrl+C, SIGTERM, closed output pipe): roll back the open transaction, release the advisory lock, mark the attempt `abandoned`, discard throwaway databases, print one notice. A second interrupt exits at once.
-
-| Exit code | Meaning |
-|---|---|
-| 0 | Success |
-| 1 | Failed or refused (`status` also on drift) |
-| 2 | Usage error; nothing ran |
-| 130 | SIGINT, cleaned up |
-| 141 | Output closed, cleaned up |
-| 143 | SIGTERM, cleaned up |
-
-### 9.6 Programmatic API
-
-Every command is an exported function taking a loaded project. Flags become options; terminal questions become callbacks. Failures throw typed errors instead of setting exit codes. Guarded commands remain terminal-only.
-
-### 9.7 `init` and `init --adopt` (Q51)
-
-- `init` scaffolds a new project from the template (shipped inside the library package).
-- `init --adopt <target>`:
-  1. Read the target's managed schema.
-  2. Generate desired-schema files from it (differ: empty → target).
-  3. Create migration `00001-adopt`.
-  4. Record it on the target as `marked`, using the same replica check as `mark`.
-  - Refuses if the managed schema contains anything V1 refuses (§4.1), listing every offending object.
-
----
-
-## 10. Configuration (Q9, Q56)
-
-`super-deploy.config.ts` at the project root, typed via `defineConfig()`, loaded with Node's built-in TypeScript type stripping (no `enum`/`namespace` in the config). (Q59)
-
-| Setting | Default | Notes |
-|---|---|---|
-| `postgresVersion` | required | Must be `18`. |
-| `rehearsal` | required | Rehearsal adapter. |
-| `targets` | `{}` | Per target: deployment adapter, `lockTimeout` (default `5s`), optional `statementTimeout`. |
-| `managedSchema` | `public` | The one schema the tool owns. |
-| `historySchema` | `deployment_history` | |
-| `externalSchemas` | `[]` | Schemas PL/pgSQL bodies may reference (§4.1). |
-| `directory` | `data-model` | |
-
-Not in config: credentials, the disposable flag, migration state.
-
-### 10.1 Adapters
-
-The library never starts PostgreSQL or opens a connection by itself; it calls adapters.
-
-- **Deployment adapter** (per target): "give me a session on this database." A session runs SQL, runs queries, reports its PostgreSQL version and closes. Called each time a command connects, so commands that don't touch `prod` never need its credentials. `deploy` opens two sessions (transaction + attempt log).
-- **Rehearsal adapter** (per project): "give me an empty throwaway database on PostgreSQL N with this encoding, locale and collation provider, and drop it when I'm done." Its login needs `CREATEROLE` (§10.2). (Q19)
-- The library ships node-postgres adapters configured from a connection string or environment variable.
-- The template's adapter uses `embedded-postgres` (PG18) to provide rehearsal databases and the `dev` target.
-- The library checks what adapters give it, e.g. refuses a server whose major version isn't 18.
-
-### 10.2 Roles (Q23, Q66)
-
-Roles are out of scope: never created or dropped on targets. Grants on managed objects to existing roles are diffed. Ownership is not diffed; objects are owned by the deploying role. Rehearsals create any missing granted role as `NOLOGIN` and never drop it.
-
----
-
-## 11. Repo and tooling (Q58–Q63)
-
-- **pnpm workspace:**
-  - `packages/super-deploy`: library and CLI. Its build copies `packages/template` into the package.
-  - `packages/example`: a working project using the library.
-  - `packages/template`: what `init` copies.
-  - Root: `GLOSSARY.md`, `REFINEMENTS.md`, `docs/`, workspace config. Root Biome config excludes `packages/`.
-- **Scripts:** every cross-package script runs as `pnpm -r <script>` (`format`, `lint`, `typecheck`, `test`, `precommit`); the root only orchestrates. Repo scripts are TypeScript run by Node. (Q61)
-- **Lint/format:** Biome for TS and JSON. The Postgres Language Server is recommended for in-editor SQL diagnostics. No automatic SQL formatting in V1. (Q60)
-- **Pre-commit:** Husky runs `pnpm precommit` → root checks, then `pnpm -r precommit`.
-  - Library: Biome check, typecheck, unit tests.
-  - Example and template: Biome check, typecheck, `validate --strict`.
-- **VS Code:** `super-deploy.code-workspace` with root and each package as folders, each with its own `.vscode/` (recommended extensions incl. Biome and Postgres Language Server). Editor format-on-save off; a run-on-save extension calls `pnpm run format:file` in the nearest package. The template sets `files.readonlyInclude` for `data-model/migrations/**` and `data-model/draft/schema-change.sql`.
-- **Testing:** Vitest, developed test-first.
-  - Unit: fixture-driven rule suite. Every hazard in `research/transactional-hazards.md` has at least one "refused" fixture; every allowed statement an "allowed" fixture.
-  - Integration: real PG18 via `embedded-postgres`, covering draft, rehearse, finalize, deploy, drift, recovery, mark, interruption, unknown COMMIT outcome.
-  - CI: GitHub Actions on Ubuntu, macOS and Windows with Node 24.
-- **Publishing:** not in V1 (see `REFINEMENTS.md`).
-
----
-
-## 12. Out of scope for V1
-
-Everything in `REFINEMENTS.md`, notably: calling user functions in scripts, enums, non-transactional operations, tolerating drift, replacing a schema change in a Recovery, ongoing seed data, extensions beyond `plpgsql`, partitioning, assertions, size-aware warnings, SQL formatting, ownership and default privileges, publishing.
+Vocabulary follows `GLOSSARY.md`. Architectural decisions: `docs/adr/0001`–`0004`. Deliberate V1 narrowings: `REFINEMENTS.md`. Research and prototype findings: `.scratch/super-deploy/research/`. `(Qn)` tags trace decisions to the design session.
+
+## Problem Statement
+
+Teams deploying schema changes to PostgreSQL get a database that is sometimes half-migrated and often subtly different from what they intended. Hand-written migrations drift from the schema people think they have; a failure partway through a run leaves some migrations applied and others not; SQL that works in development behaves differently in production because of locks, transaction semantics or column order; and nobody can say with confidence what structure a given database should have.
+
+Declarative tools (edit the schema, generate the SQL) remove the hand-writing but are fragile: they can emit statements that cannot run inside a transaction, guess wrong about renames, and leave no frozen, auditable record of what was actually run. Teams need the convenience of declarative authoring with the guarantees of immutable migrations: every target reaches exactly the intended structure, or is left exactly as it was.
+
+## Solution
+
+`super-deploy` is a TypeScript library and CLI for PostgreSQL 18. Developers edit a **desired schema** in SQL files. The system generates the **schema change**, the developer adds hand-written **pre-migration** and **post-migration scripts** for what generation can't do, and the result is frozen as a numbered, hash-chained, immutable **migration**. A **deployment** applies every **pending migration** on a **target** in one transaction: all or nothing.
+
+Fragility is contained by rules, not hope. PostgreSQL's own parser checks every SQL file against an allowlist, so nothing that could break or escape the deploy transaction is ever accepted. Every draft is **rehearsed** on throwaway databases before it can be finalized, and every deployment is rehearsed again and checked for **drift** before it touches the target. When a deployment fails, a recovery ladder (retry, **Recovery**, mark) gives a safe way forward. Disposable targets and **seed data** let developers reproduce and fix real data problems before production sees them.
+
+It runs identically on Windows, macOS and Linux, from a terminal menu, from flags in CI, or as a programmatic API.
+
+## User Stories
+
+### Authoring
+
+1. As a developer, I want to describe the database I want in plain SQL files, so that I never hand-write the `ALTER` statements to get there.
+2. As a developer, I want to organise desired-schema files however I like, without numbering them, so that the folder reflects my domain rather than load order.
+3. As a developer, I want the system to work out the order to load my desired schema automatically, so that cross-file references just work.
+4. As a developer, I want circular foreign keys between two tables to be expressible, so that real-world schemas aren't rejected.
+5. As a developer, I want unknown references and dependency cycles reported with file and line before anything loads, so that I can fix typos quickly.
+6. As a developer, I want the loaded result to never depend on file names or load order, so that renaming a file can't silently change which function a view uses.
+7. As a developer, I want to run `draft` and get a generated schema change from the newest migration to my desired schema, so that I can review exactly what will run.
+8. As a developer, I want to name a draft (typing spaces is fine) and see the normalised kebab-case name before it's created, so that migration folders are readable and consistent.
+9. As a developer, I want to rename a draft until it's finalized, so that a first guess at a name isn't permanent.
+10. As a developer, I want my pre-migration script to run before the diff is computed, so that renames, data-preserving type changes and add–backfill–`SET NOT NULL` sequences done there aren't regenerated as destructive drop-and-add.
+11. As a developer, I want `draft` to tell me what my scripts still need to cover (such as a dropped column on a table with data), so that I don't lose data by accident.
+12. As a developer, I want to re-run `draft` whenever I change the desired schema or pre-migration script, so that the schema change stays in step.
+13. As a developer, I want post-migration scripts for data work like backfills and reference data, so that data changes ship with the structure that needs them.
+14. As a developer, I want post-migration scripts to be refused if they contain DDL, so that the structure can't drift away from the desired schema.
+15. As a developer, I want to stage data in `ON COMMIT DROP` temporary tables during a migration, so that complex data reshaping is possible without leaving tables behind.
+16. As a developer, I want to add seed data that reproduces a production data problem, so that the rehearsal proves my scripts handle it.
+17. As a developer, I want seed data to exist only for the rehearsals of its own draft, so that old troubleshooting data doesn't burden later migrations.
+18. As a developer, I want `rehearse` to replay every migration plus my draft on a throwaway database and prove the result matches my desired schema, so that I find problems before finalizing.
+19. As a developer, I want rehearsals to fail if the desired schema produces a different catalog in a different valid load order, so that hidden order dependence is caught.
+20. As a developer, I want `finalize` to freeze my draft as the next numbered migration with read-only files and a hash-chain entry, so that it can never change afterwards.
+21. As a developer, I want `finalize` to refuse destructive changes (drops, `DELETE`, `TRUNCATE`, lossy type changes) unless I acknowledge them, so that data loss is always a deliberate choice.
+22. As a developer, I want the destructive acknowledgement recorded in the migration, so that reviewers can see what was accepted.
+23. As a developer, I want `finalize` to warn me about statements that rewrite or fully scan existing tables, so that I know which locks will be held until commit.
+24. As a developer, I want to `unfinalize` the newest migration back into a draft, so that I can fix a mistake I haven't shipped.
+25. As a developer, I want to `restore-schema` to the newest migration's desired schema, so that I can abandon unfinished edits.
+26. As a developer, I want to `discard-draft` while keeping my desired schema, so that I can regenerate from scratch.
+27. As a developer, I want overwrite-type commands to ask before discarding work, and to refuse without a flag in non-interactive use, so that nothing is lost by accident.
+28. As a developer, I want each migration to record which tool, differ, parser and PostgreSQL versions produced it, so that I can explain any generated SQL later.
+29. As a developer, I want migration files to contain no timestamps or usernames, so that they're reproducible and git remains the record of who and when.
+
+### Rules
+
+30. As a developer, I want every SQL file that could run in a deployment checked by PostgreSQL's own parser, so that the rules understand exactly the SQL PostgreSQL does.
+31. As a developer, I want the rules to be an allowlist, so that unfamiliar or newer syntax is refused rather than slipping through.
+32. As a developer, I want the generated schema change checked by the same rules as my scripts, so that a differ bug can't bypass them.
+33. As a developer, I want statements that can't run in a transaction (`CONCURRENTLY`, `VACUUM`, database and tablespace commands, and so on) refused, so that a deployment can never break its own transaction.
+34. As a developer, I want transaction control (`BEGIN`, `COMMIT`, `ROLLBACK`, savepoints), `CALL` and `DO` refused in scripts, so that nothing silently ends the deploy transaction.
+35. As a developer, I want calls to built-ins whose effects escape a rollback (such as `setval`, `pg_notify`, advisory locks, file and signal functions) refused, so that a failed deployment leaves no trace.
+36. As a developer, I want volatile functions like `now()` and `gen_random_uuid()` allowed, so that backfills can set timestamps and keys.
+37. As a developer, I want column-order-dependent SQL (`INSERT` without columns, `SELECT *`, ordinal `ORDER BY`/`GROUP BY`, `NATURAL JOIN`, whole-row references, `COPY`) refused, so that scripts behave the same whatever physical column order a target has.
+38. As a developer, I want explicit values into identity columns refused, so that sequences never fall behind and collide.
+39. As a developer, I want enums, partitioning, extensions other than `plpgsql`, `serial` columns, `NOT ENFORCED` constraints, virtual generated columns and other unsupported object types refused with a clear reason, so that I know V1's limits up front.
+40. As a developer, I want every index and constraint to require an explicit name, so that names never depend on load order.
+41. As a developer, I want PL/pgSQL bodies checked for dynamic SQL, transaction control and denylisted calls, so that routines can't smuggle in what scripts are forbidden.
+42. As a developer, I want to mark a single dangerous statement with `-- OVERRIDE DANGEROUS COMMAND: <reason>`, so that a justified exception is possible but always visible.
+43. As a reviewer, I want every override listed in the migration's metadata, `finalize` output and `validate` report, so that exceptions are never hidden.
+44. As a developer, I want overrides to be impossible for transaction-breaking rules, so that the core guarantee can't be overridden.
+45. As a developer, I want PL/pgSQL routines to reference declared external schemas that rehearsals don't contain, so that loader routines can read other parts of the database.
+46. As a developer, I want references to undeclared schemas refused, so that typos in schema names are caught.
+47. As a developer, I want every rule violation to name the file, line, statement and rule, so that I can fix it without guessing.
+
+### Integrity and review
+
+48. As a reviewer, I want each finalized migration's files hashed and chained to the previous one, so that any edit to history is detectable.
+49. As a developer, I want hashes to be identical on Windows, macOS and Linux regardless of line endings, so that teams on mixed platforms don't get false failures.
+50. As a team lead, I want the pre-commit hook to run `validate --strict`, so that tampered or unchecked migrations can't be committed.
+51. As a developer, I want `validate` to warn about an unfinalized draft and undrafted desired-schema changes, so that I don't forget work in progress.
+52. As a developer, I want finalized migrations and generated schema changes read-only in my editor, so that I don't edit them by accident.
+
+### Deploying
+
+53. As a release engineer, I want `status --target X` to show pending migrations, drift, the disposable flag and recent attempts, so that I know what a deployment will do.
+54. As an operator, I want `status` to exit non-zero on drift, so that a scheduled job alerts us.
+55. As a release engineer, I want `deploy --target X` to apply every pending migration in one transaction, so that the target ends at the newest migration or exactly where it started.
+56. As a release engineer, I want a deployment to refuse when the target has drifted from its recorded migrations, so that we never build on an unknown structure.
+57. As a release engineer, I want every deployment rehearsed on a throwaway database matching the target's encoding, locale and collation provider, so that collation differences can't surprise production.
+58. As a release engineer, I want a second deployment to the same target to fail immediately and name the attempt holding the lock, so that concurrent deployments can't collide.
+59. As a release engineer, I want per-target lock and statement timeouts, so that a deployment fails fast instead of queueing behind application traffic.
+60. As a release engineer, I want session settings (search path, time zone, date styles) pinned identically in rehearsals and deployments, so that results don't depend on server defaults.
+61. As a release engineer, I want deferred constraints checked at each migration boundary, so that a failure names the migration that caused it.
+62. As a release engineer, I want errors to name the file that failed, so that I know where to look.
+63. As an auditor, I want every deployment attempt recorded even when it fails, so that failures are never invisible.
+64. As a release engineer, I want an attempt whose COMMIT outcome was lost to be settled automatically on the next `status` or `deploy`, so that we always know whether it landed.
+65. As a release engineer, I want deployments to refuse when a role granted to in the desired schema doesn't exist on the target, so that a `GRANT` can't fail mid-transaction.
+66. As a release engineer, I want deployments to refuse when a declared external schema is missing on the target, so that routines don't break at runtime.
+67. As a security reviewer, I want a warning when the deploy role is superuser or holds server-file or signal privileges, so that we can tighten it.
+68. As a release engineer, I want the history schema created automatically by the first deployment, so that a new target needs no manual setup.
+69. As an operator, I want to choose the history schema's name, so that it fits our database conventions.
+70. As a release engineer, I want Ctrl+C or SIGTERM during a deployment to roll back, release the lock, record the attempt as abandoned and clean up throwaway databases, so that interruption is always safe.
+
+### Recovering
+
+71. As a release engineer, I want to retry a failed deployment after fixing its cause, so that transient problems have a simple fix.
+72. As a developer, I want to create a Recovery that replaces a failed migration's scripts and seed data for targets that haven't run it, so that a migration that can't succeed on real data can be fixed without editing history.
+73. As a developer, I want a Recovery to be refused if it would change the migration's structural result, so that every target that records the migration has the same structure.
+74. As an auditor, I want each target's history to say whether it ran a migration's original scripts or a specific Recovery, so that data differences can be explained.
+75. As a DBA, I want to `mark` the next pending migration as deployed after fixing a target by hand, but only if the target's structure matches a replica exactly, so that manual fixes can't hide drift.
+76. As a DBA, I want marks recorded only on the target, under my OS username, so that the repo stays shared and the action is attributable.
+
+### Disposable targets
+
+77. As a developer, I want to flag a target as disposable from inside its own database, so that editing the config can never make production disposable.
+78. As a developer, I want `deploy-draft` to try my unfinalized draft on a disposable target, so that I can test against realistic data before finalizing.
+79. As a developer, I want seed data loaded by `deploy-draft` only when I opt in, so that I don't overwrite other experiments on the target.
+80. As a developer, I want `rebuild --to N` to wipe a disposable target and replay migrations up to N, so that I can reset to a known point.
+81. As a team lead, I want `mark`, `rebuild`, `deploy-draft` and `disposable` to require typing `YES` at a real terminal after showing the target's details, and never run in CI, so that destructive manual actions can't happen by accident or automation.
+
+### Starting a project
+
+82. As a developer, I want `init` to scaffold a working project with a local embedded PostgreSQL, so that I can start without any external database.
+83. As a developer, I want `init --adopt <target>` to turn an existing database's managed schema into migration 1 and record it as deployed there, so that I can bring existing systems under management.
+84. As a developer, I want adoption refused with a full list of unsupported objects, so that I know exactly what to change first.
+85. As a developer, I want the template to tell me that seed data must be synthetic or anonymised, so that production data doesn't end up in git.
+
+### Running the tool
+
+86. As a developer, I want an interactive menu grouped by task when I run the tool with no arguments, so that I don't need to memorise commands.
+87. As a developer, I want the menu to return to the command I just ran, so that I can run several in a row.
+88. As a CI pipeline, I want every command runnable with flags and never prompting without a terminal, so that automation behaves the same every time.
+89. As a CI pipeline, I want distinct exit codes for failure, usage errors and each kind of interruption, so that pipelines can react correctly.
+90. As a developer, I want results on stdout and warnings and progress on stderr, so that output can be piped cleanly.
+91. As a developer, I want one-line errors by default and `--debug` for stack traces, so that output stays readable.
+92. As a developer, I want commands to find the project from any subdirectory, so that I don't have to `cd` to the root.
+93. As an integrator, I want every command available as a typed function with callbacks for questions and typed errors, so that I can embed the tool in my own scripts.
+94. As an integrator, I want to supply my own adapters for connecting to targets and providing throwaway databases, so that the tool works with my secrets manager, IAM tokens, tunnels or CI servers.
+95. As an integrator, I want commands to connect only to the targets they touch, so that a command that doesn't touch production never needs its credentials.
+96. As a developer, I want the tool to refuse a server that isn't PostgreSQL 18, so that rehearsals and targets always match.
+97. As a contributor, I want the repo's scripts to be TypeScript run by pnpm and the CI to run on Windows, macOS and Linux, so that the tool works the same everywhere.
+
+## Implementation Decisions
+
+### Guarantees
+
+- **Structural determinism** (Q2): deployments run only frozen SQL; the differ never runs at deploy time; the same migrations from the same starting structure always produce the same structure, verified by rehearsal and drift checks. Data is not required to be deterministic (Q41).
+- **All-or-nothing** (ADR-0001): every pending migration in one transaction, no escape hatch, no savepoints, no automatic retry.
+- **Immutability** (Q10, Q36): finalized migrations never change; a Recovery supersedes scripts without editing them.
+
+### Modules
+
+**Project and configuration** (Q56, Q59)
+- A typed `super-deploy.config.ts` at the project root, found by walking up from the working directory, loaded with Node's built-in TypeScript support (no `enum`/`namespace`).
+- Settings: `postgresVersion` (required, must be 18), `rehearsal` adapter (required), `targets` (each: deployment adapter, `lockTimeout` default 5s, optional `statementTimeout`), `managedSchema` (default `public`), `historySchema` (default `deployment_history`), `externalSchemas` (default none), `directory` (default `data-model`).
+- Never in config: credentials, the disposable flag, migration state.
+
+**Adapters** (Q19, consumer-implemented interfaces)
+- Deployment adapter, per target: opens a session that runs SQL, runs queries, reports its server version and closes. Called only when a command connects. `deploy` opens two sessions: one for the transaction, one for the attempt log.
+- Rehearsal adapter, per project: creates an empty throwaway PostgreSQL 18 database with a requested encoding, locale and collation provider, and drops it afterwards. Its login needs `CREATEROLE`.
+- The library ships node-postgres adapters configured from a connection string or environment variable. The template ships an `embedded-postgres` adapter providing rehearsal databases and a `dev` target.
+- The library validates what adapters return (e.g. refuses a server that isn't PostgreSQL 18).
+
+**SQL analysis** (ADR-0002, ADR-0004; database-free)
+- Built on `libpg-query@18` and `@pgsql/types`, pinned exactly; PL/pgSQL bodies parsed with its PL/pgSQL parser (Q18, Q29).
+- One splitter and syntax-tree walker shared by two capabilities:
+  - **Rules**: given SQL and its file kind (desired schema, schema change, pre-migration, post-migration, seed), return violations with file, line, statement and rule; plus destructive statements, rewrite/scan warnings and overrides found.
+  - **Ordering**: given the desired-schema files, return an ordered list of statements or errors (unknown references, cycles) with file and line.
+- Override markers are read from the raw text between statements, because PG18's parser excludes leading comments from statement locations.
+
+**Rules: desired schema** (Q5, Q8, Q22, Q28, Q31, Q35, Q40, Q48, Q49, Q65, Q67)
+- Allowed: `CREATE` of supported object types; `COMMENT ON`; `GRANT`; exactly `ALTER TABLE … ENABLE/FORCE ROW LEVEL SECURITY` and `ALTER TABLE … ADD CONSTRAINT`; `CREATE EXTENSION plpgsql`.
+- Supported object types: tables (with stored generated columns), primary key, foreign key, unique, check, exclusion and NOT NULL constraints, indexes, views, materialized views, identity columns, functions, procedures, triggers, domains, composite types, row-level security policies, comments, grants.
+- Refused: enums; partitioned tables; extensions other than `plpgsql`; rules; event triggers; foreign tables and foreign data wrappers; publications and subscriptions; custom casts, operators, aggregates, collations and text-search configurations; standalone sequences; `CREATE STATISTICS`; `serial`/`bigserial`; `NOT ENFORCED` constraints; `VIRTUAL` generated columns (including PG18's keyword-less default).
+- Refused because no load order could make them deterministic: unnamed indexes and constraints; a foreign key whose referenced columns are covered by more than one unique index or constraint; function calls written in column syntax.
+- Objects live in the managed schema and may reference only `pg_catalog`, except that PL/pgSQL bodies may reference declared external schemas. Objects that bind references at `CREATE` (views, defaults, foreign keys, triggers, `LANGUAGE sql` and `BEGIN ATOMIC` bodies) cannot reference external schemas, because rehearsals don't contain them. `check_function_bodies` stays on.
+
+**Rules: deploy-time SQL** (Q1, Q4, Q6, Q7, Q12, Q16, Q40, Q41, Q42, Q44, Q45, Q47)
+- Applies to generated schema changes, pre-migration scripts, post-migration scripts and seed data.
+- Never allowed: anything PostgreSQL refuses in a transaction block; transaction control; `CALL`; `DO`. The full catalogue is in `research/transactional-hazards.md`.
+- Functions: only `pg_catalog`, minus a denylist of built-ins whose effects escape the transaction. User-defined functions may not be called directly; triggers firing from DML is accepted. Volatile built-ins are allowed.
+- Column-order-dependent constructs are refused, as are explicit values into identity columns.
+- DML: `INSERT` with a column list, `UPDATE`, `MERGE` allowed; `DELETE` and `TRUNCATE` allowed but destructive; `CREATE TEMP TABLE … ON COMMIT DROP` (including `AS SELECT`) allowed; other temp tables, permanent `CREATE TABLE AS`/`SELECT INTO`, `COPY` and standalone `SELECT` refused.
+- Other statements: `SET`, `RESET`, `SET CONSTRAINTS`, `LISTEN`, `NOTIFY`, `PREPARE`, `DECLARE`, `LOAD` refused; `GRANT`, `REVOKE` and `COMMENT` refused in scripts (the desired schema owns them); `LOCK TABLE`, `ANALYZE` and non-concurrent `REFRESH MATERIALIZED VIEW` allowed.
+- References: only the managed schema, the script's own temp tables, and `pg_catalog` for reading.
+- Per file kind: pre-migration scripts may use DDL and DML; post-migration scripts DML only; seed data `INSERT` with column lists only.
+
+**Rules: PL/pgSQL bodies** (Q29): refuse `EXECUTE`, `COMMIT`/`ROLLBACK`, denylisted calls and references to undeclared schemas.
+
+**Override marker** (Q24, Q30): `-- OVERRIDE DANGEROUS COMMAND: <reason>` on the line before one statement, reason required. Recorded by object identity so it survives regeneration. Only risk rules (dynamic SQL, denylisted functions) can be overridden, never transaction-breaking rules. Every override appears in migration metadata, `finalize` output and `validate`.
+
+**Destructive changes and warnings** (Q25, Q46): drops, column drops, lossy type changes, `DELETE` and `TRUNCATE` need acknowledgement at `finalize`, recorded in metadata. Rewrites and full scans of existing tables (type changes, volatile defaults, `SET NOT NULL`, constraint validation, `CREATE INDEX`, `TRUNCATE`) produce warnings; tables created in the same migration are exempt.
+
+**Desired-schema loading** (Q35, ADR-0004)
+- Statements, not files, ordered by object-kind priority and dependencies, ties broken only by object identity and a hash of the statement text, never file path or locale.
+- Models every reference shape PostgreSQL binds at `CREATE`, including `BEGIN ATOMIC` bodies, unqualified names in `LANGUAGE sql` bodies, argument defaults, trigger `WHEN`, composite type attributes, `%TYPE`, `::regclass`, and implicit `_pkey`/`_seq` names. PL/pgSQL bodies are ignored for ordering. A call waits for every overload of its function name. Circular foreign keys are closed with `ALTER TABLE … ADD CONSTRAINT`.
+- Order-independence check during `draft`, `rehearse` and `finalize`: load again in a different valid order and compare catalogs, including what each view, default and function body is bound to. Any difference fails, naming the objects.
+- Prototype: `prototype/schema-ordering` (`25d5c18`) proved the approach at about 600 lines and 0.3 s for 5,000 statements; the production version is estimated at about 2k lines plus 60–100 fixtures.
+
+**Differ** (Q3, Q17, ADR-0003)
+- The desired schema is read by loading it into a throwaway database and reading the catalogs; SQL is never modelled by parsing.
+- Behind our own `Differ` interface. V1 wraps `@supabase/pg-delta`, pinned to exactly `1.0.0-alpha.59`, calling its extract and plan operations directly. Its directory loader and `@supabase/pg-topo` are never used. Every upgrade re-runs the prototype. Fallback: our own `pg_catalog`/`pg_depend` differ behind the same interface.
+- Column order is never a difference; ownership is not diffed; grants are.
+- Verification, independent of engine: apply the generated migration to a fresh database, read it back, and require an empty diff against the desired schema using both pg-delta and our own `pg_catalog` comparison (pg-delta's own re-diff misses some of its errors).
+- Known pg-delta gaps (prototype `prototype/pg-delta`, `9d619fe`): `BETWEEN` in a check never converges (upstream #544, tracked); PG18 NOT NULL constraint names and comments on constraint-backed indexes are lost (our catalog comparison must catch these); changing an in-use domain's base type is refused.
+
+**Rehearsal** (Q19, Q20, Q23, Q66)
+- Throwaway databases match the requested encoding, locale and collation provider; deployments match the target's.
+- Missing roles granted to in the desired schema are created as `NOLOGIN` and never dropped.
+- Session settings are pinned identically to deployments.
+- A draft rehearsal replays every finalized migration (newest variant), loads the draft's seed data, runs pre-migration script → schema change → post-migration script, then requires an empty diff against the desired schema.
+
+**Migration store** (Q33, Q34, Q36, Q39)
+- Project directory holds the desired schema, one draft, and the finalized migrations with a hash-chain index. Each migration folder holds its pre-migration script, schema change, post-migration script, seed data, metadata and a snapshot of the desired schema at finalize. Recoveries live under their migration.
+- One draft at a time: normal or Recovery, never both (Q50).
+- Folder names: five-digit zero-padded number, hyphen, kebab-case description of at most 60 characters. Input is trimmed, lowercased, space runs collapsed to one hyphen, and any other invalid character refused with the result previewed. The number is the identity; the hash covers the folder name.
+- Hashing: UTF-8 (BOM refused), line endings normalised to LF, SHA-256 over every file and the folder name; `chain[n] = sha256(chain[n-1] + content_hash[n])`.
+- Finalized files are made read-only (works on Windows too). The template ships `.gitattributes` forcing LF for SQL and JSON.
+- Metadata: tool, differ and parser versions; rehearsal server version; destructive acknowledgement with its statements; overrides with reasons and object identities. No timestamps or usernames.
+
+**Authoring commands** (Q16, Q25, Q27)
+- `draft`: load the desired schema into one throwaway database; replay migrations, the draft's seed data and its pre-migration script into another; diff the second to the first; write the schema change; report what scripts must cover. Recovery drafts never regenerate the schema change.
+- `rehearse`, `finalize`, `unfinalize`, `restore-schema`, `discard-draft`, `validate [--strict]` as described in the user stories.
+
+**Recoveries** (Q10, Q13): replace pre-migration script, post-migration script and seed data, never the schema change. Newest Recovery wins for targets that haven't recorded the migration. Rehearsal proves the original and every Recovery end in identical structure.
+
+**Seed data** (Q11, Q14, Q15, Q27): belongs to one migration or Recovery and is frozen with it as an audit record. Loaded only in rehearsals of its own draft (including `finalize`'s) and by `deploy-draft --with-seed`. Never loaded when finalized migrations are replayed, in deployment rehearsals, by `rebuild`, or on any non-disposable target.
+
+**Deployment engine and history schema** (Q20, Q21, Q24, Q28, Q32, Q37, Q38, Q53, Q54, Q55, Q66)
+- History schema, created by the first deployment inside its transaction, with three tables:
+  - migrations: number, name, variant (original or Recovery K), content and chain hashes, attempt id, how recorded (deployed or marked). Written inside the deploy transaction.
+  - attempts: command, target, migration range, OS username, tool version, start and end time, outcome (running, succeeded, failed, abandoned, unknown), error. Written on a second connection outside the transaction.
+  - settings: the disposable flag; new targets are not disposable.
+- Locking: a session-level advisory lock taken with try-lock on the command's own connection, keyed from the history schema name, by `deploy`, `mark`, `rebuild`, `deploy-draft` and `disposable`. Contention fails immediately, naming the holding attempt.
+- `deploy` sequence: open attempt → lock → pre-flight (granted roles exist, external schemas exist, deploy-role privilege warning, recorded hashes match the repo) → drift check (replay the target's recorded migrations, each with its recorded variant, on a locale-matched throwaway database; any structural difference refuses, no exceptions) → rehearse the pending migrations on that database (newest Recovery where one exists) and require a match with the newest snapshot → one transaction on the target → close attempt.
+- Inside the transaction: `SET LOCAL` search path (managed schema, then `pg_catalog`), time zone UTC, fixed date and interval styles, the target's lock and statement timeouts. Per migration: pre-migration script, schema change, post-migration script, each as its own batch so errors name the file, with `SET CONSTRAINTS ALL IMMEDIATE` at each migration boundary.
+- Unknown COMMIT outcome: recorded as unknown, settled on the next `status` or `deploy` by checking the migrations rows written inside the transaction.
+
+**Guarded and recovery commands** (Q14, Q27, Q52)
+- `mark`: next pending migration only; builds a locale-matched replica of migrations up to N and requires an empty diff (column order and ownership ignored); records the original variant; writes only to the target's history schema.
+- `disposable --set yes|no`, `deploy-draft [--with-seed]` (disposable targets only), `rebuild --to N` (disposable only, no seed data).
+- Guard sequence: refuse in CI or without a terminal on stdin and stdout; check preconditions; show the action plus the target's name, host, database and last recorded migration; require typing `YES` exactly; record a manual attempt under the OS username. Nothing skips it.
+
+**`init`** (Q51): scaffolds from the template bundled in the library package. `--adopt <target>` generates desired-schema files from the target's managed schema, creates migration `00001-adopt`, records it on the target as marked using `mark`'s check, and refuses with a full list if anything V1 refuses is present.
+
+**CLI shell and programmatic API** (Q50, Q57)
+- One set of command definitions drives both `util.parseArgs` flags and an `@clack/prompts` menu grouped into Start, Author, Deploy, Recover and Disposable sections. No `setup` command.
+- Option kinds: target (from config), migration number (searchable, newest first), choice, name (normalised), flag. The menu never sets acknowledgement flags; commands ask yes/no (default no) when it matters, and refuse without the flag when there's no terminal.
+- Unknown, repeated, missing or invalid options are usage errors and nothing runs.
+- Exit codes: 0 success; 1 failed or refused (and `status` on drift); 2 usage error; 130 SIGINT; 141 closed output; 143 SIGTERM.
+- Interruption: roll back, release the lock, mark the attempt abandoned, drop throwaway databases, print one notice; a second interrupt exits at once.
+- Every command is also an exported function taking a loaded project, with flags as options, questions as callbacks, and typed errors. Guarded commands stay terminal-only.
+
+**Repo and tooling** (Q58–Q63)
+- pnpm workspace with three packages: the library and CLI, an example project, and the template `init` copies (bundled into the library's build). Every cross-package script runs as `pnpm -r <script>`.
+- Node ≥ 24, ESM only, strict TypeScript built with plain `tsc`. Repo scripts are TypeScript run by Node, never shell scripts.
+- Biome for TypeScript and JSON; the Postgres Language Server recommended for in-editor SQL diagnostics; no automatic SQL formatting.
+- Husky runs `pnpm precommit`: the library runs Biome check, typecheck and unit tests; the example and template run Biome check, typecheck and `validate --strict`.
+- VS Code multi-root workspace, each folder with its own settings; format via a run-on-save extension calling the nearest package's formatter; the template marks finalized migrations and generated schema changes read-only.
+
+## Testing Decisions
+
+### What makes a good test
+
+- Tests exercise external behaviour only: what a user or integrator can observe. They never assert on internal modules, data structures or call sequences.
+- Tests use real PostgreSQL 18, not mocks. Faults are injected by wrapping a real adapter session, never by mocking internals.
+- Tests are written first, one red-green slice at a time.
+
+### Seams (agreed with the user)
+
+1. **Programmatic API against a real project folder and real PostgreSQL 18 (main seam).** A test creates a temporary project with a config and desired-schema files, wired to `embedded-postgres` throwaway databases and targets through the real adapters, then calls the exported command functions, answering questions through callbacks. Assertions cover only observable results: files written, hashes and read-only state, the target's managed and history schemas, and typed errors. This covers authoring, rehearsal, drift, deployment, Recoveries, `mark`, disposable targets and adoption. The differ, hash chain and history tables are tested only through this seam.
+2. **CLI process (thin).** Spawn the real binary to test only what exists at the process boundary: flag parsing and usage errors, exit codes, stdout/stderr separation, SIGINT/SIGTERM/closed-pipe cleanup, and guarded commands refusing without a terminal or in CI.
+3. **SQL analysis (database-free).** Pure functions taking SQL text and file kind, returning violations or a load order. Hosts the high-volume fixture suites and runs in the library's pre-commit.
+
+Fault injection (lost COMMIT outcome, lock contention, a script failing midway) uses a wrapper around a real adapter session at the existing adapter seam.
+
+### What is tested where
+
+- **SQL analysis:** at least one refused fixture for every hazard in `research/transactional-hazards.md`, an allowed fixture for every allowed statement form, every refused object type, every override case, and 60–100 ordering fixtures including every case from both ordering spikes. Ordering fixtures assert the order is unchanged when files are renamed and statement order reversed.
+- **Programmatic API:** happy-path authoring through deployment; destructive acknowledgement; rehearsal mismatch; order-independence failure; drift refusal; lock contention; script failure with full rollback and the attempt still recorded; unknown COMMIT outcome settled; Recovery deployment and variant recording; `mark` with matching and mismatching replicas; disposable flag enforcement; `deploy-draft` with and without seed data; `rebuild`; `init` and `--adopt` (including refusal); missing roles and external schemas; `validate` detecting edits, renamed folders and CRLF-only changes.
+- **CLI process:** every exit code, usage errors, interruption cleanup, guarded-command refusal without a terminal.
+- **CI:** GitHub Actions on Ubuntu, macOS and Windows with Node 24. Integration tests run in CI; the library's pre-commit runs only database-free tests.
+
+### Prior art
+
+There is no production code yet. Reusable prior art from the prototype branches (not merged to main):
+- `prototype/pg-delta` (`9d619fe`): embedded-postgres PG18 harness, catalog snapshot comparison, and 90 create/alter/drop round-trip scenarios across every supported object type: the starting point for the differ verification and the API seam's harness.
+- `prototype/schema-ordering` (`25d5c18`): ordering proof-of-concept, ordering fixtures, and the order-independence check.
+- `prototype/pg-topo-pg18` (`7f91fd6`): a 28-case matrix of V1-supported reference shapes, useful as extra ordering fixtures.
+
+## Out of Scope
+
+Everything recorded in `REFINEMENTS.md`, including: calling user-defined functions or procedures in scripts; enums; non-transactional operations and out-of-band index builds; tolerating drift; a Recovery replacing the schema change; seed data that persists across rehearsals; extensions other than `plpgsql`; partitioned tables; virtual generated columns; other refused object types; assertion directives; size-aware lock warnings; proving (rather than sampling) order independence; automatic SQL formatting; managing roles, ownership and default privileges; publishing to npm.
+
+Also out of scope: managing more than one schema; PostgreSQL versions other than 18; creating or dropping roles on targets.
+
+## Further Notes
+
+- The pg-delta prototype was run on Linux only. Windows behaviour of `embedded-postgres` and pg-delta is unverified until CI runs there; treat the first Windows CI run as a risk.
+- pg-delta is an alpha with 60 releases including a full rewrite; the pinned version must not float, and any upgrade re-runs the prototype scenarios.
+- pg-delta's licence is the PostgreSQL licence (not MIT as `research/parsers-and-differs.md` states).
+- The issue files in `.scratch/super-deploy/issues/` predate this spec and are split by layer; they are to be replaced by tracer-bullet tickets via `/to-tickets`.
