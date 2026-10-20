@@ -1,0 +1,2352 @@
+{
+  "versions": {
+    "node": "v24.21.0",
+    "platform": "linux-x64",
+    "@supabase/pg-delta": "1.0.0-alpha.59",
+    "@supabase/pg-topo": "1.0.0-alpha.8",
+    "embedded-postgres": "18.4.0-beta.17",
+    "pg": "8.23.1"
+  },
+  "server": "PostgreSQL 18.4 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 7.5.0-3ubuntu1~18.04) 7.5.0, 64-bit",
+  "columnOrder": [
+    {
+      "name": "existing column at end vs desired mid-table",
+      "detail": "target cols=id,a,c,b, desired cols=id,a,b,c, statements=0",
+      "ok": true,
+      "sql": ""
+    },
+    {
+      "name": "desired adds column mid-table",
+      "detail": "plan=[\"ALTER TABLE \\\"public\\\".\\\"t\\\" ADD COLUMN \\\"b\\\" text;\"]; after apply target cols=id,a,c,b; rows kept=1; re-diff statements=0",
+      "ok": true,
+      "sql": "ALTER TABLE \"public\".\"t\" ADD COLUMN \"b\" text;\n"
+    },
+    {
+      "name": "view SELECT * over a table whose physical order differs (informational)",
+      "detail": "plan=[\"DROP VIEW \\\"public\\\".\\\"v\\\";\",\"CREATE VIEW \\\"public\\\".\\\"v\\\" AS  SELECT id,\\n    a,\\n    b,\\n    c\\n   FROM public.t;\"]; view cols after=id,a,b,c (desired id,a,b,c); re-diff=0; catalog diff=[]",
+      "ok": true,
+      "sql": "DROP VIEW \"public\".\"v\";\n\nCREATE VIEW \"public\".\"v\" AS  SELECT id,\n    a,\n    b,\n    c\n   FROM public.t;\n"
+    }
+  ],
+  "coverage": [
+    {
+      "name": "table / create",
+      "statements": 1,
+      "sql": "CREATE TABLE \"public\".\"t\" (\"id\" bigint NOT NULL, \"name\" text NOT NULL DEFAULT 'x'::text, \"price\" numeric(10,2), CONSTRAINT \"t_pkey\" PRIMARY KEY (id));\n",
+      "sha256": "cf486825d81599eb31683c4c1c4e3a10c7421b43508e4fd0ccfe3ce6b52c1f5c",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "table / alter",
+      "statements": 6,
+      "sql": "ALTER TABLE \"public\".\"t\" ALTER COLUMN \"name\" DROP DEFAULT;\n\nALTER TABLE \"public\".\"t\" DROP COLUMN \"price\";\n\nALTER TABLE \"public\".\"t\" ADD COLUMN \"qty\" integer NOT NULL DEFAULT 1;\n\nALTER TABLE \"public\".\"t\" ADD COLUMN \"extra\" jsonb;\n\nALTER TABLE \"public\".\"t\" ALTER COLUMN \"name\" DROP DEFAULT;\n\nALTER TABLE \"public\".\"t\" ALTER COLUMN \"name\" TYPE character varying(200) USING \"name\"::character varying(200);\n",
+      "sha256": "4a792f958f81e7e2ab40cc9a04c643a57748a69b925b8f02adffec5b06fe762d",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "table / drop",
+      "statements": 1,
+      "sql": "DROP TABLE \"public\".\"t\";\n",
+      "sha256": "a13d46ef6e0a0a15ce072f61136401626285d0b8423f3c9592a799f30f93fc49",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "generated column (stored) / create",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" ADD COLUMN \"total\" integer GENERATED ALWAYS AS ((a + b)) STORED;\n",
+      "sha256": "69868296a897ce4c116a46f4377f5c1ccf33a302f844eb86e179c20e0827a22c",
+      "nonTransactional": [],
+      "diagnostics": [
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.b references a fact not in the base",
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.a references a fact not in the base"
+      ],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "generated column (stored) / alter",
+      "statements": 2,
+      "sql": "ALTER TABLE \"public\".\"t\" DROP COLUMN \"total\";\n\nALTER TABLE \"public\".\"t\" ADD COLUMN \"total\" integer GENERATED ALWAYS AS ((a * b)) STORED;\n",
+      "sha256": "fa60ccbebf772e24db70189755d287af463a9a112d63e1e6954ab0680c1616b8",
+      "nonTransactional": [],
+      "diagnostics": [
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.a references a fact not in the base",
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.b references a fact not in the base",
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.b references a fact not in the base",
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.a references a fact not in the base"
+      ],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "generated column (stored) / drop",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" DROP COLUMN \"total\";\n",
+      "sha256": "a8e064ed57bd4c605dca05916f3879415640f824c45cf47802d65257dec67c4f",
+      "nonTransactional": [],
+      "diagnostics": [
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.b references a fact not in the base",
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.a references a fact not in the base"
+      ],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "generated column (virtual, PG18) / create",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" ADD COLUMN \"total\" integer GENERATED ALWAYS AS ((a + b)) STORED;\n",
+      "sha256": "69868296a897ce4c116a46f4377f5c1ccf33a302f844eb86e179c20e0827a22c",
+      "nonTransactional": [],
+      "diagnostics": [
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.a references a fact not in the base",
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.b references a fact not in the base"
+      ],
+      "ok": false,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": [
+        "- column: t.total integer notnull=false identity= generated=s default=(a + b) collation=-",
+        "+ column: t.total integer notnull=false identity= generated=v default=(a + b) collation=-"
+      ]
+    },
+    {
+      "name": "generated column (virtual, PG18) / alter",
+      "statements": 2,
+      "sql": "ALTER TABLE \"public\".\"t\" DROP COLUMN \"total\";\n\nALTER TABLE \"public\".\"t\" ADD COLUMN \"total\" integer GENERATED ALWAYS AS ((a * b)) STORED;\n",
+      "sha256": "fa60ccbebf772e24db70189755d287af463a9a112d63e1e6954ab0680c1616b8",
+      "nonTransactional": [],
+      "diagnostics": [
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.b references a fact not in the base",
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.a references a fact not in the base",
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.a references a fact not in the base",
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.b references a fact not in the base"
+      ],
+      "ok": false,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": [
+        "- column: t.total integer notnull=false identity= generated=s default=(a * b) collation=-",
+        "+ column: t.total integer notnull=false identity= generated=v default=(a * b) collation=-"
+      ]
+    },
+    {
+      "name": "generated column (virtual, PG18) / drop",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" DROP COLUMN \"total\";\n",
+      "sha256": "a8e064ed57bd4c605dca05916f3879415640f824c45cf47802d65257dec67c4f",
+      "nonTransactional": [],
+      "diagnostics": [
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.a references a fact not in the base",
+        "dangling_edge: edge default:public.t.total -[depends]-> column:public.t.b references a fact not in the base"
+      ],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "generated column stored -> virtual / create",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" ADD COLUMN \"g\" integer GENERATED ALWAYS AS ((a * 2)) STORED;\n",
+      "sha256": "34e5b313a4ad0878906111e81816d1dbfaa7636961f8220fc128deb40a627fa3",
+      "nonTransactional": [],
+      "diagnostics": [
+        "dangling_edge: edge default:public.t.g -[depends]-> column:public.t.a references a fact not in the base"
+      ],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "generated column stored -> virtual / alter",
+      "statements": 0,
+      "sql": "",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "nonTransactional": [],
+      "diagnostics": [
+        "dangling_edge: edge default:public.t.g -[depends]-> column:public.t.a references a fact not in the base",
+        "dangling_edge: edge default:public.t.g -[depends]-> column:public.t.a references a fact not in the base"
+      ],
+      "ok": false,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": [
+        "- column: t.g integer notnull=false identity= generated=s default=(a * 2) collation=-",
+        "+ column: t.g integer notnull=false identity= generated=v default=(a * 2) collation=-"
+      ]
+    },
+    {
+      "name": "generated column stored -> virtual / drop",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" DROP COLUMN \"g\";\n",
+      "sha256": "7b813477ae6c000f680bae80f516411bd7cf3cfd0b2ca0929326241054b6f1a8",
+      "nonTransactional": [],
+      "diagnostics": [
+        "dangling_edge: edge default:public.t.g -[depends]-> column:public.t.a references a fact not in the base"
+      ],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "primary key / create",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" ADD CONSTRAINT \"t_pk\" PRIMARY KEY (id);\n",
+      "sha256": "fbd7c04d8c06318659a652036b5ccf4cae72c752e3b3b8c11cb47e1887ea47c7",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "primary key / alter",
+      "statements": 2,
+      "sql": "ALTER TABLE \"public\".\"t\" DROP CONSTRAINT \"t_pk\";\n\nALTER TABLE \"public\".\"t\" ADD CONSTRAINT \"t_pk\" PRIMARY KEY (id, code);\n",
+      "sha256": "8c0d25bf27289f8ead5bd28741ae504ed4ed7553ea39d0dc7f8ae23321e20d18",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "primary key / drop",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" DROP CONSTRAINT \"t_pk\";\n",
+      "sha256": "79ea839e6a1ae94e28fe9acebcc0f2e10f1e3d51a8b2487c238023f31a66cb66",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "foreign key / create",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"child\" ADD CONSTRAINT \"child_parent_fk\" FOREIGN KEY (parent_id) REFERENCES public.parent(id);\n",
+      "sha256": "0a2d2efd38edfe1a410b66a3503a88ae3382e8f7146693aab2bd11ed5affc7b2",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "foreign key / alter",
+      "statements": 2,
+      "sql": "ALTER TABLE \"public\".\"child\" DROP CONSTRAINT \"child_parent_fk\";\n\nALTER TABLE \"public\".\"child\" ADD CONSTRAINT \"child_parent_fk\" FOREIGN KEY (parent_id) REFERENCES public.parent(alt) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;\n",
+      "sha256": "acd84b73e12fe7033b9d0bf3b3e305cae04d9ad0374b6d6f28f2ce21d3cfaf98",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "foreign key / drop",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"child\" DROP CONSTRAINT \"child_parent_fk\";\n",
+      "sha256": "1f6a7b72f5fb7a11d85c1348be6d1f0c08a7181f2cb0f9b9cca091a64819f97c",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "unique / create",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" ADD CONSTRAINT \"t_email_key\" UNIQUE (email);\n",
+      "sha256": "be16e6c8462ab6dd577cb116ab24ff21bb3ec75fcd04ac572f59abdbe200f754",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "unique / alter",
+      "statements": 2,
+      "sql": "ALTER TABLE \"public\".\"t\" DROP CONSTRAINT \"t_email_key\";\n\nALTER TABLE \"public\".\"t\" ADD CONSTRAINT \"t_email_key\" UNIQUE NULLS NOT DISTINCT (tenant, email);\n",
+      "sha256": "65bf240911d9303fa9195873c78ba00c2270280a2d14eaff6728320ded0c39a6",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "unique / drop",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" DROP CONSTRAINT \"t_email_key\";\n",
+      "sha256": "69e7b23d22b3420d3d8d53ced9e72fd0dd13d8ea109fcc651eb7220ad9583d1c",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "check / create",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" ADD CONSTRAINT \"t_qty_check\" CHECK ((qty > 0));\n",
+      "sha256": "54ab22f77ae85ee53211bcbdd36ac377e913eddc325309951d03b44af111088a",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "check / alter",
+      "statements": 2,
+      "sql": "ALTER TABLE \"public\".\"t\" DROP CONSTRAINT \"t_qty_check\";\n\nALTER TABLE \"public\".\"t\" ADD CONSTRAINT \"t_qty_check\" CHECK (((qty >= 0) AND (qty < 1000)));\n",
+      "sha256": "4a276f37e566c3a4efc1cf39723775e87c322010f1b1520a56f7acabdd7e8758",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "check / drop",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" DROP CONSTRAINT \"t_qty_check\";\n",
+      "sha256": "8452d35dc160b5614a00a1ea76925c8ea170521cd70430744a514a4e030a0146",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "check with BETWEEN (deparse fixed point) / create",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" ADD CONSTRAINT \"t_qty_check\" CHECK (((qty >= 1) AND (qty <= 10)));\n",
+      "sha256": "f33b3d86f2a24d9ed9bf5f2afab3179367662980e606d10dad0a102e8c88b6fb",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "check with BETWEEN (deparse fixed point) / alter",
+      "statements": 2,
+      "sql": "ALTER TABLE \"public\".\"t\" DROP CONSTRAINT \"t_qty_check\";\n\nALTER TABLE \"public\".\"t\" ADD CONSTRAINT \"t_qty_check\" CHECK ((((qty >= 0) AND (qty <= 100)) AND (ROW(qty, id) > ROW(0, 0))));\n",
+      "sha256": "3331c95094dfc331083bca35b7d5c1564c5480c86adac5efde0d0924fa56665e",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": false,
+      "rediffStatements": 2,
+      "rediffSql": "ALTER TABLE \"public\".\"t\" DROP CONSTRAINT \"t_qty_check\";\n\nALTER TABLE \"public\".\"t\" ADD CONSTRAINT \"t_qty_check\" CHECK ((((qty >= 0) AND (qty <= 100)) AND (ROW(qty, id) > ROW(0, 0))));\n",
+      "catalogDiff": [
+        "- constraint: t t_qty_check c CHECK (((qty >= 0) AND (qty <= 100) AND (ROW(qty, id) > ROW(0, 0)))) deferrable=false deferred=false validated=true",
+        "+ constraint: t t_qty_check c CHECK ((((qty >= 0) AND (qty <= 100)) AND (ROW(qty, id) > ROW(0, 0)))) deferrable=false deferred=false validated=true"
+      ]
+    },
+    {
+      "name": "check with BETWEEN (deparse fixed point) / drop",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" DROP CONSTRAINT \"t_qty_check\";\n",
+      "sha256": "8452d35dc160b5614a00a1ea76925c8ea170521cd70430744a514a4e030a0146",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "exclusion / create",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"booking\" ADD CONSTRAINT \"booking_no_overlap\" EXCLUDE USING gist (during WITH &&);\n",
+      "sha256": "39255a53ff406aec99e13d7141e92c8cd7be3aa426396833f90f6e3e935ee510",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "exclusion / alter",
+      "statements": 2,
+      "sql": "ALTER TABLE \"public\".\"booking\" DROP CONSTRAINT \"booking_no_overlap\";\n\nALTER TABLE \"public\".\"booking\" ADD CONSTRAINT \"booking_no_overlap\" EXCLUDE USING gist (during WITH &&) WHERE ((room IS NOT NULL));\n",
+      "sha256": "71fff3fe35d73f9b260307d3c5ea8052618f00dd739c0d2acd490ce2991737bc",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "exclusion / drop",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"booking\" DROP CONSTRAINT \"booking_no_overlap\";\n",
+      "sha256": "f8f7e5e88106ccd1234a0e105308041f26ede2ccc6f04346e623cc1df5b942eb",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "not null / create",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" ALTER COLUMN \"name\" SET NOT NULL;\n",
+      "sha256": "d99ff687f762625d5db401d37dbd97e6342759c897a5d061aee184d9adb7dc3b",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "not null / alter",
+      "statements": 1,
+      "sql": "ALTER TABLE \"public\".\"t\" ALTER COLUMN \"code\" SET NOT NULL;\n",
+      "sha256": "a3b70269be99e7b930b11e0d85ff2c192ef39ac6d4475acdc44770948a55def2",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": false,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": [
+        "- constraint: t t_name_not_null n NOT NULL name deferrable=false deferred=false validated=true",
+        "+ constraint: t name_required n NOT NULL name deferrable=false deferred=false validated=true"
+      ]
+    },
+    {
+      "name": "not null / drop",
+      "statements": 2,
+      "sql": "ALTER TABLE \"public\".\"t\" ALTER COLUMN \"code\" DROP NOT NULL;\n\nALTER TABLE \"public\".\"t\" ALTER COLUMN \"name\" DROP NOT NULL;\n",
+      "sha256": "dbf8ff10f333f07648f9654683d6f4f1816a931884661e4a342f553f2661ccda",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "index / create",
+      "statements": 1,
+      "sql": "CREATE INDEX t_a_idx ON public.t USING btree (a);\n",
+      "sha256": "a974576a52df275bdfc65ba5dc43579e493cf185ee662c011320887ffe5a802a",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "index / alter",
+      "statements": 3,
+      "sql": "DROP INDEX \"public\".\"t_a_idx\";\n\nCREATE UNIQUE INDEX t_a_idx ON public.t USING btree (a, b) WHERE (b IS NOT NULL);\n\nCREATE INDEX t_lower_b_idx ON public.t USING btree (lower(b));\n",
+      "sha256": "eccbe9130ad7319097629fcfece56ae4859b266eda37172eed5a9eb949fd92c3",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "index / drop",
+      "statements": 2,
+      "sql": "DROP INDEX \"public\".\"t_a_idx\";\n\nDROP INDEX \"public\".\"t_lower_b_idx\";\n",
+      "sha256": "95ce32839bc0a735f6ef2334d4dd005a399f1a8656422d9fbae2176744efda6a",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "view / create",
+      "statements": 1,
+      "sql": "CREATE VIEW \"public\".\"v\" AS  SELECT id,\n    a\n   FROM public.t;\n",
+      "sha256": "c9c1a88407cb124e0ae54baa2d28440a1bcefde2d6e06e1a05864e8a78ced97c",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "view / alter",
+      "statements": 2,
+      "sql": "DROP VIEW \"public\".\"v\";\n\nCREATE VIEW \"public\".\"v\" AS  SELECT id,\n    a,\n    b,\n    (a + 1) AS a1\n   FROM public.t\n  WHERE (id > 0);\n",
+      "sha256": "fa5f7415d53976d287eea67f5802a1edfdd6456e32d395a4a82fdeb9aaac25a1",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "view / drop",
+      "statements": 1,
+      "sql": "DROP VIEW \"public\".\"v\";\n",
+      "sha256": "3c617586b6496f9b2e43f4c339fe488ccbd9d9916081f9259269ba24a88fb95c",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "view (column removed/retyped -> needs drop+create) / create",
+      "statements": 1,
+      "sql": "CREATE VIEW \"public\".\"v\" AS  SELECT id,\n    a,\n    b\n   FROM public.t;\n",
+      "sha256": "033e5ab3a3abc68aacc9a8a4eded7de64d57db995943df4ba2014abfb62cc965",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "view (column removed/retyped -> needs drop+create) / alter",
+      "statements": 2,
+      "sql": "DROP VIEW \"public\".\"v\";\n\nCREATE VIEW \"public\".\"v\" AS  SELECT id,\n    (b)::character varying(10) AS a\n   FROM public.t;\n",
+      "sha256": "3cce0177b538eb6d783a20ab05b995f691c54fa33831084a4b1b78e083f2a9b6",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "view (column removed/retyped -> needs drop+create) / drop",
+      "statements": 1,
+      "sql": "DROP VIEW \"public\".\"v\";\n",
+      "sha256": "3c617586b6496f9b2e43f4c339fe488ccbd9d9916081f9259269ba24a88fb95c",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "materialized view / create",
+      "statements": 2,
+      "sql": "CREATE MATERIALIZED VIEW \"public\".\"mv\" AS  SELECT a,\n    count(*) AS n\n   FROM public.t\n  GROUP BY a;\n\nCREATE INDEX mv_a_idx ON public.mv USING btree (a);\n",
+      "sha256": "c854749b30bb298ade513fdea0a5a005bf4105bac2c95769844bf90078c5b88a",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "materialized view / alter",
+      "statements": 2,
+      "sql": "DROP MATERIALIZED VIEW \"public\".\"mv\";\n\nCREATE MATERIALIZED VIEW \"public\".\"mv\" AS  SELECT a,\n    b,\n    count(*) AS n\n   FROM public.t\n  GROUP BY a, b;\n",
+      "sha256": "c2c5e51c5d76e22a6105c71f57226527dbdb7530569b3b6064798aa51e20edc4",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "materialized view / drop",
+      "statements": 1,
+      "sql": "DROP MATERIALIZED VIEW \"public\".\"mv\";\n",
+      "sha256": "9f2e9d7db664de0458e3a46961235f560a45bed4b82d47ff03a85788d9a643ef",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "identity column / create",
+      "statements": 2,
+      "sql": "ALTER TABLE \"public\".\"t\" ALTER COLUMN \"id\" ADD GENERATED ALWAYS AS IDENTITY;\n\nALTER TABLE \"public\".\"t\" ADD CONSTRAINT \"t_pkey\" PRIMARY KEY (id);\n",
+      "sha256": "6a2fe4a0c5b9715b048f003518c435d2b63562ce6c1306e343a2945ec64f08dd",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "identity column / alter",
+      "statements": 2,
+      "sql": "ALTER TABLE \"public\".\"t\" ALTER COLUMN \"id\" SET GENERATED BY DEFAULT;\n\nALTER TABLE \"public\".\"t\" ALTER COLUMN \"id\" SET INCREMENT BY 5 SET START WITH 100;\n",
+      "sha256": "534b35ec1903c9b02af9d29a5e7f7dcedc0ec9ffc788104623772e4f71365b6a",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "identity column / drop",
+      "statements": 3,
+      "sql": "REVOKE ALL ON SEQUENCE \"public\".\"t_id_seq\" FROM \"prototype_owner\";\n\nALTER TABLE \"public\".\"t\" DROP CONSTRAINT \"t_pkey\";\n\nALTER TABLE \"public\".\"t\" ALTER COLUMN \"id\" DROP IDENTITY;\n",
+      "sha256": "467796723dd8a98f9e20b9681ea8f6afd53eb083db30ff3fc3e317acd6e6bde7",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "function (plpgsql) / create",
+      "statements": 1,
+      "sql": "CREATE OR REPLACE FUNCTION public.f(x integer)\n RETURNS integer\n LANGUAGE plpgsql\nAS $function$ begin return x + 1; end $function$;\n",
+      "sha256": "d48b83d98185e36dad97f19df54261152abc7e6fe5a6ae26dabc9bf273a453cc",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "function (plpgsql) / alter",
+      "statements": 1,
+      "sql": "CREATE OR REPLACE FUNCTION public.f(x integer)\n RETURNS integer\n LANGUAGE plpgsql\n STABLE SECURITY DEFINER\n SET search_path TO 'public', 'pg_catalog'\nAS $function$ begin return (select count(*) from t) + x; end $function$;\n",
+      "sha256": "351ccd42d8a59efde8d69baa4a3a1b76ff8e5b556756e28a3be57eeca2b50c1f",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "function (plpgsql) / drop",
+      "statements": 1,
+      "sql": "DROP FUNCTION \"public\".\"f\"(integer);\n",
+      "sha256": "0698507e06b5c8e4d5e8f920bce75dffb12e6d9164fa0697fd77c3649bfd27db",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "function (sql, binds at create) / create",
+      "statements": 1,
+      "sql": "CREATE OR REPLACE FUNCTION public.total_a()\n RETURNS bigint\n LANGUAGE sql\n STABLE\nAS $function$ select sum(a) from t $function$;\n",
+      "sha256": "569fa1d77bcf25923c8ea779261c5d25798a40ff890d168e52af0b8454aa1915",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "function (sql, binds at create) / alter",
+      "statements": 1,
+      "sql": "CREATE OR REPLACE FUNCTION public.total_a()\n RETURNS bigint\n LANGUAGE sql\n STABLE PARALLEL SAFE\nAS $function$ select coalesce(sum(a), 0) from t where id > 0 $function$;\n",
+      "sha256": "2744ab4ce82762510966f8d0f96a290d8f35532210c27021a53151291116948d",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "function (sql, binds at create) / drop",
+      "statements": 1,
+      "sql": "DROP FUNCTION \"public\".\"total_a\"();\n",
+      "sha256": "285d7c163bf518b8a6bf7da0ed7d8d375d8c3c7b0139e5847f58203a07334e98",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "function (BEGIN ATOMIC) / create",
+      "statements": 1,
+      "sql": "CREATE OR REPLACE FUNCTION public.g(x integer)\n RETURNS integer\n LANGUAGE sql\n IMMUTABLE\nBEGIN ATOMIC\n SELECT (x + 1);\nEND;\n",
+      "sha256": "95819127daac31a353e857ccfc2f75e3b5a1832e2db61189079adb7fd641675c",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "function (BEGIN ATOMIC) / alter",
+      "statements": 1,
+      "sql": "CREATE OR REPLACE FUNCTION public.g(x integer)\n RETURNS integer\n LANGUAGE sql\n STABLE\nBEGIN ATOMIC\n SELECT (x + ( SELECT (count(*))::integer AS count\n            FROM public.t));\nEND;\n",
+      "sha256": "64a31db5744a1d755be55e668a0e85aa19825fbdb26b004d7e2f8ec2f33b99ce",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "function (BEGIN ATOMIC) / drop",
+      "statements": 1,
+      "sql": "DROP FUNCTION \"public\".\"g\"(integer);\n",
+      "sha256": "21e989dc00d5e9089f5e47a5224c77f3b66dfb5b80deeb88d9ef07bc8552c563",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "function signature change / create",
+      "statements": 1,
+      "sql": "CREATE OR REPLACE FUNCTION public.h(x integer)\n RETURNS integer\n LANGUAGE sql\n IMMUTABLE\nAS $function$ select x $function$;\n",
+      "sha256": "97a59be69da3c9628c0123c978281d0aa8b4c734f42547ccf6fb5e90d06bc047",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "function signature change / alter",
+      "statements": 2,
+      "sql": "DROP FUNCTION \"public\".\"h\"(integer);\n\nCREATE OR REPLACE FUNCTION public.h(x integer, y integer DEFAULT 0)\n RETURNS bigint\n LANGUAGE sql\n IMMUTABLE\nAS $function$ select (x + y)::bigint $function$;\n",
+      "sha256": "3b598f75a686731880cc4cc8e6108268c0ae5d529becc1f493c4e5f7544d66f9",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "function signature change / drop",
+      "statements": 1,
+      "sql": "DROP FUNCTION \"public\".\"h\"(integer, integer);\n",
+      "sha256": "f77f30b7c250017632fe5b0c7a654d71033b05cba6573bcd2db98f3f4ef1514c",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "procedure / create",
+      "statements": 1,
+      "sql": "CREATE OR REPLACE PROCEDURE public.p(IN x integer)\n LANGUAGE plpgsql\nAS $procedure$ begin insert into t (id, a) values (x, x); end $procedure$;\n",
+      "sha256": "afd680d9be70570e4f9750dac9194516cef979ec4850e785b44db23feed1d24e",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "procedure / alter",
+      "statements": 1,
+      "sql": "CREATE OR REPLACE PROCEDURE public.p(IN x integer)\n LANGUAGE plpgsql\nAS $procedure$ begin update t set a = x where id = x; end $procedure$;\n",
+      "sha256": "814ff03a3df401624f88a746d90b10a7128ccfa394f1b2aed125b066fd146e2e",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "procedure / drop",
+      "statements": 1,
+      "sql": "DROP PROCEDURE \"public\".\"p\"(integer);\n",
+      "sha256": "7a42ecfe78180fbaac9834e0a73b6f0570c9aeaae3007aa1c34ca280878f75b8",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "trigger / create",
+      "statements": 1,
+      "sql": "CREATE TRIGGER t_upper BEFORE INSERT ON public.t FOR EACH ROW EXECUTE FUNCTION public.tf();\n",
+      "sha256": "fcd87718273cae247f9da0096676409a910aa6205b3edc5767ff488431e46fad",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "trigger / alter",
+      "statements": 2,
+      "sql": "DROP TRIGGER \"t_upper\" ON \"public\".\"t\";\n\nCREATE TRIGGER t_upper BEFORE INSERT OR UPDATE OF b ON public.t FOR EACH ROW WHEN ((new.b IS NOT NULL)) EXECUTE FUNCTION public.tf();\n",
+      "sha256": "2edc9b05cb058c2c92e79cf39148296ea0a76255e65a873df4604f1114037b88",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "trigger / drop",
+      "statements": 1,
+      "sql": "DROP TRIGGER \"t_upper\" ON \"public\".\"t\";\n",
+      "sha256": "d2dbdf4a3ae3dfe4f4c13a3e7460820c3c1ecb3930d72a28c857f0c875972788",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "domain / create",
+      "statements": 3,
+      "sql": "CREATE TABLE \"public\".\"t\" (\"id\" integer NOT NULL, CONSTRAINT \"t_pkey\" PRIMARY KEY (id));\n\nCREATE DOMAIN \"public\".\"positive_int\" AS integer CONSTRAINT \"positive_int_check\" CHECK ((VALUE > 0));\n\nALTER TABLE \"public\".\"t\" ADD COLUMN \"n\" public.positive_int;\n",
+      "sha256": "8ea23e6367912a331ec77e338f7af62cdd9328f51679e870235d6d91d3108e1f",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "domain / alter",
+      "statements": 4,
+      "sql": "ALTER DOMAIN \"public\".\"positive_int\" DROP CONSTRAINT \"positive_int_check\";\n\nALTER DOMAIN \"public\".\"positive_int\" SET DEFAULT 1;\n\nALTER DOMAIN \"public\".\"positive_int\" SET NOT NULL;\n\nALTER DOMAIN \"public\".\"positive_int\" ADD CONSTRAINT \"positive_int_check\" CHECK (((VALUE > 0) AND (VALUE < 1000000)));\n",
+      "sha256": "1b76bdd536dd71d7eb7466643d7c164ab31d43b094a7dcc3239f90d69112731e",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "domain / drop",
+      "statements": 2,
+      "sql": "DROP TABLE \"public\".\"t\";\n\nDROP DOMAIN \"public\".\"positive_int\";\n",
+      "sha256": "2c74ba5624e083e8d098eab917dcfa9e8d83ce036fdcc32c0ea54f588109a860",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "composite type / create",
+      "statements": 3,
+      "sql": "CREATE TABLE \"public\".\"t\" (\"id\" integer NOT NULL, CONSTRAINT \"t_pkey\" PRIMARY KEY (id));\n\nCREATE TYPE \"public\".\"address\" AS (\"street\" text, \"city\" text);\n\nALTER TABLE \"public\".\"t\" ADD COLUMN \"addr\" public.address;\n",
+      "sha256": "93721a026f07dd0df415494d4871643d9af172ae81fa81f4bb0e5dc7e6051ace",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "composite type / alter",
+      "statements": 1,
+      "sql": "ALTER TYPE \"public\".\"address\" ADD ATTRIBUTE \"zip\" character varying(10) CASCADE;\n",
+      "sha256": "91df6d7c563b5661b4d33504e8311ab6fb587d5264b96d655e9f73d4daef4277",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "composite type / drop",
+      "statements": 2,
+      "sql": "DROP TABLE \"public\".\"t\";\n\nDROP TYPE \"public\".\"address\";\n",
+      "sha256": "523dcd89d876d36218e01351ca54d8f283f3f46a5e73f1fd669b073169d1642b",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "row-level security + policies / create",
+      "statements": 2,
+      "sql": "ALTER TABLE \"public\".\"t\" ENABLE ROW LEVEL SECURITY;\n\nCREATE POLICY \"t_select\" ON \"public\".\"t\" FOR SELECT TO PUBLIC USING ((owner = CURRENT_USER));\n",
+      "sha256": "a0c11ce24044b920413ad3ddb9c07d75cf51c821b6570521626c0b1467910804",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "row-level security + policies / alter",
+      "statements": 4,
+      "sql": "DROP POLICY \"t_select\" ON \"public\".\"t\";\n\nALTER TABLE \"public\".\"t\" FORCE ROW LEVEL SECURITY;\n\nCREATE POLICY \"t_admin\" ON \"public\".\"t\" AS RESTRICTIVE FOR DELETE TO PUBLIC USING ((CURRENT_USER = 'admin'::name));\n\nCREATE POLICY \"t_select\" ON \"public\".\"t\" FOR ALL TO \"prototype_reader\" USING ((owner = CURRENT_USER)) WITH CHECK ((owner = CURRENT_USER));\n",
+      "sha256": "9d44de25c318919c69ac92fe44903d9bae75dc523c8547c5f82d1f243f9b2c5e",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "row-level security + policies / drop",
+      "statements": 4,
+      "sql": "DROP POLICY \"t_admin\" ON \"public\".\"t\";\n\nDROP POLICY \"t_select\" ON \"public\".\"t\";\n\nALTER TABLE \"public\".\"t\" NO FORCE ROW LEVEL SECURITY;\n\nALTER TABLE \"public\".\"t\" DISABLE ROW LEVEL SECURITY;\n",
+      "sha256": "aa733c7ce45d929f5fdb18762e87e2a0bef87044da5195a5d07d5b7d62cba43b",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "comments / create",
+      "statements": 5,
+      "sql": "COMMENT ON COLUMN \"public\".\"t\".\"a\" IS 'col a';\n\nCOMMENT ON CONSTRAINT \"t_pkey\" ON \"public\".\"t\" IS 'pk';\n\nCOMMENT ON FUNCTION \"public\".\"f\"() IS 'eff';\n\nCOMMENT ON TABLE \"public\".\"t\" IS 'tee';\n\nCOMMENT ON VIEW \"public\".\"v\" IS 'vee';\n",
+      "sha256": "8315ff1ff4463ec1bf20e161565895bd26242d1016fc87da1a241ca08d9aff10",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "comments / alter",
+      "statements": 6,
+      "sql": "COMMENT ON COLUMN \"public\".\"t\".\"a\" IS NULL;\n\nCOMMENT ON CONSTRAINT \"t_pkey\" ON \"public\".\"t\" IS NULL;\n\nCOMMENT ON VIEW \"public\".\"v\" IS NULL;\n\nCOMMENT ON COLUMN \"public\".\"t\".\"b\" IS 'col b';\n\nCOMMENT ON FUNCTION \"public\".\"f\"() IS 'eff 2';\n\nCOMMENT ON TABLE \"public\".\"t\" IS 'tee 2';\n",
+      "sha256": "c8d6a3e618811d039c1661ac0efda064639ce31534af02b9fb97ffd7b0081537",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": false,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": [
+        "+ comment: pg_class t_pkey sub=0 pk index"
+      ]
+    },
+    {
+      "name": "comments / drop",
+      "statements": 3,
+      "sql": "COMMENT ON COLUMN \"public\".\"t\".\"b\" IS NULL;\n\nCOMMENT ON FUNCTION \"public\".\"f\"() IS NULL;\n\nCOMMENT ON TABLE \"public\".\"t\" IS NULL;\n",
+      "sha256": "990e884e4b7a7623c2ef445c42800d98953c493518b42d83e63e91236711c8bb",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": false,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": [
+        "- comment: pg_class t_pkey sub=0 pk index"
+      ]
+    },
+    {
+      "name": "grants / create",
+      "statements": 4,
+      "sql": "REVOKE ALL ON TABLE \"public\".\"t\" FROM \"prototype_reader\";\n\nGRANT SELECT ON TABLE \"public\".\"t\" TO \"prototype_reader\";\n\nREVOKE ALL ON TABLE \"public\".\"v\" FROM \"prototype_reader\";\n\nGRANT SELECT ON TABLE \"public\".\"v\" TO \"prototype_reader\";\n",
+      "sha256": "3538191152a40830f444e8988d1f4dce02c05e206f8bb79d05ad57e73611ff5c",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "grants / alter",
+      "statements": 11,
+      "sql": "REVOKE ALL ON TABLE \"public\".\"t\" FROM \"prototype_reader\";\n\nREVOKE ALL ON TABLE \"public\".\"v\" FROM \"prototype_reader\";\n\nREVOKE ALL ON FUNCTION \"public\".\"f\"() FROM PUBLIC;\n\nREVOKE ALL ON FUNCTION \"public\".\"f\"() FROM \"prototype_reader\";\n\nGRANT EXECUTE ON FUNCTION \"public\".\"f\"() TO \"prototype_reader\";\n\nREVOKE ALL (\"a\") ON TABLE \"public\".\"t\" FROM \"prototype_reader\";\n\nGRANT SELECT (\"a\") ON TABLE \"public\".\"t\" TO \"prototype_reader\";\n\nREVOKE ALL (\"id\") ON TABLE \"public\".\"t\" FROM \"prototype_reader\";\n\nGRANT SELECT (\"id\") ON TABLE \"public\".\"t\" TO \"prototype_reader\";\n\nREVOKE ALL ON TABLE \"public\".\"t\" FROM \"prototype_writer\";\n\nGRANT INSERT, SELECT ON TABLE \"public\".\"t\" TO \"prototype_writer\";\n",
+      "sha256": "b439ddf7b5303cecdca2cb9d0f00ed76bf3b2a8f921e9e61faf7d75db3ac44d7",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "grants / drop",
+      "statements": 6,
+      "sql": "REVOKE ALL ON FUNCTION \"public\".\"f\"() FROM \"prototype_reader\";\n\nREVOKE ALL (\"a\") ON TABLE \"public\".\"t\" FROM \"prototype_reader\";\n\nREVOKE ALL (\"id\") ON TABLE \"public\".\"t\" FROM \"prototype_reader\";\n\nREVOKE ALL ON TABLE \"public\".\"t\" FROM \"prototype_writer\";\n\nREVOKE ALL ON FUNCTION \"public\".\"f\"() FROM PUBLIC;\n\nGRANT EXECUTE ON FUNCTION \"public\".\"f\"() TO PUBLIC;\n",
+      "sha256": "00e983b51b53d96801fa667e5d34e7a83247db4ed14bf9e9b7ee571123f0eb25",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "dep: column type change under view, policy, index / create",
+      "statements": 6,
+      "sql": "DROP POLICY \"p\" ON \"public\".\"t\";\n\nDROP VIEW \"public\".\"v\";\n\nALTER TABLE \"public\".\"t\" ALTER COLUMN \"a\" DROP DEFAULT;\n\nALTER TABLE \"public\".\"t\" ALTER COLUMN \"a\" TYPE bigint USING \"a\"::bigint;\n\nCREATE VIEW \"public\".\"v\" AS  SELECT id,\n    a\n   FROM public.t;\n\nCREATE POLICY \"p\" ON \"public\".\"t\" FOR ALL TO PUBLIC USING ((a > 0));\n",
+      "sha256": "9873f0f937a14c255df4915e85b9b1182c4fdcdef7a319d732d3a7d1cf8f1906",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "dep: column type change under view, policy, index / alter",
+      "statements": 6,
+      "sql": "DROP POLICY \"p\" ON \"public\".\"t\";\n\nDROP VIEW \"public\".\"v\";\n\nALTER TABLE \"public\".\"t\" ALTER COLUMN \"a\" DROP DEFAULT;\n\nALTER TABLE \"public\".\"t\" ALTER COLUMN \"a\" TYPE numeric(12,2) USING \"a\"::numeric(12,2);\n\nCREATE VIEW \"public\".\"v\" AS  SELECT id,\n    a,\n    (a * (2)::numeric) AS a2\n   FROM public.t;\n\nCREATE POLICY \"p\" ON \"public\".\"t\" FOR ALL TO PUBLIC USING ((a > (0)::numeric));\n",
+      "sha256": "a6cdf18a539f21a11692a48b8c192a11a4b68b0a3c14aac08c7a465009f25c95",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "dep: column type change under view, policy, index / drop",
+      "statements": 6,
+      "sql": "DROP POLICY \"p\" ON \"public\".\"t\";\n\nDROP VIEW \"public\".\"v\";\n\nALTER TABLE \"public\".\"t\" ALTER COLUMN \"a\" DROP DEFAULT;\n\nALTER TABLE \"public\".\"t\" ALTER COLUMN \"a\" TYPE integer USING \"a\"::integer;\n\nCREATE VIEW \"public\".\"v\" AS  SELECT id,\n    a\n   FROM public.t;\n\nCREATE POLICY \"p\" ON \"public\".\"t\" FOR ALL TO PUBLIC USING ((a > 0));\n",
+      "sha256": "7c32e4bbc637fee03b40dc24eba3f1e2ddccc1647e5c9fd07c224e6d157e7661",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "dep: circular foreign keys / create",
+      "statements": 4,
+      "sql": "CREATE TABLE \"public\".\"customers\" (\"id\" integer NOT NULL, \"last_order_id\" integer, CONSTRAINT \"customers_pkey\" PRIMARY KEY (id));\n\nCREATE TABLE \"public\".\"orders\" (\"id\" integer NOT NULL, \"customer_id\" integer NOT NULL, CONSTRAINT \"orders_pkey\" PRIMARY KEY (id));\n\nALTER TABLE \"public\".\"orders\" ADD CONSTRAINT \"orders_customer_id_fkey\" FOREIGN KEY (customer_id) REFERENCES public.customers(id);\n\nALTER TABLE \"public\".\"customers\" ADD CONSTRAINT \"customers_last_order_fk\" FOREIGN KEY (last_order_id) REFERENCES public.orders(id);\n",
+      "sha256": "62aacb506c29d95a067a7910540989c54f9f0fc8140ad4407be6bcdeb70102a7",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "dep: circular foreign keys / alter",
+      "statements": 4,
+      "sql": "ALTER TABLE \"public\".\"customers\" DROP CONSTRAINT \"customers_last_order_fk\";\n\nALTER TABLE \"public\".\"orders\" DROP CONSTRAINT \"orders_customer_id_fkey\";\n\nALTER TABLE \"public\".\"customers\" ADD CONSTRAINT \"customers_last_order_fk\" FOREIGN KEY (last_order_id) REFERENCES public.orders(id) DEFERRABLE INITIALLY DEFERRED;\n\nALTER TABLE \"public\".\"orders\" ADD CONSTRAINT \"orders_customer_id_fkey\" FOREIGN KEY (customer_id) REFERENCES public.customers(id) ON DELETE CASCADE;\n",
+      "sha256": "8ceb0fde7b7a87e45d4613c1a34b3bc1ad952f4bf0efb8b8b984a4f55df3c1c1",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "dep: circular foreign keys / drop",
+      "statements": 4,
+      "sql": "ALTER TABLE \"public\".\"customers\" DROP CONSTRAINT \"customers_last_order_fk\";\n\nALTER TABLE \"public\".\"orders\" DROP CONSTRAINT \"orders_customer_id_fkey\";\n\nDROP TABLE \"public\".\"customers\";\n\nDROP TABLE \"public\".\"orders\";\n",
+      "sha256": "7291c6ff920791241a0e3937f55ef81983058b07898f2f5112a5134dd5591078",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "dep: view chain + sql function + domain / create",
+      "statements": 6,
+      "sql": "CREATE TABLE \"public\".\"o\" (\"id\" integer NOT NULL, CONSTRAINT \"o_pkey\" PRIMARY KEY (id));\n\nCREATE DOMAIN \"public\".\"amount\" AS numeric(12,2) CONSTRAINT \"amount_check\" CHECK ((VALUE >= (0)::numeric));\n\nALTER TABLE \"public\".\"o\" ADD COLUMN \"amt\" public.amount;\n\nCREATE OR REPLACE FUNCTION public.o_total()\n RETURNS numeric\n LANGUAGE sql\n STABLE\nAS $function$ select sum(amt) from o $function$;\n\nCREATE VIEW \"public\".\"v1\" AS  SELECT id,\n    amt\n   FROM public.o;\n\nCREATE VIEW \"public\".\"v2\" AS  SELECT id,\n    amt,\n    public.o_total() AS total\n   FROM public.v1;\n",
+      "sha256": "971c99483c2a191354fceb6057d3713352bcbb75a7d71e22fd54e429d5d9b1c4",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    },
+    {
+      "name": "dep: view chain + sql function + domain / alter",
+      "statements": -1,
+      "sql": "",
+      "sha256": "",
+      "applyError": "PLAN FAILED: domain \"public\".\"amount\": cannot replace an in-use domain — column(s) \"public\".\"o\".\"amt\" depend on it, and PostgreSQL forbids dropping a type while a column uses it. Replacing an in-use domain is not supported yet; drop the using column(s), or recreate the domain, first.",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": false
+    },
+    {
+      "name": "dep: view chain + sql function + domain / drop",
+      "statements": 5,
+      "sql": "DROP VIEW \"public\".\"v2\";\n\nDROP VIEW \"public\".\"v1\";\n\nDROP FUNCTION \"public\".\"o_total\"();\n\nDROP TABLE \"public\".\"o\";\n\nDROP DOMAIN \"public\".\"amount\";\n",
+      "sha256": "c5a6b6b1da0916151d5b72c8f1fcfe78c4408cc65be73ec807ca2e544d139618",
+      "nonTransactional": [],
+      "diagnostics": [],
+      "ok": true,
+      "rediffStatements": 0,
+      "rediffSql": "",
+      "catalogDiff": []
+    }
+  ],
+  "determinism": [
+    {
+      "name": "table / create",
+      "hashes": [
+        "cf486825d81599eb31683c4c1c4e3a10c7421b43508e4fd0ccfe3ce6b52c1f5c",
+        "cf486825d81599eb31683c4c1c4e3a10c7421b43508e4fd0ccfe3ce6b52c1f5c",
+        "cf486825d81599eb31683c4c1c4e3a10c7421b43508e4fd0ccfe3ce6b52c1f5c"
+      ],
+      "identical": true
+    },
+    {
+      "name": "table / alter",
+      "hashes": [
+        "4a792f958f81e7e2ab40cc9a04c643a57748a69b925b8f02adffec5b06fe762d",
+        "4a792f958f81e7e2ab40cc9a04c643a57748a69b925b8f02adffec5b06fe762d",
+        "4a792f958f81e7e2ab40cc9a04c643a57748a69b925b8f02adffec5b06fe762d"
+      ],
+      "identical": true
+    },
+    {
+      "name": "table / drop",
+      "hashes": [
+        "a13d46ef6e0a0a15ce072f61136401626285d0b8423f3c9592a799f30f93fc49",
+        "a13d46ef6e0a0a15ce072f61136401626285d0b8423f3c9592a799f30f93fc49",
+        "a13d46ef6e0a0a15ce072f61136401626285d0b8423f3c9592a799f30f93fc49"
+      ],
+      "identical": true
+    },
+    {
+      "name": "generated column (stored) / create",
+      "hashes": [
+        "69868296a897ce4c116a46f4377f5c1ccf33a302f844eb86e179c20e0827a22c",
+        "69868296a897ce4c116a46f4377f5c1ccf33a302f844eb86e179c20e0827a22c",
+        "69868296a897ce4c116a46f4377f5c1ccf33a302f844eb86e179c20e0827a22c"
+      ],
+      "identical": true
+    },
+    {
+      "name": "generated column (stored) / alter",
+      "hashes": [
+        "fa60ccbebf772e24db70189755d287af463a9a112d63e1e6954ab0680c1616b8",
+        "fa60ccbebf772e24db70189755d287af463a9a112d63e1e6954ab0680c1616b8",
+        "fa60ccbebf772e24db70189755d287af463a9a112d63e1e6954ab0680c1616b8"
+      ],
+      "identical": true
+    },
+    {
+      "name": "generated column (stored) / drop",
+      "hashes": [
+        "a8e064ed57bd4c605dca05916f3879415640f824c45cf47802d65257dec67c4f",
+        "a8e064ed57bd4c605dca05916f3879415640f824c45cf47802d65257dec67c4f",
+        "a8e064ed57bd4c605dca05916f3879415640f824c45cf47802d65257dec67c4f"
+      ],
+      "identical": true
+    },
+    {
+      "name": "generated column (virtual, PG18) / create",
+      "hashes": [
+        "69868296a897ce4c116a46f4377f5c1ccf33a302f844eb86e179c20e0827a22c",
+        "69868296a897ce4c116a46f4377f5c1ccf33a302f844eb86e179c20e0827a22c",
+        "69868296a897ce4c116a46f4377f5c1ccf33a302f844eb86e179c20e0827a22c"
+      ],
+      "identical": true
+    },
+    {
+      "name": "generated column (virtual, PG18) / alter",
+      "hashes": [
+        "fa60ccbebf772e24db70189755d287af463a9a112d63e1e6954ab0680c1616b8",
+        "fa60ccbebf772e24db70189755d287af463a9a112d63e1e6954ab0680c1616b8",
+        "fa60ccbebf772e24db70189755d287af463a9a112d63e1e6954ab0680c1616b8"
+      ],
+      "identical": true
+    },
+    {
+      "name": "generated column (virtual, PG18) / drop",
+      "hashes": [
+        "a8e064ed57bd4c605dca05916f3879415640f824c45cf47802d65257dec67c4f",
+        "a8e064ed57bd4c605dca05916f3879415640f824c45cf47802d65257dec67c4f",
+        "a8e064ed57bd4c605dca05916f3879415640f824c45cf47802d65257dec67c4f"
+      ],
+      "identical": true
+    },
+    {
+      "name": "generated column stored -> virtual / create",
+      "hashes": [
+        "34e5b313a4ad0878906111e81816d1dbfaa7636961f8220fc128deb40a627fa3",
+        "34e5b313a4ad0878906111e81816d1dbfaa7636961f8220fc128deb40a627fa3",
+        "34e5b313a4ad0878906111e81816d1dbfaa7636961f8220fc128deb40a627fa3"
+      ],
+      "identical": true
+    },
+    {
+      "name": "generated column stored -> virtual / alter",
+      "hashes": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "identical": true
+    },
+    {
+      "name": "generated column stored -> virtual / drop",
+      "hashes": [
+        "7b813477ae6c000f680bae80f516411bd7cf3cfd0b2ca0929326241054b6f1a8",
+        "7b813477ae6c000f680bae80f516411bd7cf3cfd0b2ca0929326241054b6f1a8",
+        "7b813477ae6c000f680bae80f516411bd7cf3cfd0b2ca0929326241054b6f1a8"
+      ],
+      "identical": true
+    },
+    {
+      "name": "primary key / create",
+      "hashes": [
+        "fbd7c04d8c06318659a652036b5ccf4cae72c752e3b3b8c11cb47e1887ea47c7",
+        "fbd7c04d8c06318659a652036b5ccf4cae72c752e3b3b8c11cb47e1887ea47c7",
+        "fbd7c04d8c06318659a652036b5ccf4cae72c752e3b3b8c11cb47e1887ea47c7"
+      ],
+      "identical": true
+    },
+    {
+      "name": "primary key / alter",
+      "hashes": [
+        "8c0d25bf27289f8ead5bd28741ae504ed4ed7553ea39d0dc7f8ae23321e20d18",
+        "8c0d25bf27289f8ead5bd28741ae504ed4ed7553ea39d0dc7f8ae23321e20d18",
+        "8c0d25bf27289f8ead5bd28741ae504ed4ed7553ea39d0dc7f8ae23321e20d18"
+      ],
+      "identical": true
+    },
+    {
+      "name": "primary key / drop",
+      "hashes": [
+        "79ea839e6a1ae94e28fe9acebcc0f2e10f1e3d51a8b2487c238023f31a66cb66",
+        "79ea839e6a1ae94e28fe9acebcc0f2e10f1e3d51a8b2487c238023f31a66cb66",
+        "79ea839e6a1ae94e28fe9acebcc0f2e10f1e3d51a8b2487c238023f31a66cb66"
+      ],
+      "identical": true
+    },
+    {
+      "name": "foreign key / create",
+      "hashes": [
+        "0a2d2efd38edfe1a410b66a3503a88ae3382e8f7146693aab2bd11ed5affc7b2",
+        "0a2d2efd38edfe1a410b66a3503a88ae3382e8f7146693aab2bd11ed5affc7b2",
+        "0a2d2efd38edfe1a410b66a3503a88ae3382e8f7146693aab2bd11ed5affc7b2"
+      ],
+      "identical": true
+    },
+    {
+      "name": "foreign key / alter",
+      "hashes": [
+        "acd84b73e12fe7033b9d0bf3b3e305cae04d9ad0374b6d6f28f2ce21d3cfaf98",
+        "acd84b73e12fe7033b9d0bf3b3e305cae04d9ad0374b6d6f28f2ce21d3cfaf98",
+        "acd84b73e12fe7033b9d0bf3b3e305cae04d9ad0374b6d6f28f2ce21d3cfaf98"
+      ],
+      "identical": true
+    },
+    {
+      "name": "foreign key / drop",
+      "hashes": [
+        "1f6a7b72f5fb7a11d85c1348be6d1f0c08a7181f2cb0f9b9cca091a64819f97c",
+        "1f6a7b72f5fb7a11d85c1348be6d1f0c08a7181f2cb0f9b9cca091a64819f97c",
+        "1f6a7b72f5fb7a11d85c1348be6d1f0c08a7181f2cb0f9b9cca091a64819f97c"
+      ],
+      "identical": true
+    },
+    {
+      "name": "unique / create",
+      "hashes": [
+        "be16e6c8462ab6dd577cb116ab24ff21bb3ec75fcd04ac572f59abdbe200f754",
+        "be16e6c8462ab6dd577cb116ab24ff21bb3ec75fcd04ac572f59abdbe200f754",
+        "be16e6c8462ab6dd577cb116ab24ff21bb3ec75fcd04ac572f59abdbe200f754"
+      ],
+      "identical": true
+    },
+    {
+      "name": "unique / alter",
+      "hashes": [
+        "65bf240911d9303fa9195873c78ba00c2270280a2d14eaff6728320ded0c39a6",
+        "65bf240911d9303fa9195873c78ba00c2270280a2d14eaff6728320ded0c39a6",
+        "65bf240911d9303fa9195873c78ba00c2270280a2d14eaff6728320ded0c39a6"
+      ],
+      "identical": true
+    },
+    {
+      "name": "unique / drop",
+      "hashes": [
+        "69e7b23d22b3420d3d8d53ced9e72fd0dd13d8ea109fcc651eb7220ad9583d1c",
+        "69e7b23d22b3420d3d8d53ced9e72fd0dd13d8ea109fcc651eb7220ad9583d1c",
+        "69e7b23d22b3420d3d8d53ced9e72fd0dd13d8ea109fcc651eb7220ad9583d1c"
+      ],
+      "identical": true
+    },
+    {
+      "name": "check / create",
+      "hashes": [
+        "54ab22f77ae85ee53211bcbdd36ac377e913eddc325309951d03b44af111088a",
+        "54ab22f77ae85ee53211bcbdd36ac377e913eddc325309951d03b44af111088a",
+        "54ab22f77ae85ee53211bcbdd36ac377e913eddc325309951d03b44af111088a"
+      ],
+      "identical": true
+    },
+    {
+      "name": "check / alter",
+      "hashes": [
+        "4a276f37e566c3a4efc1cf39723775e87c322010f1b1520a56f7acabdd7e8758",
+        "4a276f37e566c3a4efc1cf39723775e87c322010f1b1520a56f7acabdd7e8758",
+        "4a276f37e566c3a4efc1cf39723775e87c322010f1b1520a56f7acabdd7e8758"
+      ],
+      "identical": true
+    },
+    {
+      "name": "check / drop",
+      "hashes": [
+        "8452d35dc160b5614a00a1ea76925c8ea170521cd70430744a514a4e030a0146",
+        "8452d35dc160b5614a00a1ea76925c8ea170521cd70430744a514a4e030a0146",
+        "8452d35dc160b5614a00a1ea76925c8ea170521cd70430744a514a4e030a0146"
+      ],
+      "identical": true
+    },
+    {
+      "name": "check with BETWEEN (deparse fixed point) / create",
+      "hashes": [
+        "f33b3d86f2a24d9ed9bf5f2afab3179367662980e606d10dad0a102e8c88b6fb",
+        "f33b3d86f2a24d9ed9bf5f2afab3179367662980e606d10dad0a102e8c88b6fb",
+        "f33b3d86f2a24d9ed9bf5f2afab3179367662980e606d10dad0a102e8c88b6fb"
+      ],
+      "identical": true
+    },
+    {
+      "name": "check with BETWEEN (deparse fixed point) / alter",
+      "hashes": [
+        "3331c95094dfc331083bca35b7d5c1564c5480c86adac5efde0d0924fa56665e",
+        "3331c95094dfc331083bca35b7d5c1564c5480c86adac5efde0d0924fa56665e",
+        "3331c95094dfc331083bca35b7d5c1564c5480c86adac5efde0d0924fa56665e"
+      ],
+      "identical": true
+    },
+    {
+      "name": "check with BETWEEN (deparse fixed point) / drop",
+      "hashes": [
+        "8452d35dc160b5614a00a1ea76925c8ea170521cd70430744a514a4e030a0146",
+        "8452d35dc160b5614a00a1ea76925c8ea170521cd70430744a514a4e030a0146",
+        "8452d35dc160b5614a00a1ea76925c8ea170521cd70430744a514a4e030a0146"
+      ],
+      "identical": true
+    },
+    {
+      "name": "exclusion / create",
+      "hashes": [
+        "39255a53ff406aec99e13d7141e92c8cd7be3aa426396833f90f6e3e935ee510",
+        "39255a53ff406aec99e13d7141e92c8cd7be3aa426396833f90f6e3e935ee510",
+        "39255a53ff406aec99e13d7141e92c8cd7be3aa426396833f90f6e3e935ee510"
+      ],
+      "identical": true
+    },
+    {
+      "name": "exclusion / alter",
+      "hashes": [
+        "71fff3fe35d73f9b260307d3c5ea8052618f00dd739c0d2acd490ce2991737bc",
+        "71fff3fe35d73f9b260307d3c5ea8052618f00dd739c0d2acd490ce2991737bc",
+        "71fff3fe35d73f9b260307d3c5ea8052618f00dd739c0d2acd490ce2991737bc"
+      ],
+      "identical": true
+    },
+    {
+      "name": "exclusion / drop",
+      "hashes": [
+        "f8f7e5e88106ccd1234a0e105308041f26ede2ccc6f04346e623cc1df5b942eb",
+        "f8f7e5e88106ccd1234a0e105308041f26ede2ccc6f04346e623cc1df5b942eb",
+        "f8f7e5e88106ccd1234a0e105308041f26ede2ccc6f04346e623cc1df5b942eb"
+      ],
+      "identical": true
+    },
+    {
+      "name": "not null / create",
+      "hashes": [
+        "d99ff687f762625d5db401d37dbd97e6342759c897a5d061aee184d9adb7dc3b",
+        "d99ff687f762625d5db401d37dbd97e6342759c897a5d061aee184d9adb7dc3b",
+        "d99ff687f762625d5db401d37dbd97e6342759c897a5d061aee184d9adb7dc3b"
+      ],
+      "identical": true
+    },
+    {
+      "name": "not null / alter",
+      "hashes": [
+        "a3b70269be99e7b930b11e0d85ff2c192ef39ac6d4475acdc44770948a55def2",
+        "a3b70269be99e7b930b11e0d85ff2c192ef39ac6d4475acdc44770948a55def2",
+        "a3b70269be99e7b930b11e0d85ff2c192ef39ac6d4475acdc44770948a55def2"
+      ],
+      "identical": true
+    },
+    {
+      "name": "not null / drop",
+      "hashes": [
+        "dbf8ff10f333f07648f9654683d6f4f1816a931884661e4a342f553f2661ccda",
+        "dbf8ff10f333f07648f9654683d6f4f1816a931884661e4a342f553f2661ccda",
+        "dbf8ff10f333f07648f9654683d6f4f1816a931884661e4a342f553f2661ccda"
+      ],
+      "identical": true
+    },
+    {
+      "name": "index / create",
+      "hashes": [
+        "a974576a52df275bdfc65ba5dc43579e493cf185ee662c011320887ffe5a802a",
+        "a974576a52df275bdfc65ba5dc43579e493cf185ee662c011320887ffe5a802a",
+        "a974576a52df275bdfc65ba5dc43579e493cf185ee662c011320887ffe5a802a"
+      ],
+      "identical": true
+    },
+    {
+      "name": "index / alter",
+      "hashes": [
+        "eccbe9130ad7319097629fcfece56ae4859b266eda37172eed5a9eb949fd92c3",
+        "eccbe9130ad7319097629fcfece56ae4859b266eda37172eed5a9eb949fd92c3",
+        "eccbe9130ad7319097629fcfece56ae4859b266eda37172eed5a9eb949fd92c3"
+      ],
+      "identical": true
+    },
+    {
+      "name": "index / drop",
+      "hashes": [
+        "95ce32839bc0a735f6ef2334d4dd005a399f1a8656422d9fbae2176744efda6a",
+        "95ce32839bc0a735f6ef2334d4dd005a399f1a8656422d9fbae2176744efda6a",
+        "95ce32839bc0a735f6ef2334d4dd005a399f1a8656422d9fbae2176744efda6a"
+      ],
+      "identical": true
+    },
+    {
+      "name": "view / create",
+      "hashes": [
+        "c9c1a88407cb124e0ae54baa2d28440a1bcefde2d6e06e1a05864e8a78ced97c",
+        "c9c1a88407cb124e0ae54baa2d28440a1bcefde2d6e06e1a05864e8a78ced97c",
+        "c9c1a88407cb124e0ae54baa2d28440a1bcefde2d6e06e1a05864e8a78ced97c"
+      ],
+      "identical": true
+    },
+    {
+      "name": "view / alter",
+      "hashes": [
+        "fa5f7415d53976d287eea67f5802a1edfdd6456e32d395a4a82fdeb9aaac25a1",
+        "fa5f7415d53976d287eea67f5802a1edfdd6456e32d395a4a82fdeb9aaac25a1",
+        "fa5f7415d53976d287eea67f5802a1edfdd6456e32d395a4a82fdeb9aaac25a1"
+      ],
+      "identical": true
+    },
+    {
+      "name": "view / drop",
+      "hashes": [
+        "3c617586b6496f9b2e43f4c339fe488ccbd9d9916081f9259269ba24a88fb95c",
+        "3c617586b6496f9b2e43f4c339fe488ccbd9d9916081f9259269ba24a88fb95c",
+        "3c617586b6496f9b2e43f4c339fe488ccbd9d9916081f9259269ba24a88fb95c"
+      ],
+      "identical": true
+    },
+    {
+      "name": "view (column removed/retyped -> needs drop+create) / create",
+      "hashes": [
+        "033e5ab3a3abc68aacc9a8a4eded7de64d57db995943df4ba2014abfb62cc965",
+        "033e5ab3a3abc68aacc9a8a4eded7de64d57db995943df4ba2014abfb62cc965",
+        "033e5ab3a3abc68aacc9a8a4eded7de64d57db995943df4ba2014abfb62cc965"
+      ],
+      "identical": true
+    },
+    {
+      "name": "view (column removed/retyped -> needs drop+create) / alter",
+      "hashes": [
+        "3cce0177b538eb6d783a20ab05b995f691c54fa33831084a4b1b78e083f2a9b6",
+        "3cce0177b538eb6d783a20ab05b995f691c54fa33831084a4b1b78e083f2a9b6",
+        "3cce0177b538eb6d783a20ab05b995f691c54fa33831084a4b1b78e083f2a9b6"
+      ],
+      "identical": true
+    },
+    {
+      "name": "view (column removed/retyped -> needs drop+create) / drop",
+      "hashes": [
+        "3c617586b6496f9b2e43f4c339fe488ccbd9d9916081f9259269ba24a88fb95c",
+        "3c617586b6496f9b2e43f4c339fe488ccbd9d9916081f9259269ba24a88fb95c",
+        "3c617586b6496f9b2e43f4c339fe488ccbd9d9916081f9259269ba24a88fb95c"
+      ],
+      "identical": true
+    },
+    {
+      "name": "materialized view / create",
+      "hashes": [
+        "c854749b30bb298ade513fdea0a5a005bf4105bac2c95769844bf90078c5b88a",
+        "c854749b30bb298ade513fdea0a5a005bf4105bac2c95769844bf90078c5b88a",
+        "c854749b30bb298ade513fdea0a5a005bf4105bac2c95769844bf90078c5b88a"
+      ],
+      "identical": true
+    },
+    {
+      "name": "materialized view / alter",
+      "hashes": [
+        "c2c5e51c5d76e22a6105c71f57226527dbdb7530569b3b6064798aa51e20edc4",
+        "c2c5e51c5d76e22a6105c71f57226527dbdb7530569b3b6064798aa51e20edc4",
+        "c2c5e51c5d76e22a6105c71f57226527dbdb7530569b3b6064798aa51e20edc4"
+      ],
+      "identical": true
+    },
+    {
+      "name": "materialized view / drop",
+      "hashes": [
+        "9f2e9d7db664de0458e3a46961235f560a45bed4b82d47ff03a85788d9a643ef",
+        "9f2e9d7db664de0458e3a46961235f560a45bed4b82d47ff03a85788d9a643ef",
+        "9f2e9d7db664de0458e3a46961235f560a45bed4b82d47ff03a85788d9a643ef"
+      ],
+      "identical": true
+    },
+    {
+      "name": "identity column / create",
+      "hashes": [
+        "6a2fe4a0c5b9715b048f003518c435d2b63562ce6c1306e343a2945ec64f08dd",
+        "6a2fe4a0c5b9715b048f003518c435d2b63562ce6c1306e343a2945ec64f08dd",
+        "6a2fe4a0c5b9715b048f003518c435d2b63562ce6c1306e343a2945ec64f08dd"
+      ],
+      "identical": true
+    },
+    {
+      "name": "identity column / alter",
+      "hashes": [
+        "534b35ec1903c9b02af9d29a5e7f7dcedc0ec9ffc788104623772e4f71365b6a",
+        "534b35ec1903c9b02af9d29a5e7f7dcedc0ec9ffc788104623772e4f71365b6a",
+        "534b35ec1903c9b02af9d29a5e7f7dcedc0ec9ffc788104623772e4f71365b6a"
+      ],
+      "identical": true
+    },
+    {
+      "name": "identity column / drop",
+      "hashes": [
+        "467796723dd8a98f9e20b9681ea8f6afd53eb083db30ff3fc3e317acd6e6bde7",
+        "467796723dd8a98f9e20b9681ea8f6afd53eb083db30ff3fc3e317acd6e6bde7",
+        "467796723dd8a98f9e20b9681ea8f6afd53eb083db30ff3fc3e317acd6e6bde7"
+      ],
+      "identical": true
+    },
+    {
+      "name": "function (plpgsql) / create",
+      "hashes": [
+        "d48b83d98185e36dad97f19df54261152abc7e6fe5a6ae26dabc9bf273a453cc",
+        "d48b83d98185e36dad97f19df54261152abc7e6fe5a6ae26dabc9bf273a453cc",
+        "d48b83d98185e36dad97f19df54261152abc7e6fe5a6ae26dabc9bf273a453cc"
+      ],
+      "identical": true
+    },
+    {
+      "name": "function (plpgsql) / alter",
+      "hashes": [
+        "351ccd42d8a59efde8d69baa4a3a1b76ff8e5b556756e28a3be57eeca2b50c1f",
+        "351ccd42d8a59efde8d69baa4a3a1b76ff8e5b556756e28a3be57eeca2b50c1f",
+        "351ccd42d8a59efde8d69baa4a3a1b76ff8e5b556756e28a3be57eeca2b50c1f"
+      ],
+      "identical": true
+    },
+    {
+      "name": "function (plpgsql) / drop",
+      "hashes": [
+        "0698507e06b5c8e4d5e8f920bce75dffb12e6d9164fa0697fd77c3649bfd27db",
+        "0698507e06b5c8e4d5e8f920bce75dffb12e6d9164fa0697fd77c3649bfd27db",
+        "0698507e06b5c8e4d5e8f920bce75dffb12e6d9164fa0697fd77c3649bfd27db"
+      ],
+      "identical": true
+    },
+    {
+      "name": "function (sql, binds at create) / create",
+      "hashes": [
+        "569fa1d77bcf25923c8ea779261c5d25798a40ff890d168e52af0b8454aa1915",
+        "569fa1d77bcf25923c8ea779261c5d25798a40ff890d168e52af0b8454aa1915",
+        "569fa1d77bcf25923c8ea779261c5d25798a40ff890d168e52af0b8454aa1915"
+      ],
+      "identical": true
+    },
+    {
+      "name": "function (sql, binds at create) / alter",
+      "hashes": [
+        "2744ab4ce82762510966f8d0f96a290d8f35532210c27021a53151291116948d",
+        "2744ab4ce82762510966f8d0f96a290d8f35532210c27021a53151291116948d",
+        "2744ab4ce82762510966f8d0f96a290d8f35532210c27021a53151291116948d"
+      ],
+      "identical": true
+    },
+    {
+      "name": "function (sql, binds at create) / drop",
+      "hashes": [
+        "285d7c163bf518b8a6bf7da0ed7d8d375d8c3c7b0139e5847f58203a07334e98",
+        "285d7c163bf518b8a6bf7da0ed7d8d375d8c3c7b0139e5847f58203a07334e98",
+        "285d7c163bf518b8a6bf7da0ed7d8d375d8c3c7b0139e5847f58203a07334e98"
+      ],
+      "identical": true
+    },
+    {
+      "name": "function (BEGIN ATOMIC) / create",
+      "hashes": [
+        "95819127daac31a353e857ccfc2f75e3b5a1832e2db61189079adb7fd641675c",
+        "95819127daac31a353e857ccfc2f75e3b5a1832e2db61189079adb7fd641675c",
+        "95819127daac31a353e857ccfc2f75e3b5a1832e2db61189079adb7fd641675c"
+      ],
+      "identical": true
+    },
+    {
+      "name": "function (BEGIN ATOMIC) / alter",
+      "hashes": [
+        "64a31db5744a1d755be55e668a0e85aa19825fbdb26b004d7e2f8ec2f33b99ce",
+        "64a31db5744a1d755be55e668a0e85aa19825fbdb26b004d7e2f8ec2f33b99ce",
+        "64a31db5744a1d755be55e668a0e85aa19825fbdb26b004d7e2f8ec2f33b99ce"
+      ],
+      "identical": true
+    },
+    {
+      "name": "function (BEGIN ATOMIC) / drop",
+      "hashes": [
+        "21e989dc00d5e9089f5e47a5224c77f3b66dfb5b80deeb88d9ef07bc8552c563",
+        "21e989dc00d5e9089f5e47a5224c77f3b66dfb5b80deeb88d9ef07bc8552c563",
+        "21e989dc00d5e9089f5e47a5224c77f3b66dfb5b80deeb88d9ef07bc8552c563"
+      ],
+      "identical": true
+    },
+    {
+      "name": "function signature change / create",
+      "hashes": [
+        "97a59be69da3c9628c0123c978281d0aa8b4c734f42547ccf6fb5e90d06bc047",
+        "97a59be69da3c9628c0123c978281d0aa8b4c734f42547ccf6fb5e90d06bc047",
+        "97a59be69da3c9628c0123c978281d0aa8b4c734f42547ccf6fb5e90d06bc047"
+      ],
+      "identical": true
+    },
+    {
+      "name": "function signature change / alter",
+      "hashes": [
+        "3b598f75a686731880cc4cc8e6108268c0ae5d529becc1f493c4e5f7544d66f9",
+        "3b598f75a686731880cc4cc8e6108268c0ae5d529becc1f493c4e5f7544d66f9",
+        "3b598f75a686731880cc4cc8e6108268c0ae5d529becc1f493c4e5f7544d66f9"
+      ],
+      "identical": true
+    },
+    {
+      "name": "function signature change / drop",
+      "hashes": [
+        "f77f30b7c250017632fe5b0c7a654d71033b05cba6573bcd2db98f3f4ef1514c",
+        "f77f30b7c250017632fe5b0c7a654d71033b05cba6573bcd2db98f3f4ef1514c",
+        "f77f30b7c250017632fe5b0c7a654d71033b05cba6573bcd2db98f3f4ef1514c"
+      ],
+      "identical": true
+    },
+    {
+      "name": "procedure / create",
+      "hashes": [
+        "afd680d9be70570e4f9750dac9194516cef979ec4850e785b44db23feed1d24e",
+        "afd680d9be70570e4f9750dac9194516cef979ec4850e785b44db23feed1d24e",
+        "afd680d9be70570e4f9750dac9194516cef979ec4850e785b44db23feed1d24e"
+      ],
+      "identical": true
+    },
+    {
+      "name": "procedure / alter",
+      "hashes": [
+        "814ff03a3df401624f88a746d90b10a7128ccfa394f1b2aed125b066fd146e2e",
+        "814ff03a3df401624f88a746d90b10a7128ccfa394f1b2aed125b066fd146e2e",
+        "814ff03a3df401624f88a746d90b10a7128ccfa394f1b2aed125b066fd146e2e"
+      ],
+      "identical": true
+    },
+    {
+      "name": "procedure / drop",
+      "hashes": [
+        "7a42ecfe78180fbaac9834e0a73b6f0570c9aeaae3007aa1c34ca280878f75b8",
+        "7a42ecfe78180fbaac9834e0a73b6f0570c9aeaae3007aa1c34ca280878f75b8",
+        "7a42ecfe78180fbaac9834e0a73b6f0570c9aeaae3007aa1c34ca280878f75b8"
+      ],
+      "identical": true
+    },
+    {
+      "name": "trigger / create",
+      "hashes": [
+        "fcd87718273cae247f9da0096676409a910aa6205b3edc5767ff488431e46fad",
+        "fcd87718273cae247f9da0096676409a910aa6205b3edc5767ff488431e46fad",
+        "fcd87718273cae247f9da0096676409a910aa6205b3edc5767ff488431e46fad"
+      ],
+      "identical": true
+    },
+    {
+      "name": "trigger / alter",
+      "hashes": [
+        "2edc9b05cb058c2c92e79cf39148296ea0a76255e65a873df4604f1114037b88",
+        "2edc9b05cb058c2c92e79cf39148296ea0a76255e65a873df4604f1114037b88",
+        "2edc9b05cb058c2c92e79cf39148296ea0a76255e65a873df4604f1114037b88"
+      ],
+      "identical": true
+    },
+    {
+      "name": "trigger / drop",
+      "hashes": [
+        "d2dbdf4a3ae3dfe4f4c13a3e7460820c3c1ecb3930d72a28c857f0c875972788",
+        "d2dbdf4a3ae3dfe4f4c13a3e7460820c3c1ecb3930d72a28c857f0c875972788",
+        "d2dbdf4a3ae3dfe4f4c13a3e7460820c3c1ecb3930d72a28c857f0c875972788"
+      ],
+      "identical": true
+    },
+    {
+      "name": "domain / create",
+      "hashes": [
+        "8ea23e6367912a331ec77e338f7af62cdd9328f51679e870235d6d91d3108e1f",
+        "8ea23e6367912a331ec77e338f7af62cdd9328f51679e870235d6d91d3108e1f",
+        "8ea23e6367912a331ec77e338f7af62cdd9328f51679e870235d6d91d3108e1f"
+      ],
+      "identical": true
+    },
+    {
+      "name": "domain / alter",
+      "hashes": [
+        "1b76bdd536dd71d7eb7466643d7c164ab31d43b094a7dcc3239f90d69112731e",
+        "1b76bdd536dd71d7eb7466643d7c164ab31d43b094a7dcc3239f90d69112731e",
+        "1b76bdd536dd71d7eb7466643d7c164ab31d43b094a7dcc3239f90d69112731e"
+      ],
+      "identical": true
+    },
+    {
+      "name": "domain / drop",
+      "hashes": [
+        "2c74ba5624e083e8d098eab917dcfa9e8d83ce036fdcc32c0ea54f588109a860",
+        "2c74ba5624e083e8d098eab917dcfa9e8d83ce036fdcc32c0ea54f588109a860",
+        "2c74ba5624e083e8d098eab917dcfa9e8d83ce036fdcc32c0ea54f588109a860"
+      ],
+      "identical": true
+    },
+    {
+      "name": "composite type / create",
+      "hashes": [
+        "93721a026f07dd0df415494d4871643d9af172ae81fa81f4bb0e5dc7e6051ace",
+        "93721a026f07dd0df415494d4871643d9af172ae81fa81f4bb0e5dc7e6051ace",
+        "93721a026f07dd0df415494d4871643d9af172ae81fa81f4bb0e5dc7e6051ace"
+      ],
+      "identical": true
+    },
+    {
+      "name": "composite type / alter",
+      "hashes": [
+        "91df6d7c563b5661b4d33504e8311ab6fb587d5264b96d655e9f73d4daef4277",
+        "91df6d7c563b5661b4d33504e8311ab6fb587d5264b96d655e9f73d4daef4277",
+        "91df6d7c563b5661b4d33504e8311ab6fb587d5264b96d655e9f73d4daef4277"
+      ],
+      "identical": true
+    },
+    {
+      "name": "composite type / drop",
+      "hashes": [
+        "523dcd89d876d36218e01351ca54d8f283f3f46a5e73f1fd669b073169d1642b",
+        "523dcd89d876d36218e01351ca54d8f283f3f46a5e73f1fd669b073169d1642b",
+        "523dcd89d876d36218e01351ca54d8f283f3f46a5e73f1fd669b073169d1642b"
+      ],
+      "identical": true
+    },
+    {
+      "name": "row-level security + policies / create",
+      "hashes": [
+        "a0c11ce24044b920413ad3ddb9c07d75cf51c821b6570521626c0b1467910804",
+        "a0c11ce24044b920413ad3ddb9c07d75cf51c821b6570521626c0b1467910804",
+        "a0c11ce24044b920413ad3ddb9c07d75cf51c821b6570521626c0b1467910804"
+      ],
+      "identical": true
+    },
+    {
+      "name": "row-level security + policies / alter",
+      "hashes": [
+        "9d44de25c318919c69ac92fe44903d9bae75dc523c8547c5f82d1f243f9b2c5e",
+        "9d44de25c318919c69ac92fe44903d9bae75dc523c8547c5f82d1f243f9b2c5e",
+        "9d44de25c318919c69ac92fe44903d9bae75dc523c8547c5f82d1f243f9b2c5e"
+      ],
+      "identical": true
+    },
+    {
+      "name": "row-level security + policies / drop",
+      "hashes": [
+        "aa733c7ce45d929f5fdb18762e87e2a0bef87044da5195a5d07d5b7d62cba43b",
+        "aa733c7ce45d929f5fdb18762e87e2a0bef87044da5195a5d07d5b7d62cba43b",
+        "aa733c7ce45d929f5fdb18762e87e2a0bef87044da5195a5d07d5b7d62cba43b"
+      ],
+      "identical": true
+    },
+    {
+      "name": "comments / create",
+      "hashes": [
+        "8315ff1ff4463ec1bf20e161565895bd26242d1016fc87da1a241ca08d9aff10",
+        "8315ff1ff4463ec1bf20e161565895bd26242d1016fc87da1a241ca08d9aff10",
+        "8315ff1ff4463ec1bf20e161565895bd26242d1016fc87da1a241ca08d9aff10"
+      ],
+      "identical": true
+    },
+    {
+      "name": "comments / alter",
+      "hashes": [
+        "c8d6a3e618811d039c1661ac0efda064639ce31534af02b9fb97ffd7b0081537",
+        "c8d6a3e618811d039c1661ac0efda064639ce31534af02b9fb97ffd7b0081537",
+        "c8d6a3e618811d039c1661ac0efda064639ce31534af02b9fb97ffd7b0081537"
+      ],
+      "identical": true
+    },
+    {
+      "name": "comments / drop",
+      "hashes": [
+        "990e884e4b7a7623c2ef445c42800d98953c493518b42d83e63e91236711c8bb",
+        "990e884e4b7a7623c2ef445c42800d98953c493518b42d83e63e91236711c8bb",
+        "990e884e4b7a7623c2ef445c42800d98953c493518b42d83e63e91236711c8bb"
+      ],
+      "identical": true
+    },
+    {
+      "name": "grants / create",
+      "hashes": [
+        "3538191152a40830f444e8988d1f4dce02c05e206f8bb79d05ad57e73611ff5c",
+        "3538191152a40830f444e8988d1f4dce02c05e206f8bb79d05ad57e73611ff5c",
+        "3538191152a40830f444e8988d1f4dce02c05e206f8bb79d05ad57e73611ff5c"
+      ],
+      "identical": true
+    },
+    {
+      "name": "grants / alter",
+      "hashes": [
+        "b439ddf7b5303cecdca2cb9d0f00ed76bf3b2a8f921e9e61faf7d75db3ac44d7",
+        "b439ddf7b5303cecdca2cb9d0f00ed76bf3b2a8f921e9e61faf7d75db3ac44d7",
+        "b439ddf7b5303cecdca2cb9d0f00ed76bf3b2a8f921e9e61faf7d75db3ac44d7"
+      ],
+      "identical": true
+    },
+    {
+      "name": "grants / drop",
+      "hashes": [
+        "00e983b51b53d96801fa667e5d34e7a83247db4ed14bf9e9b7ee571123f0eb25",
+        "00e983b51b53d96801fa667e5d34e7a83247db4ed14bf9e9b7ee571123f0eb25",
+        "00e983b51b53d96801fa667e5d34e7a83247db4ed14bf9e9b7ee571123f0eb25"
+      ],
+      "identical": true
+    },
+    {
+      "name": "dep: column type change under view, policy, index / create",
+      "hashes": [
+        "9873f0f937a14c255df4915e85b9b1182c4fdcdef7a319d732d3a7d1cf8f1906",
+        "9873f0f937a14c255df4915e85b9b1182c4fdcdef7a319d732d3a7d1cf8f1906",
+        "9873f0f937a14c255df4915e85b9b1182c4fdcdef7a319d732d3a7d1cf8f1906"
+      ],
+      "identical": true
+    },
+    {
+      "name": "dep: column type change under view, policy, index / alter",
+      "hashes": [
+        "a6cdf18a539f21a11692a48b8c192a11a4b68b0a3c14aac08c7a465009f25c95",
+        "a6cdf18a539f21a11692a48b8c192a11a4b68b0a3c14aac08c7a465009f25c95",
+        "a6cdf18a539f21a11692a48b8c192a11a4b68b0a3c14aac08c7a465009f25c95"
+      ],
+      "identical": true
+    },
+    {
+      "name": "dep: column type change under view, policy, index / drop",
+      "hashes": [
+        "7c32e4bbc637fee03b40dc24eba3f1e2ddccc1647e5c9fd07c224e6d157e7661",
+        "7c32e4bbc637fee03b40dc24eba3f1e2ddccc1647e5c9fd07c224e6d157e7661",
+        "7c32e4bbc637fee03b40dc24eba3f1e2ddccc1647e5c9fd07c224e6d157e7661"
+      ],
+      "identical": true
+    },
+    {
+      "name": "dep: circular foreign keys / create",
+      "hashes": [
+        "62aacb506c29d95a067a7910540989c54f9f0fc8140ad4407be6bcdeb70102a7",
+        "62aacb506c29d95a067a7910540989c54f9f0fc8140ad4407be6bcdeb70102a7",
+        "62aacb506c29d95a067a7910540989c54f9f0fc8140ad4407be6bcdeb70102a7"
+      ],
+      "identical": true
+    },
+    {
+      "name": "dep: circular foreign keys / alter",
+      "hashes": [
+        "8ceb0fde7b7a87e45d4613c1a34b3bc1ad952f4bf0efb8b8b984a4f55df3c1c1",
+        "8ceb0fde7b7a87e45d4613c1a34b3bc1ad952f4bf0efb8b8b984a4f55df3c1c1",
+        "8ceb0fde7b7a87e45d4613c1a34b3bc1ad952f4bf0efb8b8b984a4f55df3c1c1"
+      ],
+      "identical": true
+    },
+    {
+      "name": "dep: circular foreign keys / drop",
+      "hashes": [
+        "7291c6ff920791241a0e3937f55ef81983058b07898f2f5112a5134dd5591078",
+        "7291c6ff920791241a0e3937f55ef81983058b07898f2f5112a5134dd5591078",
+        "7291c6ff920791241a0e3937f55ef81983058b07898f2f5112a5134dd5591078"
+      ],
+      "identical": true
+    },
+    {
+      "name": "dep: view chain + sql function + domain / create",
+      "hashes": [
+        "971c99483c2a191354fceb6057d3713352bcbb75a7d71e22fd54e429d5d9b1c4",
+        "971c99483c2a191354fceb6057d3713352bcbb75a7d71e22fd54e429d5d9b1c4",
+        "971c99483c2a191354fceb6057d3713352bcbb75a7d71e22fd54e429d5d9b1c4"
+      ],
+      "identical": true
+    },
+    {
+      "name": "dep: view chain + sql function + domain / alter",
+      "hashes": [
+        "",
+        "",
+        ""
+      ],
+      "identical": true
+    },
+    {
+      "name": "dep: view chain + sql function + domain / drop",
+      "hashes": [
+        "c5a6b6b1da0916151d5b72c8f1fcfe78c4408cc65be73ec807ca2e544d139618",
+        "c5a6b6b1da0916151d5b72c8f1fcfe78c4408cc65be73ec807ca2e544d139618",
+        "c5a6b6b1da0916151d5b72c8f1fcfe78c4408cc65be73ec807ca2e544d139618"
+      ],
+      "identical": true
+    },
+    {
+      "name": "ALL cases in one database, empty -> full (forward/reverse load)",
+      "hashes": [
+        "ee0ae536f1d3c407 (110 stmts)",
+        "ee0ae536f1d3c407 (110 stmts)",
+        "ee0ae536f1d3c407 (110 stmts)"
+      ],
+      "identical": true
+    }
+  ],
+  "q35": {
+    "fixtures": [
+      {
+        "fixture": "q35-shuffled (PG18 syntax: VIRTUAL generated column)",
+        "files": [
+          "a_policies.sql",
+          "b_views.sql",
+          "c_triggers.sql",
+          "d_functions.sql",
+          "e_constraints/customers_last_order_fk.sql",
+          "f_orders.sql",
+          "g_customers.sql",
+          "h_types.sql",
+          "i_admins.sql"
+        ],
+        "referenceNote": "reference = files applied in hand-written dependency order",
+        "attempts": [
+          {
+            "method": "pgdelta schema apply --dir (planSchemaFiles, defaults: lexicographic + retry rounds + statement fallback + pg-topo escalation)",
+            "loaded": true,
+            "warnings": [
+              "pg-topo could not parse 1 input(s) — file-kind escalate will use filename hints when a file has no class.",
+              "dangling_edge: edge default:public.orders.double_qty -[depends]-> column:public.orders.qty references a fact not in the base"
+            ],
+            "extra": "plan actions=21",
+            "vsReference": []
+          },
+          {
+            "method": "planSchemaFiles with reorder:false (lexicographic + retry rounds + statement fallback only)",
+            "loaded": true,
+            "warnings": [],
+            "vsReference": []
+          },
+          {
+            "method": "loadSqlFiles whole-file retry only (statementFallback:false, reorderOnFailure:false)",
+            "loaded": true,
+            "warnings": [],
+            "extra": "rounds=5",
+            "vsReference": []
+          },
+          {
+            "method": "pg-topo static order only (analyzeForShadow, one pass, no retries)",
+            "loaded": false,
+            "warnings": [],
+            "error": "04__a_policies.sql: relation \"orders\" does not exist || pg-topo diagnostics: UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'function:public:count:()'. ; UNRESOLVED_DEPENDENCY: No producer found for 'function:public:sum:(unknown)'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'constraint:public:orders:(id)'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; PARSE_ERROR: syntax error at or near \"virtual\""
+          },
+          {
+            "method": "path order, one pass, no retries (spec fallback)",
+            "loaded": false,
+            "warnings": [],
+            "error": "a_policies.sql: relation \"orders\" does not exist"
+          }
+        ]
+      },
+      {
+        "fixture": "q35-shuffled, PG17-parseable variant (VIRTUAL -> STORED)",
+        "files": [
+          "a_policies.sql",
+          "b_views.sql",
+          "c_triggers.sql",
+          "d_functions.sql",
+          "e_constraints/customers_last_order_fk.sql",
+          "f_orders.sql",
+          "g_customers.sql",
+          "h_types.sql",
+          "i_admins.sql"
+        ],
+        "referenceNote": "reference = files applied in hand-written dependency order",
+        "attempts": [
+          {
+            "method": "pgdelta schema apply --dir (planSchemaFiles, defaults: lexicographic + retry rounds + statement fallback + pg-topo escalation)",
+            "loaded": true,
+            "warnings": [
+              "dangling_edge: edge default:public.orders.double_qty -[depends]-> column:public.orders.qty references a fact not in the base"
+            ],
+            "extra": "plan actions=21",
+            "vsReference": []
+          },
+          {
+            "method": "planSchemaFiles with reorder:false (lexicographic + retry rounds + statement fallback only)",
+            "loaded": true,
+            "warnings": [],
+            "vsReference": []
+          },
+          {
+            "method": "loadSqlFiles whole-file retry only (statementFallback:false, reorderOnFailure:false)",
+            "loaded": true,
+            "warnings": [],
+            "extra": "rounds=5",
+            "vsReference": []
+          },
+          {
+            "method": "pg-topo static order only (analyzeForShadow, one pass, no retries)",
+            "loaded": true,
+            "warnings": [
+              "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:count:()'.",
+              "UNRESOLVED_DEPENDENCY: No producer found for 'function:public:sum:(unknown)'."
+            ],
+            "extra": "cycles=0, statements=17",
+            "vsReference": []
+          },
+          {
+            "method": "path order, one pass, no retries (spec fallback)",
+            "loaded": false,
+            "warnings": [],
+            "error": "a_policies.sql: relation \"orders\" does not exist"
+          }
+        ]
+      },
+      {
+        "fixture": "q35-numbered (same files, numbered prefixes in dependency order)",
+        "files": [
+          "01-types.sql",
+          "02-admins.sql",
+          "03-customers.sql",
+          "04-orders.sql",
+          "05-constraints/customers-last-order-fk.sql",
+          "06-functions.sql",
+          "07-triggers.sql",
+          "08-views.sql",
+          "09-policies.sql"
+        ],
+        "referenceNote": "reference = path order",
+        "attempts": [
+          {
+            "method": "pgdelta schema apply --dir (planSchemaFiles, defaults: lexicographic + retry rounds + statement fallback + pg-topo escalation)",
+            "loaded": true,
+            "warnings": [
+              "pg-topo could not parse 1 input(s) — file-kind escalate will use filename hints when a file has no class.",
+              "dangling_edge: edge default:public.orders.double_qty -[depends]-> column:public.orders.qty references a fact not in the base"
+            ],
+            "extra": "plan actions=21",
+            "vsReference": []
+          },
+          {
+            "method": "planSchemaFiles with reorder:false (lexicographic + retry rounds + statement fallback only)",
+            "loaded": true,
+            "warnings": [],
+            "vsReference": []
+          },
+          {
+            "method": "loadSqlFiles whole-file retry only (statementFallback:false, reorderOnFailure:false)",
+            "loaded": true,
+            "warnings": [],
+            "extra": "rounds=1",
+            "vsReference": []
+          },
+          {
+            "method": "pg-topo static order only (analyzeForShadow, one pass, no retries)",
+            "loaded": false,
+            "warnings": [],
+            "error": "04__05-constraints/customers-last-order-fk.sql: relation \"orders\" does not exist || pg-topo diagnostics: PARSE_ERROR: syntax error at or near \"virtual\" ; UNRESOLVED_DEPENDENCY: No producer found for 'constraint:public:orders:(id)'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'function:public:count:()'. ; UNRESOLVED_DEPENDENCY: No producer found for 'function:public:sum:(unknown)'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'."
+          },
+          {
+            "method": "path order, one pass, no retries (spec fallback)",
+            "loaded": true,
+            "warnings": [],
+            "vsReference": []
+          }
+        ]
+      },
+      {
+        "fixture": "q35-overload-binding",
+        "files": [
+          "a_pick_numeric.sql",
+          "b_view.sql",
+          "c_pick_integer.sql"
+        ],
+        "referenceNote": "reference = all functions first (view binds pick(integer))",
+        "attempts": [
+          {
+            "method": "pgdelta schema apply --dir (planSchemaFiles, defaults: lexicographic + retry rounds + statement fallback + pg-topo escalation)",
+            "loaded": true,
+            "warnings": [],
+            "extra": "plan actions=3",
+            "vsReference": [
+              "- view: v which_pick  SELECT pick(1) AS picked;",
+              "+ view: v which_pick  SELECT pick(1::numeric) AS picked;"
+            ],
+            "pickBinding": "numeric"
+          },
+          {
+            "method": "planSchemaFiles with reorder:false (lexicographic + retry rounds + statement fallback only)",
+            "loaded": true,
+            "warnings": [],
+            "vsReference": [
+              "- view: v which_pick  SELECT pick(1) AS picked;",
+              "+ view: v which_pick  SELECT pick(1::numeric) AS picked;"
+            ],
+            "pickBinding": "numeric"
+          },
+          {
+            "method": "loadSqlFiles whole-file retry only (statementFallback:false, reorderOnFailure:false)",
+            "loaded": true,
+            "warnings": [],
+            "extra": "rounds=1",
+            "vsReference": [
+              "- view: v which_pick  SELECT pick(1) AS picked;",
+              "+ view: v which_pick  SELECT pick(1::numeric) AS picked;"
+            ],
+            "pickBinding": "numeric"
+          },
+          {
+            "method": "pg-topo static order only (analyzeForShadow, one pass, no retries)",
+            "loaded": true,
+            "warnings": [],
+            "extra": "cycles=0, statements=3",
+            "vsReference": [],
+            "pickBinding": "integer"
+          },
+          {
+            "method": "path order, one pass, no retries (spec fallback)",
+            "loaded": true,
+            "warnings": [],
+            "vsReference": [
+              "- view: v which_pick  SELECT pick(1) AS picked;",
+              "+ view: v which_pick  SELECT pick(1::numeric) AS picked;"
+            ],
+            "pickBinding": "numeric"
+          }
+        ]
+      },
+      {
+        "fixture": "q35-shuffled + a genuine typo (error reporting)",
+        "files": [
+          "a_policies.sql",
+          "b_views.sql",
+          "c_triggers.sql",
+          "d_functions.sql",
+          "e_constraints/customers_last_order_fk.sql",
+          "f_orders.sql",
+          "g_customers.sql",
+          "h_types.sql",
+          "i_admins.sql",
+          "j_typo.sql"
+        ],
+        "referenceNote": "reference excludes the typo file",
+        "attempts": [
+          {
+            "method": "pgdelta schema apply --dir (planSchemaFiles, defaults: lexicographic + retry rounds + statement fallback + pg-topo escalation)",
+            "loaded": false,
+            "warnings": [],
+            "error": "shadow load stuck after 8 round(s): 1 file(s) cannot apply | [stuck_statement] j_typo.sql: syntax error at or near \"tabel\" — at line 1: create tabel oops (id int) (failed identically in 8 round(s) — likely a genuine missing dependency, not ordering) | [reorder_on_failure] Default load order stuck; reordered (statement-kind). stuck j_typo.sql:1 create tabel oops (id int) (syntax error at or near \"tabel\") Set loadOrder on .pgdelta-export.json."
+          },
+          {
+            "method": "planSchemaFiles with reorder:false (lexicographic + retry rounds + statement fallback only)",
+            "loaded": false,
+            "warnings": [],
+            "error": "shadow load stuck after 6 round(s): 1 file(s) cannot apply | [stuck_statement] j_typo.sql: syntax error at or near \"tabel\" — at line 1: create tabel oops (id int) (failed identically in 6 round(s) — likely a genuine missing dependency, not ordering)"
+          },
+          {
+            "method": "loadSqlFiles whole-file retry only (statementFallback:false, reorderOnFailure:false)",
+            "loaded": false,
+            "warnings": [],
+            "error": "shadow load stuck after 7 round(s): 1 file(s) cannot apply | [stuck_statement] j_typo.sql: syntax error at or near \"tabel\" — at line 1: create tabel oops (id int) (failed identically in 7 round(s) — likely a genuine missing dependency, not ordering)"
+          },
+          {
+            "method": "pg-topo static order only (analyzeForShadow, one pass, no retries)",
+            "loaded": false,
+            "warnings": [],
+            "error": "04__a_policies.sql: relation \"orders\" does not exist || pg-topo diagnostics: UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'function:public:count:()'. ; UNRESOLVED_DEPENDENCY: No producer found for 'function:public:sum:(unknown)'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'constraint:public:orders:(id)'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; PARSE_ERROR: syntax error at or near \"virtual\" ; PARSE_ERROR: syntax error at or near \"tabel\""
+          },
+          {
+            "method": "path order, one pass, no retries (spec fallback)",
+            "loaded": false,
+            "warnings": [],
+            "error": "a_policies.sql: relation \"orders\" does not exist"
+          }
+        ]
+      },
+      {
+        "fixture": "inline FK cycle with no ALTER TABLE (unsatisfiable, error reporting)",
+        "files": [
+          "a.sql",
+          "b.sql"
+        ],
+        "referenceNote": "reference = empty database",
+        "attempts": [
+          {
+            "method": "pgdelta schema apply --dir (planSchemaFiles, defaults: lexicographic + retry rounds + statement fallback + pg-topo escalation)",
+            "loaded": false,
+            "warnings": [],
+            "error": "shadow load stuck after 4 round(s): 2 file(s) cannot apply Tip: if two tables reference each other with inline REFERENCES clauses, split one foreign key into a separate ALTER TABLE … ADD CONSTRAINT statement. | [stuck_statement] a.sql#0: relation \"b\" does not exist — at line 1: create table a (id int primary key, b_id int references b (id)) | [stuck_statement] b.sql#0: relation \"a\" does not exist — at line 1: create table b (id int primary key, a_id int references a (id)) | [reorder_on_failure] Default load order stuck; reordered (statement-kind). stuck a.sql:1 create table a (id int primary key, b_id int references b (id)) (relation \"b\" does not exist) stuck b.sql:1 create table b (id int primary key, a_id int references a (id)) (relation \"a\" does not exist) after a.sql:1 create table a (id int primary key, b_id int references b (id)); Set loadOrder on .pgdelta-export.json to put a.sql "
+          },
+          {
+            "method": "planSchemaFiles with reorder:false (lexicographic + retry rounds + statement fallback only)",
+            "loaded": false,
+            "warnings": [],
+            "error": "shadow load stuck after 2 round(s): 2 file(s) cannot apply Tip: if two tables reference each other with inline REFERENCES clauses, split one foreign key into a separate ALTER TABLE … ADD CONSTRAINT statement. | [stuck_statement] a.sql: relation \"b\" does not exist — at line 1: create table a (id int primary key, b_id int references b (id)) (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering) | [stuck_statement] b.sql: relation \"a\" does not exist — at line 1: create table b (id int primary key, a_id int references a (id)) (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering)"
+          },
+          {
+            "method": "loadSqlFiles whole-file retry only (statementFallback:false, reorderOnFailure:false)",
+            "loaded": false,
+            "warnings": [],
+            "error": "shadow load stuck after 2 round(s): 2 file(s) cannot apply Tip: if two tables reference each other with inline REFERENCES clauses, split one foreign key into a separate ALTER TABLE … ADD CONSTRAINT statement. | [stuck_statement] a.sql: relation \"b\" does not exist — at line 1: create table a (id int primary key, b_id int references b (id)) (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering) | [stuck_statement] b.sql: relation \"a\" does not exist — at line 1: create table b (id int primary key, a_id int references a (id)) (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering)"
+          },
+          {
+            "method": "pg-topo static order only (analyzeForShadow, one pass, no retries)",
+            "loaded": false,
+            "warnings": [],
+            "error": "0__a.sql: relation \"b\" does not exist || pg-topo diagnostics: CYCLE_DETECTED: Dependency cycle detected across 2 statements."
+          },
+          {
+            "method": "path order, one pass, no retries (spec fallback)",
+            "loaded": false,
+            "warnings": [],
+            "error": "a.sql: relation \"b\" does not exist"
+          }
+        ]
+      }
+    ],
+    "pgTopo": [
+      {
+        "statement": "create table t (a int, b int generated always as (a * 2) virtual);",
+        "parsed": false,
+        "diagnostics": [
+          "PARSE_ERROR: syntax error at or near \"virtual\""
+        ]
+      },
+      {
+        "statement": "create table t (a int, b int generated always as (a * 2) stored);",
+        "parsed": true,
+        "diagnostics": []
+      },
+      {
+        "statement": "create table t (id int, during tstzrange, primary key (id, during without overlaps));",
+        "parsed": false,
+        "diagnostics": [
+          "PARSE_ERROR: syntax error at or near \"without\""
+        ]
+      },
+      {
+        "statement": "create table t (a int, constraint c check (a > 0) not enforced);",
+        "parsed": false,
+        "diagnostics": [
+          "PARSE_ERROR: syntax error at or near \"enforced\""
+        ]
+      },
+      {
+        "statement": "create table t (a int, constraint a_nn not null a);",
+        "parsed": false,
+        "diagnostics": [
+          "PARSE_ERROR: syntax error at or near \"not\""
+        ]
+      },
+      {
+        "statement": "update t set a = 1 returning old.a, new.a;",
+        "parsed": true,
+        "diagnostics": [
+          "UNRESOLVED_DEPENDENCY: No producer found for 'table:public:t:'."
+        ]
+      }
+    ],
+    "sortExample": {
+      "pgdelta CLI (readdirSync().sort() per directory)": [
+        "B.sql",
+        "a/b.sql",
+        "a-c.sql",
+        "a.sql",
+        "a0.sql",
+        "a_b/x.sql"
+      ],
+      "spec fallback (code-point sort of whole '/'-joined path)": [
+        "B.sql",
+        "a-c.sql",
+        "a.sql",
+        "a/b.sql",
+        "a0.sql",
+        "a_b/x.sql"
+      ]
+    }
+  }
+}

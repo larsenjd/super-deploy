@@ -1,0 +1,178 @@
+PostgreSQL: PostgreSQL 18.4 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 7.5.0-3ubuntu1~18.04) 7.5.0, 64-bit
+Databases: prototype_pg_delta_wipe_me*
+Versions: {"node":"v24.21.0","platform":"linux-x64","@supabase/pg-delta":"1.0.0-alpha.59","@supabase/pg-topo":"1.0.0-alpha.8","embedded-postgres":"18.4.0-beta.17","pg":"8.23.1"}
+
+== 1. Column order
+  [PASS] existing column at end vs desired mid-table
+         target cols=id,a,c,b, desired cols=id,a,b,c, statements=0
+  [PASS] desired adds column mid-table
+         plan=["ALTER TABLE \"public\".\"t\" ADD COLUMN \"b\" text;"]; after apply target cols=id,a,c,b; rows kept=1; re-diff statements=0
+  [PASS] view SELECT * over a table whose physical order differs (informational)
+         plan=["DROP VIEW \"public\".\"v\";","CREATE VIEW \"public\".\"v\" AS  SELECT id,\n    a,\n    b,\n    c\n   FROM public.t;"]; view cols after=id,a,b,c (desired id,a,b,c); re-diff=0; catalog diff=[]
+
+== 2. Object coverage round trips (create a->b, alter b->c, drop c->a)
+  [PASS] table / create (1 stmts)
+  [PASS] table / alter (6 stmts)
+  [PASS] table / drop (1 stmts)
+  [PASS] generated column (stored) / create (1 stmts)
+  [PASS] generated column (stored) / alter (2 stmts)
+  [PASS] generated column (stored) / drop (1 stmts)
+  [FAIL] generated column (virtual, PG18) / create (1 stmts) <-  catalog differs: - column: t.total integer notnull=false identity= generated=s default=(a + b) collation=- | + column: t.total integer notnull=false identity= generated=v default=(a + b) collation=-
+  [FAIL] generated column (virtual, PG18) / alter (2 stmts) <-  catalog differs: - column: t.total integer notnull=false identity= generated=s default=(a * b) collation=- | + column: t.total integer notnull=false identity= generated=v default=(a * b) collation=-
+  [PASS] generated column (virtual, PG18) / drop (1 stmts)
+  [PASS] generated column stored -> virtual / create (1 stmts)
+  [FAIL] generated column stored -> virtual / alter (0 stmts) <-  catalog differs: - column: t.g integer notnull=false identity= generated=s default=(a * 2) collation=- | + column: t.g integer notnull=false identity= generated=v default=(a * 2) collation=-
+  [PASS] generated column stored -> virtual / drop (1 stmts)
+  [PASS] primary key / create (1 stmts)
+  [PASS] primary key / alter (2 stmts)
+  [PASS] primary key / drop (1 stmts)
+  [PASS] foreign key / create (1 stmts)
+  [PASS] foreign key / alter (2 stmts)
+  [PASS] foreign key / drop (1 stmts)
+  [PASS] unique / create (1 stmts)
+  [PASS] unique / alter (2 stmts)
+  [PASS] unique / drop (1 stmts)
+  [PASS] check / create (1 stmts)
+  [PASS] check / alter (2 stmts)
+  [PASS] check / drop (1 stmts)
+  [PASS] check with BETWEEN (deparse fixed point) / create (1 stmts)
+  [FAIL] check with BETWEEN (deparse fixed point) / alter (2 stmts) <-  re-diff not empty (2) catalog differs: - constraint: t t_qty_check c CHECK (((qty >= 0) AND (qty <= 100) AND (ROW(qty, id) > ROW(0, 0)))) deferrable=false deferred=false validated=true | + constraint: t t_qty_check c CHECK ((((qty >= 0) AND (qty <= 100)) AND (ROW(qty, id) > ROW(0, 0)))) deferrable=false deferred=false validated=true
+  [PASS] check with BETWEEN (deparse fixed point) / drop (1 stmts)
+  [PASS] exclusion / create (1 stmts)
+  [PASS] exclusion / alter (2 stmts)
+  [PASS] exclusion / drop (1 stmts)
+  [PASS] not null / create (1 stmts)
+  [FAIL] not null / alter (1 stmts) <-  catalog differs: - constraint: t t_name_not_null n NOT NULL name deferrable=false deferred=false validated=true | + constraint: t name_required n NOT NULL name deferrable=false deferred=false validated=true
+  [PASS] not null / drop (2 stmts)
+  [PASS] index / create (1 stmts)
+  [PASS] index / alter (3 stmts)
+  [PASS] index / drop (2 stmts)
+  [PASS] view / create (1 stmts)
+  [PASS] view / alter (2 stmts)
+  [PASS] view / drop (1 stmts)
+  [PASS] view (column removed/retyped -> needs drop+create) / create (1 stmts)
+  [PASS] view (column removed/retyped -> needs drop+create) / alter (2 stmts)
+  [PASS] view (column removed/retyped -> needs drop+create) / drop (1 stmts)
+  [PASS] materialized view / create (2 stmts)
+  [PASS] materialized view / alter (2 stmts)
+  [PASS] materialized view / drop (1 stmts)
+  [PASS] identity column / create (2 stmts)
+  [PASS] identity column / alter (2 stmts)
+  [PASS] identity column / drop (3 stmts)
+  [PASS] function (plpgsql) / create (1 stmts)
+  [PASS] function (plpgsql) / alter (1 stmts)
+  [PASS] function (plpgsql) / drop (1 stmts)
+  [PASS] function (sql, binds at create) / create (1 stmts)
+  [PASS] function (sql, binds at create) / alter (1 stmts)
+  [PASS] function (sql, binds at create) / drop (1 stmts)
+  [PASS] function (BEGIN ATOMIC) / create (1 stmts)
+  [PASS] function (BEGIN ATOMIC) / alter (1 stmts)
+  [PASS] function (BEGIN ATOMIC) / drop (1 stmts)
+  [PASS] function signature change / create (1 stmts)
+  [PASS] function signature change / alter (2 stmts)
+  [PASS] function signature change / drop (1 stmts)
+  [PASS] procedure / create (1 stmts)
+  [PASS] procedure / alter (1 stmts)
+  [PASS] procedure / drop (1 stmts)
+  [PASS] trigger / create (1 stmts)
+  [PASS] trigger / alter (2 stmts)
+  [PASS] trigger / drop (1 stmts)
+  [PASS] domain / create (3 stmts)
+  [PASS] domain / alter (4 stmts)
+  [PASS] domain / drop (2 stmts)
+  [PASS] composite type / create (3 stmts)
+  [PASS] composite type / alter (1 stmts)
+  [PASS] composite type / drop (2 stmts)
+  [PASS] row-level security + policies / create (2 stmts)
+  [PASS] row-level security + policies / alter (4 stmts)
+  [PASS] row-level security + policies / drop (4 stmts)
+  [PASS] comments / create (5 stmts)
+  [FAIL] comments / alter (6 stmts) <-  catalog differs: + comment: pg_class t_pkey sub=0 pk index
+  [FAIL] comments / drop (3 stmts) <-  catalog differs: - comment: pg_class t_pkey sub=0 pk index
+  [PASS] grants / create (4 stmts)
+  [PASS] grants / alter (11 stmts)
+  [PASS] grants / drop (6 stmts)
+  [PASS] dep: column type change under view, policy, index / create (6 stmts)
+  [PASS] dep: column type change under view, policy, index / alter (6 stmts)
+  [PASS] dep: column type change under view, policy, index / drop (6 stmts)
+  [PASS] dep: circular foreign keys / create (4 stmts)
+  [PASS] dep: circular foreign keys / alter (4 stmts)
+  [PASS] dep: circular foreign keys / drop (4 stmts)
+  [PASS] dep: view chain + sql function + domain / create (6 stmts)
+  [FAIL] dep: view chain + sql function + domain / alter (-1 stmts) <- apply error: PLAN FAILED: domain "public"."amount": cannot replace an in-use domain — column(s) "public"."o"."amt" depend on it, and PostgreSQL forbids dropping a type while a column uses it. Replacing an in-use domain is not supported yet; drop the using column(s), or recreate the domain, first.
+  [PASS] dep: view chain + sql function + domain / drop (5 stmts)
+
+== 3. Determinism (3 runs, fresh databases, shifted OIDs, reversed load order)
+  91/91 outputs byte-identical across runs
+  ALL cases in one database, empty -> full (forward/reverse load): ee0ae536f1d3c407 (110 stmts) ee0ae536f1d3c407 (110 stmts) ee0ae536f1d3c407 (110 stmts)
+
+== 4. Q35 directory loader
+  -- q35-shuffled (PG18 syntax: VIRTUAL generated column)
+     [loaded] pgdelta schema apply --dir (planSchemaFiles, defaults: lexicographic + retry rounds + statement fallback + pg-topo escalation) same-as-reference (plan actions=21)
+         warn: pg-topo could not parse 1 input(s) — file-kind escalate will use filename hints when a file has no class.
+         warn: dangling_edge: edge default:public.orders.double_qty -[depends]-> column:public.orders.qty references a fact not in the base
+     [loaded] planSchemaFiles with reorder:false (lexicographic + retry rounds + statement fallback only) same-as-reference
+     [loaded] loadSqlFiles whole-file retry only (statementFallback:false, reorderOnFailure:false) same-as-reference (rounds=5)
+     [FAILED] pg-topo static order only (analyzeForShadow, one pass, no retries)
+         error: 04__a_policies.sql: relation "orders" does not exist || pg-topo diagnostics: UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'function:public:count:()'. ; UNRESOLVED_DEPENDENCY: No producer found for 'function:public:sum:(unknown)'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'constraint:public:orders:(id)'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; PARSE_ERROR: syntax error at or near "virtual"
+     [FAILED] path order, one pass, no retries (spec fallback)
+         error: a_policies.sql: relation "orders" does not exist
+  -- q35-shuffled, PG17-parseable variant (VIRTUAL -> STORED)
+     [loaded] pgdelta schema apply --dir (planSchemaFiles, defaults: lexicographic + retry rounds + statement fallback + pg-topo escalation) same-as-reference (plan actions=21)
+         warn: dangling_edge: edge default:public.orders.double_qty -[depends]-> column:public.orders.qty references a fact not in the base
+     [loaded] planSchemaFiles with reorder:false (lexicographic + retry rounds + statement fallback only) same-as-reference
+     [loaded] loadSqlFiles whole-file retry only (statementFallback:false, reorderOnFailure:false) same-as-reference (rounds=5)
+     [loaded] pg-topo static order only (analyzeForShadow, one pass, no retries) same-as-reference (cycles=0, statements=17)
+         warn: UNRESOLVED_DEPENDENCY: No producer found for 'function:public:count:()'.
+         warn: UNRESOLVED_DEPENDENCY: No producer found for 'function:public:sum:(unknown)'.
+     [FAILED] path order, one pass, no retries (spec fallback)
+         error: a_policies.sql: relation "orders" does not exist
+  -- q35-numbered (same files, numbered prefixes in dependency order)
+     [loaded] pgdelta schema apply --dir (planSchemaFiles, defaults: lexicographic + retry rounds + statement fallback + pg-topo escalation) same-as-reference (plan actions=21)
+         warn: pg-topo could not parse 1 input(s) — file-kind escalate will use filename hints when a file has no class.
+         warn: dangling_edge: edge default:public.orders.double_qty -[depends]-> column:public.orders.qty references a fact not in the base
+     [loaded] planSchemaFiles with reorder:false (lexicographic + retry rounds + statement fallback only) same-as-reference
+     [loaded] loadSqlFiles whole-file retry only (statementFallback:false, reorderOnFailure:false) same-as-reference (rounds=1)
+     [FAILED] pg-topo static order only (analyzeForShadow, one pass, no retries)
+         error: 04__05-constraints/customers-last-order-fk.sql: relation "orders" does not exist || pg-topo diagnostics: PARSE_ERROR: syntax error at or near "virtual" ; UNRESOLVED_DEPENDENCY: No producer found for 'constraint:public:orders:(id)'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'function:public:count:()'. ; UNRESOLVED_DEPENDENCY: No producer found for 'function:public:sum:(unknown)'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'.
+     [loaded] path order, one pass, no retries (spec fallback) same-as-reference
+  -- q35-overload-binding
+     [loaded] pgdelta schema apply --dir (planSchemaFiles, defaults: lexicographic + retry rounds + statement fallback + pg-topo escalation) DIFFERS-from-reference(2): - view: v which_pick  SELECT pick(1) AS picked; | + view: v which_pick  SELECT pick(1::numeric) AS picked; view binds pick(numeric) (plan actions=3)
+     [loaded] planSchemaFiles with reorder:false (lexicographic + retry rounds + statement fallback only) DIFFERS-from-reference(2): - view: v which_pick  SELECT pick(1) AS picked; | + view: v which_pick  SELECT pick(1::numeric) AS picked; view binds pick(numeric)
+     [loaded] loadSqlFiles whole-file retry only (statementFallback:false, reorderOnFailure:false) DIFFERS-from-reference(2): - view: v which_pick  SELECT pick(1) AS picked; | + view: v which_pick  SELECT pick(1::numeric) AS picked; view binds pick(numeric) (rounds=1)
+     [loaded] pg-topo static order only (analyzeForShadow, one pass, no retries) same-as-reference view binds pick(integer) (cycles=0, statements=3)
+     [loaded] path order, one pass, no retries (spec fallback) DIFFERS-from-reference(2): - view: v which_pick  SELECT pick(1) AS picked; | + view: v which_pick  SELECT pick(1::numeric) AS picked; view binds pick(numeric)
+  -- q35-shuffled + a genuine typo (error reporting)
+     [FAILED] pgdelta schema apply --dir (planSchemaFiles, defaults: lexicographic + retry rounds + statement fallback + pg-topo escalation)
+         error: shadow load stuck after 8 round(s): 1 file(s) cannot apply | [stuck_statement] j_typo.sql: syntax error at or near "tabel" — at line 1: create tabel oops (id int) (failed identically in 8 round(s) — likely a genuine missing dependency, not ordering) | [reorder_on_failure] Default load order stuck; reordered (statement-kind). stuck j_typo.sql:1 create tabel oops (id int) (syntax error at or near "tabel") Set loadOrder on .pgdelta-export.json.
+     [FAILED] planSchemaFiles with reorder:false (lexicographic + retry rounds + statement fallback only)
+         error: shadow load stuck after 6 round(s): 1 file(s) cannot apply | [stuck_statement] j_typo.sql: syntax error at or near "tabel" — at line 1: create tabel oops (id int) (failed identically in 6 round(s) — likely a genuine missing dependency, not ordering)
+     [FAILED] loadSqlFiles whole-file retry only (statementFallback:false, reorderOnFailure:false)
+         error: shadow load stuck after 7 round(s): 1 file(s) cannot apply | [stuck_statement] j_typo.sql: syntax error at or near "tabel" — at line 1: create tabel oops (id int) (failed identically in 7 round(s) — likely a genuine missing dependency, not ordering)
+     [FAILED] pg-topo static order only (analyzeForShadow, one pass, no retries)
+         error: 04__a_policies.sql: relation "orders" does not exist || pg-topo diagnostics: UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'function:public:count:()'. ; UNRESOLVED_DEPENDENCY: No producer found for 'function:public:sum:(unknown)'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; UNRESOLVED_DEPENDENCY: No producer found for 'constraint:public:orders:(id)'. ; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:orders:'. ; PARSE_ERROR: syntax error at or near "virtual" ; PARSE_ERROR: syntax error at or near "tabel"
+     [FAILED] path order, one pass, no retries (spec fallback)
+         error: a_policies.sql: relation "orders" does not exist
+  -- inline FK cycle with no ALTER TABLE (unsatisfiable, error reporting)
+     [FAILED] pgdelta schema apply --dir (planSchemaFiles, defaults: lexicographic + retry rounds + statement fallback + pg-topo escalation)
+         error: shadow load stuck after 4 round(s): 2 file(s) cannot apply Tip: if two tables reference each other with inline REFERENCES clauses, split one foreign key into a separate ALTER TABLE … ADD CONSTRAINT statement. | [stuck_statement] a.sql#0: relation "b" does not exist — at line 1: create table a (id int primary key, b_id int references b (id)) | [stuck_statement] b.sql#0: relation "a" does not exist — at line 1: create table b (id int primary key, a_id int references a (id)) | [reorder_on_failure] Default load order stuck; reordered (statement-kind). stuck a.sql:1 create table a (id int primary key, b_id int references b (id)) (relation "b" does not exist) stuck b.sql:1 create table b (id int primary key, a_id int references a (id)) (relation "a" does not exist) after a.sql:1 create table a (id int primary key, b_id int references b (id)); Set loadOrder on .pgdelta-export.json to put a.sql 
+     [FAILED] planSchemaFiles with reorder:false (lexicographic + retry rounds + statement fallback only)
+         error: shadow load stuck after 2 round(s): 2 file(s) cannot apply Tip: if two tables reference each other with inline REFERENCES clauses, split one foreign key into a separate ALTER TABLE … ADD CONSTRAINT statement. | [stuck_statement] a.sql: relation "b" does not exist — at line 1: create table a (id int primary key, b_id int references b (id)) (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering) | [stuck_statement] b.sql: relation "a" does not exist — at line 1: create table b (id int primary key, a_id int references a (id)) (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering)
+     [FAILED] loadSqlFiles whole-file retry only (statementFallback:false, reorderOnFailure:false)
+         error: shadow load stuck after 2 round(s): 2 file(s) cannot apply Tip: if two tables reference each other with inline REFERENCES clauses, split one foreign key into a separate ALTER TABLE … ADD CONSTRAINT statement. | [stuck_statement] a.sql: relation "b" does not exist — at line 1: create table a (id int primary key, b_id int references b (id)) (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering) | [stuck_statement] b.sql: relation "a" does not exist — at line 1: create table b (id int primary key, a_id int references a (id)) (failed identically in 2 round(s) — likely a genuine missing dependency, not ordering)
+     [FAILED] pg-topo static order only (analyzeForShadow, one pass, no retries)
+         error: 0__a.sql: relation "b" does not exist || pg-topo diagnostics: CYCLE_DETECTED: Dependency cycle detected across 2 statements.
+     [FAILED] path order, one pass, no retries (spec fallback)
+         error: a.sql: relation "b" does not exist
+  -- pg-topo (PG17 grammar) on PG18 syntax
+     [PARSE FAIL] create table t (a int, b int generated always as (a * 2) virtual); PARSE_ERROR: syntax error at or near "virtual"
+     [parsed] create table t (a int, b int generated always as (a * 2) stored); 
+     [PARSE FAIL] create table t (id int, during tstzrange, primary key (id, during without overlaps)); PARSE_ERROR: syntax error at or near "without"
+     [PARSE FAIL] create table t (a int, constraint c check (a > 0) not enforced); PARSE_ERROR: syntax error at or near "enforced"
+     [PARSE FAIL] create table t (a int, constraint a_nn not null a); PARSE_ERROR: syntax error at or near "not"
+     [parsed] update t set a = 1 returning old.a, new.a; UNRESOLVED_DEPENDENCY: No producer found for 'table:public:t:'.
+  -- path sorting
+     pgdelta CLI (readdirSync().sort() per directory): B.sql  a/b.sql  a-c.sql  a.sql  a0.sql  a_b/x.sql
+     spec fallback (code-point sort of whole '/'-joined path): B.sql  a-c.sql  a.sql  a/b.sql  a0.sql  a_b/x.sql
+
+Summary: column order 3/3, coverage 82/90, determinism 91/91. 301s. Details: prototype-pg-delta/output/

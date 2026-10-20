@@ -1,0 +1,15 @@
+{
+  "name": "prototype-pg-delta",
+  "private": true,
+  "type": "module",
+  "description": "THROWAWAY spike for issue 01. Not production code.",
+  "scripts": {
+    "start": "node src/main.ts"
+  },
+  "dependencies": {
+    "@supabase/pg-delta": "1.0.0-alpha.59",
+    "@supabase/pg-topo": "1.0.0-alpha.8",
+    "embedded-postgres": "18.4.0-beta.17",
+    "pg": "8.23.1"
+  }
+}
