@@ -310,11 +310,7 @@ describe.skipIf(process.platform === "win32")("from the menu", () => {
     const terminal = spawnTerminal([], { cwd: dir.root });
 
     await terminal.waitFor("quit");
-    // The menu starts on draft; Up passes init and wraps round to quit, and
-    // disposable is above rebuild and deploy-draft.
-    terminal.type(
-      `${keys.up}${keys.up}${keys.up}${keys.up}${keys.up}${keys.enter}`,
-    );
+    await terminal.chooseMenuItem("disposable");
     await terminal.waitFor("The target to use");
     terminal.type(keys.enter);
     await terminal.waitFor("yes to make the target disposable");

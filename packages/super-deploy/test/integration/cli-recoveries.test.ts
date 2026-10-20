@@ -95,10 +95,7 @@ describe.skipIf(process.platform === "win32")("menu", () => {
 
     const menu = await terminal.waitFor("quit");
     expect(menu).toMatch(/Recover\s*\n.*recovery/);
-    // From draft (where the menu starts) down to recovery.
-    terminal.type(keys.down.repeat(9));
-    await terminal.waitFor(/●\s*recovery/);
-    terminal.type(keys.enter);
+    await terminal.chooseMenuItem("recovery");
     const question = await terminal.waitFor("00001-add-customers");
     // Shown before 00001-add-customers, the first one offered.
     expect(question).toContain("00002-require-email");

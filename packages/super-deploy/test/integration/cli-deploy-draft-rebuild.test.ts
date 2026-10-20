@@ -878,9 +878,7 @@ unix("from the menu", () => {
     const terminal = spawnTerminal([], { cwd: dir.root });
 
     await terminal.waitFor("quit");
-    // The menu starts on draft; Up passes init and wraps round to quit, and
-    // deploy-draft is above rebuild.
-    terminal.type(`${keys.up}${keys.up}${keys.up}${keys.up}${keys.enter}`);
+    await terminal.chooseMenuItem("deploy-draft");
     await terminal.waitFor("The target to use");
     terminal.type(keys.enter);
     await terminal.waitFor("Load the draft's seed data first");
@@ -909,8 +907,7 @@ unix("from the menu", () => {
     const terminal = spawnTerminal([], { cwd: dir.root });
 
     await terminal.waitFor("quit");
-    // rebuild is the last command, just above quit.
-    terminal.type(`${keys.up}${keys.up}${keys.up}${keys.enter}`);
+    await terminal.chooseMenuItem("rebuild");
     await terminal.waitFor("The target to use");
     terminal.type(keys.enter);
     await terminal.waitFor("The last migration to replay");
