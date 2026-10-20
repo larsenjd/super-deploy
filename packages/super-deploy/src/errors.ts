@@ -2,6 +2,7 @@
 // on purpose is a SuperDeployError; `code` is stable and meant for programs,
 // `message` is one line meant for people (the CLI prints it after "Error: ").
 import type { OverwriteQuestion } from "./questions.ts";
+import type { DriftedObject } from "./verification/drift.ts";
 
 export type ErrorCode =
   | "project-not-found"
@@ -24,7 +25,9 @@ export type ErrorCode =
   | "unknown-target"
   | "target-locked"
   | "no-migration"
-  | "overwrite-not-acknowledged";
+  | "overwrite-not-acknowledged"
+  | "target-drifted"
+  | "unknown-recorded-migration";
 
 export class SuperDeployError extends Error {
   readonly code: ErrorCode;
@@ -253,7 +256,9 @@ export class SqlFileFailedError extends SuperDeployError {
 }
 
 /**
- * Replaying the migrations and the draft did not produce the desired schema.
+ * Replaying the migrations and the draft did not produce the desired schema
+ * (or, in a deployment rehearsal, the pending migrations did not produce the
+ * newest migration's desired-schema snapshot).
  * Each difference is one line, prefixed with the check that found it:
  * `pg-delta: <statement still needed>` or `catalog: - <line only in the
  * rehearsal>` / `catalog: + <line only in the desired schema>`.
@@ -261,13 +266,20 @@ export class SqlFileFailedError extends SuperDeployError {
 export class RehearsalMismatchError extends SuperDeployError {
   readonly differences: readonly string[];
 
-  constructor(differences: readonly string[]) {
+  /**
+   * `subject` replaces the default opening ("The rehearsal does not match
+   * the desired schema; run draft again"), e.g. for deployment rehearsals.
+   */
+  constructor(
+    differences: readonly string[],
+    options: { subject?: string } = {},
+  ) {
     const [first] = differences;
     const more =
       differences.length > 1 ? ` (and ${differences.length - 1} more)` : "";
     super(
       "rehearsal-mismatch",
-      `The rehearsal does not match the desired schema; run draft again. First difference: ${first ?? ""}${more}`,
+      `${options.subject ?? "The rehearsal does not match the desired schema; run draft again"}. First difference: ${first ?? ""}${more}`,
     );
     this.differences = differences;
   }
@@ -426,5 +438,45 @@ export class TargetLockedError extends SuperDeployError {
     );
     this.target = target;
     this.holder = holder;
+  }
+}
+
+/**
+ * The target's managed schema differs from what its recorded migrations
+ * produce on a replica (column order and ownership aside). Deployments
+ * refuse until the target matches again; `status` lists the objects.
+ */
+export class DriftError extends SuperDeployError {
+  readonly target: string;
+  /** Sorted by object; never empty. */
+  readonly objects: readonly DriftedObject[];
+
+  constructor(target: string, objects: readonly DriftedObject[]) {
+    const shown = objects
+      .slice(0, 5)
+      .map((o) => `${o.object} (${o.change})`)
+      .join(", ");
+    const more = objects.length > 5 ? ` and ${objects.length - 5} more` : "";
+    super(
+      "target-drifted",
+      `Target ${target} has drifted from its recorded migrations: ${shown}${more}. Nothing was deployed; make the target match its migrations again (status --target ${target} lists the differences)`,
+    );
+    this.target = target;
+    this.objects = objects;
+  }
+}
+
+/** The target records migrations the project doesn't have, so no replica of it can be built. */
+export class UnknownRecordedMigrationError extends SuperDeployError {
+  readonly target: string;
+  readonly numbers: readonly number[];
+
+  constructor(target: string, numbers: readonly number[]) {
+    super(
+      "unknown-recorded-migration",
+      `Target ${target} records migration${numbers.length === 1 ? "" : "s"} ${numbers.join(", ")}, which the project doesn't have`,
+    );
+    this.target = target;
+    this.numbers = numbers;
   }
 }

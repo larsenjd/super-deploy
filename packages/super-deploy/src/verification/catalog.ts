@@ -9,8 +9,8 @@
 // (pg_describe_object, also OID-free) so differences can name objects.
 // Column order (attnum) is never compared, and ACLs are normalised with
 // acldefault() so implicit and explicit default grants compare equal.
-// Ownership appears only through default ACLs, which is the same in both
-// databases (one rehearsal login).
+// Ownership is never compared: ACLs name the owner `<owner>` (so a target
+// owned by its deploy role matches a replica owned by the rehearsal login).
 //
 // Binding facts (opt-in) record what each object is bound to: pg_depend
 // edges (the overload a view or default calls, the table a function body
@@ -20,6 +20,18 @@ import type { Session } from "../adapters/types.ts";
 
 const describe = (classTable: string, oid: string, sub = "0") =>
   `pg_describe_object('${classTable}'::regclass, ${oid}, ${sub})`;
+
+/**
+ * An ACL as a sorted list of `grantee:PRIVILEGE[*]/grantor` items, with the
+ * object's owner written `<owner>` and PUBLIC `public`. Ownership is never
+ * compared (REFINEMENTS "Roles, grants and ownership"): a target's objects
+ * belong to its deploy role, a replica's to the rehearsal login.
+ */
+const privileges = (acl: string, owner: string) => `array(
+      select case when e.grantee = 0 then 'public' when e.grantee = ${owner} then '<owner>' else quote_ident(pg_get_userbyid(e.grantee)) end
+        || ':' || e.privilege_type || case when e.is_grantable then '*' else '' end
+        || '/' || case when e.grantor = ${owner} then '<owner>' else quote_ident(pg_get_userbyid(e.grantor)) end
+      from aclexplode(${acl}) e order by 1)::text`;
 
 /** Each query selects `object` and `line`; `$1` is the managed schema. */
 const queries: Readonly<Record<string, string>> = {
@@ -104,21 +116,22 @@ const queries: Readonly<Record<string, string>> = {
                   union all select 1 from pg_policy o join pg_class c on c.oid = o.polrelid join pg_namespace n on n.oid = c.relnamespace where o.oid = d.objoid and n.nspname = $1)`,
   acl: `
     select ${describe("pg_class", "c.oid")},
-      c.relname || ' ' || array(select x::text from unnest(coalesce(c.relacl, acldefault((case when c.relkind = 'S' then 's' else 'r' end)::"char", c.relowner))) x order by 1)::text
-    from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = $1
+      c.relname || ' ' || ${privileges(`coalesce(c.relacl, acldefault((case when c.relkind = 'S' then 's' else 'r' end)::"char", c.relowner))`, "c.relowner")}
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = $1 and c.relkind not in ('i', 'I')
     union all
     select ${describe("pg_class", "a.attrelid", "a.attnum")},
-      c.relname || '.' || a.attname || ' ' || array(select x::text from unnest(a.attacl) x order by 1)::text
+      c.relname || '.' || a.attname || ' ' || ${privileges("a.attacl", "c.relowner")}
     from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
     where n.nspname = $1 and a.attacl is not null
     union all
     select ${describe("pg_proc", "p.oid")},
-      p.oid::regprocedure::text || ' ' || array(select x::text from unnest(coalesce(p.proacl, acldefault('f'::"char", p.proowner))) x order by 1)::text
+      p.oid::regprocedure::text || ' ' || ${privileges(`coalesce(p.proacl, acldefault('f'::"char", p.proowner))`, "p.proowner")}
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = $1
     union all
-    select ${describe("pg_type", "t.oid")},
-      t.typname || ' ' || array(select x::text from unnest(coalesce(t.typacl, acldefault('T'::"char", t.typowner))) x order by 1)::text
-    from pg_type t join pg_namespace n on n.oid = t.typnamespace where n.nspname = $1 and t.typtype in ('d','c')`,
+    select case when r.relkind is null or r.relkind = 'c' then ${describe("pg_type", "t.oid")} else ${describe("pg_class", "r.oid")} end,
+      t.typname || ' ' || ${privileges(`coalesce(t.typacl, acldefault('T'::"char", t.typowner))`, "t.typowner")}
+    from pg_type t join pg_namespace n on n.oid = t.typnamespace left join pg_class r on r.oid = t.typrelid
+    where n.nspname = $1 and t.typtype in ('d','c')`,
 };
 
 const bindingQueries: Readonly<Record<string, string>> = {

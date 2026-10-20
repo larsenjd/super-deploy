@@ -445,10 +445,20 @@ INSERT INTO deploy_settings (name, value)
     await deploy(project, { target: "dev" });
 
     // The test server's databases are initialised with UTF8 and libc locale C.
-    expect(requests).toEqual([
-      { encoding: "UTF8", locale: "C", collationProvider: "libc" },
-    ]);
+    // Two: the replica (drift check, then the pending migrations) and the
+    // newest desired-schema snapshot it must match.
+    const targetLocale = {
+      encoding: "UTF8",
+      locale: "C",
+      collationProvider: "libc",
+    };
+    expect(requests).toEqual([targetLocale, targetLocale]);
     expect(await rehearsalDatabases()).toEqual(before);
+
+    // Up to date: only the replica, for the drift check.
+    requests.length = 0;
+    await deploy(project, { target: "dev" });
+    expect(requests).toEqual([targetLocale]);
   });
 
   test("never touches the target when the rehearsal fails", async () => {
@@ -740,6 +750,7 @@ describe("status", () => {
       ],
       attempts: [],
       disposable: false,
+      drift: [],
     });
     expect(
       await server.query(
