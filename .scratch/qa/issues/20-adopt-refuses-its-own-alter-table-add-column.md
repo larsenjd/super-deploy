@@ -1,6 +1,6 @@
 # 20: Adoption refuses tables whose columns use a domain, a managed function default or a generated expression
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** high
 **Merged:** 22
@@ -118,13 +118,23 @@ The same mechanism adds misleading entries to refusals:
 - `AdoptUnsupportedError`'s list of entries.
 
 **Acceptance criteria:**
-- [ ] Adopting a target whose table has a domain-typed column, a `default <managed function>()` column and a `generated always as (...) stored` column succeeds. The adopted `tables.sql` declares all three in `CREATE TABLE`. API seam.
-- [ ] The adopted desired schema keeps the target's column order.
-- [ ] A target table `with (fillfactor = 70)` is refused with the storage-parameter reason, and no `desired-schema-statement` entry.
-- [ ] A target with an enum column and an `INHERITS` child is refused with the enum and inheritance reasons only, with no `ADD COLUMN` entries.
-- [ ] Existing adoption tests pass.
+- [x] Adopting a target whose table has a domain-typed column, a `default <managed function>()` column and a `generated always as (...) stored` column succeeds. The adopted `tables.sql` declares all three in `CREATE TABLE`. API seam.
+- [x] The adopted desired schema keeps the target's column order.
+- [x] A target table `with (fillfactor = 70)` is refused with the storage-parameter reason, and no `desired-schema-statement` entry.
+- [x] A target with an enum column and an `INHERITS` child is refused with the enum and inheritance reasons only, with no `ADD COLUMN` entries.
+- [x] Existing adoption tests pass.
 
 **Out of scope:**
 - Virtual generated columns, which pg-delta renders as `STORED` (21, which depends on this).
 - Extension members and serial sequences in refusals (23).
 - Adding support for enums, inheritance or storage parameters.
+
+### Resolved, 2026-10-20 (393cc9e)
+
+- New `sql-analysis/adoption-folding.ts`. `adoptedDesiredSchema` folds each single-command `ALTER TABLE <table> ADD COLUMN` into that table's `CREATE TABLE`, in the target's column order. `adopt` reads that order from `pg_attribute.attnum` and passes it as `columnOrder`. Each `ALTER TABLE <table> SET (...)` is folded into `WITH (...)`. Splicing uses libpg-query token offsets (UTF-8 bytes), so quoted names, literals and parentheses inside expressions are safe. When a `CREATE TABLE` has no column list directly after its name (`PARTITION OF`, `OF type`), its ALTERs are kept as they are.
+- Folding into an `INHERITS` child's `CREATE TABLE` means its refusal now gives only the inheritance reason. Enum-typed columns fold too, so only the enum's `CREATE TYPE` is refused (22).
+- Tests:
+  - API seam (`adopt.test.ts`): adopting a table with a domain column, a `default make_code()` column and a stored generated column, interleaved with plain columns, succeeds. `tables.sql` has no `ALTER TABLE` and keeps the target's column order. Neither `prod` nor a freshly deployed `dev` shows drift.
+  - API seam: an enum column plus an `INHERITS` child plus `with (fillfactor = 70)` is refused with exactly three entries: inheritance, storage parameters and enum. Without the fix, the same test also listed the three generated ALTERs under `desired-schema-statement`.
+  - SQL-analysis seam (`adoption.test.ts`): column order with commas, parentheses and non-ASCII text in defaults; merging into an existing `WITH`; keeping the ALTER after a `PARTITION OF`.
+- Not done: a `PARTITION OF` or `OF type` table with storage parameters would still list its `SET (...)` beside its real reason. pg-delta emitting that is unconfirmed, and both kinds of table are refused anyway.
