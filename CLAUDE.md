@@ -1,5 +1,9 @@
 # super-deploy
 
+## Rules
+
+- This is a fresh project. Never read, search or copy from other repositories or project directories on this machine. Web sources are fine.
+
 ## Agent skills
 
 ### Issue tracker
