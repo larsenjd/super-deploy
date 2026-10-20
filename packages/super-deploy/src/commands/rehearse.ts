@@ -5,7 +5,7 @@ import { NoDraftError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { rehearseDraft } from "../rehearsal/rehearse-draft.ts";
 import { readMigrationUnits, readReplayUnit } from "../rehearsal/replay.ts";
-import { analyseDesiredSchema } from "../sql-analysis/index.ts";
+import { analyseDesiredSchema, type Override } from "../sql-analysis/index.ts";
 import { asSqlFiles, readDesiredSchemaFiles } from "../store/desired-schema.ts";
 import { type DraftMetadata, readDraft } from "../store/draft.ts";
 import type { HashedFile } from "../store/hashing.ts";
@@ -37,6 +37,8 @@ export interface RehearsedDraft {
   /** The desired schema that was rehearsed, relative to the desired-schema folder. */
   readonly desiredSchema: readonly HashedFile[];
   readonly serverVersion: string;
+  /** The override markers accepted in the draft's deploy-time files. */
+  readonly overrides: readonly Override[];
 }
 
 /** Shared by `rehearse` and `finalize`. */
@@ -64,11 +66,12 @@ export async function rehearseCurrentDraft(
     paths.draft,
     `draft ${draft.name}`,
   );
-  await refuseRuleViolations(draftUnit, {
+  const { overrides } = await refuseRuleViolations(draftUnit, {
     managedSchema: project.config.managedSchema,
+    externalSchemas: project.config.externalSchemas,
     schemas: [await newestSnapshot(root, migrations), statements],
   });
   units.push(draftUnit);
   const { serverVersion } = await rehearseDraft(project, statements, units);
-  return { draft, migrations, desiredSchema, serverVersion };
+  return { draft, migrations, desiredSchema, serverVersion, overrides };
 }

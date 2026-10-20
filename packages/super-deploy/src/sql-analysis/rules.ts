@@ -12,6 +12,7 @@ import {
   type DeployTimeOptions,
 } from "./deploy-time.ts";
 import { desiredSchemaFindings } from "./desired-schema-rules.ts";
+import { applyMarker, type Override, scanMarkers } from "./overrides.ts";
 import { parseSqlFile, type SqlFile } from "./parse.ts";
 import type { RuleContext } from "./rule-types.ts";
 
@@ -24,40 +25,70 @@ const defaultContext: RuleContext = {
   externalSchemas: [],
 };
 
+export interface FileAnalysis {
+  /** Every rule violation, in file order. */
+  readonly violations: readonly RuleViolation[];
+  /** The override markers that were accepted, in file order. */
+  readonly overrides: readonly Override[];
+}
+
 /**
- * Every rule violation in one file of the given kind, in file order.
- * `identityColumns` matters for deploy-time kinds only.
+ * Every rule violation in one file of the given kind, in file order, with
+ * override markers applied. `identityColumns` matters for deploy-time kinds
+ * only.
  */
 export async function checkRules(
   file: SqlFile,
   kind: FileKind,
   context: Partial<RuleContext> & DeployTimeOptions = {},
 ): Promise<RuleViolation[]> {
+  return [...(await analyseFile(file, kind, context)).violations];
+}
+
+/** Like `checkRules`, also returning the overrides accepted. */
+export async function analyseFile(
+  file: SqlFile,
+  kind: FileKind,
+  context: Partial<RuleContext> & DeployTimeOptions = {},
+): Promise<FileAnalysis> {
   if (kind !== "desired-schema") {
-    const analysis = await analyseMigration([{ ...file, kind }], context);
-    return [...analysis.violations];
+    return analyseMigration([{ ...file, kind }], context);
   }
   const parsed = await parseSqlFile(file);
   if (!parsed.ok) {
-    return [parsed.violation];
+    return { violations: [parsed.violation], overrides: [] };
   }
   const resolved: RuleContext = {
     managedSchema: context.managedSchema ?? defaultContext.managedSchema,
     externalSchemas: context.externalSchemas ?? defaultContext.externalSchemas,
   };
+  const scan = scanMarkers(file, parsed.statements);
   const violations: RuleViolation[] = [];
-  for (const statement of parsed.statements) {
-    for (const { line, ...found } of desiredSchemaFindings(
-      statement,
-      resolved,
-    )) {
-      violations.push({
+  const overrides: Override[] = [];
+  const pending = [...scan.violations];
+  parsed.statements.forEach((statement, index) => {
+    while (pending[0] !== undefined && pending[0].line < statement.line) {
+      violations.push(pending.shift() as RuleViolation);
+    }
+    const found = desiredSchemaFindings(statement, resolved).map(
+      ({ line, ...finding }): RuleViolation => ({
         file: statement.file,
         line: line ?? statement.line,
         statement: statement.text,
-        ...found,
-      });
+        ...finding,
+      }),
+    );
+    const marked = applyMarker(
+      statement,
+      scan.markers.get(index),
+      found,
+      resolved.managedSchema,
+    );
+    violations.push(...marked.violations);
+    if (marked.override !== undefined) {
+      overrides.push(marked.override);
     }
-  }
-  return violations;
+  });
+  violations.push(...pending);
+  return { violations, overrides };
 }
