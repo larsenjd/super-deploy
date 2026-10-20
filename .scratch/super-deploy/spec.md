@@ -300,4 +300,4 @@ Also out of scope: managing more than one schema; PostgreSQL versions other than
 - The pg-delta prototype was run on Linux only. Windows behaviour of `embedded-postgres` and pg-delta is unverified until CI runs there; treat the first Windows CI run as a risk.
 - pg-delta is an alpha with 60 releases including a full rewrite; the pinned version must not float, and any upgrade re-runs the prototype scenarios.
 - pg-delta's licence is the PostgreSQL licence (not MIT as `research/parsers-and-differs.md` states).
-- The issue files in `.scratch/super-deploy/issues/` predate this spec and are split by layer; they are to be replaced by tracer-bullet tickets via `/to-tickets`.
+- Tickets: `.scratch/super-deploy/issues/`, 23 tracer-bullet slices. 01 is the repo scaffold; 02→03→04 is the first end-to-end path (draft, finalize, deploy one table); the rest widen it.
