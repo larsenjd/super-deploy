@@ -16,8 +16,8 @@
 //
 // A migration's files are analysed in the order they run, so state (the
 // migration's temporary tables and identity columns created on the way)
-// carries from one file to the next. Ticket 11 adds destructive statements
-// and rewrite/scan warnings to MigrationAnalysis; ticket 10 adds overrides.
+// carries from one file to the next. Destructive statements and lock
+// warnings are found alongside (destructive.ts); ticket 10 adds overrides.
 import type {
   AlterTableCmd,
   ColumnDef,
@@ -40,6 +40,12 @@ import type {
 } from "@pgsql/types";
 import type { RuleViolation } from "../errors.ts";
 import { denylistedCall } from "./denylist.ts";
+import {
+  ChangeTracker,
+  type ColumnTypes,
+  type DestructiveStatement,
+  type LockWarning,
+} from "./destructive.ts";
 import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 import { pgCatalogFunctions, pgCatalogRelations } from "./pg-catalog-names.ts";
 import type { RuleId } from "./rule-catalogue.ts";
@@ -75,11 +81,21 @@ export interface DeployTimeOptions
    * migration's own DDL creates are found as the files are analysed.
    */
   readonly identityColumns?: IdentityColumns;
+  /**
+   * Column types before the migration (from the previous desired-schema
+   * snapshot, see `columnTypesOf`), to tell a lossy type change from a
+   * widening. Without them every type change counts as lossy.
+   */
+  readonly columnTypes?: ColumnTypes;
 }
 
 export interface MigrationAnalysis {
   /** Every rule violation, in file and statement order. */
   readonly violations: readonly RuleViolation[];
+  /** Statements that drop structure or delete data (finalize needs them acknowledged), in order. */
+  readonly destructive: readonly DestructiveStatement[];
+  /** Statements that rewrite or scan an existing table while holding its lock, in order. */
+  readonly warnings: readonly LockWarning[];
 }
 
 interface Finding {
@@ -105,6 +121,7 @@ export async function analyseMigration(
     temporary: new Set(),
   };
   const violations: RuleViolation[] = [];
+  const changes = new ChangeTracker(state.managedSchema, options.columnTypes);
   for (const file of files) {
     const parsed = await parseSqlFile(file);
     if (!parsed.ok) {
@@ -127,9 +144,14 @@ export async function analyseMigration(
         }
       }
       remember(statement, state);
+      changes.statement(statement);
     }
   }
-  return { violations };
+  return {
+    violations,
+    destructive: changes.destructive,
+    warnings: changes.warnings,
+  };
 }
 
 /** Identity columns created by CREATE TABLE and ALTER TABLE statements, e.g. a desired schema. */
