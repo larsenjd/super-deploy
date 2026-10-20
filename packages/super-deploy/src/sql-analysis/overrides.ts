@@ -1,5 +1,5 @@
-// The override marker (spec "Override marker"): `-- OVERRIDE DANGEROUS
-// COMMAND: <reason>` on the line directly before one statement accepts that
+// The override marker (spec "Override marker"): `-- OVERRIDE SUPER-DEPLOY
+// REFUSAL: <reason>` on the line directly before one statement accepts that
 // statement's risk-rule violations (dynamic SQL, denylisted calls) and
 // records them, so a justified exception is possible but always visible.
 // Transaction-breaking rules can never be overridden (rule-catalogue.ts).
@@ -40,10 +40,12 @@ export interface Override {
   readonly reason: string;
 }
 
-export const markerPrefix = "-- OVERRIDE DANGEROUS COMMAND:";
+export const markerPrefix = "-- OVERRIDE SUPER-DEPLOY REFUSAL:";
 
 const exactForm = `"${markerPrefix} <reason>"`;
-const lookalike = /override\s+dangerous\s+command/i;
+const lookalike = /override\s+super-deploy\s+refusal/i;
+/** The marker's form before ticket 24; no longer a marker, but hinted at. */
+const oldFormPrefix = "-- OVERRIDE DANGEROUS COMMAND";
 
 export interface Marker {
   readonly line: number;
@@ -53,6 +55,8 @@ export interface Marker {
 export interface MarkerScan {
   /** Markers by the index of the statement they apply to. */
   readonly markers: ReadonlyMap<number, Marker>;
+  /** Indexes of statements directly preceded by the old marker form. */
+  readonly oldForms: ReadonlySet<number>;
   /** Malformed or misplaced markers, in file order. */
   readonly violations: readonly RuleViolation[];
 }
@@ -63,25 +67,49 @@ export function scanMarkers(
   statements: readonly ParsedStatement[],
 ): MarkerScan {
   const markers = new Map<number, Marker>();
+  const oldForms = new Set<number>();
   const violations: RuleViolation[] = [];
-  if (!lookalike.test(file.text)) {
-    return { markers, violations };
+  if (!lookalike.test(file.text) && !file.text.includes(oldFormPrefix)) {
+    return { markers, oldForms, violations };
   }
   const bytes = Buffer.from(file.text, "utf8");
   const ends = statements.map(
     (statement) => statement.offset + Buffer.byteLength(statement.text),
   );
+  /** The statement a comment on its own line directly before it applies to. */
+  const target = (start: number, line: number): number | undefined => {
+    const next = statements.findIndex((statement) => statement.offset > start);
+    const inside = statements.some(
+      (statement, index) =>
+        statement.offset <= start && start < (ends[index] ?? 0),
+    );
+    const lineStart = bytes.lastIndexOf(0x0a, start - 1) + 1;
+    const ownLine = /^[ \t]*$/.test(
+      bytes.subarray(lineStart, start).toString("utf8"),
+    );
+    return inside || !ownLine || next < 0 || statements[next]?.line !== line + 1
+      ? undefined
+      : next;
+  };
   const comments = scanSync(file.text).tokens.filter(
     (token) =>
-      (token.tokenName === "SQL_COMMENT" || token.tokenName === "C_COMMENT") &&
-      lookalike.test(token.text),
+      token.tokenName === "SQL_COMMENT" || token.tokenName === "C_COMMENT",
   );
   for (const comment of comments) {
     const line = lineAtByte(bytes, comment.start);
+    if (!lookalike.test(comment.text)) {
+      const next = comment.text.startsWith(oldFormPrefix)
+        ? target(comment.start, line)
+        : undefined;
+      if (next !== undefined) {
+        oldForms.add(next);
+      }
+      continue;
+    }
     const violation = (rule: string, message: string): void => {
       violations.push({ file: file.path, line, statement: "", rule, message });
     };
-    const match = /^-- OVERRIDE DANGEROUS COMMAND:(.*)$/.exec(
+    const match = /^-- OVERRIDE SUPER-DEPLOY REFUSAL:(.*)$/.exec(
       comment.text.replace(/\r$/, ""),
     );
     if (match === null) {
@@ -99,24 +127,8 @@ export function scanMarkers(
       );
       continue;
     }
-    const next = statements.findIndex(
-      (statement) => statement.offset > comment.start,
-    );
-    const inside = statements.some(
-      (statement, index) =>
-        statement.offset <= comment.start && comment.start < (ends[index] ?? 0),
-    );
-    const lineStart = bytes.lastIndexOf(0x0a, comment.start - 1) + 1;
-    const ownLine = /^[ \t]*$/.test(
-      bytes.subarray(lineStart, comment.start).toString("utf8"),
-    );
-    if (
-      inside ||
-      !ownLine ||
-      next < 0 ||
-      statements[next]?.line !== line + 1 ||
-      markers.has(next)
-    ) {
+    const next = target(comment.start, line);
+    if (next === undefined || markers.has(next)) {
       violation(
         "override-misplaced",
         "The override marker must be on its own line, directly before the statement it applies to",
@@ -125,7 +137,7 @@ export function scanMarkers(
     }
     markers.set(next, { line, reason });
   }
-  return { markers, violations };
+  return { markers, oldForms, violations };
 }
 
 const overridableRules = ruleCatalogue
@@ -136,16 +148,31 @@ const overridableRules = ruleCatalogue
 /**
  * Applies a statement's marker to the statement's violations: risk-rule
  * violations become an override; every other violation stands. A marker
- * that overrides nothing is itself a violation.
+ * that overrides nothing is itself a violation. Without a marker, risk-rule
+ * violations of a statement after the old marker form hint at the new one.
  */
 export function applyMarker(
   statement: ParsedStatement,
-  marker: Marker | undefined,
+  index: number,
+  scan: MarkerScan,
   violations: readonly RuleViolation[],
   managedSchema: string,
 ): { violations: RuleViolation[]; override?: Override } {
+  const marker = scan.markers.get(index);
   if (marker === undefined) {
-    return { violations: [...violations] };
+    if (!scan.oldForms.has(index)) {
+      return { violations: [...violations] };
+    }
+    return {
+      violations: violations.map((violation) =>
+        ruleDefinition(violation.rule)?.overridable === true
+          ? {
+              ...violation,
+              message: `${violation.message}. Hint: the override marker is now ${exactForm}`,
+            }
+          : violation,
+      ),
+    };
   }
   const overridden = violations.filter(
     (violation) => ruleDefinition(violation.rule)?.overridable === true,

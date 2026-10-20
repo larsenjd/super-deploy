@@ -80,7 +80,8 @@ export async function analyseFile(
     );
     const marked = applyMarker(
       statement,
-      scan.markers.get(index),
+      index,
+      scan,
       found,
       resolved.managedSchema,
     );

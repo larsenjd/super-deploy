@@ -527,7 +527,7 @@ describe("validate", () => {
     await recovery(project, { migration: 2 });
     await dir.write(
       "data-model/draft/pre-migration.sql",
-      `-- OVERRIDE DANGEROUS COMMAND: one recovery at a time
+      `-- OVERRIDE SUPER-DEPLOY REFUSAL: one recovery at a time
 update customers set email = 'unknown@example.com' where email is null and pg_try_advisory_lock(42);
 `,
     );
