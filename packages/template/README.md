@@ -43,6 +43,92 @@ desired schema and migration `00001-adopt`, which is recorded on that target
 as already deployed. If the database holds anything super-deploy doesn't
 support, nothing is written and every such object is listed.
 
+## Permissions
+
+### What the desired schema declares
+
+The desired schema declares who may use what it defines, and super-deploy
+deploys exactly that:
+
+- Grants on its objects, e.g. `grant select on orders to app_reader`.
+- `USAGE` on the managed schema, e.g. `grant usage on schema app to app_reader`.
+  A managed schema other than `public` needs this, or no role but the deploy
+  role can reach its objects. `CREATE` and `ALL` on the schema are refused,
+  as are grants on any other schema.
+- Revokes of PostgreSQL's default `PUBLIC` privileges on its objects:
+  `revoke execute on function f() from public` (also procedures),
+  `revoke usage on type t from public` (also domains) and, when the managed
+  schema is `public`, `revoke usage on schema public from public`. Every
+  other `REVOKE` is refused: to take a grant away, remove the `GRANT`.
+
+For example, a `SECURITY DEFINER` function that only `app_writer` may call:
+
+```sql
+create function archive_order(id bigint) returns void
+  language sql security definer set search_path = public, pg_catalog
+  as $$ update orders set archived = true where orders.id = archive_order.id $$;
+
+revoke execute on function archive_order(bigint) from public;
+grant execute on function archive_order(bigint) to app_writer;
+```
+
+Grants are part of the schema: a grant or revoke made by hand on a target,
+including on the managed schema itself, is drift, and `deploy` refuses until
+it is undone (`status` lists it). `rebuild` leaves the managed schema's grants
+exactly as the migrations declare.
+
+### What each target needs set up outside super-deploy
+
+- **Roles and role membership.** super-deploy never creates or drops roles.
+  Every role the desired schema grants to must exist on a target before
+  deploying (`deploy` refuses otherwise); rehearsals create placeholder
+  `NOLOGIN` roles for them.
+- **Database privileges**: `CONNECT` (and `TEMPORARY`, if needed) for the
+  application's roles.
+- **The deploy role's own privileges.** It owns every object it deploys, and
+  a `SECURITY DEFINER` function runs as it. It needs `CREATE` on the database
+  for the first deployment to create the history schema (and the managed
+  schema, if the target lacks it). It should own the managed schema; if an
+  administrator owns it instead, grant the deploy role
+  `usage, create on schema app ... with grant option` (the grant option lets
+  it grant `USAGE` on the schema). These privileges aren't drift. For
+  `public`, deploy as the database's owner, who owns `public` by default.
+- **Grants on external schemas and their objects** (`externalSchemas` in
+  `super-deploy.config.ts`). A `SECURITY DEFINER` function runs as the deploy
+  role, so that role needs them, not the application's roles. For example,
+  a trigger that copies a user's name from an `auth` schema:
+
+  ```sql
+  create function set_author_name() returns trigger
+    language plpgsql security definer set search_path = pg_catalog
+    as $$
+    begin
+      new.author_name := (select u.name from auth.users u where u.id = new.author_id);
+      return new;
+    end
+    $$;
+
+  create trigger posts_set_author_name before insert on posts
+    for each row execute function set_author_name();
+
+  revoke execute on function set_author_name() from public;
+  ```
+
+  Every target then needs, outside super-deploy:
+
+  ```sql
+  grant usage on schema auth to deploy_role;
+  grant select on auth.users to deploy_role;
+  ```
+
+  Rehearsals have no `auth` schema, so only PL/pgSQL bodies may reference it.
+
+Don't use `ALTER DEFAULT PRIVILEGES` for the deploy role in the managed
+schema (for example `alter default privileges for role deploy_role in schema
+app grant select on tables to app_reader`). The objects a deployment creates
+would get grants that rehearsals don't have, and the next `deploy` refuses
+the target as drifted. Declare the grants in the desired schema instead.
+
 ## Files
 
 - `data-model/migrations/`: finalized migrations. Never edit them: they are
