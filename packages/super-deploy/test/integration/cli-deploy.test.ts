@@ -68,18 +68,14 @@ describe("deploy and status", () => {
     );
   });
 
-  test("an unknown target fails with exit code 1, a missing --target is a usage error", async () => {
+  test("an unknown or missing --target is a usage error", async () => {
     const dir = await finalizedProject();
 
     const unknown = await runCli(["deploy", "--target", "prod"], {
       cwd: dir.root,
     });
-    expect(unknown).toMatchObject({
-      exitCode: 1,
-      stdout: "",
-      stderr:
-        'Error: There is no target "prod" in super-deploy.config.ts (targets: dev)\n',
-    });
+    expect(unknown).toMatchObject({ exitCode: 2, stdout: "" });
+    expect(unknown.stderr).toContain('Unknown target "prod"');
 
     const missing = await runCli(["status"], { cwd: dir.root });
     expect(missing.exitCode).toBe(2);

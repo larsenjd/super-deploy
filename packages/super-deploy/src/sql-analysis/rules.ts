@@ -26,8 +26,16 @@ type Rule = (
   statement: ParsedStatement,
 ) => { rule: string; message: string } | undefined;
 
+// TEST-ONLY, until ticket 08 widens the desired-schema allowlist: lets the
+// integration tests load ordering fixtures that use views, functions and the
+// rest through draft(). Not exported from the package; ticket 08 deletes it.
+let anyDesiredSchemaStatementForTests = false;
+export function allowAnyDesiredSchemaStatementForTests(allow: boolean): void {
+  anyDesiredSchemaStatementForTests = allow;
+}
+
 const desiredSchemaStatements: Rule = (statement) =>
-  statement.nodeType === "CreateStmt"
+  statement.nodeType === "CreateStmt" || anyDesiredSchemaStatementForTests
     ? undefined
     : {
         rule: "desired-schema-statement",
