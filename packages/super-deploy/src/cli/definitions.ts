@@ -10,6 +10,7 @@ import { disposable } from "../commands/disposable.ts";
 import { draft } from "../commands/draft.ts";
 import { finalize } from "../commands/finalize.ts";
 import { init } from "../commands/init.ts";
+import { mark } from "../commands/mark.ts";
 import { rebuild } from "../commands/rebuild.ts";
 import { rehearse } from "../commands/rehearse.ts";
 import { restoreSchema } from "../commands/restore-schema.ts";
@@ -19,6 +20,8 @@ import { validate } from "../commands/validate.ts";
 import type { AttemptRecord } from "../deploy/history.ts";
 import {
   DestructiveNotAcknowledgedError,
+  DriftError,
+  MarkMismatchError,
   OverwriteNotAcknowledgedError,
   ValidationFailedError,
   type ValidationProblem,
@@ -521,7 +524,8 @@ const deployCommand: CommandDefinition = {
 const statusCommand: CommandDefinition = {
   name: "status",
   group: "Deploy",
-  summary: "Show the target's pending migrations and recent attempts",
+  summary:
+    "Show the target's pending migrations, recent attempts and drift (exit 1 on drift)",
   options: [targetOption],
   async run(project, values, context) {
     const report = await status(project, { target: String(values.target) });
@@ -545,6 +549,22 @@ const statusCommand: CommandDefinition = {
         context.result(`  ${refusal}`);
       }
     }
+    if (report.drift === undefined) {
+      context.result(
+        "Drift: not checked (the recorded history doesn't match the project's migrations)",
+      );
+    } else if (report.drift.length > 0) {
+      // `-` lines are on the target only, `+` lines what its recorded migrations produce.
+      context.result(
+        "Drift (the target differs from its recorded migrations):",
+      );
+      for (const drifted of report.drift) {
+        context.result(`  ${drifted.change}: ${drifted.object}`);
+        for (const line of drifted.differences) {
+          context.result(`    ${line}`);
+        }
+      }
+    }
     if (report.pending.length > 0) {
       context.result("Pending:");
       for (const migration of report.pending) {
@@ -556,6 +576,40 @@ const statusCommand: CommandDefinition = {
       for (const attempt of report.attempts) {
         context.result(`  ${describeAttempt(attempt)}`);
       }
+    }
+    if (report.drift !== undefined && report.drift.length > 0) {
+      // Exit 1, so a scheduled status alerts on drift.
+      throw new DriftError(report.target, report.drift);
+    }
+  },
+};
+
+const markCommand: CommandDefinition = {
+  name: "mark",
+  group: "Recover",
+  summary:
+    "Record the target's next pending migration as deployed after fixing the target by hand, if it matches a replica exactly; asks you to type YES",
+  options: [targetOption],
+  async run(project, values, context) {
+    try {
+      const result = await mark(project, { target: String(values.target) });
+      context.result(
+        `Marked migration ${result.marked.folder} as deployed on target ${result.target} (attempt #${result.attemptId})`,
+      );
+    } catch (error) {
+      if (error instanceof MarkMismatchError) {
+        // `-` lines are on the target only, `+` lines what the replica has.
+        context.warn(
+          `The target differs from a replica of its migrations up to ${error.migration}:`,
+        );
+        for (const drifted of error.objects) {
+          context.warn(`  ${drifted.change}: ${drifted.object}`);
+          for (const line of drifted.differences) {
+            context.warn(`    ${line}`);
+          }
+        }
+      }
+      throw error;
     }
   },
 };
@@ -687,6 +741,7 @@ export const commands: readonly CommandDefinition[] = [
   validateCommand,
   deployCommand,
   statusCommand,
+  markCommand,
   disposableCommand,
   deployDraftCommand,
   rebuildCommand,

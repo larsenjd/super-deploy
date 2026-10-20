@@ -1,8 +1,9 @@
 // Typed errors thrown by the programmatic API. Every error the library throws
 // on purpose is a SuperDeployError; `code` is stable and meant for programs,
 // `message` is one line meant for people (the CLI prints it after "Error: ").
-import type { PreflightFindings } from "./deploy/preflight.ts";
+import type { HistoryMismatch, PreflightFindings } from "./deploy/preflight.ts";
 import type { DestructiveQuestion, OverwriteQuestion } from "./questions.ts";
+import type { DriftedObject } from "./verification/drift.ts";
 
 export type ErrorCode =
   | "project-not-found"
@@ -32,11 +33,16 @@ export type ErrorCode =
   | "terminal-required"
   | "not-confirmed"
   | "target-changed"
+  | "init-conflict"
+  | "target-drifted"
+  | "unknown-recorded-migration"
+  | "nothing-to-mark"
+  | "history-mismatch"
+  | "mark-mismatch"
   | "target-not-disposable"
   | "target-behind"
   | "unknown-migration"
-  | "wipe-failed"
-  | "init-conflict";
+  | "wipe-failed";
 
 export class SuperDeployError extends Error {
   readonly code: ErrorCode;
@@ -281,7 +287,9 @@ export class SqlFileFailedError extends SuperDeployError {
 }
 
 /**
- * Replaying the migrations and the draft did not produce the desired schema.
+ * Replaying the migrations and the draft did not produce the desired schema
+ * (or, in a deployment rehearsal, the pending migrations did not produce the
+ * newest migration's desired-schema snapshot).
  * Each difference is one line, prefixed with the check that found it:
  * `pg-delta: <statement still needed>` or `catalog: - <line only in the
  * rehearsal>` / `catalog: + <line only in the desired schema>`.
@@ -289,13 +297,20 @@ export class SqlFileFailedError extends SuperDeployError {
 export class RehearsalMismatchError extends SuperDeployError {
   readonly differences: readonly string[];
 
-  constructor(differences: readonly string[]) {
+  /**
+   * `subject` replaces the default opening ("The rehearsal does not match
+   * the desired schema; run draft again"), e.g. for deployment rehearsals.
+   */
+  constructor(
+    differences: readonly string[],
+    options: { subject?: string } = {},
+  ) {
     const [first] = differences;
     const more =
       differences.length > 1 ? ` (and ${differences.length - 1} more)` : "";
     super(
       "rehearsal-mismatch",
-      `The rehearsal does not match the desired schema; run draft again. First difference: ${first ?? ""}${more}`,
+      `${options.subject ?? "The rehearsal does not match the desired schema; run draft again"}. First difference: ${first ?? ""}${more}`,
     );
     this.differences = differences;
   }
@@ -677,5 +692,109 @@ export class CommitOutcomeUnknownError extends SuperDeployError {
     );
     this.target = target;
     this.attemptId = attemptId;
+  }
+}
+
+/**
+ * The target's managed schema differs from what its recorded migrations
+ * produce on a replica (column order and ownership aside). Deployments
+ * refuse until the target matches again; `status` lists the objects.
+ */
+export class DriftError extends SuperDeployError {
+  readonly target: string;
+  /** Sorted by object; never empty. */
+  readonly objects: readonly DriftedObject[];
+
+  constructor(target: string, objects: readonly DriftedObject[]) {
+    const shown = objects
+      .slice(0, 5)
+      .map((o) => `${o.object} (${o.change})`)
+      .join(", ");
+    const more = objects.length > 5 ? ` and ${objects.length - 5} more` : "";
+    super(
+      "target-drifted",
+      `Target ${target} has drifted from its recorded migrations: ${shown}${more}. Deployments refuse until it matches them again (status --target ${target} lists the differences)`,
+    );
+    this.target = target;
+    this.objects = objects;
+  }
+}
+
+/** The target records migrations the project doesn't have, so no replica of it can be built. */
+export class UnknownRecordedMigrationError extends SuperDeployError {
+  readonly target: string;
+  readonly numbers: readonly number[];
+
+  constructor(target: string, numbers: readonly number[]) {
+    super(
+      "unknown-recorded-migration",
+      `Target ${target} records migration${numbers.length === 1 ? "" : "s"} ${numbers.join(", ")}, which the project doesn't have`,
+    );
+    this.target = target;
+    this.numbers = numbers;
+  }
+}
+
+/** `mark` found no pending migration on the target: there is nothing to record. */
+export class NothingToMarkError extends SuperDeployError {
+  readonly target: string;
+
+  constructor(target: string) {
+    super(
+      "nothing-to-mark",
+      `Target ${target} has no pending migration to mark: it records every migration in the project`,
+    );
+    this.target = target;
+  }
+}
+
+/**
+ * What the target records disagrees with the project's migrations (see
+ * HistoryMismatch), so no faithful replica of it can be built. Nothing changed.
+ */
+export class HistoryMismatchError extends SuperDeployError {
+  readonly target: string;
+  /** Never empty. */
+  readonly mismatches: readonly HistoryMismatch[];
+
+  constructor(target: string, mismatches: readonly HistoryMismatch[]) {
+    super(
+      "history-mismatch",
+      `Target ${target}'s recorded migrations don't match the project's: ${mismatches.map((m) => m.message).join("; ")}`,
+    );
+    this.target = target;
+    this.mismatches = mismatches;
+  }
+}
+
+/**
+ * `mark` refused: the target's managed schema differs from a replica of its
+ * migrations up to the one being marked (column order and ownership aside).
+ * Nothing was recorded.
+ */
+export class MarkMismatchError extends SuperDeployError {
+  readonly target: string;
+  /** The migration that was to be marked, e.g. `00002-add-orders`. */
+  readonly migration: string;
+  /** How the target differs from the replica, sorted by object; never empty. */
+  readonly objects: readonly DriftedObject[];
+
+  constructor(
+    target: string,
+    migration: string,
+    objects: readonly DriftedObject[],
+  ) {
+    const shown = objects
+      .slice(0, 5)
+      .map((o) => `${o.object} (${o.change})`)
+      .join(", ");
+    const more = objects.length > 5 ? ` and ${objects.length - 5} more` : "";
+    super(
+      "mark-mismatch",
+      `Target ${target} does not match a replica of its migrations up to ${migration}: ${shown}${more}. Nothing was recorded; fix the target until it matches, then mark again`,
+    );
+    this.target = target;
+    this.migration = migration;
+    this.objects = objects;
   }
 }

@@ -321,7 +321,9 @@ describe("deploy", () => {
     const holder = await testSession(server, database);
     try {
       await holder.execute(
-        "BEGIN; LOCK TABLE customers IN ACCESS EXCLUSIVE MODE",
+        // ACCESS SHARE: the drift check can still read the table's
+        // definition, but the migration's ALTER TABLE has to wait.
+        "BEGIN; LOCK TABLE customers IN ACCESS SHARE MODE",
       );
 
       const error = await deploy(project, { target: "dev" }).catch(
@@ -357,7 +359,9 @@ describe("deploy", () => {
     const holder = await testSession(server, database);
     try {
       await holder.execute(
-        "BEGIN; LOCK TABLE customers IN ACCESS EXCLUSIVE MODE",
+        // ACCESS SHARE: the drift check can still read the table's
+        // definition, but the migration's ALTER TABLE has to wait.
+        "BEGIN; LOCK TABLE customers IN ACCESS SHARE MODE",
       );
 
       const error = await deploy(project, { target: "dev" }).catch(
@@ -436,10 +440,20 @@ describe("deploy", () => {
     await deploy(project, { target: "dev" });
 
     // The test server's databases are initialised with UTF8 and libc locale C.
-    expect(requests).toEqual([
-      { encoding: "UTF8", locale: "C", collationProvider: "libc" },
-    ]);
+    // Two: the replica (drift check, then the pending migrations) and the
+    // newest desired-schema snapshot it must match.
+    const targetLocale = {
+      encoding: "UTF8",
+      locale: "C",
+      collationProvider: "libc",
+    };
+    expect(requests).toEqual([targetLocale, targetLocale]);
     expect(await rehearsalDatabases()).toEqual(before);
+
+    // Up to date: only the replica, for the drift check.
+    requests.length = 0;
+    await deploy(project, { target: "dev" });
+    expect(requests).toEqual([targetLocale]);
   });
 
   test("never touches the target when the rehearsal fails", async () => {
@@ -511,7 +525,8 @@ const pausingAdapter = `{
     return {
       ...session,
       async execute(sql) {
-        deploying ||= sql.includes("lock_timeout");
+        // The drift check reads the catalogs under the same timeouts, READ ONLY.
+        deploying ||= sql.includes("lock_timeout") && !sql.includes("READ ONLY");
         const pause = globalThis.deployBeforeCommit;
         if (deploying && sql === "COMMIT" && pause !== undefined) {
           globalThis.deployBeforeCommit = undefined;
@@ -757,6 +772,7 @@ describe("status", () => {
         historyMismatches: [],
         warnings: [expect.stringContaining("is a superuser")],
       },
+      drift: [],
     });
     expect(
       await server.query(

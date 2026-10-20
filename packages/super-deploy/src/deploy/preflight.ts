@@ -148,7 +148,7 @@ async function deploymentRoles(
 export function historyMismatches(
   migrations: readonly FinalizedMigration[],
   recorded: readonly RecordedMigration[],
-  draft?: DeployedDraft | undefined,
+  draft: DeployedDraft | undefined,
 ): HistoryMismatch[] {
   const repo = new Map(migrations.map((m) => [m.number, m]));
   const recordedNumbers = new Set(recorded.map((r) => r.number));

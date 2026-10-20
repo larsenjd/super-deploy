@@ -1,7 +1,7 @@
 // The programmatic API. Every command is an exported function taking a loaded
 // project, with flags as options, questions as callbacks, and typed errors.
 //
-// Guarded commands (`disposable`, `deploy-draft`, `rebuild`; later `mark`)
+// Guarded commands (`disposable`, `mark`, `deploy-draft`, `rebuild`)
 // are the exception: they stay terminal-only. They take no answer callback;
 // they ask the person at this process's own terminal to type YES, and throw
 // TerminalRequiredError in CI or without a terminal on stdin and stdout.
@@ -55,6 +55,7 @@ export {
   type MigrationMetadata,
 } from "./commands/finalize.ts";
 export { type InitOptions, type InitResult, init } from "./commands/init.ts";
+export { type MarkOptions, type MarkResult, mark } from "./commands/mark.ts";
 export {
   type RebuildOptions,
   type RebuildResult,
@@ -108,17 +109,21 @@ export {
   DestructiveNotAcknowledgedError,
   DifferError,
   DraftNameRequiredError,
+  DriftError,
   type ErrorCode,
   type GuardedCommand,
+  HistoryMismatchError,
   InitConflictError,
   InterruptedError,
   InvalidDraftNameError,
   InvalidEncodingError,
   type LockHolder,
+  MarkMismatchError,
   MigrationIntegrityError,
   NoDraftError,
   NoMigrationError,
   NotConfirmedError,
+  NothingToMarkError,
   OrderDependenceError,
   OverwriteNotAcknowledgedError,
   PreflightFailedError,
@@ -134,6 +139,7 @@ export {
   TargetNotDisposableError,
   TerminalRequiredError,
   UnknownMigrationError,
+  UnknownRecordedMigrationError,
   UnknownTargetError,
   UnsupportedServerError,
   ValidationFailedError,
@@ -166,4 +172,5 @@ export type {
 } from "./sql-analysis/destructive.ts";
 export { maxDraftNameLength, normaliseDraftName } from "./store/draft-name.ts";
 export type { ProjectPaths } from "./store/layout.ts";
+export type { DriftChange, DriftedObject } from "./verification/drift.ts";
 export { toolVersion } from "./version.ts";

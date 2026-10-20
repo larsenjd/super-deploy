@@ -229,17 +229,30 @@ export async function inDeployTransaction(
     await session.execute("ROLLBACK").catch(() => {});
     throw error;
   }
+  await commitRecorded(session, options.target.name, options.attemptId);
+}
+
+/**
+ * COMMITs a transaction that wrote `migrations` rows (or deploy-draft's
+ * `deployed_draft` row) for `attemptId`. If the outcome can't be known (the
+ * connection was lost), throws CommitOutcomeUnknownError, so the attempt is
+ * recorded as `unknown` and the next settle decides it from those rows. Only
+ * for transactions that write such rows: settling has nothing else to go on.
+ */
+export async function commitRecorded(
+  session: Session,
+  targetName: string,
+  attemptId: number,
+): Promise<void> {
   try {
     await session.execute("COMMIT");
   } catch (error) {
     if (error instanceof InterruptedError || refusedByServer(error)) {
       throw error;
     }
-    throw new CommitOutcomeUnknownError(
-      options.target.name,
-      options.attemptId,
-      { cause: error },
-    );
+    throw new CommitOutcomeUnknownError(targetName, attemptId, {
+      cause: error,
+    });
   }
 }
 

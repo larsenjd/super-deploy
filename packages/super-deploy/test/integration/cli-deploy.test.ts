@@ -95,6 +95,49 @@ describe("deploy and status", () => {
     });
   });
 
+  test("status lists the drifted objects and exits 1; deploy refuses with exit code 1", async () => {
+    const { config, database } = deployConfig(server);
+    const dir = await createTestProject({
+      config,
+      files: {
+        "data-model/desired-schema/customers.sql":
+          "create table customers (id bigint primary key, name text not null);\n",
+      },
+    });
+    for (const args of [
+      ["draft", "--name", "add customers"],
+      ["finalize"],
+      ["deploy", "--target", "dev"],
+    ]) {
+      expect((await runCli(args, { cwd: dir.root })).exitCode).toBe(0);
+    }
+    await server.query(
+      "alter table customers add column note text",
+      [],
+      database,
+    );
+
+    const report = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(report.exitCode).toBe(1);
+    expect(report.stdout).toMatch(
+      /^Target dev: 1 migration recorded, 0 pending\nDrift \(the target differs from its recorded migrations\):\n {2}extra: column note of table customers\n {4}- column: customers\.note text notnull=false .*\nRecent attempts:\n/,
+    );
+    const error =
+      "Error: Target dev has drifted from its recorded migrations: column note of table customers (extra). Deployments refuse until it matches them again (status --target dev lists the differences)\n";
+    expect(report.stderr).toBe(`${superuserWarning}${error}`);
+
+    const refused = await runCli(["deploy", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(refused).toMatchObject({
+      exitCode: 1,
+      stdout: "",
+      stderr: `${superuserWarning}${error}`,
+    });
+  });
+
   test("an unknown or missing --target is a usage error", async () => {
     const dir = await finalizedProject();
 

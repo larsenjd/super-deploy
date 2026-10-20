@@ -65,7 +65,8 @@ const stallingTarget = {
           stalled = true;
           await stallOn(session);
         }
-        deploying ||= sql.includes("lock_timeout");
+        // The drift check reads the catalogs under the same timeouts, READ ONLY.
+        deploying ||= sql.includes("lock_timeout") && !sql.includes("READ ONLY");
         return session.execute(sql);
       },
     };

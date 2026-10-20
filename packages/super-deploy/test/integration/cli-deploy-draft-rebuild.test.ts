@@ -233,6 +233,15 @@ unix("deploy-draft", () => {
     expect(await again.exited).toBe(1);
     expect(again.screen).not.toContain("Type YES");
 
+    // mark refuses it too: the target's structure is not that of a migration.
+    const marking = spawnTerminal(["mark", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    await marking.waitFor(
+      "Error: Target dev's recorded migrations don't match the project's: the target holds draft require-city",
+    );
+    expect(await marking.exited).toBe(1);
+
     // Another target at migration 0 with migration 1 pending.
     const behind = await deployedProject();
     await server.query(
@@ -341,7 +350,8 @@ async function twoMigrations() {
     "create function twice(x int) returns int language sql return x * 2",
     "create sequence counter",
     "grant usage on schema public to rebuild_reader",
-    "alter default privileges in schema public grant select on tables to rebuild_reader",
+    // On functions: the migrations create none, so it causes no drift.
+    "alter default privileges in schema public grant execute on functions to rebuild_reader",
     "comment on schema public is 'kept by rebuild'",
   ]) {
     await server.query(sql, [], database);
