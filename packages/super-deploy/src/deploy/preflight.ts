@@ -70,6 +70,7 @@ export interface PreflightFindings {
 /** Predefined roles that reach outside the database, and what they allow. */
 const privilegedRoles: Readonly<Record<string, string>> = {
   pg_execute_server_program: "run programs on the database server",
+  pg_read_server_files: "read files on the database server",
   pg_signal_backend: "cancel or terminate other sessions",
   pg_write_server_files: "write files on the database server",
 };
