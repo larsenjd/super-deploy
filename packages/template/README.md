@@ -48,6 +48,15 @@ support, nothing is written and every such object is listed.
   `super-deploy validate --strict`. Run it before every commit, for example
   from a Git hook.
 
+## Renaming a column
+
+`draft` can't tell a rename from a drop plus an add, so rename the column in
+`data-model/draft/pre-migration.sql` and run `draft` again. If the column is
+NOT NULL, rename its constraint too: PostgreSQL 18 names NOT NULL constraints
+(`t_old_not_null`) and a column rename keeps the old name, so the rehearsal
+would refuse the draft. For example,
+`alter table t rename constraint t_old_not_null to t_new_not_null`.
+
 ## Seed data
 
 Seed data goes in `data-model/draft/seed-data.sql`: `INSERT` statements with
