@@ -3,11 +3,14 @@
 // ignores kind priority, so a missing dependency edge fails to load), with
 // the same catalog both times.
 //
-// Uses the test-only allowlist bypass until ticket 08 allows views,
-// functions and the rest in the desired schema.
-import { DesiredSchemaLoadError, draft, loadProject } from "super-deploy";
+// The fixtures pass through the real desired-schema rules.
+import {
+  DesiredSchemaLoadError,
+  draft,
+  loadProject,
+  SqlRuleViolationError,
+} from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { allowAnyDesiredSchemaStatementForTests } from "../../src/sql-analysis/rules.ts";
 import { fixtureRoles, orderingFixtures } from "../fixtures/ordering.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject, embeddedConfig } from "../support/project.ts";
@@ -18,10 +21,8 @@ beforeAll(async () => {
   for (const role of fixtureRoles) {
     await server.query(`create role ${role} nologin`);
   }
-  allowAnyDesiredSchemaStatementForTests(true);
 });
 afterAll(async () => {
-  allowAnyDesiredSchemaStatementForTests(false);
   await server?.stop();
 });
 
@@ -44,7 +45,13 @@ describe("ordering fixtures in PostgreSQL 18", () => {
 
       const result = draft(project, { name: "fixture" });
 
-      if (fixture.postgresRefuses === undefined) {
+      if (fixture.refusedByRules !== undefined) {
+        const error = await result.catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(SqlRuleViolationError);
+        expect(
+          (error as SqlRuleViolationError).violations.map((v) => v.rule),
+        ).toEqual(fixture.refusedByRules);
+      } else if (fixture.postgresRefuses === undefined) {
         await expect(result).resolves.toMatchObject({ name: "fixture" });
       } else {
         const error = await result.catch((e: unknown) => e);

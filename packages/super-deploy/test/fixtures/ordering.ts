@@ -21,6 +21,12 @@ export interface OrderingFixture {
   readonly before?: readonly (readonly [string, string])[];
   /** PostgreSQL refuses the (correctly ordered) schema with this message, on purpose. */
   readonly postgresRefuses?: string;
+  /**
+   * Rule ids the desired-schema rules refuse this (orderable) fixture with,
+   * e.g. `REVOKE`, which the spec's allowlist leaves out. Ordering still
+   * covers it; the API seam expects draft to refuse it before loading.
+   */
+  readonly refusedByRules?: readonly string[];
   /** Expected errors, in order; when present, the fixture is refused. */
   readonly errors?: readonly ExpectedError[];
 }
@@ -468,6 +474,7 @@ create table editors (name text primary key);
       ["create trigger docs_audit", "comment on trigger docs_audit"],
       ["create policy docs_team", "alter table docs enable"],
     ],
+    refusedByRules: ["desired-schema-statement"],
   },
   {
     name: "unnamed-index: indexes without names are refused",
@@ -1205,6 +1212,7 @@ comment on constraint "a_table_name_that_is_exactl_ünïcödé_column_name_th_no
       "b.sql": "create table things (id int primary key);\n",
     },
     before: [["create table things", "grant select on all tables"]],
+    refusedByRules: ["desired-schema-statement", "desired-schema-statement"],
   },
   // ---------------------------------------------------------------------------
   // Static refusals and errors
