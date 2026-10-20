@@ -53,10 +53,18 @@ export async function writeDraft(
   metadata: DraftMetadata,
   schemaChange: string,
 ): Promise<void> {
+  await writeDraftMetadata(paths, metadata);
+  await writeFile(paths.draftSchemaChange, schemaChange);
+}
+
+/** Writes draft/draft.json (creating the draft folder if needed). */
+export async function writeDraftMetadata(
+  paths: ProjectPaths,
+  metadata: DraftMetadata,
+): Promise<void> {
   await mkdir(paths.draft, { recursive: true });
   await writeFile(
     paths.draftMetadata,
     `${JSON.stringify({ name: metadata.name, desiredSchemaHash: metadata.desiredSchemaHash }, null, 2)}\n`,
   );
-  await writeFile(paths.draftSchemaChange, schemaChange);
 }
