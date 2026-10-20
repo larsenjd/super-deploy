@@ -1,5 +1,9 @@
 import { toolVersion } from "../version.ts";
-import { type CommandDefinition, commandGroups } from "./definitions.ts";
+import {
+  type CommandDefinition,
+  commandGroups,
+  type OptionDefinition,
+} from "./definitions.ts";
 import { optionsOf } from "./parse.ts";
 
 export function usage(commands: readonly CommandDefinition[]): string {
@@ -24,18 +28,17 @@ export function usage(commands: readonly CommandDefinition[]): string {
     "Options:",
     "  --help     Show this help",
     "  --version  Show the version",
+    "  --debug    With no command: open the menu, showing stack traces on errors",
     "",
     'Run "super-deploy <command> --help" for a command\'s options.',
+    "Run super-deploy with no arguments in a terminal for an interactive menu.",
   );
   return `${lines.join("\n")}\n`;
 }
 
 export function commandHelp(command: CommandDefinition): string {
   const options = optionsOf(command).map((option) => ({
-    label:
-      option.kind === "flag"
-        ? `--${option.name}`
-        : `--${option.name} <${option.kind}>`,
+    label: `--${option.name}${placeholder(option)}`,
     description: option.required
       ? `${option.description} (required)`
       : option.description,
@@ -52,4 +55,18 @@ export function commandHelp(command: CommandDefinition): string {
     ),
   ];
   return `${lines.join("\n")}\n`;
+}
+
+function placeholder(option: OptionDefinition): string {
+  switch (option.kind) {
+    case "flag":
+      return "";
+    case "choice":
+      return ` <${option.choices.join("|")}>`;
+    case "migration":
+      return " <number>";
+    case "target":
+    case "name":
+      return ` <${option.kind}>`;
+  }
 }

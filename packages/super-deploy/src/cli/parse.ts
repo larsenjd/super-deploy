@@ -14,7 +14,7 @@ export class UsageError extends Error {
 }
 
 export type Invocation =
-  | { kind: "no-command" }
+  | { kind: "no-command"; debug: boolean }
   | { kind: "help"; command: CommandDefinition | undefined }
   | { kind: "version" }
   | {
@@ -46,7 +46,10 @@ export function parseInvocation(
 ): Invocation {
   const [first, ...rest] = argv;
   if (first === undefined) {
-    return { kind: "no-command" };
+    return { kind: "no-command", debug: false };
+  }
+  if (first === "--debug" && rest.length === 0) {
+    return { kind: "no-command", debug: true };
   }
   if (first === "--help" || first === "-h") {
     return { kind: "help", command: undefined };
@@ -142,9 +145,14 @@ export function parseInvocation(
         throw error;
       }
     }
-    if (option.kind === "choice" && !option.choices?.includes(String(value))) {
+    if (option.kind === "choice" && !option.choices.includes(String(value))) {
       throw new UsageError(
-        `Option --${option.name} must be one of ${option.choices?.join(", ")}. ${hint}`,
+        `Option --${option.name} must be one of ${option.choices.join(", ")}. ${hint}`,
+      );
+    }
+    if (option.kind === "migration" && !/^0*[1-9]\d*$/.test(String(value))) {
+      throw new UsageError(
+        `Option --${option.name} must be a migration number, e.g. 3 or 00003. ${hint}`,
       );
     }
   }

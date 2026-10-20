@@ -17,7 +17,12 @@ import { fileURLToPath } from "node:url";
 import type EmbeddedPostgresServer from "embedded-postgres";
 import pg from "pg";
 import { AdapterError } from "../errors.ts";
-import { connectSession, rehearsalOver, targetOver } from "./node-postgres.ts";
+import {
+  connectSession,
+  rehearsalDatabasePrefix,
+  rehearsalOver,
+  targetOver,
+} from "./node-postgres.ts";
 import type { DeploymentAdapter, RehearsalAdapter } from "./types.ts";
 
 export interface EmbeddedPostgresOptions {
@@ -74,9 +79,7 @@ export function embeddedPostgres(
       log.push(String(message).trim());
       log.splice(0, log.length - 20);
     };
-    const { default: EmbeddedPostgresClass } = await import(
-      "embedded-postgres"
-    );
+    const { default: EmbeddedPostgresClass } = await importDeferringSignals();
     const pgFlags = [
       "-c",
       `listen_addresses=${host}`,
@@ -145,14 +148,48 @@ export function embeddedPostgres(
     const server = owned;
     owned = undefined;
     running = undefined;
+    swept = undefined;
     await server?.stop();
+  }
+
+  // Throwaway databases left behind on a server only this process uses, e.g.
+  // when Ctrl+C in a terminal also reached the server and stopped it before
+  // they could be dropped. Never swept on a server this process attached to:
+  // another process may be using them.
+  let swept: Promise<void> | undefined;
+  async function sweepLeftovers(): Promise<void> {
+    await port();
+    if (owned === undefined) {
+      return;
+    }
+    const admin = await connectSession(await connectionString());
+    try {
+      const { rows } = await admin.query<{ datname: string }>(
+        "SELECT datname FROM pg_database WHERE starts_with(datname, $1)",
+        [rehearsalDatabasePrefix],
+      );
+      for (const { datname } of rows) {
+        await admin.query(
+          `DROP DATABASE IF EXISTS ${pg.escapeIdentifier(datname)} WITH (FORCE)`,
+        );
+      }
+    } finally {
+      await admin.close();
+    }
   }
 
   const rehearsal = rehearsalOver(() => connectionString());
 
   return {
     rehearsal: {
-      createDatabase: (request) => rehearsal.createDatabase(request),
+      async createDatabase(request) {
+        swept ??= sweepLeftovers().catch((error: unknown) => {
+          swept = undefined;
+          throw error;
+        });
+        await swept;
+        return rehearsal.createDatabase(request);
+      },
       async close() {
         await rehearsal.close();
         await stop();
@@ -184,6 +221,35 @@ export function embeddedPostgres(
     stop,
     connectionString,
   };
+}
+
+const hookedSignals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] as const;
+
+/**
+ * Imports embedded-postgres. Importing it installs async-exit-hook handlers
+ * that stop every server and exit on SIGINT, SIGTERM, SIGHUP and SIGBREAK.
+ * Where the process already handles one of those signals (the CLI does, to
+ * roll back and drop throwaway databases first), the new handler is removed
+ * again and the process's own handler stays in charge; the server is then
+ * stopped by `close()` or, failing that, by the hook's `exit` handler.
+ */
+async function importDeferringSignals(): Promise<
+  typeof import("embedded-postgres")
+> {
+  const before = new Map(
+    hookedSignals.map((signal) => [signal, process.listeners(signal)]),
+  );
+  const module = await import("embedded-postgres");
+  for (const [signal, existing] of before) {
+    if (existing.length > 0) {
+      for (const listener of process.listeners(signal)) {
+        if (!existing.includes(listener)) {
+          process.removeListener(signal, listener);
+        }
+      }
+    }
+  }
+  return module;
 }
 
 /** The port of the server running on `dataDir`, if one is. */

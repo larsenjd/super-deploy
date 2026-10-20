@@ -12,6 +12,7 @@ export type ErrorCode =
   | "unsupported-server"
   | "adapter-failed"
   | "differ-failed"
+  | "interrupted"
   | "invalid-encoding"
   | "no-draft"
   | "sql-file-failed"
@@ -283,5 +284,16 @@ export class ValidationFailedError extends SuperDeployError {
     );
     this.problems = problems;
     this.strict = strict;
+  }
+}
+
+/**
+ * The project's interruption signal aborted while a command was running. The
+ * command has cleaned up (rolled back, dropped throwaway databases) by the
+ * time this is thrown; `cause` is the signal's abort reason.
+ */
+export class InterruptedError extends SuperDeployError {
+  constructor(options?: ErrorOptions) {
+    super("interrupted", "Interrupted", options);
   }
 }
