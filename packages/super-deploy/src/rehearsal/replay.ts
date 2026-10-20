@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
 import { SqlFileFailedError } from "../errors.ts";
+import { rolesNamedInFiles } from "../sql-analysis/index.ts";
 import { decodeHashedText } from "../store/hashing.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
@@ -13,7 +14,7 @@ import {
   exists,
   type FinalizedMigration,
 } from "../store/migrations.ts";
-import { pinnedSettings } from "./throwaway.ts";
+import { ensureRoles, pinnedSettings } from "./throwaway.ts";
 
 export interface DeployTimeFile {
   /** Project-relative path with forward slashes, for messages. */
@@ -60,12 +61,25 @@ export async function readMigrationUnits(
   return units;
 }
 
-/** Runs every unit's files in one transaction, committing only if all succeed. */
+/**
+ * Runs every unit's files in one transaction, committing only if all succeed.
+ * Roles they grant to are created first if the rehearsal server lacks them
+ * (ensureRoles). Rehearsals only: deployments use runUnit, and never create
+ * roles on a target.
+ */
 export async function replay(
   session: Session,
   units: readonly ReplayUnit[],
   managedSchema: string,
 ): Promise<void> {
+  await ensureRoles(
+    session,
+    await rolesNamedInFiles(
+      units.flatMap((unit) =>
+        unit.files.map(({ file, sql }) => ({ path: file, text: sql })),
+      ),
+    ),
+  );
   await session.execute("BEGIN");
   try {
     await session.execute(pinnedSettings(managedSchema).join(";\n"));

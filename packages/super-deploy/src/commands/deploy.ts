@@ -1,13 +1,15 @@
 // `deploy --target X`: apply every pending migration to the target in one
 // transaction, after rehearsing them on a throwaway database that matches the
 // target's locale. Sequence (spec "Deployment engine"): open attempt → lock →
-// [pre-flight, ticket 13] → [drift check, ticket 12] → rehearse the pending
-// migrations → one transaction on the target → close attempt.
+// pre-flight (deploy/preflight.ts) → [drift check, ticket 12] → rehearse the
+// pending migrations → one transaction on the target → close attempt.
 
 import { applyMigrations, withLockedTarget } from "../deploy/engine.ts";
 import { readRecordedMigrations } from "../deploy/history.ts";
 import { pendingMigrations } from "../deploy/pending.ts";
+import { preflightChecks, refusesDeployment } from "../deploy/preflight.ts";
 import { targetDatabaseRequest } from "../deploy/target.ts";
+import { PreflightFailedError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { rehearseDeployment } from "../rehearsal/rehearse-deployment.ts";
 import { readMigrationUnits } from "../rehearsal/replay.ts";
@@ -16,6 +18,11 @@ import { verifiedMigrations } from "../store/integrity.ts";
 export interface DeployOptions {
   /** The target's name in config. */
   target: string;
+  /**
+   * Called with each warning as it is found, e.g. that the deploy role is a
+   * superuser. Warnings never stop the deployment.
+   */
+  onWarning?: ((warning: string) => void) | undefined;
 }
 
 export interface DeployedMigration {
@@ -55,6 +62,18 @@ export async function deploy(
         config.historySchema,
       );
       const pending = pendingMigrations(deployable, recorded);
+      const findings = await preflightChecks(session, project, {
+        targetName: target.name,
+        migrations,
+        recorded,
+        pending: pending.map((migration) => migration.unit),
+      });
+      for (const warning of findings.warnings) {
+        options.onWarning?.(warning);
+      }
+      if (refusesDeployment(findings)) {
+        throw new PreflightFailedError(target.name, findings);
+      }
       const result = {
         target: target.name,
         attemptId: attempt.id,
