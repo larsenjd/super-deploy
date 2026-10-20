@@ -1,6 +1,6 @@
 # 01: Prototype pg delta differ
 
-Status: ready-for-agent
+Status: resolved
 Type: prototype
 Spec: ../spec.md
 

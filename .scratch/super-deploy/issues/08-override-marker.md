@@ -11,7 +11,7 @@ Spec: ../spec.md
 
 ## Acceptance criteria
 
-- [ ] Exact-form match on the line before the statement; reason required.
+- [ ] Exact-form match on the line before the statement, read from the raw text between statements (PG18's parser excludes leading comments); reason required.
 - [ ] Overrides only risk rules; transaction-breaking rules never overridable.
 - [ ] Recorded by object identity so regenerated schema changes honour it.
 - [ ] Surfaced in `meta.json`, `finalize` output and `validate`.

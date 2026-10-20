@@ -2,14 +2,14 @@
 
 Status: ready-for-agent
 Type: task
-Blocked by: 01, 05, 06, 07, 09
+Blocked by: 01, 05, 06, 07, 09, 20
 Spec: ../spec.md
 
 ## What
 
 `draft [--name]` (spec §5.2): load desired schema into D; replay migrations + seed + pre-migration script into R; diff R → D; write the schema change; report what scripts must cover.
 
-The desired-schema file-order approach depends on the user's Q35 decision after issue 01.
+The desired schema loads through the ordering utility (issue 20, spec §3.2).
 
 ## Acceptance criteria
 

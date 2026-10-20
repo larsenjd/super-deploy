@@ -1,8 +1,14 @@
 # Pending decisions
 
+None open. Resolved decisions are kept below for history.
+
 Decisions deliberately deferred until evidence arrives. Ask the user again before making the final call.
 
-## Ordering desired-schema files (Q35)
+## Ordering desired-schema files (Q35) — RESOLVED
+
+**Decision (user, after three research spikes):** option A′, our own automatic ordering utility on `libpg-query@18` with an order-independence check and static refusals. See spec §3.2 and ADR-0004.
+
+Original question:
 
 Test in the differ prototype whether `@supabase/pg-delta`'s directory loader (`schema apply --dir`, possibly via `@supabase/pg-topo`) reliably orders desired-schema files by dependency on PostgreSQL 18.
 

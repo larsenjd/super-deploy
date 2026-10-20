@@ -106,7 +106,7 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 
 ## Object types refused in the desired schema
 
-**V1 refuses:** enums, partitioned tables, extensions other than `plpgsql`, rules (`CREATE RULE`), event triggers, foreign tables and foreign data wrappers, publications and subscriptions, custom casts, operators, aggregates (`CREATE AGGREGATE`), collations and text-search configurations, standalone sequences (identity sequences are allowed), `CREATE STATISTICS`, `serial`/`bigserial` columns, and `NOT ENFORCED` constraints.
+**V1 refuses:** enums, partitioned tables, extensions other than `plpgsql`, rules (`CREATE RULE`), event triggers, foreign tables and foreign data wrappers, publications and subscriptions, custom casts, operators, aggregates (`CREATE AGGREGATE`), collations and text-search configurations, standalone sequences (identity sequences are allowed), `CREATE STATISTICS`, `serial`/`bigserial` columns, `NOT ENFORCED` constraints, and `VIRTUAL` generated columns.
 
 **Why narrow:** Each adds differ coverage, rehearsal-parity or transaction-safety work that V1 does not need.
 
@@ -131,3 +131,23 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 **Why narrow:** Roles are cluster-wide. Leaving harmless `NOLOGIN` roles behind is simpler and safer than dropping roles another project's concurrent rehearsal may be using.
 
 **Revisit when:** Leftover roles accumulate on shared rehearsal servers, or `CREATEROLE` is unavailable there. Options: per-project role-name prefixes with cleanup, a declared list of expected roles in config, or rehearsing without grants and checking them separately.
+
+## Virtual generated columns
+
+**V1:** Refused, including PG18's default (a generated column with neither `STORED` nor `VIRTUAL` is virtual).
+
+**Why narrow:** `@supabase/pg-delta@1.0.0-alpha.59` silently emits virtual generated columns as `STORED`, and its own re-diff does not notice. A virtual column is cheap to add (no table rewrite), so this is a real loss.
+
+**Revisit when:** pg-delta fixes it upstream (re-run the prototype), or our own `pg_catalog` comparison can catch and correct it.
+
+**Research:** `.scratch/super-deploy/research/pg-delta-prototype.md`.
+
+## Order-independence: proof instead of sampling
+
+**V1:** The desired schema is loaded in one extra valid order and the catalogs compared. Known causes of order dependence are refused statically (unnamed indexes and constraints, duplicate unique keys under a foreign key, function calls in column syntax).
+
+**Why narrow:** Sampling catches every order-dependent case found in research with no false positives, but it does not prove independence.
+
+**Revisit when:** A new order-dependent case is found. Each one found should become a static refusal or an extra modelled reference.
+
+**Research:** `.scratch/super-deploy/research/schema-ordering.md`.

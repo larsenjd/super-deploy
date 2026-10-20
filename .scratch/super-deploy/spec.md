@@ -27,8 +27,8 @@ Vocabulary is defined in `GLOSSARY.md` and used exactly as defined here. Archite
 |---|---|
 | Language/runtime | TypeScript, Node ≥ 24 LTS, ESM only, strict. Built with plain `tsc` (JS + `.d.ts`), no bundler. (Q1, Q59) |
 | Reading the desired schema | Apply its SQL to an empty throwaway database and read PostgreSQL's catalogs. Never model the schema by parsing SQL. (Q3, ADR-0003) |
-| Differ | Behind our own `Differ` interface. V1 wraps `@supabase/pg-delta`, pinned to an exact version, **subject to the prototype** (issue 01). Fallback: our own `pg_catalog`/`pg_depend` differ behind the same interface. Column order is never a difference. (Q7, Q17) |
-| Differ verification | Independent of engine: apply the generated migration to a fresh database, read it back, require an empty diff against the desired schema. (Q17) |
+| Differ | Behind our own `Differ` interface. V1 wraps `@supabase/pg-delta`, pinned to exactly `1.0.0-alpha.59` (verdict: `research/pg-delta-prototype.md`). We call its `extract` and `plan` directly; we never use its directory loader, and never install `@supabase/pg-topo`. Every upgrade re-runs the prototype. Fallback: our own `pg_catalog`/`pg_depend` differ behind the same interface. Column order is never a difference. (Q7, Q17) |
+| Differ verification | Independent of engine: apply the generated migration to a fresh database, read it back, require an empty diff against the desired schema, using both pg-delta and our own engine-independent `pg_catalog` comparison (pg-delta's own re-diff misses some of its errors). (Q17) |
 | SQL parser | `libpg-query@18` (WASM, PG18 grammar) with `@pgsql/types`, pinned to exact versions. Used only to enforce rules. PL/pgSQL bodies are parsed with its PL/pgSQL parser. (Q18, Q29, ADR-0002) |
 | Throwaway databases | Supplied by the rehearsal adapter (§10). |
 | CLI | `@clack/prompts` for the menu and prompts; Node's `util.parseArgs` for flags. One set of command definitions drives both. (Q57) |
@@ -71,12 +71,18 @@ Vocabulary is defined in `GLOSSARY.md` and used exactly as defined here. Archite
 - Input normalisation (interactive and `--name` alike): trim → lowercase → collapse runs of spaces into one hyphen → refuse any remaining character outside `a-z0-9-`, showing the offending characters. The interactive prompt previews the result before anything is created.
 - The number is the identity; the description is a label. The hash covers the folder name, so renaming a finalized folder fails `validate`.
 
-### 3.2 Desired-schema file order — PENDING (Q35)
+### 3.2 Desired-schema load order (Q35, ADR-0004)
 
-Undecided until the differ prototype (issue 01). See `.scratch/super-deploy/pending-decisions.md`. **Ask the user before choosing.**
+Automatic and deterministic; files need no naming convention. Research: `research/schema-ordering.md`, `research/pg-topo-pg18.md`.
 
-- If pg-delta's directory loader reliably orders files by dependency on PG18: no ordering convention.
-- Otherwise: apply files in path order (raw code-point sort of `/`-separated relative paths, folders included; paths differing only by case are refused), with numbered prefixes by convention.
+- Our own ordering utility on `libpg-query@18`, sharing the parser and syntax-tree walker with the rules engine. No pg-topo, no pg-delta loader.
+- Splits every desired-schema file into statements, works out what each statement creates and what it needs, and orders **statements**, not files, by object-kind priority and dependencies.
+- Ties are broken only by object identity and a hash of the statement text, never by file path or locale.
+- Circular foreign keys are closed by the allowed `ALTER TABLE … ADD CONSTRAINT`.
+- Only references bound at `CREATE` count: PL/pgSQL bodies are late-bound and ignored for ordering (they are still parsed for rules, §4.3).
+- A call waits for every overload of its function name; a genuinely ambiguous overload fails with PostgreSQL's own error.
+- Unknown references and cycles are reported with `file:line` before anything loads.
+- **Order-independence check:** during `draft`, `rehearse` and `finalize`, the desired schema is also loaded in a different valid order (ignoring kind priority) and the two catalogs are compared, including what each view, default and function body is bound to. Any difference fails, naming the objects. It samples orders, so it is strong evidence rather than proof; known causes of order dependence are refused statically (§4.1).
 
 ---
 
@@ -94,9 +100,14 @@ Allowed statements:
 
 No DML, no `DO` blocks, no other `ALTER`.
 
-**Supported object types:** tables (incl. stored and virtual generated columns); constraints: primary key, foreign key, unique, check, exclusion, NOT NULL; indexes; views; materialized views; identity sequences (`GENERATED … AS IDENTITY`); functions; procedures; triggers; domains; composite types; row-level security policies; comments; grants.
+**Supported object types:** tables (incl. stored generated columns); constraints: primary key, foreign key, unique, check, exclusion, NOT NULL; indexes; views; materialized views; identity sequences (`GENERATED … AS IDENTITY`); functions; procedures; triggers; domains; composite types; row-level security policies; comments; grants.
 
-**Refused:** enums; partitioned tables; every extension except `plpgsql`; `CREATE RULE`; event triggers; foreign tables and foreign data wrappers; publications and subscriptions; custom casts, operators, aggregates (`CREATE AGGREGATE`; using built-in aggregates in queries is fine), collations and text-search configurations; standalone sequences; `CREATE STATISTICS`; `serial`/`bigserial` columns; `NOT ENFORCED` constraints.
+**Refused:** enums; partitioned tables; every extension except `plpgsql`; `CREATE RULE`; event triggers; foreign tables and foreign data wrappers; publications and subscriptions; custom casts, operators, aggregates (`CREATE AGGREGATE`; using built-in aggregates in queries is fine), collations and text-search configurations; standalone sequences; `CREATE STATISTICS`; `serial`/`bigserial` columns; `NOT ENFORCED` constraints; `VIRTUAL` generated columns, including PG18's keyword-less default (pg-delta emits them as `STORED`). (Q67)
+
+**Refused because the result would depend on load order (Q35):**
+- Unnamed indexes and constraints: every index and constraint must be named explicitly.
+- A foreign key whose referenced columns are covered by more than one unique index or constraint (PostgreSQL binds to whichever was created first).
+- Calling a function with column syntax (`c.order_count` meaning `order_count(c)`).
 
 **Schemas:** objects live in the managed schema. They may reference `pg_catalog` and nothing else, **except** that PL/pgSQL routine bodies may reference **external schemas** declared in config. (Q22, Q28)
 - Only PL/pgSQL bodies resolve names at run time, so only they can reference objects absent from rehearsals. `LANGUAGE sql` bodies, `BEGIN ATOMIC` bodies, views, foreign keys, defaults and triggers bind at `CREATE` and will fail in rehearsal if they reference an external schema.
@@ -155,6 +166,7 @@ Every PL/pgSQL function/procedure body in the desired schema (and therefore in g
 ### 4.4 Override marker (Q24, Q30)
 
 - Exact form, on the line immediately before the statement: `-- OVERRIDE DANGEROUS COMMAND: <reason>`. Reason required.
+- Read from the raw file text between statements: PG18's parser excludes leading comments from a statement's location, so the marker is never inside the parsed statement.
 - Scope: that one statement.
 - Recorded against the object's identity (e.g. `function load_orders(int)`), not its position, so it survives the differ regenerating the object in a schema change.
 - May override only risk rules (dynamic SQL, denylisted functions). Never rules that would break the transaction (`COMMIT`, `CONCURRENTLY`, `VACUUM`, …).
