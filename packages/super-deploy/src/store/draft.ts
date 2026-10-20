@@ -1,12 +1,19 @@
-// The one draft: draft/draft.json holds its name; draft/schema-change.sql is
-// the generated schema change.
+// The one draft: draft/draft.json holds its name (editable) and the hash of
+// the desired schema it was generated from (written by `draft`, used by
+// `validate` to warn about undrafted changes); draft/schema-change.sql is the
+// generated schema change.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { SuperDeployError } from "../errors.ts";
 import { normaliseDraftName } from "./draft-name.ts";
 import type { ProjectPaths } from "./layout.ts";
 
+/** The draft's own metadata file; never copied into the finalized migration. */
+export const draftMetadataFileName = "draft.json";
+
 export interface DraftMetadata {
   readonly name: string;
+  /** store/hashing.ts desiredSchemaHash() of the desired schema `draft` last generated from. */
+  readonly desiredSchemaHash?: string | undefined;
 }
 
 export async function readDraft(
@@ -33,7 +40,12 @@ export async function readDraft(
       `${paths.draftMetadata} has no "name"`,
     );
   }
-  return { name: normaliseDraftName(parsed.name) };
+  const hash =
+    "desiredSchemaHash" in parsed &&
+    typeof parsed.desiredSchemaHash === "string"
+      ? parsed.desiredSchemaHash
+      : undefined;
+  return { name: normaliseDraftName(parsed.name), desiredSchemaHash: hash };
 }
 
 export async function writeDraft(
@@ -44,7 +56,7 @@ export async function writeDraft(
   await mkdir(paths.draft, { recursive: true });
   await writeFile(
     paths.draftMetadata,
-    `${JSON.stringify({ name: metadata.name }, null, 2)}\n`,
+    `${JSON.stringify({ name: metadata.name, desiredSchemaHash: metadata.desiredSchemaHash }, null, 2)}\n`,
   );
   await writeFile(paths.draftSchemaChange, schemaChange);
 }

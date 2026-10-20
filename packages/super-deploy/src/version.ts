@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 
 const packageJson: unknown = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
@@ -16,5 +17,16 @@ function readVersion(manifest: unknown): string {
   ) {
     return manifest.version;
   }
-  throw new Error("super-deploy's package.json has no version");
+  throw new Error("A package.json has no version");
 }
+
+/** The SQL parser's package and version (libpg-query, PostgreSQL's own parser), as recorded in migration metadata. */
+export const parserName = "libpg-query";
+export const parserVersion: string = readVersion(
+  JSON.parse(
+    readFileSync(
+      createRequire(import.meta.url).resolve("libpg-query/package.json"),
+      "utf8",
+    ),
+  ),
+);
