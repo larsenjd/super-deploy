@@ -13,6 +13,7 @@ import {
   MarkMismatchError,
   type Override,
   type OverrideReasonQuestion,
+  type Project,
   status,
   validate,
 } from "super-deploy";
@@ -39,6 +40,16 @@ async function adoptableProject(sql: string) {
     },
   );
   return { ...deployed, prod };
+}
+
+/**
+ * The adopted target has no drift, and a fresh `dev` gets the same schema
+ * from migration 1.
+ */
+async function expectReproducedOnDev(project: Project): Promise<void> {
+  expect((await status(project, { target: "prod" })).drift).toEqual([]);
+  await deploy(project, { target: "dev" });
+  expect((await status(project, { target: "dev" })).drift).toEqual([]);
 }
 
 const shop = `
@@ -398,6 +409,86 @@ describe("adopt", () => {
     }
   });
 
+  test("declares domain-typed, function-default and generated columns in CREATE TABLE, in the target's column order", async () => {
+    const { dir, project } = await adoptableProject(`
+      create domain email as text constraint email_check check (value like '%@%');
+      create function make_code() returns text language sql volatile
+        as $$ select 'ABC' || floor(random() * 1000)::int $$;
+      create table people (
+        id bigint generated always as identity primary key,
+        contact email,
+        first text not null,
+        code text not null default make_code(),
+        last text not null,
+        full_name text generated always as (first || ' ' || last) stored,
+        note text
+      );
+    `);
+    try {
+      await adopt(project, { target: "prod" });
+
+      const tables = await dir.read("data-model/desired-schema/tables.sql");
+      expect(tables).not.toContain("ALTER TABLE");
+      const columns = [...tables.matchAll(/(?:\(|, )"(\w+)" /g)].map(
+        (match) => match[1],
+      );
+      expect(columns).toEqual([
+        "id",
+        "contact",
+        "first",
+        "code",
+        "last",
+        "full_name",
+        "note",
+      ]);
+      expect(tables).toContain("public.email");
+      expect(tables).toContain("DEFAULT public.make_code()");
+      expect(tables).toContain("GENERATED ALWAYS AS");
+      await expectReproducedOnDev(project);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses enums, inheritance and storage parameters for what they are, not for ALTER TABLEs it generated", async () => {
+    const { project } = await adoptableProject(`
+      create type order_status as enum ('new', 'paid');
+      create table orders (id bigint primary key, status order_status not null default 'new');
+      create table base (id int);
+      create table child (extra text) inherits (base);
+      create table tmp_like (x int) with (fillfactor = 70);
+    `);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const { objects } = error as AdoptUnsupportedError;
+      expect(objects).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            object: expect.stringContaining('CREATE TABLE "public"."child"'),
+            reason: expect.stringContaining("Table inheritance"),
+          }),
+          expect.objectContaining({
+            object: expect.stringContaining('CREATE TABLE "public"."tmp_like"'),
+            reason: expect.stringContaining("Table storage parameters"),
+          }),
+          expect.objectContaining({
+            object: expect.stringContaining(
+              'CREATE TYPE "public"."order_status"',
+            ),
+            reason: expect.stringContaining("Enums are not supported in V1"),
+          }),
+        ]),
+      );
+      expect(objects).toHaveLength(3);
+    } finally {
+      await project.close();
+    }
+  });
+
   test("writes the managed schema's USAGE grants and revoked PUBLIC defaults, but not the owner's or deploy role's own privileges", async () => {
     const deployer = "adopt_deployer";
     const prod = await server.createDatabase(`
@@ -447,10 +538,7 @@ const asDeployer = {
         'REVOKE USAGE ON TYPE "app"."body_text" FROM PUBLIC;',
       );
       expect(grants).not.toMatch(/adopt_admin|adopt_deployer|REVOKE ALL/);
-      expect((await status(project, { target: "prod" })).drift).toEqual([]);
-
-      await deploy(project, { target: "dev" });
-      expect((await status(project, { target: "dev" })).drift).toEqual([]);
+      await expectReproducedOnDev(project);
     } finally {
       await project.close();
     }

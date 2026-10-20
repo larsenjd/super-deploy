@@ -20,9 +20,13 @@
 //   extensions, publications...; verification/catalog.ts `other`), so each
 //   is listed once with its reason (`unsupportedCatalogObject`).
 //
+// ALTER TABLEs the differ splits off a table's CREATE TABLE (columns,
+// storage parameters) are folded back into it (adoption-folding.ts).
+//
 // The managed schema's own grants are kept, and a REVOKE ALL of PUBLIC's
 // default privileges is written with the privilege it takes away, as the
 // rules require (`REVOKE EXECUTE ON FUNCTION`, `REVOKE USAGE ON TYPE`).
+import { foldTableAlters, type KeptStatement } from "./adoption-folding.ts";
 import { grantees, publicDefaults, schemaNames } from "./grants.ts";
 import { parseSqlFile } from "./parse.ts";
 import {
@@ -31,7 +35,9 @@ import {
   isObject,
   type Json,
   list,
+  rangeVar,
   schemaQualifier,
+  statementBody,
   stringList,
   unwrap,
 } from "./syntax-tree.ts";
@@ -121,6 +127,8 @@ export interface AdoptionOptions {
    * desired schema's: its owner and the deploy role.
    */
   readonly schemaRoles: readonly string[];
+  /** Each managed table's column names in the target's order (attnum). */
+  readonly columnOrder: Readonly<Record<string, readonly string[]>>;
 }
 
 /**
@@ -133,14 +141,19 @@ export async function adoptedDesiredSchema(
   statements: readonly string[],
   options: AdoptionOptions,
 ): Promise<AdoptedFile[]> {
-  const files = new Map<string, string[]>();
+  const kept: (KeptStatement & { readonly file: string })[] = [];
   for (const sql of statements) {
-    const file = await fileFor(sql, options);
+    const statement = await parsedStatement(sql);
+    const file = fileFor(statement, options);
     if (file !== undefined) {
-      const texts = files.get(file) ?? [];
-      texts.push(desiredText(sql));
-      files.set(file, texts);
+      kept.push({ sql, file, type: "", node: {}, ...statement });
     }
+  }
+  const files = new Map<string, string[]>();
+  for (const { sql, file } of foldTableAlters(kept, options.columnOrder)) {
+    const texts = files.get(file) ?? [];
+    texts.push(desiredText(sql));
+    files.set(file, texts);
   }
   const order = [...new Set([...Object.values(fileOf), otherFile])];
   const header = options.header.map((line) => `-- ${line}`).join("\n");
@@ -152,19 +165,31 @@ export async function adoptedDesiredSchema(
   });
 }
 
-/** The file a generated statement goes to, or undefined to leave it out. */
-async function fileFor(
+/**
+ * A generated statement's type and syntax tree, or undefined unless it is
+ * exactly one statement.
+ */
+async function parsedStatement(
   sql: string,
-  { managedSchema, schemaRoles }: AdoptionOptions,
-): Promise<string | undefined> {
+): Promise<{ type: string; node: Json } | undefined> {
   const parsed = await parseSqlFile({ path: "generated.sql", text: sql });
   const [statement] = parsed.ok ? parsed.statements : [];
   if (statement === undefined || (parsed.ok && parsed.statements.length > 1)) {
+    return undefined;
+  }
+  return { type: statement.nodeType, node: statementBody(statement) };
+}
+
+/** The file a generated statement goes to, or undefined to leave it out. */
+function fileFor(
+  statement: { type: string; node: Json } | undefined,
+  { managedSchema, schemaRoles }: AdoptionOptions,
+): string | undefined {
+  if (statement === undefined) {
     // Never expected from the differ; the rules report what's wrong with it.
     return otherFile;
   }
-  const type = statement.nodeType;
-  const node = unwrap(statement.node, type) ?? {};
+  const { type, node } = statement;
   if (
     catalogObjectStatements.has(type) ||
     isOwnershipChange(type, node) ||
@@ -295,7 +320,7 @@ function ownSchema(type: string, node: Json): string | null | undefined {
 }
 
 function relationSchema(value: unknown): string | null | undefined {
-  const relation = unwrap(value, "RangeVar") ?? (isObject(value) ? value : {});
+  const relation = rangeVar(value);
   if (typeof relation.relname !== "string") {
     return null;
   }

@@ -271,6 +271,7 @@ async function readTarget(
       {
         managedSchema: config.managedSchema,
         schemaRoles: await schemaRoles(session, config.managedSchema),
+        columnOrder: await columnOrder(session, config.managedSchema),
         header: [
           `Adopted from target ${target.name} by super-deploy init --adopt.`,
           "This is the desired schema now: change it, then run draft.",
@@ -351,6 +352,24 @@ async function schemaRoles(
     [managedSchema],
   );
   return rows.map((row) => row.role);
+}
+
+/** Each table's column names in the managed schema, in the target's order. */
+async function columnOrder(
+  session: Session,
+  managedSchema: string,
+): Promise<Record<string, string[]>> {
+  const { rows } = await session.query<{ table: string; columns: string[] }>(
+    `SELECT c.relname AS table, array_agg(a.attname::text ORDER BY a.attnum) AS columns
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+      WHERE c.relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = $1)
+        AND c.relkind IN ('r', 'p')
+        AND a.attnum > 0 AND NOT a.attisdropped
+      GROUP BY c.relname`,
+    [managedSchema],
+  );
+  return Object.fromEntries(rows.map((row) => [row.table, row.columns]));
 }
 
 /** One reason per candidate, in order; an empty answer cancels. */

@@ -29,6 +29,11 @@ export function statementBody(statement: ParsedStatement): Json {
   return isObject(body) ? body : {};
 }
 
+/** A RangeVar, wrapped or not (a statement's own `relation` isn't). */
+export function rangeVar(value: unknown): Json {
+  return unwrap(value, "RangeVar") ?? (isObject(value) ? value : {});
+}
+
 /** The subcommands of an `AlterTableStmt` body. */
 export function alterTableCommands(body: Json): AlterTableCmd[] {
   return list(body.cmds).flatMap((item) => {

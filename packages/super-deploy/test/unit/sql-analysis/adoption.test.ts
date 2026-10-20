@@ -3,7 +3,12 @@
 import { describe, expect, test } from "vitest";
 import { adoptedDesiredSchema } from "../../../src/sql-analysis/index.ts";
 
-const options = { managedSchema: "app", header: ["Adopted."], schemaRoles: [] };
+const options = {
+  managedSchema: "app",
+  header: ["Adopted."],
+  schemaRoles: [],
+  columnOrder: {},
+};
 
 async function kept(statements: string[]): Promise<Record<string, string>> {
   const files = await adoptedDesiredSchema(statements, options);
@@ -131,5 +136,57 @@ REVOKE USAGE ON TYPE "app"."d" FROM PUBLIC;
       "types.sql",
       "grants.sql",
     ]);
+  });
+
+  test("declares the columns the differ adds afterwards in CREATE TABLE, in the target's column order", async () => {
+    const files = await adoptedDesiredSchema(
+      [
+        'CREATE TABLE "app"."people" ("id" bigint NOT NULL, "note" text DEFAULT \'é, (b\', CONSTRAINT "people_pkey" PRIMARY KEY (id));',
+        'ALTER TABLE "app"."people" ADD COLUMN "full_name" text GENERATED ALWAYS AS ((note || \')\'::text)) STORED;',
+        'CREATE DOMAIN "app"."email" AS text;',
+        'ALTER TABLE "app"."people" ADD COLUMN "contact" app.email;',
+        'ALTER TABLE "app"."other" ADD COLUMN "x" app.email;',
+      ],
+      {
+        ...options,
+        columnOrder: { people: ["id", "contact", "note", "full_name"] },
+      },
+    );
+    expect(files.find((file) => file.path === "tables.sql")?.text).toBe(
+      `-- Adopted.
+
+CREATE TABLE "app"."people" ("id" bigint NOT NULL, "contact" app.email, "note" text DEFAULT 'é, (b', "full_name" text GENERATED ALWAYS AS ((note || ')'::text)) STORED, CONSTRAINT "people_pkey" PRIMARY KEY (id));
+
+ALTER TABLE "app"."other" ADD COLUMN "x" app.email;
+`,
+    );
+  });
+
+  test("declares storage parameters the differ sets afterwards in CREATE TABLE ... WITH", async () => {
+    expect(
+      await kept([
+        'CREATE TABLE "app"."a" ("id" integer);',
+        'ALTER TABLE "app"."a" SET (fillfactor=\'70\');',
+        'CREATE TABLE "app"."b" ("id" integer) WITH (autovacuum_enabled=\'false\');',
+        "ALTER TABLE \"app\".\"b\" SET (fillfactor='70', toast_tuple_target='256');",
+      ]),
+    ).toEqual({
+      "tables.sql": `-- Adopted.
+
+CREATE TABLE "app"."a" ("id" integer) WITH (fillfactor='70');
+
+CREATE TABLE "app"."b" ("id" integer) WITH (autovacuum_enabled='false', fillfactor='70', toast_tuple_target='256');
+`,
+    });
+  });
+
+  test("keeps the ALTER TABLE when its CREATE TABLE has no column list to take it", async () => {
+    const statements = [
+      'CREATE TABLE "app"."p1" PARTITION OF "app"."p" FOR VALUES IN (1);',
+      'ALTER TABLE "app"."p1" SET (fillfactor=70);',
+    ];
+    expect(await kept(statements)).toEqual({
+      "tables.sql": `-- Adopted.\n\n${statements.join("\n\n")}\n`,
+    });
   });
 });
