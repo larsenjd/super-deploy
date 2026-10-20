@@ -97,6 +97,7 @@ export {
   DestructiveNotAcknowledgedError,
   DifferError,
   DraftNameRequiredError,
+  DriftError,
   type ErrorCode,
   type GuardedCommand,
   InitConflictError,
@@ -120,6 +121,7 @@ export {
   TargetChangedError,
   TargetLockedError,
   TerminalRequiredError,
+  UnknownRecordedMigrationError,
   UnknownTargetError,
   UnsupportedServerError,
   ValidationFailedError,
@@ -151,4 +153,5 @@ export type {
 } from "./sql-analysis/destructive.ts";
 export { maxDraftNameLength, normaliseDraftName } from "./store/draft-name.ts";
 export type { ProjectPaths } from "./store/layout.ts";
+export type { DriftChange, DriftedObject } from "./verification/drift.ts";
 export { toolVersion } from "./version.ts";

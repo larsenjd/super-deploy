@@ -5,7 +5,8 @@
 //
 // The deploy leg: every finalized step is deployed to target `dev` as soon
 // as it is finalized, and all of them at once (one transaction) to target
-// `fresh` at the end. Ticket 12 can add "status reports no drift" to both.
+// `fresh` at the end; status then reports nothing pending and no drift on
+// both (each deploy also ran the drift check before applying).
 //
 // Not test.concurrent: createTestProject's cleanup uses the global
 // onTestFinished, which can't tell concurrent tests apart.
@@ -66,7 +67,9 @@ export function describeRoundTrips(scenarios: readonly RoundTrip[]): void {
         const all = await deploy(project, { target: "fresh" });
         expect(all.deployed).toHaveLength(scenario.a.trim() === "" ? 3 : 4);
         for (const target of ["dev", "fresh"]) {
-          expect((await status(project, { target })).pending).toEqual([]);
+          const report = await status(project, { target });
+          expect(report.pending, target).toEqual([]);
+          expect(report.drift, target).toEqual([]);
         }
       },
     );

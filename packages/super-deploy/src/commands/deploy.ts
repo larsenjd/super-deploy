@@ -1,9 +1,12 @@
 // `deploy --target X`: apply every pending migration to the target in one
 // transaction, after rehearsing them on a throwaway database that matches the
 // target's locale. Sequence (spec "Deployment engine"): open attempt → lock →
-// pre-flight (deploy/preflight.ts) → [drift check, ticket 12] → rehearse the
-// pending migrations → one transaction on the target → close attempt.
+// pre-flight (deploy/preflight.ts) → drift check → rehearse the pending
+// migrations on the drift replica and require a match with the newest
+// snapshot → one transaction on the target → close attempt. Pre-flight and
+// drift check run even when nothing is pending.
 
+import { join } from "node:path";
 import { applyMigrations, withLockedTarget } from "../deploy/engine.ts";
 import { readRecordedMigrations } from "../deploy/history.ts";
 import { pendingMigrations } from "../deploy/pending.ts";
@@ -13,7 +16,11 @@ import { PreflightFailedError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { rehearseDeployment } from "../rehearsal/rehearse-deployment.ts";
 import { readMigrationUnits } from "../rehearsal/replay.ts";
+import { type MigrationWithUnit, replicaUnits } from "../rehearsal/replica.ts";
+import { analyseDesiredSchema } from "../sql-analysis/index.ts";
+import { readDesiredSchema } from "../store/desired-schema.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
+import { snapshotFolderName } from "../store/migrations.ts";
 
 export interface DeployOptions {
   /** The target's name in config. */
@@ -47,10 +54,12 @@ export async function deploy(
   const { root, paths, config } = project;
   const migrations = await verifiedMigrations(root, paths);
   const units = await readMigrationUnits(root, migrations);
-  const deployable = migrations.map((migration, index) => ({
-    ...migration,
-    unit: units[index] ?? { label: migration.folder, files: [] },
-  }));
+  const deployable: MigrationWithUnit[] = migrations.map(
+    (migration, index) => ({
+      ...migration,
+      unit: units[index] ?? { label: migration.folder, files: [] },
+    }),
+  );
 
   return withLockedTarget(
     project,
@@ -85,19 +94,34 @@ export async function deploy(
       };
       const [first] = pending;
       const last = pending.at(-1);
-      if (first === undefined || last === undefined) {
+      if (first !== undefined && last !== undefined) {
+        await attempt.setRange(first.number, last.number);
+      }
+
+      await rehearseDeployment(project, {
+        targetConfig: target,
+        target: session,
+        request: await targetDatabaseRequest(session),
+        recorded: replicaUnits(target.name, deployable, recorded),
+        pending: pending.map((migration) => migration.unit),
+        snapshot: async () => {
+          const newest = deployable.at(-1) as MigrationWithUnit;
+          const files = await readDesiredSchema(
+            root,
+            join(newest.path, snapshotFolderName),
+          );
+          return {
+            folder: newest.folder,
+            statements: await analyseDesiredSchema(files, {
+              managedSchema: config.managedSchema,
+              externalSchemas: config.externalSchemas,
+            }),
+          };
+        },
+      });
+      if (pending.length === 0) {
         return result;
       }
-      await attempt.setRange(first.number, last.number);
-
-      await rehearseDeployment(
-        project,
-        await targetDatabaseRequest(session),
-        deployable
-          .filter((migration) => migration.number < first.number)
-          .map((migration) => migration.unit),
-        pending.map((migration) => migration.unit),
-      );
 
       await applyMigrations(
         session,

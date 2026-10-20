@@ -52,7 +52,8 @@ const losingAdapter = `{
       },
       async execute(sql) {
         if (lost) dead();
-        deploying ||= sql.includes("lock_timeout");
+        // The drift check reads the catalogs under the same timeouts, READ ONLY.
+        deploying ||= sql.includes("lock_timeout") && !sql.includes("READ ONLY");
         const lose = globalThis.loseCommit;
         if (deploying && sql === "COMMIT" && lose !== undefined) {
           globalThis.loseCommit = undefined;
@@ -201,7 +202,8 @@ const stallingAdapter = `{
           stall();
           await session.query("select pg_sleep(60)");
         }
-        deploying ||= sql.includes("lock_timeout");
+        // The drift check reads the catalogs under the same timeouts, READ ONLY.
+        deploying ||= sql.includes("lock_timeout") && !sql.includes("READ ONLY");
         return session.execute(sql);
       },
     };

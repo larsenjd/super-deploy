@@ -9,17 +9,30 @@
 // (pg_describe_object, also OID-free) so differences can name objects.
 // Column order (attnum) is never compared, and ACLs are normalised with
 // acldefault() so implicit and explicit default grants compare equal.
-// Ownership appears only through default ACLs, which is the same in both
-// databases (one rehearsal login).
+// Ownership is never compared: ACLs name the owner `<owner>` (so a target
+// owned by its deploy role matches a replica owned by the rehearsal login).
 //
 // Binding facts (opt-in) record what each object is bound to: pg_depend
 // edges (the overload a view or default calls, the table a function body
 // reads) and the index each foreign key uses. The order-independence check
 // (ADR-0004) compares them; rehearsals don't.
 import type { Session } from "../adapters/types.ts";
+import { pinnedSettings } from "../rehearsal/throwaway.ts";
 
 const describe = (classTable: string, oid: string, sub = "0") =>
   `pg_describe_object('${classTable}'::regclass, ${oid}, ${sub})`;
+
+/**
+ * An ACL as a sorted list of `grantee:PRIVILEGE[*]/grantor` items, with the
+ * object's owner written `<owner>` and PUBLIC `public`. Ownership is never
+ * compared (REFINEMENTS "Roles, grants and ownership"): a target's objects
+ * belong to its deploy role, a replica's to the rehearsal login.
+ */
+const privileges = (acl: string, owner: string) => `array(
+      select case when e.grantee = 0 then 'public' when e.grantee = ${owner} then '<owner>' else quote_ident(pg_get_userbyid(e.grantee)) end
+        || ':' || e.privilege_type || case when e.is_grantable then '*' else '' end
+        || '/' || case when e.grantor = ${owner} then '<owner>' else quote_ident(pg_get_userbyid(e.grantor)) end
+      from aclexplode(${acl}) e order by 1)::text`;
 
 /** Each query selects `object` and `line`; `$1` is the managed schema. */
 const queries: Readonly<Record<string, string>> = {
@@ -27,7 +40,11 @@ const queries: Readonly<Record<string, string>> = {
     select ${describe("pg_class", "c.oid")},
       c.relkind::text || ' ' || c.relname || ' rls=' || c.relrowsecurity || ' force=' || c.relforcerowsecurity
       || ' persistence=' || c.relpersistence::text || ' options=' || coalesce(c.reloptions::text, '-')
-    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      || ' am=' || coalesce(am.amname, '-') || ' replident=' || c.relreplident::text
+      || ' inherits=' || array(select h.inhparent::regclass::text from pg_inherits h where h.inhrelid = c.oid order by h.inhseqno)::text
+      || ' partkey=' || coalesce(case when c.relkind = 'p' then pg_get_partkeydef(c.oid) end, '-')
+      || ' bound=' || coalesce(pg_get_expr(c.relpartbound, c.oid), '-')
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace left join pg_am am on am.oid = c.relam
     where n.nspname = $1 and c.relkind in ('r','v','m','S','c','p','f')`,
   column: `
     select ${describe("pg_class", "a.attrelid", "a.attnum")},
@@ -35,6 +52,8 @@ const queries: Readonly<Record<string, string>> = {
       || ' notnull=' || a.attnotnull || ' identity=' || a.attidentity::text || ' generated=' || a.attgenerated::text
       || ' default=' || coalesce(pg_get_expr(d.adbin, d.adrelid), '-')
       || ' collation=' || coalesce(nullif(a.attcollation, 0)::regcollation::text, '-')
+      || ' storage=' || a.attstorage::text || ' compression=' || coalesce(nullif(a.attcompression::text, ''), '-')
+      || ' stattarget=' || coalesce(a.attstattarget::text, '-') || ' local=' || a.attislocal
     from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
     left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
     where n.nspname = $1 and a.attnum > 0 and not a.attisdropped and c.relkind in ('r','v','m','c','p','f')`,
@@ -47,6 +66,7 @@ const queries: Readonly<Record<string, string>> = {
     where n.nspname = $1`,
   index: `
     select ${describe("pg_class", "i.indexrelid")}, pg_get_indexdef(i.indexrelid)
+      || ' valid=' || i.indisvalid || ' clustered=' || i.indisclustered || ' replident=' || i.indisreplident
     from pg_index i join pg_class c on c.oid = i.indexrelid join pg_namespace n on n.oid = c.relnamespace
     where n.nspname = $1`,
   view: `
@@ -104,21 +124,59 @@ const queries: Readonly<Record<string, string>> = {
                   union all select 1 from pg_policy o join pg_class c on c.oid = o.polrelid join pg_namespace n on n.oid = c.relnamespace where o.oid = d.objoid and n.nspname = $1)`,
   acl: `
     select ${describe("pg_class", "c.oid")},
-      c.relname || ' ' || array(select x::text from unnest(coalesce(c.relacl, acldefault((case when c.relkind = 'S' then 's' else 'r' end)::"char", c.relowner))) x order by 1)::text
-    from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = $1
+      c.relname || ' ' || ${privileges(`coalesce(c.relacl, acldefault((case when c.relkind = 'S' then 's' else 'r' end)::"char", c.relowner))`, "c.relowner")}
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = $1 and c.relkind not in ('i', 'I')
     union all
     select ${describe("pg_class", "a.attrelid", "a.attnum")},
-      c.relname || '.' || a.attname || ' ' || array(select x::text from unnest(a.attacl) x order by 1)::text
+      c.relname || '.' || a.attname || ' ' || ${privileges("a.attacl", "c.relowner")}
     from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
     where n.nspname = $1 and a.attacl is not null
     union all
     select ${describe("pg_proc", "p.oid")},
-      p.oid::regprocedure::text || ' ' || array(select x::text from unnest(coalesce(p.proacl, acldefault('f'::"char", p.proowner))) x order by 1)::text
+      p.oid::regprocedure::text || ' ' || ${privileges(`coalesce(p.proacl, acldefault('f'::"char", p.proowner))`, "p.proowner")}
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = $1
     union all
-    select ${describe("pg_type", "t.oid")},
-      t.typname || ' ' || array(select x::text from unnest(coalesce(t.typacl, acldefault('T'::"char", t.typowner))) x order by 1)::text
-    from pg_type t join pg_namespace n on n.oid = t.typnamespace where n.nspname = $1 and t.typtype in ('d','c')`,
+    select case when r.relkind is null or r.relkind = 'c' then ${describe("pg_type", "t.oid")} else ${describe("pg_class", "r.oid")} end,
+      t.typname || ' ' || ${privileges(`coalesce(t.typacl, acldefault('T'::"char", t.typowner))`, "t.typowner")}
+    from pg_type t join pg_namespace n on n.oid = t.typnamespace left join pg_class r on r.oid = t.typrelid
+    where n.nspname = $1 and t.typtype in ('d','c')`,
+  // Everything else a schema can hold. Desired schemas can't create these,
+  // so rehearsals never have any; on a target they are drift.
+  other: `
+    select ${describe("pg_proc", "p.oid")}, p.prokind::text || ' ' || p.oid::regprocedure::text
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = $1 and p.prokind not in ('f','p')
+    union all
+    select ${describe("pg_type", "t.oid")}, t.typtype::text || ' ' || t.typname
+    from pg_type t join pg_namespace n on n.oid = t.typnamespace where n.nspname = $1 and t.typtype in ('b','p') and t.typelem = 0
+    union all
+    select ${describe("pg_rewrite", "r.oid")}, pg_get_ruledef(r.oid)
+    from pg_rewrite r join pg_class c on c.oid = r.ev_class join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = $1 and r.rulename <> '_RETURN'
+    union all
+    select ${describe("pg_statistic_ext", "x.oid")}, pg_get_statisticsobjdef(x.oid)
+    from pg_statistic_ext x join pg_namespace n on n.oid = x.stxnamespace where n.nspname = $1
+    union all
+    select ${describe("pg_extension", "e.oid")}, e.extname || ' ' || e.extversion
+    from pg_extension e join pg_namespace n on n.oid = e.extnamespace where n.nspname = $1
+    union all
+    select ${describe("pg_publication_rel", "pr.oid")}, ${describe("pg_publication_rel", "pr.oid")}
+    from pg_publication_rel pr join pg_class c on c.oid = pr.prrelid join pg_namespace n on n.oid = c.relnamespace where n.nspname = $1
+    union all
+    select ${describe("pg_publication_namespace", "pn.oid")}, ${describe("pg_publication_namespace", "pn.oid")}
+    from pg_publication_namespace pn join pg_namespace n on n.oid = pn.pnnspid where n.nspname = $1
+    union all
+    select pg_describe_object(o.class, o.obj, 0), pg_describe_object(o.class, o.obj, 0)
+    from (select 'pg_operator'::regclass, oid, oprnamespace from pg_operator
+          union all select 'pg_opclass'::regclass, oid, opcnamespace from pg_opclass
+          union all select 'pg_opfamily'::regclass, oid, opfnamespace from pg_opfamily
+          union all select 'pg_collation'::regclass, oid, collnamespace from pg_collation
+          union all select 'pg_conversion'::regclass, oid, connamespace from pg_conversion
+          union all select 'pg_ts_config'::regclass, oid, cfgnamespace from pg_ts_config
+          union all select 'pg_ts_dict'::regclass, oid, dictnamespace from pg_ts_dict
+          union all select 'pg_ts_parser'::regclass, oid, prsnamespace from pg_ts_parser
+          union all select 'pg_ts_template'::regclass, oid, tmplnamespace from pg_ts_template) o(class, obj, ns)
+    join pg_namespace n on n.oid = o.ns
+    where n.nspname = $1`,
 };
 
 const bindingQueries: Readonly<Record<string, string>> = {
@@ -150,6 +208,23 @@ export interface CatalogFact {
 export interface CatalogFactOptions {
   /** Also record pg_depend bindings and each foreign key's index. */
   readonly bindings?: boolean;
+  /**
+   * More `SET LOCAL` statements for the read-only transaction the catalogs
+   * are read in, e.g. a target's lock and statement timeouts.
+   */
+  readonly settings?: readonly string[];
+}
+
+/**
+ * Settings that change how definitions are printed (name qualification,
+ * constants in defaults), pinned so two servers' defaults never differ.
+ */
+function readSettings(schema: string): string[] {
+  return [
+    ...pinnedSettings(schema),
+    "SET LOCAL extra_float_digits TO 1",
+    "SET LOCAL bytea_output TO 'hex'",
+  ];
 }
 
 /** Every fact about `schema`, sorted by `kind: line`. */
@@ -160,16 +235,29 @@ export async function catalogFacts(
 ): Promise<CatalogFact[]> {
   const facts: CatalogFact[] = [];
   const all = options.bindings ? { ...queries, ...bindingQueries } : queries;
-  for (const [kind, sql] of Object.entries(all)) {
-    const result = await session.query<{ object: string; line: string }>(
-      `select object, line from (${sql}) as snapshot(object, line)`,
-      [schema],
-    );
-    for (const row of result.rows) {
-      // A view's query is its _RETURN rule; name the view instead.
-      const object = row.object.replace(/^rule _RETURN on /, "");
-      facts.push({ kind, object, line: row.line });
+  await session.execute(
+    [
+      "BEGIN READ ONLY",
+      ...readSettings(schema),
+      ...(options.settings ?? []),
+    ].join(";\n"),
+  );
+  try {
+    for (const [kind, sql] of Object.entries(all)) {
+      const result = await session.query<{ object: string; line: string }>(
+        `select object, line from (${sql}) as snapshot(object, line)`,
+        [schema],
+      );
+      for (const row of result.rows) {
+        // A view's query is its _RETURN rule; name the view instead.
+        const object = row.object.replace(/^rule _RETURN on /, "");
+        facts.push({ kind, object, line: row.line });
+      }
     }
+    await session.execute("COMMIT");
+  } catch (error) {
+    await session.execute("ROLLBACK").catch(() => {});
+    throw error;
   }
   return facts.sort((a, b) => compare(factLine(a), factLine(b)));
 }

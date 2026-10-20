@@ -347,7 +347,8 @@ const pausingAtCommit = `{
     return {
       ...session,
       async execute(sql) {
-        deploying ||= sql.includes("lock_timeout");
+        // The drift check reads the catalogs under the same timeouts, READ ONLY.
+        deploying ||= sql.includes("lock_timeout") && !sql.includes("READ ONLY");
         const pause = globalThis.guardTestBeforeCommit;
         if (deploying && sql === "COMMIT" && pause !== undefined) {
           globalThis.guardTestBeforeCommit = undefined;

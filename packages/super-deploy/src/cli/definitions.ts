@@ -17,6 +17,7 @@ import { validate } from "../commands/validate.ts";
 import type { AttemptRecord } from "../deploy/history.ts";
 import {
   DestructiveNotAcknowledgedError,
+  DriftError,
   OverwriteNotAcknowledgedError,
   ValidationFailedError,
   type ValidationProblem,
@@ -518,7 +519,8 @@ const deployCommand: CommandDefinition = {
 const statusCommand: CommandDefinition = {
   name: "status",
   group: "Deploy",
-  summary: "Show the target's pending migrations and recent attempts",
+  summary:
+    "Show the target's pending migrations, recent attempts and drift (exit 1 on drift)",
   options: [targetOption],
   async run(project, values, context) {
     const report = await status(project, { target: String(values.target) });
@@ -542,6 +544,22 @@ const statusCommand: CommandDefinition = {
         context.result(`  ${refusal}`);
       }
     }
+    if (report.drift === undefined) {
+      context.result(
+        "Drift: not checked (the recorded history doesn't match the project's migrations)",
+      );
+    } else if (report.drift.length > 0) {
+      // `-` lines are on the target only, `+` lines what its recorded migrations produce.
+      context.result(
+        "Drift (the target differs from its recorded migrations):",
+      );
+      for (const drifted of report.drift) {
+        context.result(`  ${drifted.change}: ${drifted.object}`);
+        for (const line of drifted.differences) {
+          context.result(`    ${line}`);
+        }
+      }
+    }
     if (report.pending.length > 0) {
       context.result("Pending:");
       for (const migration of report.pending) {
@@ -553,6 +571,10 @@ const statusCommand: CommandDefinition = {
       for (const attempt of report.attempts) {
         context.result(`  ${describeAttempt(attempt)}`);
       }
+    }
+    if (report.drift !== undefined && report.drift.length > 0) {
+      // Exit 1, so a scheduled status alerts on drift.
+      throw new DriftError(report.target, report.drift);
     }
   },
 };

@@ -2,7 +2,9 @@
 // no lock. It writes only to settle attempts whose outcome was never recorded
 // (`settleAttempts`: a lost COMMIT, a command that died); a target without a
 // history schema is not written to and simply has every migration pending. It
-// reports the deploy pre-flight's findings. Ticket 12 adds drift.
+// reports the deploy pre-flight's findings, and drift: the target's managed
+// schema compared with a replica of its recorded migrations, built on a
+// throwaway database matching its locale (the CLI exits 1 on drift).
 import { settleAttempts } from "../deploy/attempts.ts";
 import {
   type AttemptRecord,
@@ -17,10 +19,16 @@ import {
   type PreflightFindings,
   preflightChecks,
 } from "../deploy/preflight.ts";
-import { connectTarget, resolveTarget } from "../deploy/target.ts";
+import {
+  connectTarget,
+  resolveTarget,
+  targetDatabaseRequest,
+} from "../deploy/target.ts";
 import type { Project } from "../project.ts";
 import { readMigrationUnits } from "../rehearsal/replay.ts";
+import { replicaUnits, withReplica } from "../rehearsal/replica.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
+import { type DriftedObject, driftBetween } from "../verification/drift.ts";
 import type { DeployedMigration } from "./deploy.ts";
 
 export interface StatusOptions {
@@ -43,6 +51,13 @@ export interface StatusReport {
   readonly disposable: boolean;
   /** What the deploy pre-flight finds now; a deployment would refuse on anything but warnings. */
   readonly preflight: PreflightFindings;
+  /**
+   * How the target's managed schema differs from what its recorded
+   * migrations produce (column order and ownership aside). Empty: no drift.
+   * Undefined when the recorded history doesn't match the project's
+   * migrations (`preflight.historyMismatches`), so no replica can be built.
+   */
+  readonly drift: readonly DriftedObject[] | undefined;
 }
 
 export async function status(
@@ -72,6 +87,18 @@ export async function status(
       recorded,
       pending: pending.map((migration) => migration.unit),
     });
+    const drift =
+      preflight.historyMismatches.length > 0
+        ? undefined
+        : await withReplica(
+            project,
+            await targetDatabaseRequest(session),
+            replicaUnits(target.name, withUnits, recorded),
+            (replica) =>
+              driftBetween(session, replica, config.managedSchema, {
+                target,
+              }),
+          );
     return {
       target: target.name,
       historySchemaExists: exists,
@@ -88,6 +115,7 @@ export async function status(
       ),
       disposable: (await readTargetSettings(session, schema)).disposable,
       preflight,
+      drift,
     };
   } finally {
     await session.close().catch(() => {});
