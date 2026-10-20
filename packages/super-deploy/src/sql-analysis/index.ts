@@ -1,10 +1,15 @@
 // SQL analysis (database-free): rules and ordering, sharing one splitter.
 import { SqlRuleViolationError } from "../errors.ts";
-import { orderDesiredSchema } from "./ordering.ts";
+import { type OrderingOptions, orderDesiredSchema } from "./ordering.ts";
 import type { ParsedStatement, SqlFile } from "./parse.ts";
 import { checkRules } from "./rules.ts";
 
-export { type OrderingResult, orderDesiredSchema } from "./ordering.ts";
+export {
+  alternativeOrder,
+  type OrderingOptions,
+  type OrderingResult,
+  orderDesiredSchema,
+} from "./ordering.ts";
 export { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 export { checkRules, type FileKind } from "./rules.ts";
 
@@ -14,6 +19,7 @@ export { checkRules, type FileKind } from "./rules.ts";
  */
 export async function analyseDesiredSchema(
   files: readonly SqlFile[],
+  options: OrderingOptions = {},
 ): Promise<readonly ParsedStatement[]> {
   const violations = [];
   for (const file of files) {
@@ -22,7 +28,7 @@ export async function analyseDesiredSchema(
   if (violations.length > 0) {
     throw new SqlRuleViolationError(violations);
   }
-  const ordering = await orderDesiredSchema(files);
+  const ordering = await orderDesiredSchema(files, options);
   if (ordering.errors.length > 0) {
     throw new SqlRuleViolationError(ordering.errors);
   }

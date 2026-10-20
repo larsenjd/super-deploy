@@ -68,6 +68,7 @@ export {
   MigrationIntegrityError,
   NoDraftError,
   NoMigrationError,
+  OrderDependenceError,
   OverwriteNotAcknowledgedError,
   ProjectNotFoundError,
   RehearsalMismatchError,
