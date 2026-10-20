@@ -66,7 +66,7 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 39. As a developer, I want enums, partitioning, extensions other than `plpgsql`, `serial` columns, `NOT ENFORCED` constraints, virtual generated columns and other unsupported object types refused with a clear reason, so that I know V1's limits up front.
 40. As a developer, I want every index and constraint to require an explicit name, so that names never depend on load order.
 41. As a developer, I want PL/pgSQL bodies checked for dynamic SQL, transaction control and denylisted calls, so that routines can't smuggle in what scripts are forbidden.
-42. As a developer, I want to mark a single dangerous statement with `-- OVERRIDE DANGEROUS COMMAND: <reason>`, so that a justified exception is possible but always visible.
+42. As a developer, I want to override super-deploy's refusal of a single statement with `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>` on the line before it, so that a justified exception is possible but always visible.
 43. As a reviewer, I want every override listed in the migration's metadata, `finalize` output and `validate` report, so that exceptions are never hidden.
 44. As a developer, I want overrides to be impossible for transaction-breaking rules, so that the core guarantee can't be overridden.
 45. As a developer, I want PL/pgSQL routines to reference declared external schemas that rehearsals don't contain, so that loader routines can read other parts of the database.
@@ -140,6 +140,9 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 95. As an integrator, I want commands to connect only to the targets they touch, so that a command that doesn't touch production never needs its credentials.
 96. As a developer, I want the tool to refuse a server that isn't PostgreSQL 18, so that rehearsals and targets always match.
 97. As a contributor, I want the repo's scripts to be TypeScript run by pnpm and the CI to run on Windows, macOS and Linux, so that the tool works the same everywhere.
+98. As a developer, I want to revoke PostgreSQL's default `PUBLIC` privileges (such as `EXECUTE` on functions) on objects the desired schema defines, so that a `SECURITY DEFINER` function is callable only by the roles I grant it to.
+99. As a developer, I want to grant `USAGE` on the managed schema in the desired schema, so that a managed schema other than `public` needs no hand-made grants on each target.
+100. As a developer, I want `init --adopt` to ask me for a reason for each function that needs an override marker, so that I can adopt a database that uses dynamic SQL without first removing those functions from it.
 
 ## Implementation Decisions
 
@@ -170,10 +173,12 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 - Override markers are read from the raw text between statements, because PG18's parser excludes leading comments from statement locations.
 
 **Rules: desired schema** (Q5, Q8, Q22, Q28, Q31, Q35, Q40, Q48, Q49, Q65, Q67)
-- Allowed: `CREATE` of supported object types; `COMMENT ON`; `GRANT`; exactly `ALTER TABLE … ENABLE/FORCE ROW LEVEL SECURITY` and `ALTER TABLE … ADD CONSTRAINT`; `CREATE EXTENSION plpgsql`.
+- Allowed: `CREATE` of supported object types; `COMMENT ON`; `GRANT` on objects it defines; `GRANT USAGE ON SCHEMA` on the managed schema; `REVOKE … FROM PUBLIC` of PostgreSQL's default privileges on objects it defines (`EXECUTE` on functions and procedures, `USAGE` on types and domains); exactly `ALTER TABLE … ENABLE/FORCE ROW LEVEL SECURITY` and `ALTER TABLE … ADD CONSTRAINT`; `CREATE EXTENSION plpgsql`.
 - Supported object types: tables (with stored generated columns), primary key, foreign key, unique, check, exclusion and NOT NULL constraints, indexes, views, materialized views, identity columns, functions, procedures, triggers, domains, composite types, row-level security policies, comments, grants.
 - Refused: enums; partitioned tables; extensions other than `plpgsql`; rules; event triggers; foreign tables and foreign data wrappers; publications and subscriptions; custom casts, operators, aggregates, collations and text-search configurations; standalone sequences; `CREATE STATISTICS`; `serial`/`bigserial`; `NOT ENFORCED` constraints; `VIRTUAL` generated columns (including PG18's keyword-less default).
-- Refused because no load order could make them deterministic: unnamed indexes and constraints; a foreign key whose referenced columns are covered by more than one unique index or constraint; function calls written in column syntax.
+- Also refused in V1: temporary tables and views; table inheritance and typed tables; range and base types; procedural languages and routines in languages other than `sql` and `plpgsql`; routine options other than language, volatility, `STRICT`, security, `LEAKPROOF`, parallel, cost, rows and `SET`; view options other than `security_invoker`, `security_barrier` and `check_option`; custom conversions, transforms and access methods; physical storage settings (unlogged tables, tablespaces, table storage parameters, table access methods, column `STORAGE` and `COMPRESSION`).
+- Grants refused: other schema-level grants (including `CREATE` on the managed schema and anything on other schemas); `GRANT … ON ALL … IN SCHEMA`; every other `REVOKE`; role membership; `ALTER DEFAULT PRIVILEGES`.
+- Refused because no load order could make them deterministic: `IF NOT EXISTS` and `OR REPLACE` (each object is defined exactly once, and the desired schema always loads into an empty schema, so these clauses can only hide a second definition); unnamed indexes and constraints; a foreign key whose referenced columns are covered by more than one unique index or constraint; function calls written in column syntax.
 - Objects live in the managed schema and may reference only `pg_catalog`, except that PL/pgSQL bodies may reference declared external schemas. Objects that bind references at `CREATE` (views, defaults, foreign keys, triggers, `LANGUAGE sql` and `BEGIN ATOMIC` bodies) cannot reference external schemas, because rehearsals don't contain them. `check_function_bodies` stays on.
 
 **Rules: deploy-time SQL** (Q1, Q4, Q6, Q7, Q12, Q16, Q40, Q41, Q42, Q44, Q45, Q47)
@@ -188,7 +193,7 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 
 **Rules: PL/pgSQL bodies** (Q29): refuse `EXECUTE`, `COMMIT`/`ROLLBACK`, denylisted calls and references to undeclared schemas.
 
-**Override marker** (Q24, Q30): `-- OVERRIDE DANGEROUS COMMAND: <reason>` on the line before one statement, reason required. Recorded by object identity so it survives regeneration. Only risk rules (dynamic SQL, denylisted functions) can be overridden, never transaction-breaking rules. Every override appears in migration metadata, `finalize` output and `validate`.
+**Override marker** (Q24, Q30): `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>` on the line before one statement, reason required. Recorded by object identity so it survives regeneration. Only risk rules (dynamic SQL, denylisted functions) can be overridden, never transaction-breaking rules. Every override appears in migration metadata, `finalize` output and `validate`.
 
 **Destructive changes and warnings** (Q25, Q46): drops, column drops, lossy type changes, `DELETE` and `TRUNCATE` need acknowledgement at `finalize`, recorded in metadata. Rewrites and full scans of existing tables (type changes, volatile defaults, `SET NOT NULL`, constraint validation, `CREATE INDEX`, `TRUNCATE`) produce warnings; tables created in the same migration are exempt.
 
@@ -201,7 +206,7 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 **Differ** (Q3, Q17, ADR-0003)
 - The desired schema is read by loading it into a throwaway database and reading the catalogs; SQL is never modelled by parsing.
 - Behind our own `Differ` interface. V1 wraps `@supabase/pg-delta`, pinned to exactly `1.0.0-alpha.59`, calling its extract and plan operations directly. Its directory loader and `@supabase/pg-topo` are never used. Every upgrade re-runs the prototype. Fallback: our own `pg_catalog`/`pg_depend` differ behind the same interface.
-- Column order is never a difference; ownership is not diffed; grants are.
+- Column order is never a difference; ownership is not diffed; grants are, including the managed schema's own grants.
 - Verification, independent of engine: apply the generated migration to a fresh database, read it back, and require an empty diff against the desired schema using both pg-delta and our own `pg_catalog` comparison (pg-delta's own re-diff misses some of its errors).
 - Known pg-delta gaps (prototype `prototype/pg-delta`, `9d619fe`): `BETWEEN` in a check never converges (upstream #544, tracked); PG18 NOT NULL constraint names and comments on constraint-backed indexes are lost (our catalog comparison must catch these); changing an in-use domain's base type is refused.
 
@@ -235,14 +240,15 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 - Locking: a session-level advisory lock taken with try-lock on the command's own connection, keyed from the history schema name, by `deploy`, `mark`, `rebuild`, `deploy-draft` and `disposable`. Contention fails immediately, naming the holding attempt.
 - `deploy` sequence: open attempt → lock → pre-flight (granted roles exist, external schemas exist, deploy-role privilege warning, recorded hashes match the repo) → drift check (replay the target's recorded migrations, each with its recorded variant, on a locale-matched throwaway database; any structural difference refuses, no exceptions) → rehearse the pending migrations on that database (newest Recovery where one exists) and require a match with the newest snapshot → one transaction on the target → close attempt.
 - Inside the transaction: `SET LOCAL` search path (managed schema, then `pg_catalog`), time zone UTC, fixed date and interval styles, the target's lock and statement timeouts. Per migration: pre-migration script, schema change, post-migration script, each as its own batch so errors name the file, with `SET CONSTRAINTS ALL IMMEDIATE` at each migration boundary.
+- Target setup that stays outside super-deploy: roles and role membership; database-level privileges (`CONNECT`, `TEMPORARY`); grants on external schemas and their objects (a `SECURITY DEFINER` function runs as the deploy role, so that role needs them). `ALTER DEFAULT PRIVILEGES` that apply to the deploy role in the managed schema give new objects grants rehearsals don't have, which the drift check refuses.
 - Unknown COMMIT outcome: recorded as unknown, settled on the next `status` or `deploy` by checking the migrations rows written inside the transaction.
 
 **Guarded and recovery commands** (Q14, Q27, Q52)
 - `mark`: next pending migration only; builds a locale-matched replica of migrations up to N and requires an empty diff (column order and ownership ignored); records the original variant; writes only to the target's history schema.
-- `disposable --set yes|no`, `deploy-draft [--with-seed]` (disposable targets only), `rebuild --to N` (disposable only, no seed data).
+- `disposable --set yes|no`, `deploy-draft [--with-seed]` (disposable targets only), `rebuild --to N` (disposable only, no seed data; afterwards the managed schema's grants are exactly those the replayed migrations declare).
 - Guard sequence: refuse in CI or without a terminal on stdin and stdout; check preconditions; show the action plus the target's name, host, database and last recorded migration; require typing `YES` exactly; record a manual attempt under the OS username. Nothing skips it.
 
-**`init`** (Q51): scaffolds from the template bundled in the library package. `--adopt <target>` generates desired-schema files from the target's managed schema, creates migration `00001-adopt`, records it on the target as marked using `mark`'s check, and refuses with a full list if anything V1 refuses is present.
+**`init`** (Q51): scaffolds from the template bundled in the library package. `--adopt <target>` generates desired-schema files from the target's managed schema, creates migration `00001-adopt`, records it on the target as marked using `mark`'s check, and refuses with a full list if anything V1 refuses is present. Functions that need an override marker are not refused when a reason is given: adoption asks for one per function in a terminal (or through a callback in the API) and writes the marker with it; without a terminal it refuses, listing them.
 
 **CLI shell and programmatic API** (Q50, Q57)
 - One set of command definitions drives both `util.parseArgs` flags and an `@clack/prompts` menu grouped into Start, Author, Deploy, Recover and Disposable sections. No `setup` command.

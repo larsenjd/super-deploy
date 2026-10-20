@@ -36,6 +36,10 @@ _Avoid_: Fixtures, test data, sample data
 A finalized replacement for a migration's scripts, used by targets that have not yet run that migration. It never changes the migration's schema change.
 _Avoid_: Hotfix, patch, amended migration
 
+**Override marker**:
+The comment `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>` on the line before one statement, which overrides super-deploy's refusal of that statement for a risk rule. The reason is recorded and always shown to reviewers.
+_Avoid_: Dangerous command, escape hatch, suppression
+
 ## Deploying
 
 **Target**:

@@ -60,11 +60,11 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 
 ## Roles, grants and ownership
 
-**V1:** Roles are cluster-wide and out of scope: the tool never creates or drops them. Grants on managed objects to existing roles are in scope and diffed. Objects are owned by whichever role deploys them and ownership is not diffed. Rehearsals create placeholder roles so grants can be applied.
+**V1:** Roles are cluster-wide and out of scope: the tool never creates or drops them. Grants on managed objects and `USAGE` on the managed schema to existing roles are in scope and diffed, as are revokes of PostgreSQL's default `PUBLIC` privileges on managed objects. Objects are owned by whichever role deploys them and ownership is not diffed, so a `SECURITY DEFINER` function always runs as the deploy role. Rehearsals create placeholder roles so grants can be applied.
 
 **Why narrow:** Roles span every database in a cluster, so one project cannot own them safely.
 
-**Revisit when:** Teams need ownership tracked, default privileges (`ALTER DEFAULT PRIVILEGES`) managed, or role existence verified on targets before deploying.
+**Revisit when:** Teams need ownership tracked (for example a dedicated, low-privilege owner for `SECURITY DEFINER` functions instead of the deploy role), default privileges (`ALTER DEFAULT PRIVILEGES`) managed, or role existence verified on targets before deploying.
 
 ## Extensions
 
@@ -108,9 +108,21 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 
 **V1 refuses:** enums, partitioned tables, extensions other than `plpgsql`, rules (`CREATE RULE`), event triggers, foreign tables and foreign data wrappers, publications and subscriptions, custom casts, operators, aggregates (`CREATE AGGREGATE`), collations and text-search configurations, standalone sequences (identity sequences are allowed), `CREATE STATISTICS`, `serial`/`bigserial` columns, `NOT ENFORCED` constraints, and `VIRTUAL` generated columns.
 
+Also refused, though the spec's first list didn't name them: temporary tables and views; table inheritance and typed tables (`CREATE TABLE ... OF type`); range types and base types; procedural languages and routines in languages other than `sql` and `plpgsql`; routine options such as `WINDOW` and `SUPPORT`; view options other than `security_invoker`, `security_barrier` and `check_option`; custom conversions, transforms and access methods. Physical storage settings have their own entry below.
+
+`IF NOT EXISTS` and `OR REPLACE` are not refinements: they stay refused for good (ADR-0002).
+
 **Why narrow:** Each adds differ coverage, rehearsal-parity or transaction-safety work that V1 does not need.
 
 **Revisit when:** A real project needs one. Enums, partitioning and extensions have their own entries above.
+
+## Physical storage settings
+
+**V1 refuses:** unlogged tables, tablespaces, table storage parameters (`WITH (fillfactor = ...)` and the like), table access methods, and column `STORAGE` and `COMPRESSION` settings.
+
+**Why narrow:** Tablespaces differ between targets and rehearsals, so a rehearsal can't reproduce them. The others don't change what the schema means; they were left out because the differ and catalog comparison weren't verified for them.
+
+**Revisit when:** A project needs unlogged tables (caches, queues, staging) or a lower fillfactor for update-heavy tables. Each needs differ round-trip fixtures and catalog-comparison coverage; changing a table between logged and unlogged rewrites it, so it also needs a rewrite warning.
 
 ## SQL formatting
 
