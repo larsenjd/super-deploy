@@ -4,6 +4,11 @@
       "folder": "00001-add-customers",
       "contentHash": "d0ac0401d9eb956e645d1e670b10cd3e0d81147723841b6ee0a105cc7c3a9844",
       "chainHash": "cb59c32ab292cd316e5f3de3bc4f7089b8eab36867fa02f3ea4de2bf3cc7277a"
+    },
+    {
+      "folder": "00002-add-orders",
+      "contentHash": "42a7c390a0ccf4637048b32ca531de2c4b7316df1b3a14931bc9dfe135b705da",
+      "chainHash": "7362e4e652690c36bd3ec300a180a5b9fe62363736baca4f31931f4beb16220e"
     }
   ]
 }
