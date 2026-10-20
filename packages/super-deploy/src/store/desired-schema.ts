@@ -3,7 +3,7 @@
 // be UTF-8 without a BOM, because finalize hashes them into the snapshot.
 import { mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
-import type { SqlFile } from "../sql-analysis/parse.ts";
+import type { SqlFile } from "../sql-analysis/index.ts";
 import { type HashedFile, normaliseLineEndings } from "./hashing.ts";
 import { projectRelative } from "./layout.ts";
 import { listFiles, readHashedFiles } from "./migrations.ts";

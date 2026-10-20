@@ -57,9 +57,7 @@ import {
 import {
   type AdoptedFile,
   adoptedDesiredSchema,
-} from "../sql-analysis/adoption.ts";
-import { catalogObjectFinding } from "../sql-analysis/desired-schema-rules.ts";
-import {
+  catalogObjectFinding,
   desiredSchemaAnalysis,
   type ParsedStatement,
   type SqlFile,

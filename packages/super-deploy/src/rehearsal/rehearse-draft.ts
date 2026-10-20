@@ -5,7 +5,7 @@
 import { pgDeltaDiffer } from "../differ/pg-delta.ts";
 import { RehearsalMismatchError } from "../errors.ts";
 import type { Project } from "../project.ts";
-import type { ParsedStatement } from "../sql-analysis/parse.ts";
+import type { ParsedStatement } from "../sql-analysis/index.ts";
 import { catalogDifferences } from "../verification/catalog.ts";
 import { checkOrderIndependence } from "./order-independence.ts";
 import { type ReplayUnit, replay } from "./replay.ts";

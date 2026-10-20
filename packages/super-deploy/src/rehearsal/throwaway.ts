@@ -11,12 +11,12 @@ import {
   SuperDeployError,
   UnsupportedServerError,
 } from "../errors.ts";
+import type { ParsedStatement } from "../sql-analysis/index.ts";
 import {
   externalSchemasBoundAtCreate,
   isAlreadyInstalled,
   rolesNamedIn,
 } from "../sql-analysis/index.ts";
-import type { ParsedStatement } from "../sql-analysis/parse.ts";
 
 /**
  * Drafts and draft rehearsals: UTF-8 with PostgreSQL 18's builtin `C.UTF-8`

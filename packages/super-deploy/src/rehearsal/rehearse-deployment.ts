@@ -14,7 +14,7 @@ import type { ResolvedTarget } from "../config/config.ts";
 import { pgDeltaDiffer } from "../differ/pg-delta.ts";
 import { DriftError, RehearsalMismatchError } from "../errors.ts";
 import type { Project } from "../project.ts";
-import type { ParsedStatement } from "../sql-analysis/parse.ts";
+import type { ParsedStatement } from "../sql-analysis/index.ts";
 import { catalogDifferences } from "../verification/catalog.ts";
 import { driftBetween } from "../verification/drift.ts";
 import { type ReplayUnit, replay } from "./replay.ts";
