@@ -147,6 +147,37 @@ None of these is needed with `rawProfile` and the low-level `extract`/`plan`.
 
 Why not build our own: what passed here (dependency-ordered drop/recreate around type changes, FK cycles, view chains, grants with `acldefault` normalisation, identity/domain/policy alters, byte-identical output) is the expensive part. pg-delta has about 42k lines of source and a 331-scenario corpus run on PG14–18. Every failure found is narrow and either caught by condition 2 or loud. Revisit if alpha churn breaks the wrapper repeatedly, if F1 is not fixed upstream, or if a future prototype run finds silent failures that condition 2 does not catch. The fallback stays as the spec describes: our own `pg_catalog`/`pg_depend` differ behind the same interface. `catalog.ts` is a small seed for it.
 
+## 8. Known behaviours (found while building V1)
+
+Added 2026-10-20 from the V1 build, against the same pinned `1.0.0-alpha.59`. What pg-delta does that the rest of super-deploy has to allow for, and where the code allows for it. Read this before changing the differ wrapper, the rules for generated schema changes, adoption or the catalog comparison.
+
+**Silent gaps: pg-delta's re-diff is empty but the structure is wrong**
+
+| Behaviour | Where it is handled |
+|---|---|
+| PG18 NOT NULL constraint names are ignored (F3). A column rename keeps its generated name (`t_old_not_null`), and a custom name is never applied. | `verification/catalog.ts` compares constraint names, so `rehearse` and `finalize` refuse the draft until a pre-migration script runs `ALTER TABLE … RENAME CONSTRAINT`. Adoption refuses a target with a custom name (`not-reproduced`, `commands/adopt.ts`). |
+| Comments on indexes that back a constraint (`COMMENT ON INDEX t_pkey`) are not extracted (F4). | The catalog comparison catches them; adoption refuses them as `not-reproduced`. |
+| Virtual generated columns come out `STORED` (F1). | The desired-schema rules refuse a generated column without `STORED` (`sql-analysis/desired-schema-rules.ts`). |
+| Composite-type attribute order is not diffed (pg-toolbelt #330/#332). | **Not handled.** `verification/catalog.ts` doesn't compare attribute position for any relation kind, so neither check catches a reordered composite type. |
+
+**Loud failures: the run stops with an error**
+
+| Behaviour | Where it is handled |
+|---|---|
+| Nested `AND` with `BETWEEN` or row comparisons in a check never converges (F2, upstream #544). | The rehearsal re-diff fails, so `rehearse` and `finalize` refuse the draft. |
+| Changing the base type of a domain a column uses throws in `plan()` (F5). | `differ/pg-delta.ts` wraps it in `DifferError`, so `draft` stops with pg-delta's message. |
+| A non-transactional action. None seen so far. | `differ/pg-delta.ts` refuses the plan with `DifferError` (ADR-0001). |
+
+**Shapes of generated SQL that other code relies on**
+
+- **Statements sometimes lack the final `;`.** `terminate()` in `differ/pg-delta.ts` adds it.
+- **Changes are made by dropping and creating again.** This covers views, materialized views, indexes, functions, triggers, policies, types and constraints. `sql-analysis/destructive.ts` doesn't count such a pair as destructive unless the object holds data or the drop uses `CASCADE`.
+- **Every `GRANT` follows a `REVOKE ALL` from the same grantee.** PUBLIC's defaults on functions, procedures, types and schemas come out as `REVOKE ALL … FROM PUBLIC`, then a `GRANT` putting back what is kept. The exact output is listed in `test/unit/sql-analysis/deploy-time-rules.test.ts` ("managed-schema grants and PUBLIC revokes"). The rules for generated schema changes allow these forms. The desired schema doesn't allow `REVOKE ALL`, so adoption rewrites PUBLIC's revokes to name the privilege, and drops the revokes from other roles because they change nothing on a new object (`sql-analysis/adoption.ts`).
+- **Ownership comes out as `ALTER … OWNER TO`.** For a schema owned by another role, pg-delta also emits `ALTER SCHEMA … OWNER` and grants to the owner. Ownership isn't modelled: the wrapper passes `defaultOwner: current_user`, and adoption leaves out `OWNER TO` and grants to the owner or the deploy role.
+- **Roles referenced by grants must be declared.** With `scope: "database"`, pg-delta drops role facts, so the wrapper passes every role it saw as `assumedRoles`.
+- **It reads the whole database, not one schema.** Adoption keeps only the managed schema's statements. The drift check doesn't use pg-delta at all and uses the catalog comparison instead (`verification/drift.ts`).
+- **Minor noise.** Some type changes add an extra `ALTER COLUMN … DROP DEFAULT`. Every generated column gives a harmless `dangling_edge` extract diagnostic.
+
 ## Sources
 
 - npm registry metadata for `@supabase/pg-delta`, `@supabase/pg-topo` and `embedded-postgres` (versions, release times, dependencies, licence), read 2026-10-19.

@@ -33,7 +33,9 @@
 //     error_file     text      project-relative file that failed, if any
 //   settings     exactly one row
 //     disposable     boolean   false for new targets (ticket 18 sets it)
-//     layout_version integer   1; bump with an upgrade step when columns change
+//     layout_version integer   1. Unreleased, so layout 1 still changes in
+//                              place; from the first release on, every
+//                              column change bumps it with an upgrade step
 //   deployed_draft  at most one row: the draft `deploy-draft` put on this
 //                (disposable) target. Written INSIDE that command's
 //                transaction, deleted inside `rebuild`'s. While it exists the
