@@ -21,6 +21,8 @@ export type ErrorCode =
   | "rehearsal-mismatch"
   | "migration-integrity"
   | "validation-failed"
+  | "unknown-target"
+  | "target-locked"
   | "no-migration"
   | "overwrite-not-acknowledged";
 
@@ -374,5 +376,58 @@ export class OverwriteNotAcknowledgedError extends SuperDeployError {
 export class InterruptedError extends SuperDeployError {
   constructor(options?: ErrorOptions) {
     super("interrupted", "Interrupted", options);
+  }
+}
+
+/** A command named a target that isn't in the config. */
+export class UnknownTargetError extends SuperDeployError {
+  readonly target: string;
+  /** The targets the config does define. */
+  readonly known: readonly string[];
+
+  constructor(target: string, known: readonly string[]) {
+    super(
+      "unknown-target",
+      `There is no target ${JSON.stringify(target)} in super-deploy.config.ts (${known.length === 0 ? "no targets are defined" : `targets: ${known.join(", ")}`})`,
+    );
+    this.target = target;
+    this.known = known;
+  }
+}
+
+/** The holder of a target's lock, as recorded in its history schema. */
+export interface LockHolder {
+  /** The server process holding the lock. */
+  readonly pid: number | undefined;
+  /** The running attempt that process recorded, if one is found. */
+  readonly attempt:
+    | {
+        readonly id: number;
+        readonly command: string;
+        readonly osUser: string;
+        readonly startedAt: Date;
+      }
+    | undefined;
+}
+
+/** Another command holds the target's lock (deploy, mark, rebuild, deploy-draft, disposable). */
+export class TargetLockedError extends SuperDeployError {
+  readonly target: string;
+  readonly holder: LockHolder;
+
+  constructor(target: string, holder: LockHolder) {
+    const { attempt, pid } = holder;
+    const who =
+      attempt !== undefined
+        ? `attempt #${attempt.id} (${attempt.command} by ${attempt.osUser}, started ${attempt.startedAt.toISOString()})`
+        : pid !== undefined
+          ? `another session (server process ${pid})`
+          : "another session";
+    super(
+      "target-locked",
+      `Target ${target} is locked by ${who}; try again when it has finished`,
+    );
+    this.target = target;
+    this.holder = holder;
   }
 }
