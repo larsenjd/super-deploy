@@ -6,6 +6,7 @@ import { pgDeltaDiffer } from "../differ/pg-delta.ts";
 import type { PlannedStatement } from "../differ/types.ts";
 import { DraftNameRequiredError } from "../errors.ts";
 import type { Project } from "../project.ts";
+import { checkOrderIndependence } from "../rehearsal/order-independence.ts";
 import {
   draftDatabaseRequest,
   ensureManagedSchema,
@@ -52,13 +53,22 @@ export async function draft(
 
   const { config, paths } = project;
   const files = await readDesiredSchema(project.root, paths.desiredSchema);
-  const statements = await analyseDesiredSchema(files);
+  const statements = await analyseDesiredSchema(files, {
+    managedSchema: config.managedSchema,
+  });
 
   const planned = await withThrowawayDatabase(
     config.rehearsal,
     draftDatabaseRequest,
     async (desired) => {
       await loadDesiredSchema(desired, statements, config.managedSchema);
+      await checkOrderIndependence({
+        rehearsal: config.rehearsal,
+        request: draftDatabaseRequest,
+        managedSchema: config.managedSchema,
+        statements,
+        loaded: desired,
+      });
       return withThrowawayDatabase(
         config.rehearsal,
         draftDatabaseRequest,

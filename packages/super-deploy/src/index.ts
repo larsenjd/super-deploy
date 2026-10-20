@@ -37,6 +37,7 @@ export {
   DraftNameRequiredError,
   type ErrorCode,
   InvalidDraftNameError,
+  OrderDependenceError,
   ProjectNotFoundError,
   type RuleViolation,
   SqlRuleViolationError,

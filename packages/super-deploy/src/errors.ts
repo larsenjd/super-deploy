@@ -9,6 +9,7 @@ export type ErrorCode =
   | "draft-name-required"
   | "sql-rule-violation"
   | "desired-schema-load-failed"
+  | "order-dependent-desired-schema"
   | "unsupported-server"
   | "adapter-failed"
   | "differ-failed";
@@ -120,6 +121,45 @@ export class DesiredSchemaLoadError extends SuperDeployError {
     this.line = line;
     this.detail = detail;
   }
+}
+
+/**
+ * The desired schema gives a different catalog, or fails to load, when its
+ * statements load in another valid order (the order-independence check).
+ */
+export class OrderDependenceError extends SuperDeployError {
+  /** The objects whose catalog entries differ, e.g. `view which_pick`, sorted. */
+  readonly objects: readonly string[];
+  /**
+   * The differing catalog facts: `- <object>: <detail>` as loaded in the
+   * normal order, `+ <object>: <detail>` as loaded in the other order.
+   */
+  readonly differences: readonly string[];
+  /** Set when the other order failed to load instead. */
+  readonly failure: { file: string; line: number; detail: string } | undefined;
+
+  constructor(
+    objects: readonly string[],
+    differences: readonly string[],
+    failure?: { file: string; line: number; detail: string },
+    options?: ErrorOptions,
+  ) {
+    super(
+      "order-dependent-desired-schema",
+      failure === undefined
+        ? `The desired schema depends on load order: loaded in another valid order, it gives a different catalog for ${listed(objects)}`
+        : `The desired schema depends on load order: it loads in one valid order but not in another, where ${failure.file}:${failure.line} fails: ${failure.detail}. super-deploy may not see a reference this statement makes; please report it`,
+      options,
+    );
+    this.objects = objects;
+    this.differences = differences;
+    this.failure = failure;
+  }
+}
+
+function listed(objects: readonly string[]): string {
+  const shown = objects.slice(0, 5).join(", ");
+  return objects.length > 5 ? `${shown} and ${objects.length - 5} more` : shown;
 }
 
 /** An adapter connected to a server that isn't PostgreSQL 18. */
