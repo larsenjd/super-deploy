@@ -1,6 +1,7 @@
 // Typed errors thrown by the programmatic API. Every error the library throws
 // on purpose is a SuperDeployError; `code` is stable and meant for programs,
 // `message` is one line meant for people (the CLI prints it after "Error: ").
+import type { PreflightFindings } from "./deploy/preflight.ts";
 import type { OverwriteQuestion } from "./questions.ts";
 
 export type ErrorCode =
@@ -23,8 +24,14 @@ export type ErrorCode =
   | "validation-failed"
   | "unknown-target"
   | "target-locked"
+  | "commit-outcome-unknown"
   | "no-migration"
-  | "overwrite-not-acknowledged";
+  | "overwrite-not-acknowledged"
+  | "preflight-failed"
+  | "terminal-required"
+  | "not-confirmed"
+  | "target-changed"
+  | "init-conflict";
 
 export class SuperDeployError extends Error {
   readonly code: ErrorCode;
@@ -46,6 +53,22 @@ export class ProjectNotFoundError extends SuperDeployError {
       `No super-deploy.config.ts found in ${searchedFrom} or any parent directory`,
     );
     this.searchedFrom = searchedFrom;
+  }
+}
+
+/** `init` would overwrite existing files; nothing was written. */
+export class InitConflictError extends SuperDeployError {
+  readonly directory: string;
+  /** Paths relative to `directory`, sorted. */
+  readonly paths: readonly string[];
+
+  constructor(directory: string, paths: readonly string[]) {
+    super(
+      "init-conflict",
+      `Cannot initialise a project in ${directory}: it already has ${paths.join(", ")}`,
+    );
+    this.directory = directory;
+    this.paths = paths;
   }
 }
 
@@ -429,5 +452,123 @@ export class TargetLockedError extends SuperDeployError {
     );
     this.target = target;
     this.holder = holder;
+  }
+}
+
+/**
+ * The deploy pre-flight refused the target: a role the deployment grants to
+ * or a declared external schema is missing, or its recorded history doesn't
+ * match the repo. Nothing was rehearsed or changed; the attempt is logged as
+ * failed.
+ */
+export class PreflightFailedError extends SuperDeployError {
+  readonly target: string;
+  readonly findings: PreflightFindings;
+
+  constructor(target: string, findings: PreflightFindings) {
+    const roles = findings.missingRoles.map(
+      (role) =>
+        `role "${role}" does not exist (the desired schema grants to it; create it on the target)`,
+    );
+    const schemas = findings.missingExternalSchemas.map(
+      (schema) =>
+        `external schema "${schema}" does not exist (it is declared in externalSchemas)`,
+    );
+    const history = findings.historyMismatches.map(
+      (mismatch) => mismatch.message,
+    );
+    super(
+      "preflight-failed",
+      `Target ${target} failed the deploy pre-flight checks: ${[...roles, ...schemas, ...history].join("; ")}`,
+    );
+    this.target = target;
+    this.findings = findings;
+  }
+}
+
+/** The commands that go through the guard (they ask for YES at a terminal). */
+export type GuardedCommand = "disposable" | "deploy-draft" | "rebuild" | "mark";
+
+/**
+ * A guarded command was run in CI or without a terminal on stdin and stdout.
+ * Nothing was read from or written to the target.
+ */
+export class TerminalRequiredError extends SuperDeployError {
+  readonly command: GuardedCommand;
+  readonly reason: "ci" | "no-terminal";
+
+  constructor(command: GuardedCommand, reason: "ci" | "no-terminal") {
+    super(
+      "terminal-required",
+      `${command} ${reason === "ci" ? "never runs in CI" : "needs a terminal on stdin and stdout"}: run it yourself at a terminal, where it asks you to type YES`,
+    );
+    this.command = command;
+    this.reason = reason;
+  }
+}
+
+/** The person at the terminal did not type YES (or cancelled). Nothing changed. */
+export class NotConfirmedError extends SuperDeployError {
+  readonly command: GuardedCommand;
+  readonly target: string;
+  /** What was typed instead of YES; undefined when the question was cancelled. */
+  readonly typed: string | undefined;
+
+  constructor(
+    command: GuardedCommand,
+    target: string,
+    typed: string | undefined,
+  ) {
+    super(
+      "not-confirmed",
+      `${command} on target ${target} was not confirmed (${typed === undefined ? "cancelled" : `typed ${JSON.stringify(typed)}, not YES`}): nothing changed`,
+    );
+    this.command = command;
+    this.target = target;
+    this.typed = typed;
+  }
+}
+
+/**
+ * The target's recorded migrations or disposable flag changed between showing
+ * them and taking the lock. Nothing changed; run the command again.
+ */
+export class TargetChangedError extends SuperDeployError {
+  readonly command: GuardedCommand;
+  readonly target: string;
+
+  constructor(command: GuardedCommand, target: string) {
+    super(
+      "target-changed",
+      `Target ${target} changed while ${command} waited for YES (its recorded migrations or disposable flag): nothing changed; run ${command} again to see the new details`,
+    );
+    this.command = command;
+    this.target = target;
+  }
+}
+
+/**
+ * The connection to a target was lost while its deploy transaction was
+ * committing, so whether the deployment landed is unknown. The attempt is
+ * recorded as `unknown`; the next `status` or `deploy` settles it as
+ * succeeded or failed from the migrations rows the transaction wrote.
+ */
+export class CommitOutcomeUnknownError extends SuperDeployError {
+  readonly target: string;
+  readonly attemptId: number;
+
+  constructor(target: string, attemptId: number, options?: ErrorOptions) {
+    const cause = options?.cause;
+    const reason =
+      cause === undefined
+        ? ""
+        : ` (${cause instanceof Error ? cause.message : String(cause)})`;
+    super(
+      "commit-outcome-unknown",
+      `Lost the connection to target ${target} during COMMIT, so it is unknown whether attempt #${attemptId} landed; the next status or deploy settles it${reason}`,
+      options,
+    );
+    this.target = target;
+    this.attemptId = attemptId;
   }
 }

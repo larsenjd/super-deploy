@@ -5,8 +5,10 @@
 import { join } from "node:path";
 import { deploy } from "../commands/deploy.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
+import { disposable } from "../commands/disposable.ts";
 import { draft } from "../commands/draft.ts";
 import { finalize } from "../commands/finalize.ts";
+import { init } from "../commands/init.ts";
 import { rehearse } from "../commands/rehearse.ts";
 import { restoreSchema } from "../commands/restore-schema.ts";
 import { status } from "../commands/status.ts";
@@ -115,17 +117,40 @@ export interface CommandContext {
   readonly confirm: ((question: string) => Promise<boolean>) | undefined;
 }
 
-export interface CommandDefinition {
+interface CommandBase {
   readonly name: string;
   readonly group: CommandGroup;
   readonly summary: string;
   readonly options: readonly OptionDefinition[];
+}
+
+/** A command on the project found from the working directory (most commands). */
+export interface ProjectCommandDefinition extends CommandBase {
+  readonly needsProject?: true;
   run(
     project: Project,
     values: OptionValues,
     context: CommandContext,
   ): Promise<void>;
 }
+
+/**
+ * A command that runs in the working directory without loading a project
+ * (`init`). Its options must not need one: no `target` or `migration` kinds,
+ * and no `initial` on `name` options.
+ */
+export interface DirectoryCommandDefinition extends CommandBase {
+  readonly needsProject: false;
+  run(
+    directory: string,
+    values: OptionValues,
+    context: CommandContext,
+  ): Promise<void>;
+}
+
+export type CommandDefinition =
+  | ProjectCommandDefinition
+  | DirectoryCommandDefinition;
 
 /** A command refused to go ahead (exit 1). */
 export class RefusedError extends Error {
@@ -153,6 +178,24 @@ export async function acknowledge(
   }
   return context.confirm(question);
 }
+
+const initCommand: DirectoryCommandDefinition = {
+  name: "init",
+  group: "Start",
+  summary:
+    "Create a project here from the bundled template, with a local embedded PostgreSQL and a dev target",
+  needsProject: false,
+  options: [],
+  async run(directory, _values, context) {
+    const result = await init({ directory });
+    context.result(
+      `Initialised a super-deploy project in ${context.displayPath(result.root)}`,
+    );
+    context.result(
+      "Next: pnpm install, add CREATE statements under data-model/desired-schema/, then run draft",
+    );
+  },
+};
 
 const draftCommand: CommandDefinition = {
   name: "draft",
@@ -399,7 +442,10 @@ const deployCommand: CommandDefinition = {
     "Rehearse every pending migration, then apply them all to the target in one transaction",
   options: [targetOption],
   async run(project, values, context) {
-    const result = await deploy(project, { target: String(values.target) });
+    const result = await deploy(project, {
+      target: String(values.target),
+      onWarning: (warning) => context.warn(`warning: ${warning}`),
+    });
     context.result(
       result.deployed.length === 0
         ? `Target ${result.target} is up to date: nothing to deploy`
@@ -415,9 +461,26 @@ const statusCommand: CommandDefinition = {
   options: [targetOption],
   async run(project, values, context) {
     const report = await status(project, { target: String(values.target) });
+    const { preflight } = report;
+    for (const warning of preflight.warnings) {
+      context.warn(`warning: ${warning}`);
+    }
     context.result(
       `Target ${report.target}${report.disposable ? " (disposable)" : ""}: ${plural(report.recorded.length, "migration")} recorded, ${report.pending.length} pending`,
     );
+    const refusals = [
+      ...preflight.missingRoles.map((role) => `role "${role}" does not exist`),
+      ...preflight.missingExternalSchemas.map(
+        (schema) => `external schema "${schema}" does not exist`,
+      ),
+      ...preflight.historyMismatches.map((mismatch) => mismatch.message),
+    ];
+    if (refusals.length > 0) {
+      context.result("Deploy would refuse:");
+      for (const refusal of refusals) {
+        context.result(`  ${refusal}`);
+      }
+    }
     if (report.pending.length > 0) {
       context.result("Pending:");
       for (const migration of report.pending) {
@@ -430,6 +493,36 @@ const statusCommand: CommandDefinition = {
         context.result(`  ${describeAttempt(attempt)}`);
       }
     }
+  },
+};
+
+const disposableCommand: CommandDefinition = {
+  name: "disposable",
+  group: "Disposable",
+  summary:
+    "Flag the target as disposable (or not) in its own history schema; asks you to type YES",
+  options: [
+    targetOption,
+    {
+      name: "set",
+      kind: "choice",
+      choices: ["yes", "no"],
+      description:
+        "yes to make the target disposable, no to make it not disposable",
+      required: true,
+    },
+  ],
+  async run(project, values, context) {
+    const result = await disposable(project, {
+      target: String(values.target),
+      set: values.set === "yes",
+    });
+    const what = result.disposable ? "disposable" : "not disposable";
+    context.result(
+      result.changed
+        ? `Target ${result.target} is now ${what}`
+        : `Target ${result.target} is already ${what}: nothing changed`,
+    );
   },
 };
 
@@ -459,6 +552,7 @@ function plural(count: number, noun: string): string {
 }
 
 export const commands: readonly CommandDefinition[] = [
+  initCommand,
   draftCommand,
   rehearseCommand,
   finalizeCommand,
@@ -468,4 +562,5 @@ export const commands: readonly CommandDefinition[] = [
   validateCommand,
   deployCommand,
   statusCommand,
+  disposableCommand,
 ];
