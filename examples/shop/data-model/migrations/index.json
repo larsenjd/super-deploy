@@ -18,7 +18,14 @@
     {
       "folder": "00004-unique-customer-emails",
       "contentHash": "ef5a4736f5659903872f6c8c7748b702e2d8b5afbad6f67d4c0feb582d8a0ad5",
-      "chainHash": "14086f2ba0ae17b906cc43b33ede3387ef5c158f5c9b97b298de3ed5fbe9e887"
+      "chainHash": "14086f2ba0ae17b906cc43b33ede3387ef5c158f5c9b97b298de3ed5fbe9e887",
+      "recoveries": [
+        {
+          "folder": "recovery-1",
+          "contentHash": "cf81126b67de8a078ba0a3b31be87c96bca59dd041a866758d0eadc582c5132e",
+          "chainHash": "6e5f1729a808b9f11446506fdbde3892a54e8fc893a3957ecd8dfee9c8062831"
+        }
+      ]
     }
   ]
 }
