@@ -1,7 +1,8 @@
 // `validate [--strict]`: database-free checks for the pre-commit hook.
 // Errors: the migrations index, folder names and numbering, content hashes
 // and the hash chain; rule violations in the desired schema, in every
-// finalized migration's deploy-time files and in the draft's. Warnings: an unfinalized draft, and desired-schema
+// finalized migration's deploy-time files and seed data, and in the draft's.
+// Warnings: an unfinalized draft, and desired-schema
 // changes not yet drafted. `strict` turns warnings into failures.
 //
 // Read-only state: git does not store it, so a fresh checkout has writable
@@ -17,7 +18,7 @@ import {
   type ValidationProblem,
 } from "../errors.ts";
 import type { Project } from "../project.ts";
-import { readReplayUnit } from "../rehearsal/replay.ts";
+import { readSeededUnit, seededFiles } from "../rehearsal/seed-data.ts";
 import { analyseDesiredSchema, type SqlFile } from "../sql-analysis/index.ts";
 import {
   readDesiredSchema,
@@ -146,7 +147,7 @@ export async function validate(
 
 /**
  * Rule violations as errors: every finalized migration's deploy-time files
- * (only when the migrations verify, so the files are the ones finalized), the
+ * and seed data (only when the migrations verify, so the files are the ones finalized), the
  * desired schema, and the draft's files.
  */
 async function ruleProblems(
@@ -166,7 +167,9 @@ async function ruleProblems(
         const own = await snapshot(migration.path);
         violations.push(
           ...(await checkReplayUnit(
-            await readReplayUnit(root, migration.path, migration.folder),
+            seededFiles(
+              await readSeededUnit(root, migration.path, migration.folder),
+            ),
             { managedSchema: config.managedSchema, schemas: [previous, own] },
           )),
         );
@@ -188,7 +191,9 @@ async function ruleProblems(
     if (draftName !== undefined) {
       violations.push(
         ...(await checkReplayUnit(
-          await readReplayUnit(root, paths.draft, `draft ${draftName}`),
+          seededFiles(
+            await readSeededUnit(root, paths.draft, `draft ${draftName}`),
+          ),
           {
             managedSchema: config.managedSchema,
             schemas: [previous, desired],
