@@ -183,7 +183,7 @@ describe("order-independence check in draft", () => {
     expect(error).toMatchObject({
       code: "order-dependent-desired-schema",
       objects: ["table beta"],
-      differences: ["+ comment: pg_class beta sub=0 created first"],
+      differences: ["+ comment: pg_class beta created first"],
       failure: undefined,
     });
     expect((error as Error).message).toContain("table beta");

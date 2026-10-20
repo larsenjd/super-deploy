@@ -10,7 +10,8 @@
 // Column order (attnum) is never compared, except for composite types:
 // their values are built by position (ROW(...), '(a,b)'), so an attribute's
 // position among the live ones is part of the type (pg-delta doesn't diff
-// it). ACLs are normalised with acldefault() so implicit and explicit default
+// it). So a column's comment names the column, never its attnum (objsubid).
+// ACLs are normalised with acldefault() so implicit and explicit default
 // grants compare equal.
 // Ownership is never compared: ACLs name the owner `<owner>` (so a target
 // owned by its deploy role matches a replica owned by the rehearsal login).
@@ -140,7 +141,9 @@ const queries: Readonly<Record<string, string>> = {
              (select tgname from pg_trigger where oid = d.objoid and d.classoid = 'pg_trigger'::regclass),
              (select polname from pg_policy where oid = d.objoid and d.classoid = 'pg_policy'::regclass),
              d.objoid::text)
-           || ' sub=' || d.objsubid || ' ' || d.description
+           || coalesce((select '.' || attname from pg_attribute
+                        where attrelid = d.objoid and attnum = d.objsubid and d.classoid = 'pg_class'::regclass), '')
+           || ' ' || d.description
     from pg_description d
     where d.classoid in ('pg_class'::regclass, 'pg_proc'::regclass, 'pg_constraint'::regclass,
                          'pg_type'::regclass, 'pg_trigger'::regclass, 'pg_policy'::regclass)

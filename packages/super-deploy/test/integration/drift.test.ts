@@ -144,6 +144,40 @@ create index orders_customer_idx on orders (customer_id);
     expect((await status(project, { target: "dev" })).drift).toEqual([]);
   });
 
+  test("names a column comment by its column, so the column's position doesn't count", async () => {
+    const { project, database } = await deployProject(server, {
+      "customers.sql": `${customers}comment on column customers.name is 'Full name';\n`,
+    });
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+
+    // Re-create the column: it is now the third attribute, after a dropped one.
+    await server.query(
+      `alter table customers drop column name;
+       alter table customers add column name text not null;
+       comment on column customers.name is 'Full name';`,
+      [],
+      database,
+    );
+    expect((await status(project, { target: "dev" })).drift).toEqual([]);
+
+    await server.query(
+      "comment on column customers.name is 'Display name'",
+      [],
+      database,
+    );
+    expect((await status(project, { target: "dev" })).drift).toEqual([
+      {
+        object: "column name of table customers",
+        change: "changed",
+        differences: [
+          "- comment: pg_class customers.name Display name",
+          "+ comment: pg_class customers.name Full name",
+        ],
+      },
+    ]);
+  });
+
   test("counts the order of a composite type's attributes, ignoring dropped ones", async () => {
     const { project, database } = await deployProject(server, {
       "size.sql": "create type size as (width integer, height integer);\n",

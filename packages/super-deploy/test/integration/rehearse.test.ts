@@ -124,6 +124,71 @@ describe("rehearse", () => {
     ]);
   });
 
+  test("a comment on a domain-typed column passes, though pg-delta adds the column last", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: {
+        "data-model/desired-schema/types.sql":
+          "create domain email_address as text constraint email_address_check check (value like '%@%');\n",
+        "data-model/desired-schema/customers.sql": `create table customers (
+  id bigint primary key,
+  email email_address not null,
+  name text not null
+);
+comment on column customers.email is 'Login e-mail';
+`,
+      },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    await draft(project, { name: "Add customers" });
+
+    await expect(rehearse(project)).resolves.toMatchObject({
+      name: "add-customers",
+    });
+  });
+
+  test("a comment on a column that a later migration moves to another position rehearses and finalizes", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: {
+        "data-model/desired-schema/t.sql": `create table t (id bigint primary key, b text);
+comment on column t.b is 'bee';
+`,
+      },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    await finalizeMigration(project, "Add t");
+    await dir.write(
+      "data-model/desired-schema/t.sql",
+      `create table t (id bigint primary key, a text, b text);
+comment on column t.b is 'bee';
+`,
+    );
+    await draft(project, { name: "Add a" });
+
+    await expect(finalize(project)).resolves.toMatchObject({ name: "add-a" });
+  });
+
+  test("a changed column comment is a difference, naming the column", async () => {
+    const { dir, project } = await draftedProject(
+      `${customers}comment on column customers.name is 'Full name';\n`,
+    );
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      `${customers}comment on column customers.name is 'Display name';\n`,
+    );
+
+    const error = await rehearse(project).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RehearsalMismatchError);
+    expect((error as RehearsalMismatchError).differences).toEqual(
+      expect.arrayContaining([
+        "catalog: - comment: pg_class customers.name Full name",
+        "catalog: + comment: pg_class customers.name Display name",
+      ]),
+    );
+  });
+
   test("names the file and line PostgreSQL refused while replaying, and rolls back", async () => {
     const { dir, project } = await draftedProject();
     const file = "data-model/draft/schema-change.sql";
