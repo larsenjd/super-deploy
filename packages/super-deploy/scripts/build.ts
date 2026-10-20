@@ -11,7 +11,7 @@ const distDir = join(packageDir, "dist");
 const templateDir = join(packageDir, "..", "template");
 
 /** Paths inside the template package that are workspace artefacts, not template content. */
-const excludedNames = new Set(["node_modules", "dist"]);
+const excludedNames = new Set(["node_modules", "dist", ".super-deploy"]);
 
 rmSync(distDir, { recursive: true, force: true });
 

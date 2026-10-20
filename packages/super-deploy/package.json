@@ -15,6 +15,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./embedded-postgres": {
+      "types": "./dist/adapters/embedded-postgres.d.ts",
+      "default": "./dist/adapters/embedded-postgres.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -26,15 +30,33 @@
     "format:file": "biome format --write --no-errors-on-unmatched",
     "lint": "biome check",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "test:unit": "vitest run --project unit",
-    "test:integration": "vitest run --project integration --passWithNoTests",
+    "test:integration": "vitest run --project integration",
     "precommit": "biome check && tsc --noEmit && vitest run --project unit"
+  },
+  "dependencies": {
+    "@pgsql/types": "18.0.0",
+    "@supabase/pg-delta": "1.0.0-alpha.59",
+    "libpg-query": "18.1.5",
+    "pg": "8.23.1",
+    "pg-connection-string": "2.14.1"
+  },
+  "peerDependencies": {
+    "embedded-postgres": "18.4.0-beta.17"
+  },
+  "peerDependenciesMeta": {
+    "embedded-postgres": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "embedded-postgres": "18.4.0-beta.17",
     "typescript": "7.0.2",
+    "vite": "8.3.4",
     "vitest": "5.0.5"
   }
 }

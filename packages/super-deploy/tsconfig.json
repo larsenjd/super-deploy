@@ -20,7 +20,11 @@
     "rewriteRelativeImportExtensions": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "super-deploy": ["./src/index.ts"],
+      "super-deploy/embedded-postgres": ["./src/adapters/embedded-postgres.ts"]
+    }
   },
   "include": ["src", "test", "scripts", "vitest.config.ts"]
 }
