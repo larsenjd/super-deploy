@@ -1,8 +1,9 @@
-// `status --target X`: what a deployment to the target would do. Read-only:
-// one session, no lock, nothing written (a target without a history schema
-// simply has every migration pending). It reports the deploy pre-flight's
-// findings. Tickets 12 and 14 add drift and settling attempts whose COMMIT
-// outcome was lost.
+// `status --target X`: what a deployment to the target would do. One session,
+// no lock. It writes only to settle attempts whose outcome was never recorded
+// (`settleAttempts`: a lost COMMIT, a command that died); a target without a
+// history schema is not written to and simply has every migration pending. It
+// reports the deploy pre-flight's findings. Ticket 12 adds drift.
+import { settleAttempts } from "../deploy/attempts.ts";
 import {
   type AttemptRecord,
   historySchemaExists,
@@ -59,6 +60,10 @@ export async function status(
   const session = await connectTarget(target);
   try {
     const schema = config.historySchema;
+    const exists = await historySchemaExists(session, schema);
+    if (exists) {
+      await settleAttempts(session, schema);
+    }
     const recorded = await readRecordedMigrations(session, schema);
     const pending = pendingMigrations(withUnits, recorded);
     const preflight = await preflightChecks(session, project, {
@@ -69,7 +74,7 @@ export async function status(
     });
     return {
       target: target.name,
-      historySchemaExists: await historySchemaExists(session, schema),
+      historySchemaExists: exists,
       recorded,
       pending: pending.map(({ number, name, folder }) => ({
         number,

@@ -24,9 +24,13 @@ export type ErrorCode =
   | "validation-failed"
   | "unknown-target"
   | "target-locked"
+  | "commit-outcome-unknown"
   | "no-migration"
   | "overwrite-not-acknowledged"
   | "preflight-failed"
+  | "terminal-required"
+  | "not-confirmed"
+  | "target-changed"
   | "init-conflict";
 
 export class SuperDeployError extends Error {
@@ -479,5 +483,92 @@ export class PreflightFailedError extends SuperDeployError {
     );
     this.target = target;
     this.findings = findings;
+  }
+}
+
+/** The commands that go through the guard (they ask for YES at a terminal). */
+export type GuardedCommand = "disposable" | "deploy-draft" | "rebuild" | "mark";
+
+/**
+ * A guarded command was run in CI or without a terminal on stdin and stdout.
+ * Nothing was read from or written to the target.
+ */
+export class TerminalRequiredError extends SuperDeployError {
+  readonly command: GuardedCommand;
+  readonly reason: "ci" | "no-terminal";
+
+  constructor(command: GuardedCommand, reason: "ci" | "no-terminal") {
+    super(
+      "terminal-required",
+      `${command} ${reason === "ci" ? "never runs in CI" : "needs a terminal on stdin and stdout"}: run it yourself at a terminal, where it asks you to type YES`,
+    );
+    this.command = command;
+    this.reason = reason;
+  }
+}
+
+/** The person at the terminal did not type YES (or cancelled). Nothing changed. */
+export class NotConfirmedError extends SuperDeployError {
+  readonly command: GuardedCommand;
+  readonly target: string;
+  /** What was typed instead of YES; undefined when the question was cancelled. */
+  readonly typed: string | undefined;
+
+  constructor(
+    command: GuardedCommand,
+    target: string,
+    typed: string | undefined,
+  ) {
+    super(
+      "not-confirmed",
+      `${command} on target ${target} was not confirmed (${typed === undefined ? "cancelled" : `typed ${JSON.stringify(typed)}, not YES`}): nothing changed`,
+    );
+    this.command = command;
+    this.target = target;
+    this.typed = typed;
+  }
+}
+
+/**
+ * The target's recorded migrations or disposable flag changed between showing
+ * them and taking the lock. Nothing changed; run the command again.
+ */
+export class TargetChangedError extends SuperDeployError {
+  readonly command: GuardedCommand;
+  readonly target: string;
+
+  constructor(command: GuardedCommand, target: string) {
+    super(
+      "target-changed",
+      `Target ${target} changed while ${command} waited for YES (its recorded migrations or disposable flag): nothing changed; run ${command} again to see the new details`,
+    );
+    this.command = command;
+    this.target = target;
+  }
+}
+
+/**
+ * The connection to a target was lost while its deploy transaction was
+ * committing, so whether the deployment landed is unknown. The attempt is
+ * recorded as `unknown`; the next `status` or `deploy` settles it as
+ * succeeded or failed from the migrations rows the transaction wrote.
+ */
+export class CommitOutcomeUnknownError extends SuperDeployError {
+  readonly target: string;
+  readonly attemptId: number;
+
+  constructor(target: string, attemptId: number, options?: ErrorOptions) {
+    const cause = options?.cause;
+    const reason =
+      cause === undefined
+        ? ""
+        : ` (${cause instanceof Error ? cause.message : String(cause)})`;
+    super(
+      "commit-outcome-unknown",
+      `Lost the connection to target ${target} during COMMIT, so it is unknown whether attempt #${attemptId} landed; the next status or deploy settles it${reason}`,
+      options,
+    );
+    this.target = target;
+    this.attemptId = attemptId;
   }
 }
