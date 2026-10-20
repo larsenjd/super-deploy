@@ -497,6 +497,16 @@ describe("refused statements and clauses", () => {
       /^COMMENT ON EXTENSION is not allowed/,
     ],
     [
+      "COMMENT ON SERVER, worded as in SQL",
+      "comment on server s is 'x'",
+      /^COMMENT ON SERVER is not allowed/,
+    ],
+    [
+      "GRANT ON FOREIGN SERVER, worded like COMMENT ON SERVER",
+      "grant usage on foreign server s to r",
+      /^GRANT ON SERVER is not allowed/,
+    ],
+    [
       "CREATE OR REPLACE VIEW",
       "create or replace view v as select 1 as a",
       /^CREATE OR REPLACE VIEW is not allowed.*exactly once/,

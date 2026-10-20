@@ -15,7 +15,7 @@ import type { ParsedStatement } from "./parse.ts";
 import { plpgsqlFindings, sqlBodyFindings } from "./routine-bodies.ts";
 import type { RuleContext, RuleFinding } from "./rule-types.ts";
 import { schemaFindings } from "./schemas.ts";
-import { statementName } from "./statement-names.ts";
+import { objectTypeKeyword, statementName } from "./statement-names.ts";
 import {
   defElemString,
   defElems,
@@ -540,7 +540,7 @@ function checkComment(node: Json): RuleFinding[] {
     ? []
     : [
         notAllowed(
-          `COMMENT ON ${objectTypeName(node.objtype)} is not allowed in the desired schema: comment only on the objects it defines`,
+          `COMMENT ON ${objectTypeKeyword(node.objtype)} is not allowed in the desired schema: comment only on the objects it defines`,
         ),
       ];
 }
@@ -573,7 +573,7 @@ function checkGrant(node: Json): RuleFinding[] {
   if (!grantTypes.has(String(node.objtype))) {
     return [
       notAllowed(
-        `GRANT ON ${objectTypeName(node.objtype)} is not allowed in the desired schema: grant only on the objects it defines`,
+        `GRANT ON ${objectTypeKeyword(node.objtype)} is not allowed in the desired schema: grant only on the objects it defines`,
       ),
     ];
   }
@@ -591,12 +591,6 @@ function checkExtension(node: Json): RuleFinding[] {
         ),
       ]
     : [];
-}
-
-function objectTypeName(objtype: unknown): string {
-  return String(objtype)
-    .replace(/^OBJECT_/, "")
-    .replaceAll("_", " ");
 }
 
 /**

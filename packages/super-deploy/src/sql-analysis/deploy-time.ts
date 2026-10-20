@@ -53,7 +53,11 @@ import { pgCatalogFunctions, pgCatalogRelations } from "./pg-catalog-names.ts";
 import { plpgsqlFindings, sqlBodyFindings } from "./routine-bodies.ts";
 import type { RuleId } from "./rule-catalogue.ts";
 import type { RuleContext } from "./rule-types.ts";
-import { objectTypeName, statementName } from "./statement-names.ts";
+import {
+  objectTypeKeyword,
+  objectTypeName,
+  statementName,
+} from "./statement-names.ts";
 import {
   alterTableCommands,
   type Json,
@@ -806,7 +810,7 @@ function detailFindings(
     const drop = body as DropStmt;
     if (!managedObjectTypes.has(drop.removeType ?? "")) {
       unsupportedFeature(
-        `DROP ${objectTypeName(drop.removeType).toUpperCase()} is not supported: super-deploy manages only the objects in its schema`,
+        `DROP ${objectTypeKeyword(drop.removeType)} is not supported: super-deploy manages only the objects in its schema`,
       );
     }
   }
@@ -824,7 +828,7 @@ function detailFindings(
       body.objtype !== "OBJECT_SCHEMA"
     ) {
       unsupportedFeature(
-        `COMMENT ON ${objectTypeName(String(body.objtype)).toUpperCase()} is not supported: super-deploy manages only the objects in its schema`,
+        `COMMENT ON ${objectTypeKeyword(body.objtype)} is not supported: super-deploy manages only the objects in its schema`,
       );
     }
   }

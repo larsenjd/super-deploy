@@ -117,3 +117,10 @@ export function objectTypeName(objectType: string | undefined): string {
       .replaceAll("_", " ")
   );
 }
+
+/** `OBJECT_MATVIEW` -> `MATERIALIZED VIEW`, as SQL names it after `DROP`, `COMMENT ON` or `GRANT ... ON`. */
+export function objectTypeKeyword(objectType: unknown): string {
+  return objectTypeName(
+    typeof objectType === "string" ? objectType : undefined,
+  ).toUpperCase();
+}
