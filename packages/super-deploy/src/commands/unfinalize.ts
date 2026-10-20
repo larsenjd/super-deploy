@@ -14,7 +14,7 @@
 // desired schema is left alone). `recoveryOf: N` picks migration N's newest
 // Recovery instead, for a Recovery of an older migration.
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import {
   NoMigrationError,
   NoRecoveryError,
@@ -39,10 +39,15 @@ import {
   recoveriesFolderName,
   schemaChangeFileName,
   snapshotFolderName,
+  writeFiles,
   writeIndex,
 } from "../store/migrations.ts";
 import { draftName } from "./discard-draft.ts";
-import { discarding, pendingRestore } from "./restore-schema.ts";
+import {
+  discarding,
+  pendingRestore,
+  type RestoredDesiredSchema,
+} from "./restore-schema.ts";
 
 export interface UnfinalizeOptions extends OverwriteOptions {
   /**
@@ -53,7 +58,7 @@ export interface UnfinalizeOptions extends OverwriteOptions {
   readonly recoveryOf?: number;
 }
 
-export interface UnfinalizeResult {
+export interface UnfinalizeResult extends RestoredDesiredSchema {
   readonly number: number;
   readonly name: string;
   /** The migration's folder name, e.g. `00001-add-customers` (removed unless a Recovery was unfinalized). */
@@ -62,12 +67,6 @@ export interface UnfinalizeResult {
   readonly recovery: number | undefined;
   /** Absolute path of the draft folder. */
   readonly draftPath: string;
-  /** Project-relative paths of desired-schema files written from the snapshot. */
-  readonly restored: readonly string[];
-  /** Project-relative paths of desired-schema files deleted (not in the snapshot). */
-  readonly deleted: readonly string[];
-  /** Name of the draft that was replaced, if there was one. */
-  readonly discardedDraft: string | undefined;
 }
 
 export async function unfinalize(
@@ -124,11 +123,7 @@ export async function unfinalize(
   });
 
   await rm(paths.draft, { recursive: true, force: true });
-  for (const file of draftFiles) {
-    const target = join(paths.draft, file.path);
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, file.text);
-  }
+  await writeFiles(paths.draft, draftFiles);
   await writeDraftMetadata(paths, {
     name: newest.name,
     desiredSchemaHash: desiredSchemaHash(snapshot),
@@ -183,11 +178,7 @@ async function unfinalizeRecovery(
 
   await rm(paths.draft, { recursive: true, force: true });
   await mkdir(paths.draft, { recursive: true });
-  for (const file of files) {
-    const target = join(paths.draft, file.path);
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, file.text);
-  }
+  await writeFiles(paths.draft, files);
   await writeFile(
     paths.draftSchemaChange,
     await readFile(join(migration.path, schemaChangeFileName)),

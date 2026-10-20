@@ -1,5 +1,7 @@
 // Throwaway databases from the rehearsal adapter: always PostgreSQL 18,
 // always dropped, with session settings pinned identically to deployments.
+
+import { inTransaction } from "../adapters/transaction.ts";
 import type {
   DatabaseRequest,
   RehearsalAdapter,
@@ -30,6 +32,8 @@ export const draftDatabaseRequest: DatabaseRequest = {
   collationProvider: "builtin",
 };
 
+const rehearsalAdapter = "The rehearsal adapter";
+
 /**
  * Creates a throwaway database, checks it is PostgreSQL 18, runs `use` on a
  * session to it, then closes the session and drops the database whatever
@@ -40,11 +44,14 @@ export async function withThrowawayDatabase<T>(
   request: DatabaseRequest,
   use: (session: Session) => Promise<T>,
 ): Promise<T> {
-  const database = await adapterCall("create a throwaway database", () =>
-    adapter.createDatabase(request),
+  const database = await adapterCall(
+    rehearsalAdapter,
+    "create a throwaway database",
+    () => adapter.createDatabase(request),
   );
   try {
     const session = await adapterCall(
+      rehearsalAdapter,
       `connect to throwaway database ${database.name}`,
       () => database.connect(),
     );
@@ -55,8 +62,10 @@ export async function withThrowawayDatabase<T>(
       await session.close().catch(() => {});
     }
   } finally {
-    await adapterCall(`drop throwaway database ${database.name}`, () =>
-      database.drop(),
+    await adapterCall(
+      rehearsalAdapter,
+      `drop throwaway database ${database.name}`,
+      () => database.drop(),
     );
   }
 }
@@ -84,6 +93,18 @@ export function pinnedSettings(managedSchema: string): string[] {
     "SET LOCAL IntervalStyle TO 'postgres'",
     "SET LOCAL check_function_bodies TO on",
   ];
+}
+
+/** Runs `body` in one transaction that starts with the pinned settings. */
+export function inPinnedTransaction(
+  session: Session,
+  managedSchema: string,
+  body: () => Promise<void>,
+): Promise<void> {
+  return inTransaction(session, async () => {
+    await session.execute(pinnedSettings(managedSchema).join(";\n"));
+    await body();
+  });
 }
 
 /** Creates the managed schema if the database doesn't have it yet. */
@@ -143,9 +164,7 @@ export async function loadDesiredSchema(
 ): Promise<void> {
   await ensureManagedSchema(session, managedSchema);
   await ensureRoles(session, rolesNamedIn(statements));
-  await session.execute("BEGIN");
-  try {
-    await session.execute(pinnedSettings(managedSchema).join(";\n"));
+  await inPinnedTransaction(session, managedSchema, async () => {
     for (const statement of statements) {
       if (isAlreadyInstalled(statement)) {
         continue;
@@ -170,11 +189,7 @@ export async function loadDesiredSchema(
         );
       }
     }
-    await session.execute("COMMIT");
-  } catch (error) {
-    await session.execute("ROLLBACK").catch(() => {});
-    throw error;
-  }
+  });
 }
 
 function externalHint(
@@ -219,7 +234,12 @@ function linesBefore(text: string, position: string | undefined): number {
     .filter((character) => character === "\n").length;
 }
 
-async function adapterCall<T>(
+/**
+ * Calls an adapter, turning anything it throws (other than a SuperDeployError)
+ * into an AdapterError: "`adapter` failed to `action`: reason".
+ */
+export async function adapterCall<T>(
+  adapter: string,
   action: string,
   call: () => Promise<T>,
 ): Promise<T> {
@@ -230,11 +250,8 @@ async function adapterCall<T>(
       throw error;
     }
     const reason = error instanceof Error ? error.message : String(error);
-    throw new AdapterError(
-      `The rehearsal adapter failed to ${action}: ${reason}`,
-      {
-        cause: error,
-      },
-    );
+    throw new AdapterError(`${adapter} failed to ${action}: ${reason}`, {
+      cause: error,
+    });
   }
 }

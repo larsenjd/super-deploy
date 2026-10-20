@@ -26,12 +26,13 @@ import { constants, type Dirent } from "node:fs";
 import {
   access,
   chmod,
+  mkdir,
   readdir,
   readFile,
   stat,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { DeployTimeKind } from "../sql-analysis/index.ts";
 import { maxDraftNameLength } from "./draft-name.ts";
 import { decodeHashedText, type HashedFile } from "./hashing.ts";
@@ -272,18 +273,36 @@ export async function writeIndex(
   );
 }
 
-/** Paths (relative to `folder`, forward slashes, sorted) of every file under it. */
-export async function listFiles(folder: string): Promise<string[]> {
-  let entries: Dirent[];
+/** The entries in `folder` (and its subfolders, if `recursive`); none if it doesn't exist. */
+export async function readFolder(
+  folder: string,
+  recursive = false,
+): Promise<Dirent[]> {
   try {
-    entries = await readdir(folder, { recursive: true, withFileTypes: true });
+    return await readdir(folder, { recursive, withFileTypes: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return [];
     }
     throw error;
   }
-  return entries
+}
+
+/** Writes each file at its path under `folder`, creating folders as needed. */
+export async function writeFiles(
+  folder: string,
+  files: Iterable<HashedFile>,
+): Promise<void> {
+  for (const file of files) {
+    const target = join(folder, file.path);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, file.text);
+  }
+}
+
+/** Paths (relative to `folder`, forward slashes, sorted) of every file under it. */
+export async function listFiles(folder: string): Promise<string[]> {
+  return (await readFolder(folder, true))
     .filter((entry) => entry.isFile())
     .map((entry) => projectRelative(folder, join(entry.parentPath, entry.name)))
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));

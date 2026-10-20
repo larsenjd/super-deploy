@@ -28,12 +28,13 @@
     "build": "node scripts/build.ts",
     "format": "biome format --write",
     "format:file": "biome format --write --no-errors-on-unmatched",
-    "lint": "biome check",
+    "lint": "biome check && pnpm run duplicates",
+    "duplicates": "jscpd src --min-tokens 30 && jscpd test --min-tokens 80",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
-    "precommit": "biome check && tsc --noEmit && vitest run --project unit"
+    "precommit": "biome check && pnpm run duplicates && tsc --noEmit && vitest run --project unit"
   },
   "dependencies": {
     "@clack/core": "1.5.1",
@@ -58,6 +59,7 @@
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
     "embedded-postgres": "18.4.0-beta.17",
+    "jscpd": "5.4.1",
     "typescript": "7.0.2",
     "vite": "8.3.4",
     "vitest": "5.0.5"

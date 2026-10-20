@@ -297,31 +297,24 @@ async function ruleProblems(
       }
       violations.push(...error.violations);
     }
-    if (draft !== undefined && draft.recoveryOf === undefined) {
+    // A draft is checked between the newest snapshot and the desired schema;
+    // a Recovery draft against its migration's snapshots. A Recovery draft's
+    // copy of the schema change is the migration's (checked with it) unless
+    // edited, which recoveryDraftProblems reports.
+    const draftSides =
+      draft?.recoveryOf === undefined
+        ? { before: previous, after: desired }
+        : around.get(draft.recoveryOf);
+    if (draft !== undefined && draftSides !== undefined) {
       collect(
         await analyseReplayUnit(
           seededFiles(
             await readSeededUnit(root, paths.draft, `draft ${draft.name}`),
           ),
-          { ...rules, schemas: [previous, desired] },
+          { ...rules, schemas: [draftSides.before, draftSides.after] },
         ),
+        draft.recoveryOf === undefined ? undefined : notSchemaChange,
       );
-    } else if (draft?.recoveryOf !== undefined) {
-      // Checked against its migration's snapshots. Its copy of the schema
-      // change is the migration's (checked with it) unless edited, which
-      // recoveryDraftProblems reports.
-      const sides = around.get(draft.recoveryOf);
-      if (sides !== undefined) {
-        collect(
-          await analyseReplayUnit(
-            seededFiles(
-              await readSeededUnit(root, paths.draft, `draft ${draft.name}`),
-            ),
-            { ...rules, schemas: [sides.before, sides.after] },
-          ),
-          notSchemaChange,
-        );
-      }
     }
   } catch (error) {
     if (!(error instanceof InvalidEncodingError)) {

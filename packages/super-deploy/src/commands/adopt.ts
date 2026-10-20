@@ -46,6 +46,7 @@ import {
   connectTarget,
   resolveTarget,
   targetDatabaseRequest,
+  targetTimeouts,
 } from "../deploy/target.ts";
 import { differ } from "../differ/index.ts";
 import {
@@ -89,11 +90,7 @@ import {
   readIndex,
 } from "../store/migrations.ts";
 import { catalogFacts } from "../verification/catalog.ts";
-import {
-  type DriftChange,
-  driftBetween,
-  targetTimeouts,
-} from "../verification/drift.ts";
+import { type DriftChange, driftBetween } from "../verification/drift.ts";
 import { schemaSetupRoles } from "../verification/schema-setup.ts";
 import { draft } from "./draft.ts";
 import { finalize } from "./finalize.ts";

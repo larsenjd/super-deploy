@@ -303,76 +303,24 @@ describe("deploy", () => {
   });
 
   test("fails fast when a lock isn't granted within the target's lock timeout", async () => {
-    const { dir, project, database } = await deployProject(
-      server,
-      { "customers.sql": customers },
-      { target: 'lockTimeout: "200ms",' },
+    const { project, error } = await deployWhileCustomersLocked(
+      'lockTimeout: "200ms",',
     );
-    await finalizeMigration(project, "add customers");
-    await deploy(project, { target: "dev" });
-    await dir.write(
-      "data-model/desired-schema/customers.sql",
-      customers.replace(
-        "name text not null",
-        "name text not null,\n  email text",
-      ),
-    );
-    await finalizeMigration(project, "add email");
-    const holder = await testSession(server, database);
-    try {
-      await holder.execute(
-        // ACCESS SHARE: the drift check can still read the table's
-        // definition, but the migration's ALTER TABLE has to wait.
-        "BEGIN; LOCK TABLE customers IN ACCESS SHARE MODE",
-      );
 
-      const error = await deploy(project, { target: "dev" }).catch(
-        (e: unknown) => e,
-      );
-
-      expect(error).toBeInstanceOf(SqlFileFailedError);
-      expect((error as SqlFileFailedError).detail).toMatch(/lock timeout/);
-    } finally {
-      await holder.close();
-    }
+    expect(error).toBeInstanceOf(SqlFileFailedError);
+    expect((error as SqlFileFailedError).detail).toMatch(/lock timeout/);
     expect(
       (await deploy(project, { target: "dev" })).deployed.map((m) => m.number),
     ).toEqual([2]);
   });
 
   test("cancels a statement that runs longer than the target's statement timeout", async () => {
-    const { dir, project, database } = await deployProject(
-      server,
-      { "customers.sql": customers },
-      { target: 'lockTimeout: "1min", statementTimeout: "300ms",' },
+    const { error } = await deployWhileCustomersLocked(
+      'lockTimeout: "1min", statementTimeout: "300ms",',
     );
-    await finalizeMigration(project, "add customers");
-    await deploy(project, { target: "dev" });
-    await dir.write(
-      "data-model/desired-schema/customers.sql",
-      customers.replace(
-        "name text not null",
-        "name text not null,\n  email text",
-      ),
-    );
-    await finalizeMigration(project, "add email");
-    const holder = await testSession(server, database);
-    try {
-      await holder.execute(
-        // ACCESS SHARE: the drift check can still read the table's
-        // definition, but the migration's ALTER TABLE has to wait.
-        "BEGIN; LOCK TABLE customers IN ACCESS SHARE MODE",
-      );
 
-      const error = await deploy(project, { target: "dev" }).catch(
-        (e: unknown) => e,
-      );
-
-      expect(error).toBeInstanceOf(SqlFileFailedError);
-      expect((error as SqlFileFailedError).detail).toMatch(/statement timeout/);
-    } finally {
-      await holder.close();
-    }
+    expect(error).toBeInstanceOf(SqlFileFailedError);
+    expect((error as SqlFileFailedError).detail).toMatch(/statement timeout/);
   });
 
   test("pins search path, time zone, date and interval styles and the target's timeouts inside the transaction", async () => {
@@ -539,6 +487,41 @@ const pausingAdapter = `{
 }`;
 
 /** Makes the next deployment through `pausingAdapter` wait at COMMIT until released. */
+/**
+ * Deploys migration 1 (customers) to a target configured with `target`, then
+ * deploys migration 2 (an ALTER TABLE on customers) while another session
+ * holds ACCESS SHARE on customers: the drift check can still read the
+ * table's definition, but the ALTER TABLE has to wait. Returns what the
+ * second deploy threw, once the lock is released.
+ */
+async function deployWhileCustomersLocked(target: string) {
+  const { dir, project, database } = await deployProject(
+    server,
+    { "customers.sql": customers },
+    { target },
+  );
+  await finalizeMigration(project, "add customers");
+  await deploy(project, { target: "dev" });
+  await dir.write(
+    "data-model/desired-schema/customers.sql",
+    customers.replace(
+      "name text not null",
+      "name text not null,\n  email text",
+    ),
+  );
+  await finalizeMigration(project, "add email");
+  const holder = await testSession(server, database);
+  try {
+    await holder.execute("BEGIN; LOCK TABLE customers IN ACCESS SHARE MODE");
+    const error = await deploy(project, { target: "dev" }).catch(
+      (e: unknown) => e,
+    );
+    return { project, error };
+  } finally {
+    await holder.close();
+  }
+}
+
 function pauseAtCommit(): { reached: Promise<void>; release: () => void } {
   let release = () => {};
   const reached = new Promise<void>((resolveReached) => {

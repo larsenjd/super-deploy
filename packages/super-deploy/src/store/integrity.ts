@@ -2,8 +2,6 @@
 // index, folder names, numbering, content hashes and the hash chains. `validate` reports its
 // findings; every command that builds on the migrations (draft, rehearse,
 // finalize) refuses to run while it finds errors.
-import type { Dirent } from "node:fs";
-import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
   InvalidEncodingError,
@@ -24,6 +22,7 @@ import {
   isRecoveryPath,
   parseMigrationFolderName,
   parseRecoveryFolderName,
+  readFolder,
   readHashedFiles,
   readIndex,
   recoveriesFolderName,
@@ -59,14 +58,7 @@ export async function checkMigrations(
   }
 
   // What is on disk.
-  let entries: Dirent[] = [];
-  try {
-    entries = await readdir(paths.migrations, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
-  }
+  const entries = await readFolder(paths.migrations);
   const onDisk = new Map<number, string>();
   for (const entry of entries) {
     const path = display(join(paths.migrations, entry.name));
@@ -147,25 +139,16 @@ export async function checkMigrations(
       );
       continue;
     }
-    try {
-      const files = await readHashedFiles(
-        root,
-        path,
-        (file) => !isRecoveryPath(file),
-      );
-      if (migrationContentHash(entry.folder, files) !== entry.contentHash) {
-        problem(
-          "content-hash-mismatch",
-          `${display(path)} was changed after it was finalized (its content hash does not match ${indexPath})`,
-          display(path),
-        );
-      }
-    } catch (error) {
-      if (!(error instanceof InvalidEncodingError)) {
-        throw error;
-      }
-      problem("invalid-encoding", error.message, error.file);
-    }
+    await checkContentHash(
+      display(path),
+      indexPath,
+      problem,
+      async () =>
+        migrationContentHash(
+          entry.folder,
+          await readHashedFiles(root, path, (file) => !isRecoveryPath(file)),
+        ) === entry.contentHash,
+    );
     recoveries.push(
       ...(await checkRecoveries(root, entry, path, indexPath, problem)),
     );
@@ -183,6 +166,33 @@ export async function checkMigrations(
 }
 
 /**
+ * Reports a finalized folder (`shownPath`) whose files no longer hash to what
+ * the index records (`matches` resolves false), or that holds a file that
+ * isn't valid UTF-8.
+ */
+async function checkContentHash(
+  shownPath: string,
+  indexPath: string,
+  problem: (code: string, message: string, path?: string) => void,
+  matches: () => Promise<boolean>,
+): Promise<void> {
+  try {
+    if (!(await matches())) {
+      problem(
+        "content-hash-mismatch",
+        `${shownPath} was changed after it was finalized (its content hash does not match ${indexPath})`,
+        shownPath,
+      );
+    }
+  } catch (error) {
+    if (!(error instanceof InvalidEncodingError)) {
+      throw error;
+    }
+    problem("invalid-encoding", error.message, error.file);
+  }
+}
+
+/**
  * A migration's Recoveries: the index's entries against the folders under
  * `<migration>/recoveries/`, their content hashes and their chain (which
  * starts from the migration's chain hash). Problems go to `problem`.
@@ -196,14 +206,7 @@ async function checkRecoveries(
 ): Promise<FinalizedRecovery[]> {
   const display = (absolute: string) => projectRelative(root, absolute);
   const folder = join(migrationPath, recoveriesFolderName);
-  let entries: Dirent[] = [];
-  try {
-    entries = await readdir(folder, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
-  }
+  const entries = await readFolder(folder);
   const onDisk = new Set<string>();
   for (const dirent of entries) {
     const path = display(join(folder, dirent.name));
@@ -259,24 +262,17 @@ async function checkRecoveries(
       );
       continue;
     }
-    try {
-      const files = await readHashedFiles(root, path);
-      if (
-        recoveryContentHash(entry.folder, recovery.folder, files) !==
-        recovery.contentHash
-      ) {
-        problem(
-          "content-hash-mismatch",
-          `${display(path)} was changed after it was finalized (its content hash does not match ${indexPath})`,
-          display(path),
-        );
-      }
-    } catch (error) {
-      if (!(error instanceof InvalidEncodingError)) {
-        throw error;
-      }
-      problem("invalid-encoding", error.message, error.file);
-    }
+    await checkContentHash(
+      display(path),
+      indexPath,
+      problem,
+      async () =>
+        recoveryContentHash(
+          entry.folder,
+          recovery.folder,
+          await readHashedFiles(root, path),
+        ) === recovery.contentHash,
+    );
   }
   for (const name of [...onDisk].sort()) {
     const path = display(join(folder, name));

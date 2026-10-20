@@ -3,13 +3,9 @@
 // server, and read the locale its rehearsals must match.
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
-import {
-  AdapterError,
-  SuperDeployError,
-  UnknownTargetError,
-} from "../errors.ts";
+import { AdapterError, UnknownTargetError } from "../errors.ts";
 import type { Project } from "../project.ts";
-import { requirePostgres18 } from "../rehearsal/throwaway.ts";
+import { adapterCall, requirePostgres18 } from "../rehearsal/throwaway.ts";
 
 /** The configured target called `name`, or UnknownTargetError. */
 export function resolveTarget(project: Project, name: string): ResolvedTarget {
@@ -22,25 +18,27 @@ export function resolveTarget(project: Project, name: string): ResolvedTarget {
   return target;
 }
 
+/** `SET LOCAL` statements for a target's lock and statement timeouts. */
+export function targetTimeouts(target: ResolvedTarget): string[] {
+  return [
+    `SET LOCAL lock_timeout TO '${target.lockTimeoutMs}ms'`,
+    ...(target.statementTimeoutMs === undefined
+      ? []
+      : [`SET LOCAL statement_timeout TO '${target.statementTimeoutMs}ms'`]),
+  ];
+}
+
 /**
  * Opens a session to `target` through its adapter and refuses a server that
  * isn't PostgreSQL 18. Every call is one `adapter.connect()`; a deployment
  * calls it twice (see deploy/engine.ts for which session is which).
  */
 export async function connectTarget(target: ResolvedTarget): Promise<Session> {
-  let session: Session;
-  try {
-    session = await target.adapter.connect();
-  } catch (error) {
-    if (error instanceof SuperDeployError) {
-      throw error;
-    }
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new AdapterError(
-      `The deployment adapter of target ${target.name} failed to connect: ${reason}`,
-      { cause: error },
-    );
-  }
+  const session = await adapterCall(
+    `The deployment adapter of target ${target.name}`,
+    "connect",
+    () => target.adapter.connect(),
+  );
   try {
     await requirePostgres18(session, `Target ${target.name}`);
   } catch (error) {

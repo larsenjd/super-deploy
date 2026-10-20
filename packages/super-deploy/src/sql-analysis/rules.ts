@@ -12,7 +12,11 @@ import {
   type DeployTimeOptions,
 } from "./deploy-time.ts";
 import { desiredSchemaFindings } from "./desired-schema-rules.ts";
-import { applyMarker, type Override, scanMarkers } from "./overrides.ts";
+import {
+  checkMarkedStatements,
+  type Override,
+  violationOf,
+} from "./overrides.ts";
 import { parseSqlFile, type SqlFile } from "./parse.ts";
 import type { RuleContext } from "./rule-types.ts";
 
@@ -62,34 +66,13 @@ export async function analyseFile(
     managedSchema: context.managedSchema ?? defaultContext.managedSchema,
     externalSchemas: context.externalSchemas ?? defaultContext.externalSchemas,
   };
-  const scan = scanMarkers(file, parsed.statements);
-  const violations: RuleViolation[] = [];
-  const overrides: Override[] = [];
-  const pending = [...scan.violations];
-  parsed.statements.forEach((statement, index) => {
-    while (pending[0] !== undefined && pending[0].line < statement.line) {
-      violations.push(pending.shift() as RuleViolation);
-    }
-    const found = desiredSchemaFindings(statement, resolved).map(
-      ({ line, ...finding }): RuleViolation => ({
-        file: statement.file,
-        line: line ?? statement.line,
-        statement: statement.text,
-        ...finding,
-      }),
-    );
-    const marked = applyMarker(
-      statement,
-      index,
-      scan,
-      found,
-      resolved.managedSchema,
-    );
-    violations.push(...marked.violations);
-    if (marked.override !== undefined) {
-      overrides.push(marked.override);
-    }
-  });
-  violations.push(...pending);
-  return { violations, overrides };
+  return checkMarkedStatements(
+    file,
+    parsed.statements,
+    resolved.managedSchema,
+    (statement) =>
+      desiredSchemaFindings(statement, resolved).map((finding) =>
+        violationOf(statement, finding),
+      ),
+  );
 }

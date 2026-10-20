@@ -1,0 +1,6 @@
+{
+  "minLines": 5,
+  "ignorePattern": ["(?m)^import\\s[^;]*;"],
+  "exitCode": 1,
+  "noTips": true
+}

@@ -375,10 +375,7 @@ export class ChangeTracker {
       const table = existing(relation);
       const prefix = `ALTER TABLE ${display(relation)}`;
       for (const cmd of table === undefined ? [] : alterTableCommands(body)) {
-        const column = unwrap(cmd.def, "ColumnDef") as ColumnDef | undefined;
-        const constraint = unwrap(cmd.def, "Constraint") as
-          | Constraint
-          | undefined;
+        const { column, constraint } = commandDefinition(cmd);
         const name = cmd.name ?? column?.colname ?? "";
         switch (cmd.subtype) {
           case "AT_AlterColumnType":
@@ -630,10 +627,7 @@ function createdKeys(statement: ParsedStatement, body: Json): string[] {
     case "AlterTableStmt": {
       const table = relation("relation");
       return alterTableCommands(body).flatMap((cmd) => {
-        const column = unwrap(cmd.def, "ColumnDef") as ColumnDef | undefined;
-        const constraint = unwrap(cmd.def, "Constraint") as
-          | Constraint
-          | undefined;
+        const { column, constraint } = commandDefinition(cmd);
         if (cmd.subtype === "AT_AddColumn" && column?.colname !== undefined) {
           return [`column:${table}.${column.colname}`];
         }
@@ -977,4 +971,15 @@ function display(relation: RangeVar | undefined): string {
   return [relation?.schemaname, relation?.relname]
     .filter((part) => part !== undefined)
     .join(".");
+}
+
+/** The column or constraint an ALTER TABLE subcommand defines, if any. */
+function commandDefinition(cmd: AlterTableCmd): {
+  column: ColumnDef | undefined;
+  constraint: Constraint | undefined;
+} {
+  return {
+    column: unwrap<ColumnDef>(cmd.def, "ColumnDef"),
+    constraint: unwrap<Constraint>(cmd.def, "Constraint"),
+  };
 }

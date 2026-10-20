@@ -73,6 +73,7 @@ export {
 } from "./commands/recovery.ts";
 export { type RehearseResult, rehearse } from "./commands/rehearse.ts";
 export {
+  type RestoredDesiredSchema,
   type RestoreSchemaOptions,
   type RestoreSchemaResult,
   restoreSchema,
@@ -104,6 +105,7 @@ export type {
   AttemptOutcome,
   AttemptRecord,
   DeployedDraft,
+  MigrationVariantIdentity,
   RecordedMigration,
 } from "./deploy/history.ts";
 export type {

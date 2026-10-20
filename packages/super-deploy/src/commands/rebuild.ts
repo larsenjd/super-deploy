@@ -108,11 +108,7 @@ export async function rebuild(
       };
     },
     async run({ target, session, attempt }, plan) {
-      const first = plan[0];
-      const last = plan.at(-1);
-      if (first !== undefined && last !== undefined) {
-        await attempt.setRange(first.number, last.number);
-      }
+      await attempt.setRange(plan);
       const applyOptions = {
         managedSchema: config.managedSchema,
         historySchema: config.historySchema,

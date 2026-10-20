@@ -19,8 +19,8 @@ export interface AttemptStart {
 
 export interface Attempt {
   readonly id: number;
-  /** Records the range of migrations it applies. */
-  setRange(fromMigration: number, toMigration: number): Promise<void>;
+  /** Records the range of migrations it applies: the first's number to the last's; nothing when empty. */
+  setRange(migrations: readonly { readonly number: number }[]): Promise<void>;
   /** Ends a running attempt; later calls do nothing. */
   end(
     outcome: Exclude<AttemptOutcome, "running">,
@@ -50,7 +50,12 @@ export async function openAttempt(
   let ended = false;
   return {
     id,
-    async setRange(fromMigration, toMigration) {
+    async setRange(migrations) {
+      const fromMigration = migrations[0]?.number;
+      const toMigration = migrations.at(-1)?.number;
+      if (fromMigration === undefined || toMigration === undefined) {
+        return;
+      }
       await log.query(
         `UPDATE ${table} SET from_migration = $2, to_migration = $3 WHERE id = $1`,
         [id, fromMigration, toMigration],

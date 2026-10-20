@@ -48,6 +48,7 @@
 //
 // Every statement schema-qualifies its tables: deploy transactions pin
 // search_path to the managed schema and pg_catalog.
+import { inTransaction } from "../adapters/transaction.ts";
 import type { Session } from "../adapters/types.ts";
 import { lockKey } from "./lock.ts";
 
@@ -60,15 +61,20 @@ export type AttemptOutcome =
   | "abandoned"
   | "unknown";
 
-/** A migration as a target's history schema records it. */
-export interface RecordedMigration {
+/** Which migration, and which of its variants, a history row records. */
+export interface MigrationVariantIdentity {
   readonly number: number;
   readonly name: string;
   readonly contentHash: string;
   readonly chainHash: string;
   /** Undefined for the original scripts, K for Recovery K. */
   readonly recovery: number | undefined;
-  /** Recovery K's chain hash when it was recorded; undefined for the original. */
+  /** Required with `recovery`: Recovery K's chain hash; undefined for the original. */
+  readonly recoveryChainHash?: string | undefined;
+}
+
+/** A migration as a target's history schema records it. */
+export interface RecordedMigration extends MigrationVariantIdentity {
   readonly recoveryChainHash: string | undefined;
   readonly attemptId: number;
   readonly recordedHow: "deployed" | "marked";
@@ -135,8 +141,7 @@ export async function ensureHistorySchema(
   const attempts = historyTable(schema, "attempts");
   const settings = historyTable(schema, "settings");
   const deployedDraft = historyTable(schema, "deployed_draft");
-  await session.execute("BEGIN");
-  try {
+  await inTransaction(session, async () => {
     await session.query("SELECT pg_advisory_xact_lock($1::bigint)", [
       lockKey(schema, "create-history"),
     ]);
@@ -185,11 +190,7 @@ CREATE TABLE IF NOT EXISTS ${deployedDraft} (
 );
 INSERT INTO ${settings} (layout_version) VALUES (${historyLayoutVersion})
   ON CONFLICT (singleton) DO NOTHING`);
-    await session.execute("COMMIT");
-  } catch (error) {
-    await session.execute("ROLLBACK").catch(() => {});
-    throw error;
-  }
+  });
 }
 
 /** The target's recorded migrations in number order; none if it has no history schema yet. */
@@ -228,14 +229,7 @@ export async function readRecordedMigrations(
 }
 
 /** What a deployment writes for each migration, inside its transaction. */
-export interface MigrationRecord {
-  readonly number: number;
-  readonly name: string;
-  readonly contentHash: string;
-  readonly chainHash: string;
-  readonly recovery: number | undefined;
-  /** Required with `recovery`: Recovery K's chain hash. */
-  readonly recoveryChainHash?: string | undefined;
+export interface MigrationRecord extends MigrationVariantIdentity {
   readonly attemptId: number;
   readonly recordedHow: "deployed" | "marked";
 }

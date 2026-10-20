@@ -692,26 +692,20 @@ const extractors: Record<string, Extractor> = {
   },
 
   ViewStmt(body, facts, collector) {
-    const view = relName(body.view);
-    facts.kind = "view";
-    facts.identity = `view ${view}`;
-    facts.provides.push(`rel:${view}`, `type:${view}`);
-    collector.walk(body.query);
-    dropCteReferences(collector);
-    return true;
+    return viewFacts("view", relName(body.view), body, facts, collector);
   },
 
   CreateTableAsStmt(body, facts, collector) {
     if (body.objtype !== "OBJECT_MATVIEW") {
       return undefined;
     }
-    const view = relName((body.into as Json | undefined)?.rel);
-    facts.kind = "materialized view";
-    facts.identity = `materialized view ${view}`;
-    facts.provides.push(`rel:${view}`, `type:${view}`);
-    collector.walk(body.query);
-    dropCteReferences(collector);
-    return true;
+    return viewFacts(
+      "materialized view",
+      relName((body.into as Json | undefined)?.rel),
+      body,
+      facts,
+      collector,
+    );
   },
 
   CompositeTypeStmt(body, facts, collector) {
@@ -1056,6 +1050,22 @@ const extractors: Record<string, Extractor> = {
     return true;
   },
 };
+
+/** A view or materialized view: provides its relation and row type; references what its query does. */
+function viewFacts(
+  kind: "view" | "materialized view",
+  view: string,
+  body: Json,
+  facts: StatementFacts,
+  collector: Collector,
+): true {
+  facts.kind = kind;
+  facts.identity = `${kind} ${view}`;
+  facts.provides.push(`rel:${view}`, `type:${view}`);
+  collector.walk(body.query);
+  dropCteReferences(collector);
+  return true;
+}
 
 /** Unqualified relation names that match a CTE in the statement refer to the CTE. */
 function dropCteReferences(collector: Collector): void {

@@ -224,6 +224,11 @@ function listed(objects: readonly string[]): string {
   return objects.length > 5 ? `${shown} and ${objects.length - 5} more` : shown;
 }
 
+/** Up to five drifted objects with their change, e.g. `table t (changed)`. */
+function listedDrift(objects: readonly DriftedObject[]): string {
+  return listed(objects.map((o) => `${o.object} (${o.change})`));
+}
+
 /** An adapter connected to a server that isn't PostgreSQL 18. */
 export class UnsupportedServerError extends SuperDeployError {
   readonly serverVersion: string;
@@ -848,14 +853,9 @@ export class DriftError extends SuperDeployError {
   readonly objects: readonly DriftedObject[];
 
   constructor(target: string, objects: readonly DriftedObject[]) {
-    const shown = objects
-      .slice(0, 5)
-      .map((o) => `${o.object} (${o.change})`)
-      .join(", ");
-    const more = objects.length > 5 ? ` and ${objects.length - 5} more` : "";
     super(
       "target-drifted",
-      `Target ${target} has drifted from its recorded migrations: ${shown}${more}. Deployments refuse until it matches them again (status --target ${target} lists the differences)`,
+      `Target ${target} has drifted from its recorded migrations: ${listedDrift(objects)}. Deployments refuse until it matches them again (status --target ${target} lists the differences)`,
     );
     this.target = target;
     this.objects = objects;
@@ -926,14 +926,9 @@ export class MarkMismatchError extends SuperDeployError {
     migration: string,
     objects: readonly DriftedObject[],
   ) {
-    const shown = objects
-      .slice(0, 5)
-      .map((o) => `${o.object} (${o.change})`)
-      .join(", ");
-    const more = objects.length > 5 ? ` and ${objects.length - 5} more` : "";
     super(
       "mark-mismatch",
-      `Target ${target} does not match a replica of its migrations up to ${migration}: ${shown}${more}. Nothing was recorded; fix the target until it matches, then mark again`,
+      `Target ${target} does not match a replica of its migrations up to ${migration}: ${listedDrift(objects)}. Nothing was recorded; fix the target until it matches, then mark again`,
     );
     this.target = target;
     this.migration = migration;

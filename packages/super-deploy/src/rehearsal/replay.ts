@@ -16,7 +16,7 @@ import {
   type FinalizedRecovery,
   schemaChangeFileName,
 } from "../store/migrations.ts";
-import { ensureRoles, pinnedSettings } from "./throwaway.ts";
+import { ensureRoles, inPinnedTransaction } from "./throwaway.ts";
 
 export interface DeployTimeFile {
   /** Project-relative path with forward slashes, for messages. */
@@ -122,17 +122,11 @@ export async function replay(
       ),
     ),
   );
-  await session.execute("BEGIN");
-  try {
-    await session.execute(pinnedSettings(managedSchema).join(";\n"));
+  await inPinnedTransaction(session, managedSchema, async () => {
     for (const unit of units) {
       await runUnit(session, unit);
     }
-    await session.execute("COMMIT");
-  } catch (error) {
-    await session.execute("ROLLBACK").catch(() => {});
-    throw error;
-  }
+  });
 }
 
 /**
