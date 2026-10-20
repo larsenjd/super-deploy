@@ -15,8 +15,12 @@ import { targetDatabaseRequest } from "../deploy/target.ts";
 import { PreflightFailedError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { rehearseDeployment } from "../rehearsal/rehearse-deployment.ts";
-import { readMigrationUnits } from "../rehearsal/replay.ts";
-import { type MigrationWithUnit, replicaUnits } from "../rehearsal/replica.ts";
+import {
+  type MigrationWithUnit,
+  newestVariant,
+  readMigrationsWithUnits,
+  replicaUnits,
+} from "../rehearsal/replica.ts";
 import { analyseDesiredSchema } from "../sql-analysis/index.ts";
 import { readDesiredSchema } from "../store/desired-schema.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
@@ -53,13 +57,7 @@ export async function deploy(
 ): Promise<DeployResult> {
   const { root, paths, config } = project;
   const migrations = await verifiedMigrations(root, paths);
-  const units = await readMigrationUnits(root, migrations);
-  const deployable: MigrationWithUnit[] = migrations.map(
-    (migration, index) => ({
-      ...migration,
-      unit: units[index] ?? { label: migration.folder, files: [] },
-    }),
-  );
+  const deployable = await readMigrationsWithUnits(root, migrations);
 
   return withLockedTarget(
     project,
@@ -70,7 +68,10 @@ export async function deploy(
         session,
         config.historySchema,
       );
-      const pending = pendingMigrations(deployable, recorded);
+      // Each pending migration runs its newest variant.
+      const pending = pendingMigrations(deployable, recorded).map(
+        (migration) => ({ ...migration, ...newestVariant(migration) }),
+      );
       const findings = await preflightChecks(session, project, {
         targetName: target.name,
         migrations,
@@ -130,7 +131,8 @@ export async function deploy(
           name: migration.name,
           contentHash: migration.contentHash,
           chainHash: migration.chainHash,
-          recovery: undefined,
+          recovery: migration.recovery,
+          recoveryChainHash: migration.recoveryChainHash,
           unit: migration.unit,
         })),
         {

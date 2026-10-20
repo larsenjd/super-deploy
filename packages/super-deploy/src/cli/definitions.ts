@@ -12,6 +12,7 @@ import { finalize } from "../commands/finalize.ts";
 import { init } from "../commands/init.ts";
 import { mark } from "../commands/mark.ts";
 import { rebuild } from "../commands/rebuild.ts";
+import { recovery } from "../commands/recovery.ts";
 import { rehearse } from "../commands/rehearse.ts";
 import { restoreSchema } from "../commands/restore-schema.ts";
 import { status } from "../commands/status.ts";
@@ -250,7 +251,9 @@ const rehearseCommand: CommandDefinition = {
       );
     }
     context.result(
-      `Rehearsed draft ${result.name} after ${plural(result.migrationsReplayed, "migration")}: matches the desired schema`,
+      result.recoveryOf === undefined
+        ? `Rehearsed draft ${result.name} after ${plural(result.migrationsReplayed, "migration")}: matches the desired schema`
+        : `Rehearsed the Recovery draft of migration ${migrationFolder(result.recoveryOf, result.name)}: it ends in the same structure as the original`,
     );
   },
 };
@@ -294,7 +297,9 @@ const finalizeCommand: CommandDefinition = {
     }
     reportWarnings(result.warnings, context);
     context.result(
-      `Finalized migration ${result.folder} in ${context.displayPath(result.path)}`,
+      result.recovery === undefined
+        ? `Finalized migration ${result.folder} in ${context.displayPath(result.path)}`
+        : `Finalized Recovery ${result.recovery} of migration ${result.folder} in ${context.displayPath(result.path)}`,
     );
     for (const override of result.metadata.overrides) {
       context.result(describeOverride(override, result.path, context));
@@ -335,7 +340,9 @@ const validateCommand: CommandDefinition = {
           `Made ${plural(result.readOnlyRestored.length, "finalized file")} read-only again`,
         );
       }
-      context.result(`Validated ${plural(result.migrations, "migration")}`);
+      context.result(
+        `Validated ${plural(result.migrations, "migration")}${result.recoveries === 0 ? "" : ` and ${plural(result.recoveries, "Recovery", "Recoveries")}`}`,
+      );
     } catch (error) {
       if (error instanceof ValidationFailedError) {
         error.problems.forEach(report);
@@ -432,17 +439,34 @@ const unfinalizeCommand: CommandDefinition = {
   name: "unfinalize",
   group: "Author",
   summary:
-    "Move the newest migration back into the draft and restore its desired-schema snapshot",
-  options: [acknowledgeOverwriteOption],
+    "Move the newest migration (or its newest Recovery) back into the draft and restore its desired-schema snapshot",
+  options: [
+    {
+      name: "recovery-of",
+      kind: "migration",
+      description:
+        "Move this migration's newest Recovery back into a Recovery draft instead",
+      migrations: (project) => indexedMigrations(project, "with-recoveries"),
+    },
+    acknowledgeOverwriteOption,
+  ],
   async run(project, values, context) {
+    const recoveryOf = values["recovery-of"];
     const result = await unlessDeclined(context, () =>
-      unfinalize(project, overwriteOptions(values, context)),
+      unfinalize(project, {
+        ...overwriteOptions(values, context),
+        ...(typeof recoveryOf === "string"
+          ? { recoveryOf: Number(recoveryOf) }
+          : {}),
+      }),
     );
     if (result === undefined) {
       return;
     }
     context.result(
-      `Moved migration ${result.folder} back into draft ${result.name} in ${context.displayPath(result.draftPath)}`,
+      result.recovery === undefined
+        ? `Moved migration ${result.folder} back into draft ${result.name} in ${context.displayPath(result.draftPath)}`
+        : `Moved Recovery ${result.recovery} of migration ${result.folder} back into a Recovery draft in ${context.displayPath(result.draftPath)}`,
     );
     reportRestore(project, result, context);
   },
@@ -584,6 +608,30 @@ const statusCommand: CommandDefinition = {
   },
 };
 
+const recoveryCommand: CommandDefinition = {
+  name: "recovery",
+  group: "Recover",
+  summary:
+    "Start a Recovery of a migration: replacement scripts and seed data for targets that haven't run it",
+  options: [
+    {
+      name: "migration",
+      kind: "migration",
+      description: "The migration to recover",
+      required: true,
+      migrations: indexedMigrations,
+    },
+  ],
+  async run(project, values, context) {
+    const result = await recovery(project, {
+      migration: Number(values.migration),
+    });
+    context.result(
+      `Created a Recovery draft of migration ${result.folder} in ${context.displayPath(result.draftPath)} (it becomes Recovery ${result.recovery} when finalized)`,
+    );
+  },
+};
+
 const markCommand: CommandDefinition = {
   name: "mark",
   group: "Recover",
@@ -669,13 +717,21 @@ const deployDraftCommand: CommandDefinition = {
   },
 };
 
-/** The finalized migrations in index.json, for the menu's migration question. */
-async function indexedMigrations(project: Project): Promise<MigrationChoice[]> {
+/**
+ * The finalized migrations in index.json (only those with Recoveries, if
+ * asked), for the menu's migration questions.
+ */
+async function indexedMigrations(
+  project: Project,
+  only?: "with-recoveries",
+): Promise<MigrationChoice[]> {
   const index = await readIndex(project.paths);
   return index.ok
-    ? index.entries.flatMap(
-        (entry) => parseMigrationFolderName(entry.folder) ?? [],
-      )
+    ? index.entries
+        .filter(
+          (entry) => only === undefined || (entry.recoveries ?? []).length > 0,
+        )
+        .flatMap((entry) => parseMigrationFolderName(entry.folder) ?? [])
     : [];
 }
 
@@ -726,8 +782,13 @@ function describeOverride(
   return `override: ${file}:${override.line}: ${override.object} [${override.rules.join(", ")}]: ${override.reason}`;
 }
 
-function plural(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+function plural(count: number, noun: string, nouns = `${noun}s`): string {
+  return `${count} ${count === 1 ? noun : nouns}`;
+}
+
+/** `00002-require-email` from 2 and `require-email`. */
+function migrationFolder(number: number, name: string): string {
+  return `${String(number).padStart(5, "0")}-${name}`;
 }
 
 export const commands: readonly CommandDefinition[] = [
@@ -741,6 +802,7 @@ export const commands: readonly CommandDefinition[] = [
   validateCommand,
   deployCommand,
   statusCommand,
+  recoveryCommand,
   markCommand,
   disposableCommand,
   deployDraftCommand,

@@ -13,6 +13,16 @@
 //
 // The desired-schema hash uses the same file lines under the header
 // "super-deploy desired schema 1\n" and no folder line.
+//
+// A Recovery (<migration>/recoveries/recovery-K/) is hashed on its own, so
+// adding one never changes its migration's content or chain hash:
+//
+//   recovery content hash   sha256("super-deploy recovery 1\n"
+//                                  "migration <JSON migration folder name>\n"
+//                                  "folder <JSON recovery folder name>\n"
+//                                  file lines as above)
+//   recovery chain hash     recovery[K] = sha256(recovery[K-1] + content[K]),
+//                           with recovery[0] = the migration's chain hash
 import { createHash } from "node:crypto";
 import { InvalidEncodingError } from "../errors.ts";
 
@@ -67,6 +77,17 @@ export function migrationContentHash(
 ): string {
   return sha256(
     `super-deploy migration 1\nfolder ${JSON.stringify(folderName)}\n${fileLines(files)}`,
+  );
+}
+
+/** The content hash of a Recovery folder: its migration, its name and every file in it. */
+export function recoveryContentHash(
+  migrationFolderName: string,
+  recoveryFolderName: string,
+  files: readonly HashedFile[],
+): string {
+  return sha256(
+    `super-deploy recovery 1\nmigration ${JSON.stringify(migrationFolderName)}\nfolder ${JSON.stringify(recoveryFolderName)}\n${fileLines(files)}`,
   );
 }
 

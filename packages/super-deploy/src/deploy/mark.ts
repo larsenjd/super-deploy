@@ -24,9 +24,9 @@ import {
   NothingToMarkError,
 } from "../errors.ts";
 import type { Project } from "../project.ts";
-import { readMigrationUnits } from "../rehearsal/replay.ts";
 import {
   type MigrationWithUnit,
+  readMigrationsWithUnits,
   replicaUnits,
   withReplica,
 } from "../rehearsal/replica.ts";
@@ -55,12 +55,10 @@ import { targetDatabaseRequest } from "./target.ts";
 export async function readMarkableMigrations(
   project: Project,
 ): Promise<MigrationWithUnit[]> {
-  const migrations = await verifiedMigrations(project.root, project.paths);
-  const units = await readMigrationUnits(project.root, migrations);
-  return migrations.map((migration, index) => ({
-    ...migration,
-    unit: units[index] ?? { label: migration.folder, files: [] },
-  }));
+  return readMigrationsWithUnits(
+    project.root,
+    await verifiedMigrations(project.root, project.paths),
+  );
 }
 
 /**

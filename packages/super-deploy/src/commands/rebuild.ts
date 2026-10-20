@@ -7,7 +7,8 @@
 // schema itself, its privileges and default privileges stay), delete the
 // recorded migrations and any deployed draft from the history schema, then
 // run migrations 1 to N exactly as a deployment does, recording each as
-// deployed by this attempt. Seed data is never loaded. The attempt log and
+// deployed by this attempt (each as its newest variant, like a deployment to
+// a new target). Seed data is never loaded. The attempt log and
 // the disposable flag are kept. Not rehearsed first: the target is
 // disposable and the transaction rolls back on any failure.
 import {
@@ -20,7 +21,10 @@ import { wipeManagedSchema } from "../deploy/wipe.ts";
 import { TargetNotDisposableError, UnknownMigrationError } from "../errors.ts";
 import { runGuarded } from "../guard/guard.ts";
 import type { Project } from "../project.ts";
-import { readMigrationUnits } from "../rehearsal/replay.ts";
+import {
+  newestVariant,
+  readMigrationsWithUnits,
+} from "../rehearsal/replica.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { migrationFolderName } from "../store/migrations.ts";
 import type { DeployedMigration } from "./deploy.ts";
@@ -71,7 +75,10 @@ export async function rebuild(
       const replayed = migrations.filter(
         (migration) => migration.number <= options.to,
       );
-      const units = await readMigrationUnits(root, replayed);
+      // Each migration's newest variant, as a deployment to a new target.
+      const variants = (await readMigrationsWithUnits(root, replayed)).map(
+        newestVariant,
+      );
       const range =
         options.to === 1 ? "migration 1" : `migrations 1-${options.to}`;
       const wiped = [
@@ -93,8 +100,10 @@ export async function rebuild(
           name: migration.name,
           contentHash: migration.contentHash,
           chainHash: migration.chainHash,
-          recovery: undefined,
-          unit: units[index] ?? { label: migration.folder, files: [] },
+          ...(variants[index] ?? {
+            recovery: undefined,
+            unit: { label: migration.folder, files: [] },
+          }),
         })),
       };
     },

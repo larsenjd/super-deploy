@@ -61,6 +61,11 @@ export {
   type RebuildResult,
   rebuild,
 } from "./commands/rebuild.ts";
+export {
+  type RecoveryOptions,
+  type RecoveryResult,
+  recovery,
+} from "./commands/recovery.ts";
 export { type RehearseResult, rehearse } from "./commands/rehearse.ts";
 export {
   type RestoreSchemaOptions,
@@ -108,6 +113,7 @@ export {
   DesiredSchemaLoadError,
   DestructiveNotAcknowledgedError,
   DifferError,
+  DraftExistsError,
   DraftNameRequiredError,
   DriftError,
   type ErrorCode,
@@ -122,12 +128,15 @@ export {
   MigrationIntegrityError,
   NoDraftError,
   NoMigrationError,
+  NoRecoveryError,
   NotConfirmedError,
   NothingToMarkError,
   OrderDependenceError,
   OverwriteNotAcknowledgedError,
   PreflightFailedError,
   ProjectNotFoundError,
+  RecoveryDraftError,
+  RecoverySchemaChangeEditedError,
   RehearsalMismatchError,
   type RuleViolation,
   SqlFileFailedError,

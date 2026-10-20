@@ -168,20 +168,29 @@ async function askOption(
         ...(await option.migrations(needed(project, option))),
       ].sort((a, b) => b.number - a.number);
       if (migrations.length === 0) {
+        if (!option.required) {
+          // Nothing to choose: the option is simply not given.
+          return undefined;
+        }
         throw new RefusedError("There are no migrations to choose from");
       }
-      return answered(
+      const none = "";
+      const answer = answered(
         await autocomplete({
           ...streams(io),
           message,
           placeholder: "Type to search",
           maxItems: 10,
-          options: migrations.map((migration) => ({
-            value: String(migration.number),
-            label: `${String(migration.number).padStart(5, "0")}-${migration.name}`,
-          })),
+          options: [
+            ...(option.required ? [] : [{ value: none, label: "(none)" }]),
+            ...migrations.map((migration) => ({
+              value: String(migration.number),
+              label: `${String(migration.number).padStart(5, "0")}-${migration.name}`,
+            })),
+          ],
         }),
       );
+      return answer === none ? undefined : answer;
     }
     case "choice":
       return answered(

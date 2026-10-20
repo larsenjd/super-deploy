@@ -9,7 +9,9 @@
 //     name           text      kebab-case name (folder = 00001-<name>)
 //     content_hash   text      the migration's content hash from index.json
 //     chain_hash     text      its chain hash
-//     recovery       integer   null = the original scripts, K = Recovery K (ticket 17)
+//     recovery       integer   null = the original scripts, K = Recovery K
+//     recovery_chain_hash text  Recovery K's chain hash (index.json); null
+//                              for the original
 //     attempt_id     bigint    the attempt that recorded it
 //     recorded_how   text      'deployed' or 'marked' (ticket 20)
 //     recorded_at    timestamptz
@@ -66,6 +68,8 @@ export interface RecordedMigration {
   readonly chainHash: string;
   /** Undefined for the original scripts, K for Recovery K. */
   readonly recovery: number | undefined;
+  /** Recovery K's chain hash when it was recorded; undefined for the original. */
+  readonly recoveryChainHash: string | undefined;
   readonly attemptId: number;
   readonly recordedHow: "deployed" | "marked";
   readonly recordedAt: Date;
@@ -159,6 +163,8 @@ CREATE TABLE IF NOT EXISTS ${migrations} (
   content_hash text NOT NULL,
   chain_hash text NOT NULL,
   recovery integer CHECK (recovery > 0),
+  recovery_chain_hash text,
+  CHECK ((recovery IS NULL) = (recovery_chain_hash IS NULL)),
   attempt_id bigint NOT NULL REFERENCES ${attempts} (id),
   recorded_how text NOT NULL CHECK (recorded_how IN ('deployed', 'marked')),
   recorded_at timestamptz NOT NULL DEFAULT now()
@@ -200,11 +206,12 @@ export async function readRecordedMigrations(
     content_hash: string;
     chain_hash: string;
     recovery: number | null;
+    recovery_chain_hash: string | null;
     attempt_id: string;
     recorded_how: "deployed" | "marked";
     recorded_at: Date;
   }>(
-    `SELECT number, name, content_hash, chain_hash, recovery, attempt_id, recorded_how, recorded_at
+    `SELECT number, name, content_hash, chain_hash, recovery, recovery_chain_hash, attempt_id, recorded_how, recorded_at
        FROM ${historyTable(schema, "migrations")} ORDER BY number`,
   );
   return rows.map((row) => ({
@@ -213,6 +220,7 @@ export async function readRecordedMigrations(
     contentHash: row.content_hash,
     chainHash: row.chain_hash,
     recovery: row.recovery ?? undefined,
+    recoveryChainHash: row.recovery_chain_hash ?? undefined,
     attemptId: Number(row.attempt_id),
     recordedHow: row.recorded_how,
     recordedAt: row.recorded_at,
@@ -226,6 +234,8 @@ export interface MigrationRecord {
   readonly contentHash: string;
   readonly chainHash: string;
   readonly recovery: number | undefined;
+  /** Required with `recovery`: Recovery K's chain hash. */
+  readonly recoveryChainHash?: string | undefined;
   readonly attemptId: number;
   readonly recordedHow: "deployed" | "marked";
 }
@@ -237,14 +247,15 @@ export async function recordMigration(
 ): Promise<void> {
   await session.query(
     `INSERT INTO ${historyTable(schema, "migrations")}
-       (number, name, content_hash, chain_hash, recovery, attempt_id, recorded_how)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+       (number, name, content_hash, chain_hash, recovery, recovery_chain_hash, attempt_id, recorded_how)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [
       record.number,
       record.name,
       record.contentHash,
       record.chainHash,
       record.recovery ?? null,
+      record.recoveryChainHash ?? null,
       record.attemptId,
       record.recordedHow,
     ],

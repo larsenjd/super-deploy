@@ -6,7 +6,7 @@
 import { posix } from "node:path";
 import { pgDeltaDiffer } from "../differ/pg-delta.ts";
 import type { PlannedStatement } from "../differ/types.ts";
-import { DraftNameRequiredError } from "../errors.ts";
+import { DraftNameRequiredError, RecoveryDraftError } from "../errors.ts";
 import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { checkOrderIndependence } from "../rehearsal/order-independence.ts";
@@ -84,6 +84,9 @@ export async function draft(
   const requested =
     options.name === undefined ? undefined : normaliseDraftName(options.name);
   const existing = await readDraft(project.paths);
+  if (existing?.recoveryOf !== undefined) {
+    throw new RecoveryDraftError(existing.recoveryOf);
+  }
   const name = requested ?? existing?.name;
   if (name === undefined) {
     throw new DraftNameRequiredError();
