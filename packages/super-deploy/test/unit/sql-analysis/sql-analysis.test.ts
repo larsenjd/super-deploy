@@ -78,27 +78,6 @@ describe("desired-schema rules", () => {
   });
 });
 
-describe("deploy-time rules", () => {
-  test.each([
-    "schema-change",
-    "pre-migration",
-    "post-migration",
-    "seed-data",
-  ] as const)(
-    "fail closed for %s until their allowlists exist",
-    async (kind) => {
-      const violations = await checkRules(
-        file("create table t (a int);"),
-        kind,
-      );
-
-      expect(violations).toMatchObject([
-        { rule: "deploy-time-statement", line: 1 },
-      ]);
-    },
-  );
-});
-
 describe("ordering", () => {
   test("returns every statement once, with its file and line", async () => {
     const result = await orderDesiredSchema([

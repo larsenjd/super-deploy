@@ -283,13 +283,16 @@ export interface ValidationProblem {
    * Stable identifier: `index-invalid`, `invalid-folder-name`,
    * `unexpected-entry`, `migration-missing`, `migration-unindexed`,
    * `migration-renamed`, `numbering-gap`, `invalid-encoding`,
-   * `content-hash-mismatch`, `chain-hash-mismatch` (errors);
+   * `content-hash-mismatch`, `chain-hash-mismatch`, `sql-rule-violation` (errors);
    * `unfinalized-draft`, `undrafted-changes` (warnings).
    */
   readonly code: string;
   readonly message: string;
   /** Project-relative path with forward slashes, when the problem has one. */
   readonly path?: string;
+  /** For `sql-rule-violation`: the 1-based line and the rule id. */
+  readonly line?: number;
+  readonly rule?: string;
 }
 
 function summarise(problems: readonly ValidationProblem[]): string {
