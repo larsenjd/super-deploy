@@ -29,7 +29,12 @@ export async function rehearseDraft(
     config.rehearsal,
     draftDatabaseRequest,
     async (desired) => {
-      await loadDesiredSchema(desired, desiredSchema, config.managedSchema);
+      await loadDesiredSchema(
+        desired,
+        desiredSchema,
+        config.managedSchema,
+        config.externalSchemas,
+      );
       return withThrowawayDatabase(
         config.rehearsal,
         draftDatabaseRequest,

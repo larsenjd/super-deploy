@@ -57,6 +57,7 @@ export async function draft(
   const files = await readDesiredSchemaFiles(project.root, paths.desiredSchema);
   const statements = await analyseDesiredSchema(
     asSqlFiles(project.root, paths.desiredSchema, files),
+    project.config,
   );
   const migrations = await readMigrationUnits(
     project.root,
@@ -67,7 +68,12 @@ export async function draft(
     config.rehearsal,
     draftDatabaseRequest,
     async (desired) => {
-      await loadDesiredSchema(desired, statements, config.managedSchema);
+      await loadDesiredSchema(
+        desired,
+        statements,
+        config.managedSchema,
+        config.externalSchemas,
+      );
       return withThrowawayDatabase(
         config.rehearsal,
         draftDatabaseRequest,

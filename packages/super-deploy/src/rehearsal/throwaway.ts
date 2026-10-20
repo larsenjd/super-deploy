@@ -11,6 +11,10 @@ import {
   SuperDeployError,
   UnsupportedServerError,
 } from "../errors.ts";
+import {
+  externalSchemasBoundAtCreate,
+  isAlreadyInstalled,
+} from "../sql-analysis/index.ts";
 import type { ParsedStatement } from "../sql-analysis/parse.ts";
 
 /**
@@ -92,18 +96,24 @@ export async function ensureManagedSchema(
 
 /**
  * Loads ordered desired-schema statements in one transaction, one statement
- * at a time so a failure names its file and line.
+ * at a time so a failure names its file and line. A failing statement that
+ * binds to a declared external schema at CREATE gets a hint: rehearsals never
+ * contain external schemas.
  */
 export async function loadDesiredSchema(
   session: Session,
   statements: readonly ParsedStatement[],
   managedSchema: string,
+  externalSchemas: readonly string[] = [],
 ): Promise<void> {
   await ensureManagedSchema(session, managedSchema);
   await session.execute("BEGIN");
   try {
     await session.execute(pinnedSettings(managedSchema).join(";\n"));
     for (const statement of statements) {
+      if (isAlreadyInstalled(statement)) {
+        continue;
+      }
       try {
         await session.execute(statement.text);
       } catch (error) {
@@ -115,7 +125,7 @@ export async function loadDesiredSchema(
               (error as { position?: string }).position,
             ),
           error instanceof Error ? error.message : String(error),
-          { cause: error },
+          { cause: error, hint: externalHint(statement, externalSchemas) },
         );
       }
     }
@@ -124,6 +134,18 @@ export async function loadDesiredSchema(
     await session.execute("ROLLBACK").catch(() => {});
     throw error;
   }
+}
+
+function externalHint(
+  statement: ParsedStatement,
+  externalSchemas: readonly string[],
+): string | undefined {
+  const schemas = externalSchemasBoundAtCreate(statement, externalSchemas);
+  if (schemas.length === 0) {
+    return undefined;
+  }
+  const names = schemas.map((schema) => `"${schema}"`).join(", ");
+  return `this statement references external schema ${names}, which rehearsals don't contain. Only PL/pgSQL bodies may reference external schemas: views, defaults, foreign keys, triggers, LANGUAGE sql and BEGIN ATOMIC bodies, and PL/pgSQL variable declarations bind their references at CREATE`;
 }
 
 function linesBefore(text: string, position: string | undefined): number {

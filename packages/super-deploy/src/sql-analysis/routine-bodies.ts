@@ -1,0 +1,299 @@
+// Routine bodies held as strings, which the main parse leaves unparsed.
+//
+// PL/pgSQL bodies (spec "Rules: PL/pgSQL bodies") are parsed with
+// libpg-query's PL/pgSQL parser: EXECUTE, COMMIT/ROLLBACK, denylisted calls
+// and references to undeclared schemas are refused. The embedded SQL is text,
+// so each expression is parsed again with the SQL parser. Declared external
+// schemas are allowed here and only here.
+//
+// LANGUAGE sql string bodies bind at CREATE like the rest of the statement:
+// they get the same denylist and schema checks.
+//
+// Both use the *Sync parsers, so they run only after parseSqlFile has loaded
+// the WASM module (checkRules always parses the file first).
+import { parsePlPgSQLSync, parseSync } from "libpg-query";
+import { denylistFindings } from "./denylist.ts";
+import type { RuleContext, RuleFinding } from "./desired-schema-rules.ts";
+import type { ParsedStatement } from "./parse.ts";
+import { referencedSchemas, referenceFindings } from "./schemas.ts";
+import {
+  defElemString,
+  defElems,
+  isObject,
+  type Json,
+  unwrap,
+  walk,
+} from "./syntax-tree.ts";
+
+export function plpgsqlFindings(
+  statement: ParsedStatement,
+  body: unknown,
+  context: RuleContext,
+): RuleFinding[] {
+  let parsed: unknown;
+  try {
+    parsed = parsePlPgSQLSync(statement.text);
+  } catch (error) {
+    return [
+      {
+        rule: "syntax-error",
+        message: `Syntax error in the PL/pgSQL body: ${error instanceof Error ? error.message : String(error)}`,
+      },
+    ];
+  }
+  const firstLine = bodyFirstLine(statement, body);
+  const findings: RuleFinding[] = [];
+  const visit = (value: unknown, lineno: number): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item, lineno);
+      }
+      return;
+    }
+    if (!isObject(value)) {
+      return;
+    }
+    const here = linenoOf(value) ?? lineno;
+    const line = firstLine + Math.max(here, 1) - 1;
+    findings.push(...plpgsqlNodeFindings(value, line, context));
+    for (const child of Object.values(value)) {
+      visit(child, here);
+    }
+  };
+  visit(parsed, 1);
+  return unique(findings);
+}
+
+/** A node's own line: `{lineno}` or a wrapped `{ PLpgSQL_stmt_x: {lineno} }`. */
+function linenoOf(object: Json): number | undefined {
+  if (typeof object.lineno === "number") {
+    return object.lineno;
+  }
+  const values = Object.values(object);
+  const [inner] = values;
+  return values.length === 1 &&
+    isObject(inner) &&
+    typeof inner.lineno === "number"
+    ? inner.lineno
+    : undefined;
+}
+
+function plpgsqlNodeFindings(
+  object: Json,
+  line: number,
+  context: RuleContext,
+): RuleFinding[] {
+  if (
+    "PLpgSQL_stmt_dynexecute" in object ||
+    "PLpgSQL_stmt_dynfors" in object ||
+    "dynquery" in object
+  ) {
+    return [
+      {
+        rule: "plpgsql-dynamic-sql",
+        message:
+          "EXECUTE (dynamic SQL) is not allowed in PL/pgSQL bodies: SQL built at run time can't be checked by the rules",
+        line,
+      },
+    ];
+  }
+  for (const [key, word] of [
+    ["PLpgSQL_stmt_commit", "COMMIT"],
+    ["PLpgSQL_stmt_rollback", "ROLLBACK"],
+  ] as const) {
+    if (key in object) {
+      return [
+        {
+          rule: "plpgsql-transaction-control",
+          message: `${word} is not allowed in PL/pgSQL bodies: it would end the deployment's transaction`,
+          line,
+        },
+      ];
+    }
+  }
+  const datatype = object.datatype;
+  if (isObject(datatype) && typeof object.lineno === "number") {
+    const typname = (datatype.PLpgSQL_type as Json | undefined)?.typname;
+    if (typeof typname === "string") {
+      const schema = declaredTypeSchema(typname);
+      return schema === undefined
+        ? []
+        : referenceFindings([schema], context, true, line);
+    }
+  }
+  const expression = object.PLpgSQL_expr;
+  if (isObject(expression) && typeof expression.query === "string") {
+    const tree = parseEmbedded(
+      expression.query,
+      Number(expression.parseMode ?? 0),
+    );
+    if (tree === undefined) {
+      return [];
+    }
+    return [
+      ...denylistFindings(tree, line),
+      ...notifyFindings(tree, line),
+      ...referenceFindings(referencedSchemas(tree), context, true, line),
+    ];
+  }
+  return [];
+}
+
+/** Parses a PL/pgSQL expression's SQL text, or undefined if it doesn't parse. */
+function parseEmbedded(query: string, parseMode: number): unknown {
+  let sql = query;
+  if (parseMode === 2) {
+    sql = `SELECT ${query}`;
+  } else if (parseMode >= 3) {
+    // Assignments: `target := expression` (or `=`).
+    const assign = query.indexOf(":=");
+    const index = assign >= 0 ? assign + 2 : query.indexOf("=") + 1;
+    sql = `SELECT ${query.slice(index)}`;
+  }
+  try {
+    return parseSync(sql);
+  } catch {
+    // PostgreSQL itself refuses an unparseable body at CREATE.
+    return undefined;
+  }
+}
+
+function notifyFindings(tree: unknown, line: number): RuleFinding[] {
+  return JSON.stringify(tree).includes('"NotifyStmt"')
+    ? [
+        {
+          rule: "denylisted-call",
+          message:
+            "NOTIFY is not allowed: it sends a notification other sessions act on, which a failed deployment's rollback cannot undo",
+          line,
+        },
+      ]
+    : [];
+}
+
+/** The schema in a declared variable type: `s.t%ROWTYPE`, `s.t.c%TYPE`, `s.ty`. */
+function declaredTypeSchema(typname: string): string | undefined {
+  const match = /^(.*?)%(row)?type$/i.exec(typname.trim());
+  if (match !== null) {
+    const parts = identifierChain(match[1] ?? "");
+    const needed = match[2] === undefined ? 3 : 2;
+    return parts.length >= needed ? parts[0] : undefined;
+  }
+  try {
+    return referencedSchemas(parseSync(`SELECT NULL::${typname}`))[0];
+  } catch {
+    return undefined;
+  }
+}
+
+function identifierChain(text: string): string[] {
+  const parts: string[] = [];
+  const pattern = /\s*(?:"((?:[^"]|"")*)"|([^."\s]+))\s*(?:\.|$)/gy;
+  for (const match of text.matchAll(pattern)) {
+    parts.push(
+      match[1] !== undefined
+        ? match[1].replaceAll('""', '"')
+        : (match[2] ?? "").toLowerCase(),
+    );
+  }
+  return parts;
+}
+
+export function sqlBodyFindings(
+  statement: ParsedStatement,
+  body: unknown,
+  context: RuleContext,
+): RuleFinding[] {
+  const text = defElemString(body);
+  if (text === undefined || text.trim() === "") {
+    return [];
+  }
+  let tree: unknown;
+  try {
+    tree = parseSync(text);
+  } catch {
+    // PostgreSQL itself refuses an unparseable body at CREATE.
+    return [];
+  }
+  const line = bodyFirstLine(statement, body);
+  return unique([
+    ...denylistFindings(tree, line),
+    ...referenceFindings(referencedSchemas(tree), context, true, line),
+  ]);
+}
+
+/** The file line where a routine's string body starts. */
+function bodyFirstLine(statement: ParsedStatement, body: unknown): number {
+  const text = defElemString(body);
+  const index = text === undefined ? -1 : statement.text.indexOf(text);
+  if (index < 0) {
+    return statement.line;
+  }
+  return (
+    statement.line + (statement.text.slice(0, index).split("\n").length - 1)
+  );
+}
+
+function unique(findings: RuleFinding[]): RuleFinding[] {
+  const seen = new Set<string>();
+  return findings.filter((finding) => {
+    const key = `${finding.line}\u0000${finding.rule}\u0000${finding.message}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * Declared external schemas that a desired-schema statement references in
+ * places PostgreSQL resolves at CREATE (everything except PL/pgSQL statement
+ * bodies, but including PL/pgSQL variable declarations). Rehearsals don't
+ * contain external schemas, so such a statement can never load; this names
+ * the schemas for the error's hint.
+ */
+export function externalSchemasBoundAtCreate(
+  statement: ParsedStatement,
+  externalSchemas: readonly string[],
+): string[] {
+  const schemas = referencedSchemas(statement.node);
+  const routine = unwrap(statement.node, "CreateFunctionStmt");
+  if (routine !== undefined) {
+    const options = defElems(routine.options);
+    const language = defElemString(
+      options.find((option) => option.name === "language")?.arg,
+    )?.toLowerCase();
+    const body = options.find((option) => option.name === "as")?.arg;
+    if (language === "sql") {
+      const text = defElemString(body);
+      try {
+        schemas.push(...referencedSchemas(parseSync(text ?? "")));
+      } catch {
+        // Unparseable or empty: PostgreSQL reports it.
+      }
+    } else if (language === "plpgsql") {
+      try {
+        walk(parsePlPgSQLSync(statement.text), (object) => {
+          const typname = (
+            (isObject(object.datatype) ? object.datatype : {}).PLpgSQL_type as
+              | Json
+              | undefined
+          )?.typname;
+          const schema =
+            typeof typname === "string"
+              ? declaredTypeSchema(typname)
+              : undefined;
+          if (schema !== undefined) {
+            schemas.push(schema);
+          }
+        });
+      } catch {
+        // PostgreSQL reports body syntax errors.
+      }
+    }
+  }
+  return [...new Set(schemas)].filter((schema) =>
+    externalSchemas.includes(schema),
+  );
+}

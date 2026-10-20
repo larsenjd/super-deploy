@@ -1,0 +1,598 @@
+// Rules for the desired schema (spec "Rules: desired schema"): an allowlist
+// of statements and supported object types. Everything else is refused with
+// a reason. Kept apart from the deploy-time rules, which share only the
+// splitter, the syntax-tree helpers and the side-effect denylist.
+//
+// Rule identifiers:
+// - `desired-schema-statement`: a statement or clause outside the allowlist.
+// - `unsupported-object`: an object type or feature V1 refuses.
+// - `outside-managed-schema`, `undeclared-schema`: schema rules (schemas.ts).
+// - `denylisted-call`: a built-in whose effects escape the transaction.
+// - `plpgsql-dynamic-sql`, `plpgsql-transaction-control`: PL/pgSQL bodies.
+
+import { denylistFindings } from "./denylist.ts";
+import type { ParsedStatement } from "./parse.ts";
+import { plpgsqlFindings, sqlBodyFindings } from "./routine-bodies.ts";
+import { schemaFindings } from "./schemas.ts";
+import {
+  defElemString,
+  defElems,
+  isObject,
+  type Json,
+  list,
+  stringList,
+  unwrap,
+} from "./syntax-tree.ts";
+
+/** What the rules need from the project's configuration. */
+export interface RuleContext {
+  /** Default `public`. */
+  readonly managedSchema: string;
+  /** Schemas PL/pgSQL bodies may reference. Default none. */
+  readonly externalSchemas: readonly string[];
+}
+
+export interface RuleFinding {
+  readonly rule: string;
+  readonly message: string;
+  /** Absolute 1-based line, when it isn't the statement's own first line. */
+  readonly line?: number;
+}
+
+type StatementCheck = (
+  node: Json,
+  statement: ParsedStatement,
+  context: RuleContext,
+) => RuleFinding[];
+
+const notAllowed = (message: string): RuleFinding => ({
+  rule: "desired-schema-statement",
+  message,
+});
+const unsupported = (message: string): RuleFinding => ({
+  rule: "unsupported-object",
+  message,
+});
+const v1 = (what: string, tip = ""): RuleFinding =>
+  unsupported(`${what} are not supported in V1${tip}`);
+
+const redefinition = (clause: string): RuleFinding =>
+  notAllowed(
+    `${clause} is not allowed in the desired schema: define each object exactly once, so no definition can silently replace or skip another depending on load order`,
+  );
+const tablespaces = unsupported(
+  "Tablespaces are not supported: storage layout differs between targets and rehearsals",
+);
+
+const allowed: Record<string, StatementCheck> = {
+  CreateStmt: checkTable,
+  ViewStmt: checkView,
+  CreateTableAsStmt: checkMaterializedView,
+  IndexStmt: checkIndex,
+  CreateFunctionStmt: checkRoutine,
+  CreateTrigStmt: checkTrigger,
+  CreateDomainStmt: (node) => constraintFindings(node.constraints),
+  CompositeTypeStmt: (node) => list(node.coldeflist).flatMap(columnFindings),
+  CreatePolicyStmt: () => [],
+  AlterTableStmt: checkAlterTable,
+  CommentStmt: checkComment,
+  GrantStmt: checkGrant,
+  CreateExtensionStmt: checkExtension,
+};
+
+/** Refused statement types, with the reason given. */
+const refused: Record<string, (node: Json) => RuleFinding> = {
+  CreateEnumStmt: () =>
+    v1(
+      "Enums",
+      ": use a lookup table with a foreign key, or a CHECK constraint",
+    ),
+  RuleStmt: () => v1("Rules"),
+  CreateEventTrigStmt: () => v1("Event triggers"),
+  CreateForeignTableStmt: foreign,
+  CreateFdwStmt: foreign,
+  CreateForeignServerStmt: foreign,
+  CreateUserMappingStmt: foreign,
+  ImportForeignSchemaStmt: foreign,
+  CreatePublicationStmt: () => v1("Publications and subscriptions"),
+  CreateSubscriptionStmt: () => v1("Publications and subscriptions"),
+  CreateCastStmt: () => v1("Custom casts"),
+  CreateOpClassStmt: operators,
+  CreateOpFamilyStmt: operators,
+  CreateConversionStmt: () => v1("Custom conversions"),
+  CreateTransformStmt: () => v1("Transforms"),
+  CreateAmStmt: () => v1("Custom access methods"),
+  CreatePLangStmt: () => v1("Procedural languages"),
+  CreateSeqStmt: () =>
+    v1(
+      "Standalone sequences",
+      ": use an identity column (`bigint generated always as identity`)",
+    ),
+  CreateStatsStmt: () =>
+    unsupported("CREATE STATISTICS is not supported in V1"),
+  CreateRangeStmt: () => v1("Range types"),
+  CreateSchemaStmt: () =>
+    unsupported(
+      "CREATE SCHEMA is not allowed in the desired schema: super-deploy manages one schema and creates it itself",
+    ),
+  CreateRoleStmt: roles,
+  GrantRoleStmt: roles,
+  DefineStmt: (node) => {
+    switch (node.kind) {
+      case "OBJECT_AGGREGATE":
+        return v1("Custom aggregates");
+      case "OBJECT_OPERATOR":
+        return operators();
+      case "OBJECT_COLLATION":
+        return v1("Custom collations");
+      case "OBJECT_TSCONFIGURATION":
+      case "OBJECT_TSDICTIONARY":
+      case "OBJECT_TSPARSER":
+      case "OBJECT_TSTEMPLATE":
+        return v1(
+          "Text-search configurations",
+          " (nor their dictionaries, parsers and templates)",
+        );
+      case "OBJECT_TYPE":
+        return v1("Base types", ": use a domain or a composite type");
+      default:
+        return notAllowed(
+          `${String(node.kind)} definitions are not allowed in the desired schema`,
+        );
+    }
+  },
+};
+
+function foreign(): RuleFinding {
+  return v1("Foreign tables and foreign data wrappers");
+}
+function operators(): RuleFinding {
+  return v1("Custom operators", " (nor operator classes and families)");
+}
+function roles(): RuleFinding {
+  return unsupported(
+    "Roles are not managed by super-deploy: they are cluster-wide, so create them outside the desired schema",
+  );
+}
+
+/** Every rule finding for one desired-schema statement. */
+export function desiredSchemaFindings(
+  statement: ParsedStatement,
+  context: RuleContext,
+): RuleFinding[] {
+  const node = unwrap(statement.node, statement.nodeType) ?? {};
+  const refusal = refused[statement.nodeType];
+  if (refusal !== undefined) {
+    return [refusal(node)];
+  }
+  const check = allowed[statement.nodeType];
+  if (check === undefined) {
+    return [
+      notAllowed(
+        `${statementName(statement.nodeType)} is not allowed in the desired schema`,
+      ),
+    ];
+  }
+  return [
+    ...check(node, statement, context),
+    ...schemaFindings(statement, context),
+    ...denylistFindings(statement.node),
+  ];
+}
+
+// --- tables, columns and constraints ---------------------------------------
+
+function checkTable(node: Json): RuleFinding[] {
+  const findings: RuleFinding[] = [];
+  const relation = isObject(node.relation) ? node.relation : {};
+  if (node.partspec !== undefined || node.partbound !== undefined) {
+    findings.push(v1("Partitioned tables"));
+  }
+  if (list(node.inhRelations).length > 0 && node.partbound === undefined) {
+    findings.push(unsupported("Table inheritance is not supported in V1"));
+  }
+  if (node.ofTypename !== undefined) {
+    findings.push(v1("Typed tables (CREATE TABLE ... OF type)"));
+  }
+  findings.push(...persistence(relation, "tables"));
+  if (node.tablespacename !== undefined) {
+    findings.push(tablespaces);
+  }
+  if (node.accessMethod !== undefined) {
+    findings.push(v1("Table access methods"));
+  }
+  if (list(node.options).length > 0) {
+    findings.push(v1("Table storage parameters"));
+  }
+  if (node.if_not_exists === true) {
+    findings.push(redefinition("CREATE TABLE IF NOT EXISTS"));
+  }
+  for (const element of list(node.tableElts)) {
+    if (unwrap(element, "TableLikeClause") !== undefined) {
+      findings.push(
+        unsupported(
+          "CREATE TABLE ... (LIKE) is not supported: it copies another table's definition at CREATE, so write the columns out",
+        ),
+      );
+    }
+    const column = unwrap(element, "ColumnDef");
+    if (column !== undefined) {
+      findings.push(...columnFindings({ ColumnDef: column }));
+    }
+    findings.push(...constraintFindings([element]));
+  }
+  findings.push(...constraintFindings(node.constraints));
+  return findings;
+}
+
+function persistence(relation: Json, what: "tables" | "views"): RuleFinding[] {
+  if (relation.relpersistence === "t") {
+    const name = what === "tables" ? "Temporary tables" : "Temporary views";
+    return [unsupported(`${name} are not allowed in the desired schema`)];
+  }
+  if (relation.relpersistence === "u") {
+    return [v1("Unlogged tables")];
+  }
+  return [];
+}
+
+const serialTypes = new Set([
+  "serial",
+  "serial4",
+  "bigserial",
+  "serial8",
+  "smallserial",
+  "serial2",
+]);
+
+function columnFindings(element: unknown): RuleFinding[] {
+  const column = unwrap(element, "ColumnDef");
+  if (column === undefined) {
+    return [];
+  }
+  const findings: RuleFinding[] = [];
+  const typeNames = stringList(
+    isObject(column.typeName) ? column.typeName.names : undefined,
+  );
+  const [only] = typeNames;
+  if (typeNames.length === 1 && only !== undefined && serialTypes.has(only)) {
+    findings.push(
+      unsupported(
+        `${only} columns are not supported: use an identity column, e.g. \`bigint generated always as identity\``,
+      ),
+    );
+  }
+  if (column.storage_name !== undefined || column.compression !== undefined) {
+    findings.push(v1("Column STORAGE and COMPRESSION settings"));
+  }
+  findings.push(...constraintFindings(column.constraints));
+  return findings;
+}
+
+function constraintFindings(nodes: unknown): RuleFinding[] {
+  const findings: RuleFinding[] = [];
+  for (const item of list(nodes)) {
+    const constraint = unwrap(item, "Constraint");
+    if (constraint === undefined) {
+      continue;
+    }
+    const type = constraint.contype;
+    if (
+      type === "CONSTR_ATTR_NOT_ENFORCED" ||
+      ((type === "CONSTR_CHECK" || type === "CONSTR_FOREIGN") &&
+        constraint.is_enforced !== true)
+    ) {
+      findings.push(v1("NOT ENFORCED constraints"));
+    }
+    if (type === "CONSTR_GENERATED" && constraint.generated_kind !== "s") {
+      findings.push(
+        v1(
+          "Virtual generated columns",
+          " (a generated column without STORED is virtual in PostgreSQL 18): add STORED",
+        ),
+      );
+    }
+    if (constraint.indexspace !== undefined) {
+      findings.push(tablespaces);
+    }
+  }
+  return findings;
+}
+
+// --- views, materialized views, indexes ------------------------------------
+
+const viewOptions = new Set([
+  "security_invoker",
+  "security_barrier",
+  "check_option",
+]);
+
+function checkView(node: Json): RuleFinding[] {
+  const findings = persistence(isObject(node.view) ? node.view : {}, "views");
+  if (node.replace === true) {
+    findings.push(redefinition("CREATE OR REPLACE VIEW"));
+  }
+  for (const { name } of defElems(node.options)) {
+    if (!viewOptions.has(name)) {
+      findings.push(unsupported(`View option ${name} is not supported in V1`));
+    }
+  }
+  return findings;
+}
+
+function checkMaterializedView(node: Json): RuleFinding[] {
+  if (node.objtype !== "OBJECT_MATVIEW") {
+    return [
+      notAllowed(
+        "CREATE TABLE AS is not allowed in the desired schema: declare the table with CREATE TABLE",
+      ),
+    ];
+  }
+  const into = isObject(node.into) ? node.into : {};
+  const findings: RuleFinding[] = [];
+  if (node.if_not_exists === true) {
+    findings.push(redefinition("CREATE MATERIALIZED VIEW IF NOT EXISTS"));
+  }
+  if (into.tableSpaceName !== undefined) {
+    findings.push(tablespaces);
+  }
+  if (into.accessMethod !== undefined) {
+    findings.push(v1("Table access methods"));
+  }
+  if (list(into.options).length > 0) {
+    findings.push(v1("Materialized view storage parameters"));
+  }
+  return findings;
+}
+
+function checkIndex(node: Json): RuleFinding[] {
+  const findings: RuleFinding[] = [];
+  if (node.concurrent === true) {
+    findings.push(
+      notAllowed(
+        "CREATE INDEX CONCURRENTLY is not allowed: it cannot run inside the deployment's transaction",
+      ),
+    );
+  }
+  if (node.tableSpace !== undefined) {
+    findings.push(tablespaces);
+  }
+  if (node.if_not_exists === true) {
+    findings.push(redefinition("CREATE INDEX IF NOT EXISTS"));
+  }
+  return findings;
+}
+
+// --- routines and triggers --------------------------------------------------
+
+const routineOptions = new Set([
+  "as",
+  "language",
+  "volatility",
+  "strict",
+  "security",
+  "leakproof",
+  "parallel",
+  "cost",
+  "rows",
+  "set",
+]);
+
+function checkRoutine(
+  node: Json,
+  statement: ParsedStatement,
+  context: RuleContext,
+): RuleFinding[] {
+  const findings: RuleFinding[] = [];
+  const kind = node.is_procedure === true ? "PROCEDURE" : "FUNCTION";
+  if (node.replace === true) {
+    findings.push(redefinition(`CREATE OR REPLACE ${kind}`));
+  }
+  const options = defElems(node.options);
+  for (const { name } of options) {
+    if (!routineOptions.has(name)) {
+      findings.push(
+        unsupported(
+          `The ${name.toUpperCase()} routine option is not supported in V1`,
+        ),
+      );
+    }
+  }
+  const language = defElemString(
+    options.find((option) => option.name === "language")?.arg,
+  )?.toLowerCase();
+  if (language !== undefined && language !== "sql" && language !== "plpgsql") {
+    findings.push(
+      unsupported(
+        `Functions in language ${language} are not supported: write routines in sql or plpgsql`,
+      ),
+    );
+    return findings;
+  }
+  const body = options.find((option) => option.name === "as")?.arg;
+  if (language === "plpgsql") {
+    findings.push(...plpgsqlFindings(statement, body, context));
+  } else if (language === "sql" && node.sql_body === undefined) {
+    findings.push(...sqlBodyFindings(statement, body, context));
+  }
+  return findings;
+}
+
+function checkTrigger(node: Json): RuleFinding[] {
+  const findings: RuleFinding[] = [];
+  if (node.replace === true) {
+    findings.push(redefinition("CREATE OR REPLACE TRIGGER"));
+  }
+  if (node.isconstraint === true) {
+    findings.push(v1("Constraint triggers"));
+  }
+  return findings;
+}
+
+// --- ALTER TABLE, COMMENT, GRANT, CREATE EXTENSION ---------------------------
+
+const alterTableCommands = new Set([
+  "AT_EnableRowSecurity",
+  "AT_ForceRowSecurity",
+  "AT_AddConstraint",
+]);
+
+function checkAlterTable(node: Json): RuleFinding[] {
+  const onlyThese = notAllowed(
+    "Only ALTER TABLE ... ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY or ADD CONSTRAINT is allowed in the desired schema; declare everything else in CREATE TABLE",
+  );
+  if (node.objtype !== "OBJECT_TABLE") {
+    return [onlyThese];
+  }
+  const commands = list(node.cmds).map(
+    (command) => unwrap(command, "AlterTableCmd") ?? {},
+  );
+  if (
+    commands.some((command) => !alterTableCommands.has(String(command.subtype)))
+  ) {
+    return [onlyThese];
+  }
+  const findings: RuleFinding[] = [];
+  if (commands.length !== 1) {
+    findings.push(
+      notAllowed(
+        "Write one ALTER TABLE statement per change in the desired schema",
+      ),
+    );
+  }
+  if (node.missing_ok === true) {
+    findings.push(redefinition("ALTER TABLE IF EXISTS"));
+  }
+  for (const command of commands) {
+    findings.push(...constraintFindings([command.def]));
+  }
+  return findings;
+}
+
+const commentTypes = new Set([
+  "OBJECT_TABLE",
+  "OBJECT_COLUMN",
+  "OBJECT_VIEW",
+  "OBJECT_MATVIEW",
+  "OBJECT_INDEX",
+  "OBJECT_SEQUENCE",
+  "OBJECT_TABCONSTRAINT",
+  "OBJECT_DOMCONSTRAINT",
+  "OBJECT_FUNCTION",
+  "OBJECT_PROCEDURE",
+  "OBJECT_ROUTINE",
+  "OBJECT_TRIGGER",
+  "OBJECT_POLICY",
+  "OBJECT_TYPE",
+  "OBJECT_DOMAIN",
+]);
+
+function checkComment(node: Json): RuleFinding[] {
+  return commentTypes.has(String(node.objtype))
+    ? []
+    : [
+        notAllowed(
+          `COMMENT ON ${objectTypeName(node.objtype)} is not allowed in the desired schema: comment only on the objects it defines`,
+        ),
+      ];
+}
+
+const grantTypes = new Set([
+  "OBJECT_TABLE",
+  "OBJECT_SEQUENCE",
+  "OBJECT_FUNCTION",
+  "OBJECT_PROCEDURE",
+  "OBJECT_ROUTINE",
+  "OBJECT_TYPE",
+  "OBJECT_DOMAIN",
+]);
+
+function checkGrant(node: Json): RuleFinding[] {
+  if (node.is_grant !== true) {
+    return [
+      notAllowed(
+        "REVOKE is not allowed in the desired schema: it declares what is granted, so remove the GRANT instead",
+      ),
+    ];
+  }
+  if (node.targtype !== "ACL_TARGET_OBJECT") {
+    return [
+      notAllowed(
+        "GRANT ... ON ALL ... IN SCHEMA is not allowed in the desired schema: it depends on which objects exist when it runs, so grant on each object",
+      ),
+    ];
+  }
+  if (!grantTypes.has(String(node.objtype))) {
+    return [
+      notAllowed(
+        `GRANT ON ${objectTypeName(node.objtype)} is not allowed in the desired schema: grant only on the objects it defines`,
+      ),
+    ];
+  }
+  return [];
+}
+
+function checkExtension(node: Json): RuleFinding[] {
+  if (node.extname !== "plpgsql") {
+    return [v1("Extensions other than plpgsql")];
+  }
+  return list(node.options).length > 0
+    ? [
+        unsupported(
+          "CREATE EXTENSION plpgsql takes no options in the desired schema",
+        ),
+      ]
+    : [];
+}
+
+function objectTypeName(objtype: unknown): string {
+  return String(objtype)
+    .replace(/^OBJECT_/, "")
+    .replaceAll("_", " ");
+}
+
+/**
+ * True for `CREATE EXTENSION [IF NOT EXISTS] plpgsql`: plpgsql is installed
+ * in every database, so loading skips the statement (PostgreSQL would refuse
+ * it without IF NOT EXISTS).
+ */
+export function isAlreadyInstalled(statement: ParsedStatement): boolean {
+  return unwrap(statement.node, "CreateExtensionStmt")?.extname === "plpgsql";
+}
+
+// --- names -------------------------------------------------------------------
+
+const names: Record<string, string> = {
+  CreateStmt: "CREATE TABLE",
+  CreateTableAsStmt: "CREATE TABLE AS",
+  ViewStmt: "CREATE VIEW",
+  IndexStmt: "CREATE INDEX",
+  CreateFunctionStmt: "CREATE FUNCTION",
+  CreateTrigStmt: "CREATE TRIGGER",
+  CreateDomainStmt: "CREATE DOMAIN",
+  CompositeTypeStmt: "CREATE TYPE",
+  CreateEnumStmt: "CREATE TYPE ... AS ENUM",
+  CreateSchemaStmt: "CREATE SCHEMA",
+  CreateSeqStmt: "CREATE SEQUENCE",
+  CreateExtensionStmt: "CREATE EXTENSION",
+  CreatePolicyStmt: "CREATE POLICY",
+  AlterTableStmt: "ALTER TABLE",
+  DropStmt: "DROP",
+  InsertStmt: "INSERT",
+  UpdateStmt: "UPDATE",
+  DeleteStmt: "DELETE",
+  MergeStmt: "MERGE",
+  SelectStmt: "SELECT",
+  TruncateStmt: "TRUNCATE",
+  GrantStmt: "GRANT / REVOKE",
+  CommentStmt: "COMMENT",
+  TransactionStmt: "Transaction control",
+  DoStmt: "DO",
+  CallStmt: "CALL",
+  VariableSetStmt: "SET",
+  CopyStmt: "COPY",
+};
+
+export function statementName(nodeType: string): string {
+  return names[nodeType] ?? `A ${nodeType} statement`;
+}

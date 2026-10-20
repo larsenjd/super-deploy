@@ -110,21 +110,25 @@ export class DesiredSchemaLoadError extends SuperDeployError {
   readonly line: number;
   /** PostgreSQL's own message. */
   readonly detail: string;
+  /** Our explanation of the likely cause, when we know one. */
+  readonly hint: string | undefined;
 
   constructor(
     file: string,
     line: number,
     detail: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { hint?: string | undefined },
   ) {
+    const hint = options?.hint;
     super(
       "desired-schema-load-failed",
-      `${file}:${line}: PostgreSQL refused the desired schema: ${detail}`,
+      `${file}:${line}: PostgreSQL refused the desired schema: ${detail}${hint === undefined ? "" : `. Hint: ${hint}`}`,
       options,
     );
     this.file = file;
     this.line = line;
     this.detail = detail;
+    this.hint = hint;
   }
 }
 

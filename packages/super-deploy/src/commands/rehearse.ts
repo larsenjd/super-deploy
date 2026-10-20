@@ -52,6 +52,7 @@ export async function rehearseCurrentDraft(
   const desiredSchema = await readDesiredSchemaFiles(root, paths.desiredSchema);
   const statements = await analyseDesiredSchema(
     asSqlFiles(root, paths.desiredSchema, desiredSchema),
+    project.config,
   );
   const units = await readMigrationUnits(root, migrations);
   units.push(await readReplayUnit(root, paths.draft, `draft ${draft.name}`));
