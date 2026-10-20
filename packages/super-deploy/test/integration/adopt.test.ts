@@ -110,7 +110,8 @@ describe("adopt", () => {
       create statistics t_stats (dependencies) on a, b from t;
       create function same(int, int) returns boolean language sql immutable as 'select $1 = $2';
       create operator === (leftarg = int, rightarg = int, function = same);
-      revoke execute on function same(int, int) from public;
+      create role adopt_writer nologin;
+      grant create on schema public to adopt_writer;
       create unlogged table scratch (id bigint primary key);
     `);
     try {
@@ -144,8 +145,10 @@ describe("adopt", () => {
             reason: expect.stringContaining("Standalone sequences"),
           }),
           expect.objectContaining({
-            object: expect.stringContaining("REVOKE"),
-            reason: expect.stringContaining("REVOKE is not allowed"),
+            object: 'GRANT CREATE ON SCHEMA "public" TO "adopt_writer"',
+            reason: expect.stringContaining(
+              "GRANT CREATE ON SCHEMA is not allowed",
+            ),
           }),
           expect.objectContaining({
             object: expect.stringContaining("CREATE UNLOGGED TABLE"),
@@ -199,6 +202,64 @@ describe("adopt", () => {
       expect(tables).toContain('CREATE TABLE "app"."accounts"');
       expect(tables).not.toMatch(/legacy|daily|OWNER/);
       expect((await status(project, { target: "prod" })).drift).toEqual([]);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("writes the managed schema's USAGE grants and revoked PUBLIC defaults, but not the owner's or deploy role's own privileges", async () => {
+    const deployer = "adopt_deployer";
+    const prod = await server.createDatabase(`
+      create role adopt_admin nologin;
+      create role ${deployer} login password 'deployer';
+      create role adopt_app nologin;
+      create schema app authorization adopt_admin;
+      grant usage, create on schema app to ${deployer} with grant option;
+      do $$ begin execute format('grant create on database %I to ${deployer}', current_database()); end $$;
+      set role ${deployer};
+      create table app.notes (id bigint primary key, body text);
+      grant usage on schema app to adopt_app;
+      grant select on app.notes to adopt_app;
+      create function app.note_count() returns bigint language sql stable security definer
+        set search_path = app, pg_catalog as $$ select count(*) from app.notes $$;
+      revoke execute on function app.note_count() from public;
+      grant execute on function app.note_count() to adopt_app;
+      create domain app.body_text as text;
+      revoke usage on domain app.body_text from public;
+    `);
+    const { dir, project } = await deployProject(
+      server,
+      {},
+      {
+        settings: 'managedSchema: "app",',
+        preamble: `import { postgresTarget } from "super-deploy";
+const asDeployer = {
+  async connect() {
+    const url = new URL(await postgres.connectionString(${JSON.stringify(prod)}));
+    url.username = ${JSON.stringify(deployer)};
+    url.password = "deployer";
+    return postgresTarget({ connectionString: url.href }).connect();
+  },
+};`,
+        otherTargets: "prod: { adapter: asDeployer },",
+      },
+    );
+    try {
+      await adopt(project, { target: "prod" });
+
+      const grants = await dir.read("data-model/desired-schema/grants.sql");
+      expect(grants).toContain('GRANT USAGE ON SCHEMA "app" TO "adopt_app";');
+      expect(grants).toContain(
+        'REVOKE EXECUTE ON FUNCTION "app"."note_count"() FROM PUBLIC;',
+      );
+      expect(grants).toContain(
+        'REVOKE USAGE ON TYPE "app"."body_text" FROM PUBLIC;',
+      );
+      expect(grants).not.toMatch(/adopt_admin|adopt_deployer|REVOKE ALL/);
+      expect((await status(project, { target: "prod" })).drift).toEqual([]);
+
+      await deploy(project, { target: "dev" });
+      expect((await status(project, { target: "dev" })).drift).toEqual([]);
     } finally {
       await project.close();
     }

@@ -40,7 +40,7 @@ describe("adopted desired schema", () => {
         "CREATE INDEX daily_idx ON reporting.daily USING btree (day);",
         'COMMENT ON COLUMN "reporting"."daily"."day" IS \'x\';',
         'GRANT SELECT ON TABLE "reporting"."daily" TO "r";',
-        'GRANT USAGE ON SCHEMA "app" TO "r";',
+        'GRANT USAGE ON SCHEMA "reporting" TO "r";',
         "COMMENT ON SCHEMA \"app\" IS 'x';",
         'ALTER DEFAULT PRIVILEGES IN SCHEMA "app" GRANT SELECT ON TABLES TO "r";',
         'CREATE ROLE "r";',
@@ -64,6 +64,57 @@ describe("adopted desired schema", () => {
         "CREATE FUNCTION app.w() RETURNS integer LANGUAGE c WINDOW AS 'x', 'y';",
       ]),
     ).toEqual({});
+  });
+
+  test("keeps the managed schema's grants and revokes of PUBLIC's defaults, naming the privilege", async () => {
+    expect(
+      await adoptedDesiredSchema(
+        [
+          'REVOKE ALL ON SCHEMA "app" FROM "super_deploy";',
+          'REVOKE ALL ON SCHEMA "app" FROM "admin";',
+          'GRANT CREATE, USAGE ON SCHEMA "app" TO "admin";',
+          'REVOKE ALL ON SCHEMA "app" FROM "deployer";',
+          'GRANT CREATE, USAGE ON SCHEMA "app" TO "deployer" WITH GRANT OPTION;',
+          'REVOKE ALL ON SCHEMA "app" FROM "r";',
+          'GRANT USAGE ON SCHEMA "app" TO "r";',
+          'GRANT CREATE ON SCHEMA "app" TO "w";',
+          'REVOKE ALL ON FUNCTION "app"."f"() FROM PUBLIC;',
+          'REVOKE ALL ON FUNCTION "app"."f"() FROM "r";',
+          'GRANT EXECUTE ON FUNCTION "app"."f"() TO "r";',
+          'REVOKE ALL ON PROCEDURE "app"."p"() FROM PUBLIC;',
+          'REVOKE ALL ON TYPE "app"."d" FROM PUBLIC;',
+        ],
+        { ...options, schemaRoles: ["admin", "deployer"] },
+      ),
+    ).toEqual([
+      {
+        path: "grants.sql",
+        text: `-- Adopted.
+
+GRANT USAGE ON SCHEMA "app" TO "r";
+
+GRANT CREATE ON SCHEMA "app" TO "w";
+
+REVOKE EXECUTE ON FUNCTION "app"."f"() FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "app"."f"() TO "r";
+
+REVOKE EXECUTE ON PROCEDURE "app"."p"() FROM PUBLIC;
+
+REVOKE USAGE ON TYPE "app"."d" FROM PUBLIC;
+`,
+      },
+    ]);
+  });
+
+  test("keeps a revoke of the public schema's default USAGE for PUBLIC", async () => {
+    const files = await adoptedDesiredSchema(
+      ['REVOKE ALL ON SCHEMA "public" FROM PUBLIC;'],
+      { ...options, managedSchema: "public" },
+    );
+    expect(files.map((file) => file.text)).toEqual([
+      '-- Adopted.\n\nREVOKE USAGE ON SCHEMA "public" FROM PUBLIC;\n',
+    ]);
   });
 
   test("keeps what the rules must refuse, so they can say why", async () => {

@@ -11,6 +11,14 @@
 //   servers...): the managed schema is all super-deploy manages.
 // - ownership changes (`ALTER ... OWNER TO`): ownership isn't modelled;
 //   objects belong to whoever deploys them.
+// - grants on the managed schema to its owner or the deploy role (target
+//   setup, which the catalog comparison counts as the owner's), and REVOKEs
+//   from roles other than PUBLIC: the differ emits them before each GRANT,
+//   and on a new object they change nothing.
+//
+// The managed schema's own grants are kept, and a REVOKE ALL of PUBLIC's
+// default privileges is written with the privilege it takes away, as the
+// rules require (`REVOKE EXECUTE ON FUNCTION`, `REVOKE USAGE ON TYPE`).
 // - for objects a desired schema can never create and the catalog check
 //   reports itself (aggregates, operators, rules, statistics objects,
 //   extensions, publications...; verification/catalog.ts `other`), so each
@@ -107,6 +115,11 @@ export interface AdoptionOptions {
   readonly managedSchema: string;
   /** The first lines of every file, e.g. where it came from. */
   readonly header: readonly string[];
+  /**
+   * Roles whose privileges on the managed schema are target setup, not the
+   * desired schema's: its owner and the deploy role. Default none.
+   */
+  readonly schemaRoles?: readonly string[];
 }
 
 /**
@@ -121,7 +134,7 @@ export async function adoptedDesiredSchema(
 ): Promise<AdoptedFile[]> {
   const files = new Map<string, string[]>();
   for (const sql of statements) {
-    const file = await fileFor(sql, options.managedSchema);
+    const file = await fileFor(sql, options);
     if (file !== undefined) {
       const texts = files.get(file) ?? [];
       texts.push(desiredText(sql));
@@ -141,7 +154,7 @@ export async function adoptedDesiredSchema(
 /** The file a generated statement goes to, or undefined to leave it out. */
 async function fileFor(
   sql: string,
-  managedSchema: string,
+  { managedSchema, schemaRoles = [] }: AdoptionOptions,
 ): Promise<string | undefined> {
   const parsed = await parseSqlFile({ path: "generated.sql", text: sql });
   const [statement] = parsed.ok ? parsed.statements : [];
@@ -160,6 +173,33 @@ async function fileFor(
   ) {
     return undefined;
   }
+  if (type === "GrantStmt") {
+    const grantees = list(node.grantees).map((grantee) => {
+      const role = unwrap(grantee, "RoleSpec") ?? {};
+      return role.roletype === "ROLESPEC_PUBLIC" ? null : role.rolename;
+    });
+    if (
+      node.is_grant === true
+        ? node.objtype === "OBJECT_SCHEMA" &&
+          grantees.every(
+            (role) => typeof role === "string" && schemaRoles.includes(role),
+          )
+        : !grantees.includes(null)
+    ) {
+      return undefined;
+    }
+    if (
+      node.objtype === "OBJECT_SCHEMA" &&
+      node.targtype === "ACL_TARGET_OBJECT"
+    ) {
+      const schemas = list(node.objects).map(
+        (object) => unwrap(object, "String")?.sval,
+      );
+      return schemas.every((schema) => schema === managedSchema)
+        ? fileOf[type]
+        : undefined;
+    }
+  }
   const schema = ownSchema(type, node);
   if (schema === null || (schema !== undefined && schema !== managedSchema)) {
     return undefined;
@@ -167,8 +207,25 @@ async function fileFor(
   return fileOf[type] ?? otherFile;
 }
 
+/** PUBLIC's default privilege on each object type the differ revokes ALL of. */
+const publicDefaults: Readonly<Record<string, string>> = {
+  FUNCTION: "EXECUTE",
+  PROCEDURE: "EXECUTE",
+  ROUTINE: "EXECUTE",
+  TYPE: "USAGE",
+  DOMAIN: "USAGE",
+  SCHEMA: "USAGE",
+};
+
 function desiredText(sql: string): string {
-  const text = sql.trim().replace(/^CREATE\s+OR\s+REPLACE\s+/i, "CREATE ");
+  const text = sql
+    .trim()
+    .replace(/^CREATE\s+OR\s+REPLACE\s+/i, "CREATE ")
+    .replace(
+      /^REVOKE\s+ALL\s+ON\s+(FUNCTION|PROCEDURE|ROUTINE|TYPE|DOMAIN|SCHEMA)\s(?=[\s\S]*\sFROM\s+PUBLIC;?$)/i,
+      (_all, kind: string) =>
+        `REVOKE ${publicDefaults[kind.toUpperCase()]} ON ${kind} `,
+    );
   return text.endsWith(";") ? text : `${text};`;
 }
 

@@ -30,6 +30,7 @@
 // (the record may be there: the next status or deploy settles it).
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { withLockedTarget } from "../deploy/engine.ts";
 import { readRecordedMigrations } from "../deploy/history.ts";
@@ -227,6 +228,7 @@ async function readTarget(
       statements.map((statement) => statement.sql),
       {
         managedSchema: config.managedSchema,
+        schemaRoles: await schemaRoles(session, config.managedSchema),
         header: [
           `Adopted from target ${target.name} by super-deploy init --adopt.`,
           "This is the desired schema now: change it, then run draft.",
@@ -279,6 +281,22 @@ async function readTarget(
   } finally {
     await session.close().catch(() => {});
   }
+}
+
+/**
+ * The managed schema's owner and the deploy role: their privileges on the
+ * schema are target setup, not the desired schema's (verification/catalog.ts).
+ */
+async function schemaRoles(
+  session: Session,
+  managedSchema: string,
+): Promise<string[]> {
+  const { rows } = await session.query<{ role: string }>(
+    `SELECT current_user AS role
+     UNION SELECT pg_catalog.pg_get_userbyid(nspowner) FROM pg_catalog.pg_namespace WHERE nspname = $1`,
+    [managedSchema],
+  );
+  return rows.map((row) => row.role);
 }
 
 /** Why a drifted object isn't reproduced by the generated desired schema. */
