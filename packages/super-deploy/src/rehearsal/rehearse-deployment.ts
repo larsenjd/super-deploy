@@ -30,7 +30,9 @@ export async function rehearseDeployment(
       // The target as its recorded migrations should have left it.
       await replay(replica, recorded, managedSchema);
     }
+    // Ticket 12: the drift comparison with the target goes here.
     await replay(replica, pending, managedSchema);
+    // Ticket 12: the comparison with the newest snapshot goes here.
     return { serverVersion: await replica.serverVersion() };
   });
 }
