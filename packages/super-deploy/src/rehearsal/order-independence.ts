@@ -11,7 +11,11 @@ import type {
 import { DesiredSchemaLoadError, OrderDependenceError } from "../errors.ts";
 import { alternativeOrder } from "../sql-analysis/ordering.ts";
 import type { ParsedStatement } from "../sql-analysis/parse.ts";
-import { catalogDifferences, catalogSnapshot } from "./catalog-snapshot.ts";
+import {
+  catalogFacts,
+  factDifferences,
+  factLine,
+} from "../verification/catalog.ts";
 import { loadDesiredSchema, withThrowawayDatabase } from "./throwaway.ts";
 
 export interface OrderIndependenceCheck {
@@ -41,7 +45,9 @@ export async function checkOrderIndependence(
   ) {
     return; // The dependencies allow only one order.
   }
-  const expected = await catalogSnapshot(check.loaded, managedSchema);
+  const expected = await catalogFacts(check.loaded, managedSchema, {
+    bindings: true,
+  });
   await withThrowawayDatabase(
     check.rehearsal,
     check.request,
@@ -59,16 +65,14 @@ export async function checkOrderIndependence(
         }
         throw error;
       }
-      const differences = catalogDifferences(
+      const differences = factDifferences(
         expected,
-        await catalogSnapshot(session, managedSchema),
+        await catalogFacts(session, managedSchema, { bindings: true }),
       );
       if (differences.length > 0) {
         throw new OrderDependenceError(
-          [...new Set(differences.map((d) => d.fact.object))],
-          differences.map(
-            (d) => `${d.side} ${d.fact.object}: ${d.fact.detail}`,
-          ),
+          [...new Set(differences.map((d) => d.fact.object))].sort(),
+          differences.map((d) => `${d.side} ${factLine(d.fact)}`),
         );
       }
     },

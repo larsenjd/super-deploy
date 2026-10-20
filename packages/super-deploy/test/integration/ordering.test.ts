@@ -2,8 +2,10 @@
 // against real PostgreSQL 18.
 import {
   draft,
+  finalize,
   loadProject,
   OrderDependenceError,
+  rehearse,
   SqlRuleViolationError,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -22,7 +24,8 @@ afterAll(async () => {
  * A config whose rehearsal databases behave as if PostgreSQL let creation
  * order leak into the catalog: whenever `create table beta` runs before
  * `create table alpha` in a database, `onBetaFirst` runs too (or, if it is
- * "fail", the statement fails).
+ * "fail", the statement fails). Setting `globalThis.orderLeakOff` turns the
+ * leak off, so a test can create a draft first.
  */
 function orderSensitiveConfig(onBetaFirst: string): string {
   return `import { defineConfig } from "super-deploy";
@@ -45,7 +48,7 @@ export default defineConfig({
             ...session,
             async execute(sql) {
               if (sql.startsWith("create table alpha")) alphaCreated = true;
-              if (sql.startsWith("create table beta") && !alphaCreated) {
+              if (sql.startsWith("create table beta") && !alphaCreated && !globalThis.orderLeakOff) {
                 ${
                   onBetaFirst === "fail"
                     ? `throw new Error("simulated: beta needs alpha");`
@@ -180,7 +183,7 @@ describe("order-independence check in draft", () => {
     expect(error).toMatchObject({
       code: "order-dependent-desired-schema",
       objects: ["table beta"],
-      differences: ["+ table beta: comment created first"],
+      differences: ["+ comment: pg_class beta sub=0 created first"],
       failure: undefined,
     });
     expect((error as Error).message).toContain("table beta");
@@ -224,5 +227,44 @@ describe("order-independence check in draft", () => {
     await expect(draft(project, { name: "add tables" })).resolves.toMatchObject(
       { name: "add-tables" },
     );
+  });
+});
+
+describe("order-independence check in rehearse and finalize", () => {
+  async function draftedOrderSensitiveProject() {
+    const dir = await createTestProject({
+      config: orderSensitiveConfig("comment on table beta is 'created first'"),
+      files: independentTables,
+    });
+    const project = await loadProject({ cwd: dir.root });
+    const leak = globalThis as { orderLeakOff?: boolean };
+    leak.orderLeakOff = true;
+    try {
+      await draft(project, { name: "add tables" });
+    } finally {
+      leak.orderLeakOff = false;
+    }
+    return { dir, project };
+  }
+
+  test("rehearse refuses a desired schema whose catalog depends on load order", async () => {
+    const { project } = await draftedOrderSensitiveProject();
+    const before = await server.databases();
+
+    await expect(rehearse(project)).rejects.toMatchObject({
+      code: "order-dependent-desired-schema",
+      objects: ["table beta"],
+    });
+    expect(await server.databases()).toEqual(before);
+  });
+
+  test("finalize refuses a desired schema whose catalog depends on load order, and finalizes nothing", async () => {
+    const { dir, project } = await draftedOrderSensitiveProject();
+
+    await expect(finalize(project)).rejects.toBeInstanceOf(
+      OrderDependenceError,
+    );
+    expect(dir.exists("data-model/draft")).toBe(true);
+    expect(dir.exists("data-model/migrations/00001-add-tables")).toBe(false);
   });
 });

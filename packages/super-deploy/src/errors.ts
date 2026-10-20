@@ -12,7 +12,14 @@ export type ErrorCode =
   | "order-dependent-desired-schema"
   | "unsupported-server"
   | "adapter-failed"
-  | "differ-failed";
+  | "differ-failed"
+  | "interrupted"
+  | "invalid-encoding"
+  | "no-draft"
+  | "sql-file-failed"
+  | "rehearsal-mismatch"
+  | "migration-integrity"
+  | "validation-failed";
 
 export class SuperDeployError extends Error {
   readonly code: ErrorCode;
@@ -131,8 +138,8 @@ export class OrderDependenceError extends SuperDeployError {
   /** The objects whose catalog entries differ, e.g. `view which_pick`, sorted. */
   readonly objects: readonly string[];
   /**
-   * The differing catalog facts: `- <object>: <detail>` as loaded in the
-   * normal order, `+ <object>: <detail>` as loaded in the other order.
+   * The differing catalog facts, as `- <kind>: <line>` when loaded in the
+   * normal order and `+ <kind>: <line>` when loaded in the other order.
    */
   readonly differences: readonly string[];
   /** Set when the other order failed to load instead. */
@@ -185,5 +192,148 @@ export class AdapterError extends SuperDeployError {
 export class DifferError extends SuperDeployError {
   constructor(message: string, options?: ErrorOptions) {
     super("differ-failed", message, options);
+  }
+}
+
+/** A file that is hashed (finalized migrations, the draft, the desired schema) isn't UTF-8 without a BOM. */
+export class InvalidEncodingError extends SuperDeployError {
+  /** Project-relative path with forward slashes. */
+  readonly file: string;
+
+  constructor(file: string, reason: string, options?: ErrorOptions) {
+    super(
+      "invalid-encoding",
+      `${file} ${reason}; save it as UTF-8 without a byte-order mark`,
+      options,
+    );
+    this.file = file;
+  }
+}
+
+/** The command needs a draft and there is none. */
+export class NoDraftError extends SuperDeployError {
+  constructor(action: string) {
+    super("no-draft", `There is no draft to ${action}; run draft first`);
+  }
+}
+
+/** PostgreSQL refused a deploy-time SQL file while a rehearsal replayed it. */
+export class SqlFileFailedError extends SuperDeployError {
+  /** Project-relative path with forward slashes. */
+  readonly file: string;
+  /** 1-based line of the error, when PostgreSQL reported a position. */
+  readonly line: number | undefined;
+  /** PostgreSQL's own message. */
+  readonly detail: string;
+
+  constructor(
+    file: string,
+    line: number | undefined,
+    detail: string,
+    options?: ErrorOptions,
+  ) {
+    super(
+      "sql-file-failed",
+      `${file}${line === undefined ? "" : `:${line}`}: PostgreSQL refused it: ${detail}`,
+      options,
+    );
+    this.file = file;
+    this.line = line;
+    this.detail = detail;
+  }
+}
+
+/**
+ * Replaying the migrations and the draft did not produce the desired schema.
+ * Each difference is one line, prefixed with the check that found it:
+ * `pg-delta: <statement still needed>` or `catalog: - <line only in the
+ * rehearsal>` / `catalog: + <line only in the desired schema>`.
+ */
+export class RehearsalMismatchError extends SuperDeployError {
+  readonly differences: readonly string[];
+
+  constructor(differences: readonly string[]) {
+    const [first] = differences;
+    const more =
+      differences.length > 1 ? ` (and ${differences.length - 1} more)` : "";
+    super(
+      "rehearsal-mismatch",
+      `The rehearsal does not match the desired schema; run draft again. First difference: ${first ?? ""}${more}`,
+    );
+    this.differences = differences;
+  }
+}
+
+export type ValidationSeverity = "error" | "warning";
+
+/** One finding of `validate` (or of the integrity check other commands run first). */
+export interface ValidationProblem {
+  readonly severity: ValidationSeverity;
+  /**
+   * Stable identifier: `index-invalid`, `invalid-folder-name`,
+   * `unexpected-entry`, `migration-missing`, `migration-unindexed`,
+   * `migration-renamed`, `numbering-gap`, `invalid-encoding`,
+   * `content-hash-mismatch`, `chain-hash-mismatch` (errors);
+   * `unfinalized-draft`, `undrafted-changes` (warnings).
+   */
+  readonly code: string;
+  readonly message: string;
+  /** Project-relative path with forward slashes, when the problem has one. */
+  readonly path?: string;
+}
+
+function summarise(problems: readonly ValidationProblem[]): string {
+  const [first] = problems;
+  const more = problems.length > 1 ? ` (and ${problems.length - 1} more)` : "";
+  return `${first?.message ?? ""}${more}`;
+}
+
+/** The finalized migrations failed their integrity check, so nothing builds on them. */
+export class MigrationIntegrityError extends SuperDeployError {
+  readonly problems: readonly ValidationProblem[];
+
+  constructor(problems: readonly ValidationProblem[]) {
+    super(
+      "migration-integrity",
+      `The finalized migrations failed validation: ${summarise(problems)}`,
+    );
+    this.problems = problems;
+  }
+}
+
+/** `validate` found errors, or warnings under `--strict`. */
+export class ValidationFailedError extends SuperDeployError {
+  /** Every finding, errors and warnings, in report order. */
+  readonly problems: readonly ValidationProblem[];
+  readonly strict: boolean;
+
+  constructor(problems: readonly ValidationProblem[], strict: boolean) {
+    const errors = problems.filter((p) => p.severity === "error").length;
+    const warnings = problems.length - errors;
+    const counts = [
+      errors > 0 ? `${errors} error${errors === 1 ? "" : "s"}` : "",
+      warnings > 0
+        ? `${warnings} warning${warnings === 1 ? "" : "s"}${strict ? " (--strict)" : ""}`
+        : "",
+    ]
+      .filter((part) => part !== "")
+      .join(", ");
+    super(
+      "validation-failed",
+      `Validation failed with ${counts}: ${summarise(problems)}`,
+    );
+    this.problems = problems;
+    this.strict = strict;
+  }
+}
+
+/**
+ * The project's interruption signal aborted while a command was running. The
+ * command has cleaned up (rolled back, dropped throwaway databases) by the
+ * time this is thrown; `cause` is the signal's abort reason.
+ */
+export class InterruptedError extends SuperDeployError {
+  constructor(options?: ErrorOptions) {
+    super("interrupted", "Interrupted", options);
   }
 }
