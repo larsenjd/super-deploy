@@ -91,3 +91,63 @@ function errorMessage(error: unknown): string | null {
 function errorFile(error: unknown): string | null {
   return error instanceof SqlFileFailedError ? error.file : null;
 }
+
+/** An attempt `settleAttempts` gave its final outcome. */
+export interface SettledAttempt {
+  readonly id: number;
+  readonly outcome: "succeeded" | "failed" | "abandoned";
+}
+
+/**
+ * Settles every attempt whose outcome its command could not record: `unknown`
+ * ones (the COMMIT's result was lost) and `running` ones whose command went
+ * away without ending them (a crash, a forced exit). Only once the attempt's
+ * server process is gone, so its transaction is over: then the migrations
+ * rows written inside that transaction say whether it committed. With rows it
+ * succeeded; without, an `unknown` attempt failed and a `running` one was
+ * abandoned. A server process id reused by a newer backend counts as gone.
+ * Runs on any session to the target, in autocommit; the history schema must
+ * exist.
+ */
+export async function settleAttempts(
+  session: Session,
+  historySchema: string,
+): Promise<SettledAttempt[]> {
+  const attempts = historyTable(historySchema, "attempts");
+  const migrations = historyTable(historySchema, "migrations");
+  const { rows } = await session.query<{
+    id: string;
+    outcome: SettledAttempt["outcome"];
+  }>(
+    `WITH settled AS (
+       SELECT a.id,
+              CASE
+                WHEN EXISTS (SELECT 1 FROM ${migrations} m WHERE m.attempt_id = a.id) THEN 'succeeded'
+                WHEN a.outcome = 'unknown' THEN 'failed'
+                ELSE 'abandoned'
+              END AS outcome
+         FROM ${attempts} a
+        WHERE a.outcome IN ('unknown', 'running')
+          AND a.backend_pid IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_stat_activity s
+             WHERE s.pid = a.backend_pid
+               AND (s.backend_start IS NULL OR s.backend_start <= a.started_at))
+          FOR UPDATE OF a SKIP LOCKED)
+     UPDATE ${attempts} a
+        SET outcome = settled.outcome,
+            ended_at = coalesce(a.ended_at, clock_timestamp()),
+            error = concat_ws('; ',
+              coalesce(a.error, CASE WHEN a.outcome = 'running' THEN 'The command ended without recording an outcome' END),
+              CASE settled.outcome
+                WHEN 'succeeded' THEN 'settled as succeeded: its migrations are recorded'
+                ELSE 'settled as ' || settled.outcome || ': none of its migrations are recorded'
+              END)
+       FROM settled
+      WHERE a.id = settled.id AND a.outcome IN ('unknown', 'running')
+      RETURNING a.id, a.outcome`,
+  );
+  return rows
+    .map((row) => ({ id: Number(row.id), outcome: row.outcome }))
+    .sort((a, b) => a.id - b.id);
+}

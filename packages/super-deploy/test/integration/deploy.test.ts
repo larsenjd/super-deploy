@@ -751,6 +751,12 @@ describe("status", () => {
       ],
       attempts: [],
       disposable: false,
+      preflight: {
+        missingRoles: [],
+        missingExternalSchemas: [],
+        historyMismatches: [],
+        warnings: [expect.stringContaining("is a superuser")],
+      },
     });
     expect(
       await server.query(

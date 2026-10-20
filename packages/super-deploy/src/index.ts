@@ -1,5 +1,11 @@
 // The programmatic API. Every command is an exported function taking a loaded
 // project, with flags as options, questions as callbacks, and typed errors.
+//
+// Guarded commands (`disposable`; later `deploy-draft`, `rebuild`, `mark`)
+// are the exception: they stay terminal-only. They take no answer callback;
+// they ask the person at this process's own terminal to type YES, and throw
+// TerminalRequiredError in CI or without a terminal on stdin and stdout.
+// No option, flag or environment variable skips that (guard/guard.ts).
 
 export {
   type ConnectionSource,
@@ -26,6 +32,11 @@ export {
   type DiscardDraftResult,
   discardDraft,
 } from "./commands/discard-draft.ts";
+export {
+  type DisposableOptions,
+  type DisposableResult,
+  disposable,
+} from "./commands/disposable.ts";
 export {
   type DraftOptions,
   type DraftResult,
@@ -70,14 +81,20 @@ export type {
   AttemptRecord,
   RecordedMigration,
 } from "./deploy/history.ts";
+export type {
+  HistoryMismatch,
+  PreflightFindings,
+} from "./deploy/preflight.ts";
 export type { PlannedStatement } from "./differ/types.ts";
 export {
   AdapterError,
+  CommitOutcomeUnknownError,
   ConfigError,
   DesiredSchemaLoadError,
   DifferError,
   DraftNameRequiredError,
   type ErrorCode,
+  type GuardedCommand,
   InterruptedError,
   InvalidDraftNameError,
   InvalidEncodingError,
@@ -85,15 +102,19 @@ export {
   MigrationIntegrityError,
   NoDraftError,
   NoMigrationError,
+  NotConfirmedError,
   OrderDependenceError,
   OverwriteNotAcknowledgedError,
+  PreflightFailedError,
   ProjectNotFoundError,
   RehearsalMismatchError,
   type RuleViolation,
   SqlFileFailedError,
   SqlRuleViolationError,
   SuperDeployError,
+  TargetChangedError,
   TargetLockedError,
+  TerminalRequiredError,
   UnknownTargetError,
   UnsupportedServerError,
   ValidationFailedError,
