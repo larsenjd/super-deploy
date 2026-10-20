@@ -67,6 +67,36 @@ const allowed: Record<string, StatementCheck> = {
   CreateExtensionStmt: checkExtension,
 };
 
+/**
+ * Object types V1 refuses that a database can hold, with the reason given.
+ * Shared by the rules (the statements creating them) and adoption (the
+ * objects found on a target, `catalogObjectFinding`).
+ */
+const refusedObjects = {
+  aggregates: () => v1("Custom aggregates"),
+  rules: () => v1("Rules"),
+  statistics: () => unsupported("CREATE STATISTICS is not supported in V1"),
+  extensions: () => v1("Extensions other than plpgsql"),
+  publications: () => v1("Publications and subscriptions"),
+  operators: () =>
+    v1("Custom operators", " (nor operator classes and families)"),
+  collations: () => v1("Custom collations"),
+  conversions: () => v1("Custom conversions"),
+  textSearch: () =>
+    v1(
+      "Text-search configurations",
+      " (nor their dictionaries, parsers and templates)",
+    ),
+  baseTypes: () => v1("Base types", ": use a domain or a composite type"),
+  windowFunctions: () => routineOption("window"),
+} satisfies Record<string, () => RuleFinding>;
+
+function routineOption(name: string): RuleFinding {
+  return unsupported(
+    `The ${name.toUpperCase()} routine option is not supported in V1`,
+  );
+}
+
 /** Refused statement types, with the reason given. */
 const refused: Record<string, (node: Json) => RuleFinding> = {
   CreateEnumStmt: () =>
@@ -74,19 +104,19 @@ const refused: Record<string, (node: Json) => RuleFinding> = {
       "Enums",
       ": use a lookup table with a foreign key, or a CHECK constraint",
     ),
-  RuleStmt: () => v1("Rules"),
+  RuleStmt: refusedObjects.rules,
   CreateEventTrigStmt: () => v1("Event triggers"),
   CreateForeignTableStmt: foreign,
   CreateFdwStmt: foreign,
   CreateForeignServerStmt: foreign,
   CreateUserMappingStmt: foreign,
   ImportForeignSchemaStmt: foreign,
-  CreatePublicationStmt: () => v1("Publications and subscriptions"),
-  CreateSubscriptionStmt: () => v1("Publications and subscriptions"),
+  CreatePublicationStmt: refusedObjects.publications,
+  CreateSubscriptionStmt: refusedObjects.publications,
   CreateCastStmt: () => v1("Custom casts"),
-  CreateOpClassStmt: operators,
-  CreateOpFamilyStmt: operators,
-  CreateConversionStmt: () => v1("Custom conversions"),
+  CreateOpClassStmt: refusedObjects.operators,
+  CreateOpFamilyStmt: refusedObjects.operators,
+  CreateConversionStmt: refusedObjects.conversions,
   CreateTransformStmt: () => v1("Transforms"),
   CreateAmStmt: () => v1("Custom access methods"),
   CreatePLangStmt: () => v1("Procedural languages"),
@@ -95,8 +125,7 @@ const refused: Record<string, (node: Json) => RuleFinding> = {
       "Standalone sequences",
       ": use an identity column (`bigint generated always as identity`)",
     ),
-  CreateStatsStmt: () =>
-    unsupported("CREATE STATISTICS is not supported in V1"),
+  CreateStatsStmt: refusedObjects.statistics,
   CreateRangeStmt: () => v1("Range types"),
   CreateSchemaStmt: () =>
     unsupported(
@@ -107,21 +136,18 @@ const refused: Record<string, (node: Json) => RuleFinding> = {
   DefineStmt: (node) => {
     switch (node.kind) {
       case "OBJECT_AGGREGATE":
-        return v1("Custom aggregates");
+        return refusedObjects.aggregates();
       case "OBJECT_OPERATOR":
-        return operators();
+        return refusedObjects.operators();
       case "OBJECT_COLLATION":
-        return v1("Custom collations");
+        return refusedObjects.collations();
       case "OBJECT_TSCONFIGURATION":
       case "OBJECT_TSDICTIONARY":
       case "OBJECT_TSPARSER":
       case "OBJECT_TSTEMPLATE":
-        return v1(
-          "Text-search configurations",
-          " (nor their dictionaries, parsers and templates)",
-        );
+        return refusedObjects.textSearch();
       case "OBJECT_TYPE":
-        return v1("Base types", ": use a domain or a composite type");
+        return refusedObjects.baseTypes();
       default:
         return notAllowed(
           `${String(node.kind)} definitions are not allowed in the desired schema`,
@@ -133,13 +159,58 @@ const refused: Record<string, (node: Json) => RuleFinding> = {
 function foreign(): RuleFinding {
   return v1("Foreign tables and foreign data wrappers");
 }
-function operators(): RuleFinding {
-  return v1("Custom operators", " (nor operator classes and families)");
-}
 function roles(): RuleFinding {
   return unsupported(
     "Roles are not managed by super-deploy: they are cluster-wide, so create them outside the desired schema",
   );
+}
+
+/**
+ * Why V1 refuses an object a desired schema can't create at all, found in a
+ * database's managed schema (verification/catalog.ts, kind `other`):
+ * `object` as pg_describe_object names it, `line` its catalog line (for
+ * routines `<prokind> <signature>`). The same reasons the rules give for
+ * the statements that would create it.
+ */
+export function catalogObjectFinding(fact: {
+  readonly object: string;
+  readonly line: string;
+}): RuleFinding {
+  const { object, line } = fact;
+  const startsWith = (prefix: string) => object.startsWith(prefix);
+  if (startsWith("function ")) {
+    return line.startsWith("w ")
+      ? refusedObjects.windowFunctions()
+      : refusedObjects.aggregates();
+  }
+  if (startsWith("type ")) {
+    return refusedObjects.baseTypes();
+  }
+  if (startsWith("rule ")) {
+    return refusedObjects.rules();
+  }
+  if (startsWith("statistics object ")) {
+    return refusedObjects.statistics();
+  }
+  if (startsWith("extension ")) {
+    return refusedObjects.extensions();
+  }
+  if (startsWith("publication ")) {
+    return refusedObjects.publications();
+  }
+  if (startsWith("operator ")) {
+    return refusedObjects.operators();
+  }
+  if (startsWith("collation ")) {
+    return refusedObjects.collations();
+  }
+  if (startsWith("conversion ")) {
+    return refusedObjects.conversions();
+  }
+  if (startsWith("text search ")) {
+    return refusedObjects.textSearch();
+  }
+  return unsupported(`${object} is not supported in V1`);
 }
 
 /** Every rule finding for one desired-schema statement. */
@@ -372,11 +443,7 @@ function checkRoutine(
   const options = defElems(node.options);
   for (const { name } of options) {
     if (!routineOptions.has(name)) {
-      findings.push(
-        unsupported(
-          `The ${name.toUpperCase()} routine option is not supported in V1`,
-        ),
-      );
+      findings.push(routineOption(name));
     }
   }
   const language = defElemString(
@@ -515,7 +582,7 @@ function checkGrant(node: Json): RuleFinding[] {
 
 function checkExtension(node: Json): RuleFinding[] {
   if (node.extname !== "plpgsql") {
-    return [v1("Extensions other than plpgsql")];
+    return [refusedObjects.extensions()];
   }
   return list(node.options).length > 0
     ? [

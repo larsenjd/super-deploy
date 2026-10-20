@@ -46,7 +46,8 @@ export async function driftBetween(
 ): Promise<DriftedObject[]> {
   return driftedObjects(
     await catalogFacts(target, managedSchema, {
-      settings: options.target === undefined ? [] : timeouts(options.target),
+      settings:
+        options.target === undefined ? [] : targetTimeouts(options.target),
     }),
     await catalogFacts(replica, managedSchema),
   );
@@ -62,7 +63,8 @@ export interface DriftOptions {
   readonly target?: ResolvedTarget;
 }
 
-function timeouts(target: ResolvedTarget): string[] {
+/** `SET LOCAL` statements for a target's lock and statement timeouts. */
+export function targetTimeouts(target: ResolvedTarget): string[] {
   return [
     `SET LOCAL lock_timeout TO '${target.lockTimeoutMs}ms'`,
     ...(target.statementTimeoutMs === undefined

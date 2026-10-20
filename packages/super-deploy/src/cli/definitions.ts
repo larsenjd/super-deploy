@@ -3,6 +3,7 @@
 // calls the exported API function and prints its result. To add a command,
 // define it here and append it to `commands`.
 import { join } from "node:path";
+import { adopt } from "../commands/adopt.ts";
 import { deploy } from "../commands/deploy.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
 import { disposable } from "../commands/disposable.ts";
@@ -17,6 +18,7 @@ import { unfinalize } from "../commands/unfinalize.ts";
 import { validate } from "../commands/validate.ts";
 import type { AttemptRecord } from "../deploy/history.ts";
 import {
+  AdoptUnsupportedError,
   DestructiveNotAcknowledgedError,
   DriftError,
   MarkMismatchError,
@@ -141,7 +143,7 @@ export interface ProjectCommandDefinition extends CommandBase {
 /**
  * A command that runs in the working directory without loading a project
  * (`init`). Its options must not need one: no `target` or `migration` kinds,
- * and no `initial` on `name` options.
+ * and no `initial` on `name` options; except `projectMode`'s option.
  */
 export interface DirectoryCommandDefinition extends CommandBase {
   readonly needsProject: false;
@@ -150,11 +152,37 @@ export interface DirectoryCommandDefinition extends CommandBase {
     values: OptionValues,
     context: CommandContext,
   ): Promise<void>;
+  /**
+   * An option (e.g. `init --adopt <target>`) that turns the command into a
+   * project command: when it is given, the project is loaded and `run`
+   * runs instead. The menu asks it (as required) only inside a project,
+   * and runs the command without it outside one.
+   */
+  readonly projectMode?: {
+    readonly option: string;
+    run(
+      project: Project,
+      values: OptionValues,
+      context: CommandContext,
+    ): Promise<void>;
+  };
 }
 
 export type CommandDefinition =
   | ProjectCommandDefinition
   | DirectoryCommandDefinition;
+
+/** True when the command runs on a project with these option values. */
+export function needsProject(
+  command: CommandDefinition,
+  values: OptionValues,
+): boolean {
+  return (
+    command.needsProject !== false ||
+    (command.projectMode !== undefined &&
+      values[command.projectMode.option] !== undefined)
+  );
+}
 
 /** A command refused to go ahead (exit 1). */
 export class RefusedError extends Error {
@@ -187,9 +215,16 @@ const initCommand: DirectoryCommandDefinition = {
   name: "init",
   group: "Start",
   summary:
-    "Create a project here from the bundled template, with a local embedded PostgreSQL and a dev target",
+    "Create a project here from the bundled template, with a local embedded PostgreSQL and a dev target; or, in an empty project, adopt an existing database",
   needsProject: false,
-  options: [],
+  options: [
+    {
+      name: "adopt",
+      kind: "target",
+      description:
+        "Instead, in an initialised project with no migrations yet: turn this target's managed schema into the desired schema and migration 1, recorded on it as marked",
+    },
+  ],
   async run(directory, _values, context) {
     const result = await init({ directory });
     context.result(
@@ -198,6 +233,35 @@ const initCommand: DirectoryCommandDefinition = {
     context.result(
       "Next: pnpm install, add CREATE statements under data-model/desired-schema/, then run draft",
     );
+  },
+  projectMode: {
+    option: "adopt",
+    async run(project, values, context) {
+      try {
+        const result = await adopt(project, { target: String(values.adopt) });
+        for (const file of result.files) {
+          context.result(
+            `Wrote ${context.displayPath(join(project.root, file))}`,
+          );
+        }
+        context.result(
+          `Adopted target ${result.target}: migration ${result.migration.folder} in ${context.displayPath(result.migration.path)}, recorded on it as marked (attempt #${result.attemptId})`,
+        );
+      } catch (error) {
+        if (error instanceof AdoptUnsupportedError) {
+          context.warn(
+            `Target ${error.target} has ${plural(error.objects.length, "thing")} V1 doesn't support:`,
+          );
+          for (const item of error.objects) {
+            context.warn(`  ${item.object}`);
+            context.warn(`    ${item.rule}: ${item.reason}`);
+          }
+        } else if (error instanceof MarkMismatchError) {
+          reportMarkMismatch(error, context);
+        }
+        throw error;
+      }
+    },
   },
 };
 
@@ -595,16 +659,7 @@ const markCommand: CommandDefinition = {
       );
     } catch (error) {
       if (error instanceof MarkMismatchError) {
-        // `-` lines are on the target only, `+` lines what the replica has.
-        context.warn(
-          `The target differs from a replica of its migrations up to ${error.migration}:`,
-        );
-        for (const drifted of error.objects) {
-          context.warn(`  ${drifted.change}: ${drifted.object}`);
-          for (const line of drifted.differences) {
-            context.warn(`    ${line}`);
-          }
-        }
+        reportMarkMismatch(error, context);
       }
       throw error;
     }
@@ -640,6 +695,23 @@ const disposableCommand: CommandDefinition = {
     );
   },
 };
+
+/** The objects a MarkMismatchError lists, on stderr. */
+function reportMarkMismatch(
+  error: MarkMismatchError,
+  context: CommandContext,
+): void {
+  // `-` lines are on the target only, `+` lines what the replica has.
+  context.warn(
+    `The target differs from a replica of its migrations up to ${error.migration}:`,
+  );
+  for (const drifted of error.objects) {
+    context.warn(`  ${drifted.change}: ${drifted.object}`);
+    for (const line of drifted.differences) {
+      context.warn(`    ${line}`);
+    }
+  }
+}
 
 function describeAttempt(attempt: AttemptRecord): string {
   const range =

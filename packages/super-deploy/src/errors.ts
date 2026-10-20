@@ -38,7 +38,9 @@ export type ErrorCode =
   | "unknown-recorded-migration"
   | "nothing-to-mark"
   | "history-mismatch"
-  | "mark-mismatch";
+  | "mark-mismatch"
+  | "adopt-conflict"
+  | "adopt-unsupported";
 
 export class SuperDeployError extends Error {
   readonly code: ErrorCode;
@@ -714,6 +716,62 @@ export class MarkMismatchError extends SuperDeployError {
     );
     this.target = target;
     this.migration = migration;
+    this.objects = objects;
+  }
+}
+
+/**
+ * `init --adopt` needs a project with no migrations, draft or desired
+ * schema yet, and a target that records no migrations; nothing was written.
+ */
+export class AdoptConflictError extends SuperDeployError {
+  readonly target: string;
+  /** Each reason, e.g. `the project already has a draft`. */
+  readonly reasons: readonly string[];
+
+  constructor(target: string, reasons: readonly string[]) {
+    super(
+      "adopt-conflict",
+      `Cannot adopt target ${target}: ${reasons.join("; ")}`,
+    );
+    this.target = target;
+    this.reasons = reasons;
+  }
+}
+
+/** Something V1 doesn't support, found by `init --adopt`. */
+export interface UnsupportedObject {
+  /**
+   * The object as PostgreSQL describes it (`statistics object st`), or the
+   * first line of the statement the target's schema needs.
+   */
+  readonly object: string;
+  /** The rule id that refuses it, e.g. `unsupported-object`. */
+  readonly rule: string;
+  /** Why, in the rules' words. */
+  readonly reason: string;
+}
+
+/**
+ * `init --adopt` found objects in the target's managed schema that V1
+ * doesn't support (or can't reproduce); nothing was written anywhere.
+ */
+export class AdoptUnsupportedError extends SuperDeployError {
+  readonly target: string;
+  /** Every one found; never empty. */
+  readonly objects: readonly UnsupportedObject[];
+
+  constructor(target: string, objects: readonly UnsupportedObject[]) {
+    const shown = objects
+      .slice(0, 5)
+      .map((o) => o.object)
+      .join("; ");
+    const more = objects.length > 5 ? `; and ${objects.length - 5} more` : "";
+    super(
+      "adopt-unsupported",
+      `Cannot adopt target ${target}: its managed schema has ${objects.length} thing${objects.length === 1 ? "" : "s"} V1 doesn't support: ${shown}${more}. Nothing was written; change the target first, then adopt again`,
+    );
+    this.target = target;
     this.objects = objects;
   }
 }
