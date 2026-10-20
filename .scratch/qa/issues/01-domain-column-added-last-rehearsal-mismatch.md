@@ -1,6 +1,6 @@
 # 01: A column typed with a domain is added last, so a comment on it makes every rehearsal fail with "run draft again"
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** high
 **Area:** newproj
@@ -114,12 +114,19 @@ The message shows catalog notation (`pg_class customers sub=5`).
 - `catalogFacts` / `catalogDifferences` in the verification module: the comment fact's key and text for `pg_class` objects with a non-zero `objsubid`.
 
 **Acceptance criteria:**
-- [ ] The report's schema (domain-typed column with a comment) drafts and `rehearse` passes. API seam.
-- [ ] Migration 1 has `t(id, b)` with a comment on `b`; migration 2 has desired schema `t(id, a, b)` with the same comment. Drafting migration 2 then rehearses and finalizes.
-- [ ] Changing a column comment's text is still caught by `rehearse` and by drift.
-- [ ] A target whose commented column sits at a different attnum from the replica shows no drift.
-- [ ] Composite type attribute reordering is still caught (the existing ticket-27 tests pass).
+- [x] The report's schema (domain-typed column with a comment) drafts and `rehearse` passes. API seam.
+- [x] Migration 1 has `t(id, b)` with a comment on `b`; migration 2 has desired schema `t(id, a, b)` with the same comment. Drafting migration 2 then rehearses and finalizes.
+- [x] Changing a column comment's text is still caught by `rehearse` and by drift.
+- [x] A target whose commented column sits at a different attnum from the replica shows no drift.
+- [x] Composite type attribute reordering is still caught (the existing ticket-27 tests pass).
 
 **Out of scope:**
 - Making the differ create domain or composite columns in place. Column order is not a difference by design.
 - Rewording the generic "run draft again" message (17) and showing every difference instead of "(and 1 more)" (02).
+
+### Resolved, 2026-10-20 (6103dc5)
+
+- The comment fact for a table column now names the column (`comment: pg_class customers.email Login e-mail`), not its attnum. Comments on whole objects drop the always-zero `sub=0`.
+- Composite type attributes compare their position through their own column fact, as before. Their comments also use the name.
+- Tests: `rehearse.test.ts` covers the report's domain-column case, `t(id, b)` → `t(id, a, b)` through `finalize`, and a changed comment text. `drift.test.ts` covers a commented column at another attnum (no drift) and a changed comment text (drift).
+- Not done: the line still starts with `pg_class`. Rewording difference lines is for 17 and 02.
