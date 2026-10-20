@@ -92,6 +92,7 @@ describe("finalize", () => {
       },
       parser: { name: "libpg-query", version: "18.1.5" },
       rehearsalServer: { version: expect.stringMatching(/^18\.\d+/) },
+      overrides: [],
     });
     expect(result.metadata).toEqual(metadata);
     const username = userInfo().username;

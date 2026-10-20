@@ -60,6 +60,7 @@ describe("validate", () => {
       migrations: 1,
       problems: [],
       readOnlyRestored: [],
+      overrides: [],
     });
   });
 

@@ -18,7 +18,11 @@ import {
 } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { readReplayUnit } from "../rehearsal/replay.ts";
-import { analyseDesiredSchema, type SqlFile } from "../sql-analysis/index.ts";
+import {
+  desiredSchemaAnalysis,
+  type Override,
+  type SqlFile,
+} from "../sql-analysis/index.ts";
 import {
   readDesiredSchema,
   readDesiredSchemaFiles,
@@ -32,7 +36,7 @@ import {
   snapshotFolderName,
   writableFiles,
 } from "../store/migrations.ts";
-import { checkReplayUnit } from "./check-rules.ts";
+import { analyseReplayUnit } from "./check-rules.ts";
 
 export interface ValidateOptions {
   /** Fail on warnings too (the pre-commit hook uses this). */
@@ -46,6 +50,11 @@ export interface ValidationReport {
   readonly problems: readonly ValidationProblem[];
   /** Project-relative paths of finalized files that were writable and were made read-only again. */
   readonly readOnlyRestored: readonly string[];
+  /**
+   * Every override marker accepted: in the finalized migrations, the desired
+   * schema and the draft, in that order. Paths are project-relative.
+   */
+  readonly overrides: readonly Override[];
 }
 
 /** Resolves to the report when validation passes; throws ValidationFailedError otherwise. */
@@ -119,7 +128,8 @@ export async function validate(
     });
   }
 
-  problems.push(...(await ruleProblems(project, draft?.name, integrity)));
+  const rules = await ruleProblems(project, draft?.name, integrity);
+  problems.push(...rules.problems);
 
   if (problems.some((p) => p.severity === "error" || strict)) {
     throw new ValidationFailedError(problems, strict);
@@ -141,22 +151,35 @@ export async function validate(
     migrations: integrity.migrations.length,
     problems,
     readOnlyRestored,
+    overrides: rules.overrides,
   };
 }
 
 /**
- * Rule violations as errors: every finalized migration's deploy-time files
- * (only when the migrations verify, so the files are the ones finalized), the
- * desired schema, and the draft's files.
+ * Rule violations as errors, and the overrides accepted: every finalized
+ * migration's deploy-time files (only when the migrations verify, so the
+ * files are the ones finalized), the desired schema, and the draft's files.
  */
 async function ruleProblems(
   project: Project,
   draftName: string | undefined,
   integrity: IntegrityReport,
-): Promise<ValidationProblem[]> {
+): Promise<{ problems: ValidationProblem[]; overrides: Override[] }> {
   const { root, paths, config } = project;
   const violations: RuleViolation[] = [];
+  const overrides: Override[] = [];
   const problems: ValidationProblem[] = [];
+  const rules = {
+    managedSchema: config.managedSchema,
+    externalSchemas: config.externalSchemas,
+  };
+  const collect = (analysis: {
+    violations: readonly RuleViolation[];
+    overrides: readonly Override[];
+  }) => {
+    violations.push(...analysis.violations);
+    overrides.push(...analysis.overrides);
+  };
   try {
     const snapshot = (path: string) =>
       readDesiredSchema(root, join(path, snapshotFolderName));
@@ -164,20 +187,20 @@ async function ruleProblems(
     if (integrity.problems.length === 0) {
       for (const migration of integrity.migrations) {
         const own = await snapshot(migration.path);
-        violations.push(
-          ...(await checkReplayUnit(
+        collect(
+          await analyseReplayUnit(
             await readReplayUnit(root, migration.path, migration.folder),
-            { managedSchema: config.managedSchema, schemas: [previous, own] },
-          )),
+            { ...rules, schemas: [previous, own] },
+          ),
         );
         previous = own;
       }
     }
     const desired = await readDesiredSchema(root, paths.desiredSchema);
     try {
-      await analyseDesiredSchema(desired, {
-        managedSchema: config.managedSchema,
-        externalSchemas: config.externalSchemas,
+      collect({
+        violations: [],
+        ...(await desiredSchemaAnalysis(desired, rules)),
       });
     } catch (error) {
       if (!(error instanceof SqlRuleViolationError)) {
@@ -186,14 +209,11 @@ async function ruleProblems(
       violations.push(...error.violations);
     }
     if (draftName !== undefined) {
-      violations.push(
-        ...(await checkReplayUnit(
+      collect(
+        await analyseReplayUnit(
           await readReplayUnit(root, paths.draft, `draft ${draftName}`),
-          {
-            managedSchema: config.managedSchema,
-            schemas: [previous, desired],
-          },
-        )),
+          { ...rules, schemas: [previous, desired] },
+        ),
       );
     }
   } catch (error) {
@@ -220,5 +240,5 @@ async function ruleProblems(
       rule: violation.rule,
     });
   }
-  return problems;
+  return { problems, overrides };
 }
