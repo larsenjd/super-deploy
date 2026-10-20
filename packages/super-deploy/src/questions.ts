@@ -3,7 +3,11 @@
 // the menu does the same; scripts answer however they like). With neither
 // `confirm` nor the acknowledgement flag it refuses, so nothing is lost when
 // there is nobody to ask.
-import { OverwriteNotAcknowledgedError } from "./errors.ts";
+import {
+  DestructiveNotAcknowledgedError,
+  OverwriteNotAcknowledgedError,
+} from "./errors.ts";
+import type { DestructiveStatement } from "./sql-analysis/destructive.ts";
 
 /** Asked before a command overwrites or deletes work (`--acknowledge-overwrite` skips it). */
 export interface OverwriteQuestion {
@@ -15,8 +19,22 @@ export interface OverwriteQuestion {
   readonly paths: readonly string[];
 }
 
-/** Every question a command can ask. Ticket 11 adds the destructive acknowledgement. */
-export type Question = OverwriteQuestion;
+/**
+ * Asked before `finalize` freezes a draft that drops structure or deletes
+ * data (`--acknowledge-destructive` skips it). The answer is recorded in the
+ * migration's metadata with the statements.
+ */
+export interface DestructiveQuestion {
+  readonly kind: "acknowledge-destructive";
+  readonly command: "finalize";
+  /** One line for people, ending in a question mark. */
+  readonly message: string;
+  /** The destructive statements, in the order they run (draft paths). */
+  readonly statements: readonly DestructiveStatement[];
+}
+
+/** Every question a command can ask. */
+export type Question = OverwriteQuestion | DestructiveQuestion;
 
 /** Answers a yes/no question: true goes ahead, false refuses and nothing changes. */
 export type Confirm = (question: Question) => boolean | Promise<boolean>;
@@ -45,5 +63,35 @@ export async function acknowledgeOverwrite(
   }
   if (!(await options.confirm(question))) {
     throw new OverwriteNotAcknowledgedError(question, true);
+  }
+}
+
+export interface DestructiveOptions {
+  /** Go ahead without asking (`--acknowledge-destructive`). */
+  readonly acknowledgeDestructive?: boolean;
+  /** Asked before finalizing destructive statements. Without it (and without `acknowledgeDestructive`) the command refuses. */
+  readonly confirm?: Confirm;
+}
+
+/**
+ * Resolves when `question` lists no statements, the acknowledgement was
+ * given, or `confirm` said yes. Otherwise throws
+ * DestructiveNotAcknowledgedError.
+ */
+export async function acknowledgeDestructive(
+  options: DestructiveOptions,
+  question: DestructiveQuestion,
+): Promise<void> {
+  if (
+    question.statements.length === 0 ||
+    options.acknowledgeDestructive === true
+  ) {
+    return;
+  }
+  if (options.confirm === undefined) {
+    throw new DestructiveNotAcknowledgedError(question, false);
+  }
+  if (!(await options.confirm(question))) {
+    throw new DestructiveNotAcknowledgedError(question, true);
   }
 }

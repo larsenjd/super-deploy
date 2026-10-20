@@ -10,7 +10,13 @@ import {
   seededFiles,
   seededUnits,
 } from "../rehearsal/seed-data.ts";
-import { analyseDesiredSchema, type Override } from "../sql-analysis/index.ts";
+import {
+  analyseDesiredSchema,
+  type DestructiveStatement,
+  type LockWarning,
+  type MigrationAnalysis,
+  type Override,
+} from "../sql-analysis/index.ts";
 import { asSqlFiles, readDesiredSchemaFiles } from "../store/desired-schema.ts";
 import { type DraftMetadata, readDraft } from "../store/draft.ts";
 import type { HashedFile } from "../store/hashing.ts";
@@ -25,6 +31,10 @@ export interface RehearseResult {
   readonly migrationsReplayed: number;
   /** `server_version` of the rehearsal server. */
   readonly serverVersion: string;
+  /** Statements `finalize` will need acknowledged (draft paths). */
+  readonly destructive: readonly DestructiveStatement[];
+  /** Statements that rewrite or scan an existing table while holding its lock (draft paths). */
+  readonly warnings: readonly LockWarning[];
 }
 
 export async function rehearse(project: Project): Promise<RehearseResult> {
@@ -33,6 +43,8 @@ export async function rehearse(project: Project): Promise<RehearseResult> {
     name: rehearsed.draft.name,
     migrationsReplayed: rehearsed.migrations.length,
     serverVersion: rehearsed.serverVersion,
+    destructive: rehearsed.analysis.destructive,
+    warnings: rehearsed.analysis.warnings,
   };
 }
 
@@ -44,12 +56,22 @@ export interface RehearsedDraft {
   readonly serverVersion: string;
   /** The override markers accepted in the draft's deploy-time files. */
   readonly overrides: readonly Override[];
+  /** The draft's deploy-time analysis (no violations by now). */
+  readonly analysis: MigrationAnalysis;
 }
 
-/** Shared by `rehearse` and `finalize`. */
+/**
+ * Shared by `rehearse` and `finalize`. `beforeRehearsal` runs once the
+ * draft has passed the rules, before any database work (finalize asks for
+ * the destructive acknowledgement there).
+ */
 export async function rehearseCurrentDraft(
   project: Project,
   action: string,
+  beforeRehearsal?: (
+    draft: DraftMetadata,
+    analysis: MigrationAnalysis,
+  ) => Promise<void>,
 ): Promise<RehearsedDraft> {
   const { root, paths } = project;
   const draft = await readDraft(paths);
@@ -69,12 +91,22 @@ export async function rehearseCurrentDraft(
   // The draft's seed data loads just before its pre-migration script; the
   // finalized migrations' seed data is never loaded.
   const seeded = await readSeededUnit(root, paths.draft, `draft ${draft.name}`);
-  const { overrides } = await refuseRuleViolations(seededFiles(seeded), {
+  const previous = await newestSnapshot(root, migrations);
+  const analysis = await refuseRuleViolations(seededFiles(seeded), {
     managedSchema: project.config.managedSchema,
     externalSchemas: project.config.externalSchemas,
-    schemas: [await newestSnapshot(root, migrations), statements],
+    schemas: [previous, statements],
+    previous,
   });
+  await beforeRehearsal?.(draft, analysis);
   units.push(...seededUnits(seeded));
   const { serverVersion } = await rehearseDraft(project, statements, units);
-  return { draft, migrations, desiredSchema, serverVersion, overrides };
+  return {
+    draft,
+    migrations,
+    desiredSchema,
+    serverVersion,
+    overrides: analysis.overrides,
+    analysis,
+  };
 }

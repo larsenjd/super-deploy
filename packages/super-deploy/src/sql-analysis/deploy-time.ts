@@ -18,8 +18,8 @@
 // A migration's files are analysed in the order they run, so state (the
 // migration's temporary tables and identity columns created on the way)
 // carries from one file to the next. Override markers (overrides.ts) are
-// applied per statement. Ticket 11 adds destructive statements and
-// rewrite/scan warnings to MigrationAnalysis.
+// applied per statement. Destructive statements and lock warnings are found
+// alongside (destructive.ts).
 import type {
   AlterTableCmd,
   ColumnDef,
@@ -42,6 +42,12 @@ import type {
 } from "@pgsql/types";
 import type { RuleViolation } from "../errors.ts";
 import { denylistedCall } from "./denylist.ts";
+import {
+  ChangeTracker,
+  type ColumnTypes,
+  type DestructiveStatement,
+  type LockWarning,
+} from "./destructive.ts";
 import { applyMarker, type Override, scanMarkers } from "./overrides.ts";
 import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 import { pgCatalogFunctions, pgCatalogRelations } from "./pg-catalog-names.ts";
@@ -78,6 +84,12 @@ export interface DeployTimeOptions extends Partial<RuleContext> {
    * migration's own DDL creates are found as the files are analysed.
    */
   readonly identityColumns?: IdentityColumns;
+  /**
+   * Column types before the migration (from the previous desired-schema
+   * snapshot, see `columnTypesOf`), to tell a lossy type change from a
+   * widening. Without them every type change counts as lossy.
+   */
+  readonly columnTypes?: ColumnTypes;
 }
 
 export interface MigrationAnalysis {
@@ -85,6 +97,10 @@ export interface MigrationAnalysis {
   readonly violations: readonly RuleViolation[];
   /** The override markers accepted, in file and statement order. */
   readonly overrides: readonly Override[];
+  /** Statements that drop structure or delete data (finalize needs them acknowledged), in order. */
+  readonly destructive: readonly DestructiveStatement[];
+  /** Statements that rewrite or scan an existing table while holding its lock, in order. */
+  readonly warnings: readonly LockWarning[];
 }
 
 interface Finding {
@@ -116,6 +132,7 @@ export async function analyseMigration(
   };
   const violations: RuleViolation[] = [];
   const overrides: Override[] = [];
+  const changes = new ChangeTracker(state.managedSchema, options.columnTypes);
   for (const file of files) {
     const parsed = await parseSqlFile(file);
     if (!parsed.ok) {
@@ -157,10 +174,16 @@ export async function analyseMigration(
         overrides.push(marked.override);
       }
       remember(statement, state);
+      changes.statement(statement);
     });
     violations.push(...pending);
   }
-  return { violations, overrides };
+  return {
+    violations,
+    overrides,
+    destructive: changes.destructive,
+    warnings: changes.warnings,
+  };
 }
 
 /** Identity columns created by CREATE TABLE and ALTER TABLE statements, e.g. a desired schema. */

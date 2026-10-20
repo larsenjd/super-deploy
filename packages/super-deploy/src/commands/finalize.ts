@@ -6,13 +6,22 @@ import { dirname, join, relative, sep } from "node:path";
 import { pgDeltaDiffer } from "../differ/pg-delta.ts";
 import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
-import type { Override } from "../sql-analysis/index.ts";
+import {
+  acknowledgeDestructive,
+  type DestructiveOptions,
+} from "../questions.ts";
+import type {
+  DestructiveStatement,
+  LockWarning,
+  Override,
+} from "../sql-analysis/index.ts";
 import { draftMetadataFileName } from "../store/draft.ts";
 import {
   chainHash,
   type HashedFile,
   migrationContentHash,
 } from "../store/hashing.ts";
+import { projectRelative } from "../store/layout.ts";
 import {
   makeReadOnly,
   maxMigrationNumber,
@@ -28,8 +37,7 @@ import { rehearseCurrentDraft } from "./rehearse.ts";
 
 /**
  * metadata.json of a finalized migration. Deliberately no timestamps or
- * usernames: git records who and when. Ticket 11 adds the destructive
- * acknowledgement.
+ * usernames: git records who and when.
  */
 export interface MigrationMetadata {
   readonly tool: { readonly name: string; readonly version: string };
@@ -42,7 +50,18 @@ export interface MigrationMetadata {
    * are relative to the migration folder.
    */
   readonly overrides: readonly Override[];
+  /** Present only when the migration drops structure or deletes data. */
+  readonly destructive?: DestructiveAcknowledgement;
 }
+
+/** The destructive statements the developer acknowledged at finalize. */
+export interface DestructiveAcknowledgement {
+  readonly acknowledged: true;
+  /** `file` is relative to the migration folder, e.g. `schema-change.sql`. */
+  readonly statements: readonly DestructiveStatement[];
+}
+
+export type FinalizeOptions = DestructiveOptions;
 
 export interface FinalizeResult {
   readonly number: number;
@@ -54,11 +73,36 @@ export interface FinalizeResult {
   readonly contentHash: string;
   readonly chainHash: string;
   readonly metadata: MigrationMetadata;
+  /** The acknowledged destructive statements (project-relative paths in the new migration folder). */
+  readonly destructive: readonly DestructiveStatement[];
+  /** Statements that rewrite or scan an existing table while holding its lock (project-relative paths in the new migration folder). */
+  readonly warnings: readonly LockWarning[];
 }
 
-export async function finalize(project: Project): Promise<FinalizeResult> {
+/**
+ * A draft that drops structure or deletes data is refused unless
+ * `acknowledgeDestructive` is set or `confirm` answers yes; it is asked
+ * after the rules pass and before the rehearsal.
+ */
+export async function finalize(
+  project: Project,
+  options: FinalizeOptions = {},
+): Promise<FinalizeResult> {
   const { root, paths } = project;
-  const rehearsed = await rehearseCurrentDraft(project, "finalize");
+  const rehearsed = await rehearseCurrentDraft(
+    project,
+    "finalize",
+    async (draft, analysis) => {
+      const count = analysis.destructive.length;
+      await acknowledgeDestructive(options, {
+        kind: "acknowledge-destructive",
+        command: "finalize",
+        message: `Draft ${draft.name} drops structure or deletes data in ${count} statement${count === 1 ? "" : "s"}. Finalize it anyway?`,
+        statements: analysis.destructive,
+      });
+    },
+  );
+  const { destructive, warnings } = rehearsed.analysis;
   const number = rehearsed.migrations.length + 1;
   if (number > maxMigrationNumber) {
     throw new SuperDeployError(
@@ -67,18 +111,33 @@ export async function finalize(project: Project): Promise<FinalizeResult> {
     );
   }
   const folder = migrationFolderName(number, rehearsed.draft.name);
+  const path = join(paths.migrations, folder);
+  // Draft files are named by project-relative path; once finalized they are
+  // named relative to the migration folder (metadata) or by their new
+  // project-relative path (the result).
+  const inMigration = <T extends { file: string }>(item: T): T => ({
+    ...item,
+    file: relative(paths.draft, join(root, item.file)).split(sep).join("/"),
+  });
+  const finalized = <T extends { file: string }>(item: T): T => ({
+    ...item,
+    file: projectRelative(root, join(path, inMigration(item).file)),
+  });
 
   const metadata: MigrationMetadata = {
     tool: { name: "super-deploy", version: toolVersion },
     differ: { name: pgDeltaDiffer.name, version: pgDeltaDiffer.version },
     parser: { name: parserName, version: parserVersion },
     rehearsalServer: { version: rehearsed.serverVersion },
-    overrides: rehearsed.overrides.map((override) => ({
-      ...override,
-      file: relative(paths.draft, join(root, override.file))
-        .split(sep)
-        .join("/"),
-    })),
+    overrides: rehearsed.overrides.map(inMigration),
+    ...(destructive.length === 0
+      ? {}
+      : {
+          destructive: {
+            acknowledged: true,
+            statements: destructive.map(inMigration),
+          },
+        }),
   };
   const files: HashedFile[] = [
     ...(await readHashedFiles(
@@ -102,7 +161,6 @@ export async function finalize(project: Project): Promise<FinalizeResult> {
 
   // Written under a temporary name, then renamed, so a half-written folder
   // never looks like a migration (validate reports a leftover one).
-  const path = join(paths.migrations, folder);
   const staging = join(paths.migrations, `.finalizing-${folder}`);
   await rm(staging, { recursive: true, force: true });
   for (const file of files) {
@@ -123,5 +181,7 @@ export async function finalize(project: Project): Promise<FinalizeResult> {
     path,
     metadata,
     ...entry,
+    destructive: destructive.map(finalized),
+    warnings: warnings.map(finalized),
   };
 }

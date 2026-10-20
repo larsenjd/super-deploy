@@ -17,6 +17,14 @@ export {
 } from "./deploy-time.ts";
 export { isAlreadyInstalled } from "./desired-schema-rules.ts";
 export {
+  type ColumnTypes,
+  columnTypesOf,
+  type DestructiveKind,
+  type DestructiveStatement,
+  type LockWarning,
+  type LockWarningKind,
+} from "./destructive.ts";
+export {
   alternativeOrder,
   type OrderingOptions,
   type OrderingResult,
