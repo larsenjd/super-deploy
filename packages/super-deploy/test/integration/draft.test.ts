@@ -153,7 +153,7 @@ describe("draft", () => {
     const dir = await createTestProject({
       config: embeddedConfig(server),
       files: {
-        "data-model/desired-schema/customers.sql": `${customers}\ncreate table orders (\n  id bigint primary key,\n  total moneyamount\n);\n`,
+        "data-model/desired-schema/customers.sql": `${customers}\ncreate table orders (\n  id bigint primary key,\n  total numeric default 'abc'\n);\n`,
       },
     });
     const project = await loadProject({ cwd: dir.root });
@@ -169,7 +169,7 @@ describe("draft", () => {
       line: 8,
     });
     expect((error as DesiredSchemaLoadError).detail).toContain(
-      'type "moneyamount" does not exist',
+      'invalid input syntax for type numeric: "abc"',
     );
     expect(dir.exists("data-model/draft")).toBe(false);
     expect(await server.databases()).toEqual(before);

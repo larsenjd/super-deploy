@@ -6,7 +6,12 @@ import { checkRules, type RuleContext } from "./rules.ts";
 
 export { denylistReason } from "./denylist.ts";
 export { isAlreadyInstalled } from "./desired-schema-rules.ts";
-export { type OrderingResult, orderDesiredSchema } from "./ordering.ts";
+export {
+  alternativeOrder,
+  type OrderingOptions,
+  type OrderingResult,
+  orderDesiredSchema,
+} from "./ordering.ts";
 export { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 export { externalSchemasBoundAtCreate } from "./routine-bodies.ts";
 export { checkRules, type FileKind, type RuleContext } from "./rules.ts";
@@ -26,7 +31,12 @@ export async function analyseDesiredSchema(
   if (violations.length > 0) {
     throw new SqlRuleViolationError(violations);
   }
-  const ordering = await orderDesiredSchema(files);
+  const ordering = await orderDesiredSchema(
+    files,
+    context.managedSchema === undefined
+      ? {}
+      : { managedSchema: context.managedSchema },
+  );
   if (ordering.errors.length > 0) {
     throw new SqlRuleViolationError(ordering.errors);
   }

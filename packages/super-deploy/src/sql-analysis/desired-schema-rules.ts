@@ -207,14 +207,8 @@ function checkTable(node: Json): RuleFinding[] {
   if (node.if_not_exists === true) {
     findings.push(redefinition("CREATE TABLE IF NOT EXISTS"));
   }
+  // CREATE TABLE ... (LIKE) is refused by ordering (`table-like`).
   for (const element of list(node.tableElts)) {
-    if (unwrap(element, "TableLikeClause") !== undefined) {
-      findings.push(
-        unsupported(
-          "CREATE TABLE ... (LIKE) is not supported: it copies another table's definition at CREATE, so write the columns out",
-        ),
-      );
-    }
     const column = unwrap(element, "ColumnDef");
     if (column !== undefined) {
       findings.push(...columnFindings({ ColumnDef: column }));

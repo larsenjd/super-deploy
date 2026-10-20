@@ -1,6 +1,7 @@
 // Typed errors thrown by the programmatic API. Every error the library throws
 // on purpose is a SuperDeployError; `code` is stable and meant for programs,
 // `message` is one line meant for people (the CLI prints it after "Error: ").
+import type { OverwriteQuestion } from "./questions.ts";
 
 export type ErrorCode =
   | "project-not-found"
@@ -9,15 +10,19 @@ export type ErrorCode =
   | "draft-name-required"
   | "sql-rule-violation"
   | "desired-schema-load-failed"
+  | "order-dependent-desired-schema"
   | "unsupported-server"
   | "adapter-failed"
   | "differ-failed"
+  | "interrupted"
   | "invalid-encoding"
   | "no-draft"
   | "sql-file-failed"
   | "rehearsal-mismatch"
   | "migration-integrity"
-  | "validation-failed";
+  | "validation-failed"
+  | "no-migration"
+  | "overwrite-not-acknowledged";
 
 export class SuperDeployError extends Error {
   readonly code: ErrorCode;
@@ -130,6 +135,45 @@ export class DesiredSchemaLoadError extends SuperDeployError {
     this.detail = detail;
     this.hint = hint;
   }
+}
+
+/**
+ * The desired schema gives a different catalog, or fails to load, when its
+ * statements load in another valid order (the order-independence check).
+ */
+export class OrderDependenceError extends SuperDeployError {
+  /** The objects whose catalog entries differ, e.g. `view which_pick`, sorted. */
+  readonly objects: readonly string[];
+  /**
+   * The differing catalog facts, as `- <kind>: <line>` when loaded in the
+   * normal order and `+ <kind>: <line>` when loaded in the other order.
+   */
+  readonly differences: readonly string[];
+  /** Set when the other order failed to load instead. */
+  readonly failure: { file: string; line: number; detail: string } | undefined;
+
+  constructor(
+    objects: readonly string[],
+    differences: readonly string[],
+    failure?: { file: string; line: number; detail: string },
+    options?: ErrorOptions,
+  ) {
+    super(
+      "order-dependent-desired-schema",
+      failure === undefined
+        ? `The desired schema depends on load order: loaded in another valid order, it gives a different catalog for ${listed(objects)}`
+        : `The desired schema depends on load order: it loads in one valid order but not in another, where ${failure.file}:${failure.line} fails: ${failure.detail}. super-deploy may not see a reference this statement makes; please report it`,
+      options,
+    );
+    this.objects = objects;
+    this.differences = differences;
+    this.failure = failure;
+  }
+}
+
+function listed(objects: readonly string[]): string {
+  const shown = objects.slice(0, 5).join(", ");
+  return objects.length > 5 ? `${shown} and ${objects.length - 5} more` : shown;
 }
 
 /** An adapter connected to a server that isn't PostgreSQL 18. */
@@ -287,5 +331,45 @@ export class ValidationFailedError extends SuperDeployError {
     );
     this.problems = problems;
     this.strict = strict;
+  }
+}
+
+/** The command needs a finalized migration and there is none. */
+export class NoMigrationError extends SuperDeployError {
+  constructor(action: string) {
+    super("no-migration", `There is no finalized migration to ${action}`);
+  }
+}
+
+/**
+ * A command would discard work and was not allowed to: nobody could be asked
+ * and `acknowledgeOverwrite` wasn't set, or the question was answered no.
+ * Nothing was changed.
+ */
+export class OverwriteNotAcknowledgedError extends SuperDeployError {
+  readonly question: OverwriteQuestion;
+  /** True when the question was asked and answered no. */
+  readonly declined: boolean;
+
+  constructor(question: OverwriteQuestion, declined: boolean) {
+    super(
+      "overwrite-not-acknowledged",
+      declined
+        ? `${question.message} Answered no: nothing changed`
+        : `${question.message} Refused without a terminal: pass --acknowledge-overwrite to delete or overwrite ${question.paths.join(", ")}`,
+    );
+    this.question = question;
+    this.declined = declined;
+  }
+}
+
+/**
+ * The project's interruption signal aborted while a command was running. The
+ * command has cleaned up (rolled back, dropped throwaway databases) by the
+ * time this is thrown; `cause` is the signal's abort reason.
+ */
+export class InterruptedError extends SuperDeployError {
+  constructor(options?: ErrorOptions) {
+    super("interrupted", "Interrupted", options);
   }
 }

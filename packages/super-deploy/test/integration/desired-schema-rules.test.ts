@@ -110,6 +110,23 @@ end $$;
     },
   );
 
+  test("a materialized view calling a LANGUAGE sql function with unqualified names fails with a hint", async () => {
+    const { project } = await projectWith({
+      "data-model/desired-schema/a.sql": `create table t (id int constraint t_pkey primary key);
+create function n() returns bigint language sql stable as $$ select count(*) from t $$;
+create materialized view mv as select n() as n;
+`,
+    });
+
+    const error = await draft(project, { name: "x" }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(DesiredSchemaLoadError);
+    expect(error).toMatchObject({
+      line: 3,
+      hint: expect.stringContaining("must schema-qualify"),
+    });
+  });
+
   test("CREATE EXTENSION plpgsql is accepted and changes nothing", async () => {
     const { dir, project } = await projectWith({
       "data-model/desired-schema/a.sql":

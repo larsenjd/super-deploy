@@ -1,12 +1,23 @@
 // One set of command definitions drives both direct CLI mode (util.parseArgs
-// flags) and the interactive menu (ticket 05). Each command's `run` calls the
-// exported API function and prints its result.
+// flags, parse.ts) and the interactive menu (menu.ts). Each command's `run`
+// calls the exported API function and prints its result. To add a command,
+// define it here and append it to `commands`.
+import { join } from "node:path";
+import { discardDraft } from "../commands/discard-draft.ts";
 import { draft } from "../commands/draft.ts";
 import { finalize } from "../commands/finalize.ts";
 import { rehearse } from "../commands/rehearse.ts";
+import { restoreSchema } from "../commands/restore-schema.ts";
+import { unfinalize } from "../commands/unfinalize.ts";
 import { validate } from "../commands/validate.ts";
-import { ValidationFailedError, type ValidationProblem } from "../errors.ts";
+import {
+  OverwriteNotAcknowledgedError,
+  ValidationFailedError,
+  type ValidationProblem,
+} from "../errors.ts";
 import type { Project } from "../project.ts";
+import type { OverwriteOptions, Question } from "../questions.ts";
+import { readDraft } from "../store/draft.ts";
 
 export type CommandGroup =
   | "Start"
@@ -15,6 +26,7 @@ export type CommandGroup =
   | "Recover"
   | "Disposable";
 
+/** Menu and help sections, in order. */
 export const commandGroups: readonly CommandGroup[] = [
   "Start",
   "Author",
@@ -23,25 +35,63 @@ export const commandGroups: readonly CommandGroup[] = [
   "Disposable",
 ];
 
-/**
- * How an option is asked for in the menu and parsed on the command line:
- * - target: a target name from config
- * - migration: a migration number (menu: searchable, newest first)
- * - choice: one of `choices`
- * - name: free text normalised like a draft name (invalid input is a usage error)
- * - flag: a boolean switch (the menu never sets acknowledgement flags)
- */
-export type OptionKind = "target" | "migration" | "choice" | "name" | "flag";
-
-export interface OptionDefinition {
+interface OptionBase {
   /** Long option name without dashes, e.g. `name` for `--name`. */
   readonly name: string;
-  readonly kind: OptionKind;
   readonly description: string;
+  /** Missing on the command line is a usage error; the menu insists on an answer. */
   readonly required?: boolean;
-  readonly choices?: readonly string[];
 }
 
+/** A target name from config. Unknown names are usage errors; the menu picks from the configured targets. */
+export interface TargetOption extends OptionBase {
+  readonly kind: "target";
+}
+
+export interface MigrationChoice {
+  readonly number: number;
+  readonly name: string;
+}
+
+/** A migration number. The menu offers `migrations(project)` newest first, searchable. */
+export interface MigrationOption extends OptionBase {
+  readonly kind: "migration";
+  migrations(project: Project): Promise<readonly MigrationChoice[]>;
+}
+
+/** One of `choices`. */
+export interface ChoiceOption extends OptionBase {
+  readonly kind: "choice";
+  readonly choices: readonly string[];
+}
+
+/** Free text normalised like a draft name; the menu previews the normalised result. */
+export interface NameOption extends OptionBase {
+  readonly kind: "name";
+  /** The menu's starting text, e.g. the current draft's name. */
+  initial?(project: Project): Promise<string | undefined>;
+}
+
+/**
+ * A boolean switch. The menu asks yes/no (default no), except for
+ * acknowledgement flags, which the menu never sets: the command itself asks
+ * when it matters (see `acknowledge`).
+ */
+export interface FlagOption extends OptionBase {
+  readonly kind: "flag";
+  readonly acknowledgement?: boolean;
+}
+
+export type OptionDefinition =
+  | TargetOption
+  | MigrationOption
+  | ChoiceOption
+  | NameOption
+  | FlagOption;
+
+export type OptionKind = OptionDefinition["kind"];
+
+/** Option values by option name: strings for valued kinds, `true` for flags given. */
 export type OptionValues = Readonly<
   Record<string, string | boolean | undefined>
 >;
@@ -53,6 +103,12 @@ export interface CommandContext {
   warn(line: string): void;
   /** An absolute path as shown to the user (relative to the working directory). */
   displayPath(path: string): string;
+  /**
+   * Asks a yes/no question at the terminal, default no; cancelling answers
+   * no. Undefined without a terminal (or in CI): commands must then refuse
+   * unless the acknowledgement flag was given. See `acknowledge`.
+   */
+  readonly confirm: ((question: string) => Promise<boolean>) | undefined;
 }
 
 export interface CommandDefinition {
@@ -67,6 +123,33 @@ export interface CommandDefinition {
   ): Promise<void>;
 }
 
+/** A command refused to go ahead (exit 1). */
+export class RefusedError extends Error {
+  override name = "RefusedError";
+}
+
+/**
+ * For acknowledgements: true if the flag was given or the user answers yes,
+ * false if they answer no (the command should then stop without changing
+ * anything). Without a terminal, refuses with RefusedError naming the flag.
+ */
+export async function acknowledge(
+  values: OptionValues,
+  context: CommandContext,
+  flag: string,
+  question: string,
+): Promise<boolean> {
+  if (values[flag] === true) {
+    return true;
+  }
+  if (context.confirm === undefined) {
+    throw new RefusedError(
+      `${question} Refused without a terminal: pass --${flag} to accept`,
+    );
+  }
+  return context.confirm(question);
+}
+
 const draftCommand: CommandDefinition = {
   name: "draft",
   group: "Author",
@@ -78,6 +161,7 @@ const draftCommand: CommandDefinition = {
       kind: "name",
       description:
         "Name for a new draft, or a new name for the existing draft (spaces become hyphens)",
+      initial: async (project) => (await readDraft(project.paths))?.name,
     },
   ],
   async run(project, values, context) {
@@ -157,6 +241,140 @@ const validateCommand: CommandDefinition = {
   },
 };
 
+const acknowledgeOverwriteOption: FlagOption = {
+  name: "acknowledge-overwrite",
+  kind: "flag",
+  acknowledgement: true,
+  description:
+    "Go ahead without asking when work would be deleted or overwritten (required without a terminal)",
+};
+
+/**
+ * The API's overwrite options: the flag, and the terminal's yes/no question
+ * (listing what would be lost) as the confirm callback.
+ */
+function overwriteOptions(
+  values: OptionValues,
+  context: CommandContext,
+): OverwriteOptions {
+  const { confirm } = context;
+  return {
+    acknowledgeOverwrite: values["acknowledge-overwrite"] === true,
+    ...(confirm === undefined
+      ? {}
+      : {
+          confirm: (question: Question) =>
+            confirm(
+              [
+                question.message,
+                ...question.paths.map((path) => `  ${path}`),
+              ].join("\n"),
+            ),
+        }),
+  };
+}
+
+/**
+ * Runs an overwriting command; answering no at the terminal is not a failure:
+ * it prints a result line and nothing changes (exit 0).
+ */
+async function unlessDeclined<T>(
+  context: CommandContext,
+  run: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof OverwriteNotAcknowledgedError && error.declined) {
+      context.result("Nothing changed");
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+/** One result line per desired-schema file written or deleted (paths are project-relative). */
+function reportRestore(
+  project: Project,
+  result: { restored: readonly string[]; deleted: readonly string[] },
+  context: CommandContext,
+): void {
+  const show = (path: string) => context.displayPath(join(project.root, path));
+  for (const path of result.restored) {
+    context.result(`Restored ${show(path)}`);
+  }
+  for (const path of result.deleted) {
+    context.result(`Deleted ${show(path)}`);
+  }
+}
+
+const unfinalizeCommand: CommandDefinition = {
+  name: "unfinalize",
+  group: "Author",
+  summary:
+    "Move the newest migration back into the draft and restore its desired-schema snapshot",
+  options: [acknowledgeOverwriteOption],
+  async run(project, values, context) {
+    const result = await unlessDeclined(context, () =>
+      unfinalize(project, overwriteOptions(values, context)),
+    );
+    if (result === undefined) {
+      return;
+    }
+    context.result(
+      `Moved migration ${result.folder} back into draft ${result.name} in ${context.displayPath(result.draftPath)}`,
+    );
+    reportRestore(project, result, context);
+  },
+};
+
+const restoreSchemaCommand: CommandDefinition = {
+  name: "restore-schema",
+  group: "Author",
+  summary:
+    "Reset the desired schema to the newest migration's snapshot and delete any draft",
+  options: [acknowledgeOverwriteOption],
+  async run(project, values, context) {
+    const result = await unlessDeclined(context, () =>
+      restoreSchema(project, overwriteOptions(values, context)),
+    );
+    if (result === undefined) {
+      return;
+    }
+    const changed =
+      result.restored.length > 0 ||
+      result.deleted.length > 0 ||
+      result.discardedDraft !== undefined;
+    context.result(
+      changed
+        ? `Reset the desired schema to migration ${result.migration}'s snapshot`
+        : `The desired schema already matches migration ${result.migration}'s snapshot`,
+    );
+    if (result.discardedDraft !== undefined) {
+      context.result(`Discarded draft ${result.discardedDraft}`);
+    }
+    reportRestore(project, result, context);
+  },
+};
+
+const discardDraftCommand: CommandDefinition = {
+  name: "discard-draft",
+  group: "Author",
+  summary: "Delete the draft, leaving the desired schema alone",
+  options: [acknowledgeOverwriteOption],
+  async run(project, values, context) {
+    const result = await unlessDeclined(context, () =>
+      discardDraft(project, overwriteOptions(values, context)),
+    );
+    if (result === undefined) {
+      return;
+    }
+    context.result(
+      `Discarded draft ${result.name ?? "(unnamed)"} (${context.displayPath(result.path)})`,
+    );
+  },
+};
+
 function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
@@ -165,5 +383,8 @@ export const commands: readonly CommandDefinition[] = [
   draftCommand,
   rehearseCommand,
   finalizeCommand,
+  unfinalizeCommand,
+  restoreSchemaCommand,
+  discardDraftCommand,
   validateCommand,
 ];

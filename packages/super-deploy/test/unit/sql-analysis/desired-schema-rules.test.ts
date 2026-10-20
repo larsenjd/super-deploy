@@ -3,6 +3,7 @@
 // is refused with its rule, line and a clear reason.
 import { describe, expect, test } from "vitest";
 import { checkRules } from "../../../src/sql-analysis/index.ts";
+import { orderingFixtures } from "../../fixtures/ordering.ts";
 
 const path = "data-model/desired-schema/schema.sql";
 
@@ -337,11 +338,6 @@ describe("refused table features", () => {
       "typed table",
       "create table t of address",
       /^Typed tables .* are not supported in V1/,
-    ],
-    [
-      "LIKE",
-      "create table t (like u)",
-      /^CREATE TABLE \.\.\. \(LIKE\) is not supported/,
     ],
     [
       "temporary table",
@@ -909,4 +905,25 @@ describe("denylisted calls outside PL/pgSQL", () => {
       { line: 1, rule: "denylisted-call" },
     ]);
   });
+});
+
+describe("ordering fixtures", () => {
+  test.each(
+    orderingFixtures
+      .filter((fixture) => fixture.errors === undefined)
+      .map((fixture) => [fixture.name, fixture] as const),
+  )(
+    "accepted ordering fixture passes the rules, or is marked refused: %s",
+    async (_name, fixture) => {
+      const found = [];
+      for (const [file, text] of Object.entries(fixture.files)) {
+        found.push(
+          ...(await checkRules({ path: file, text }, "desired-schema")),
+        );
+      }
+      expect(found.map((violation) => violation.rule)).toEqual(
+        fixture.refusedByRules ?? [],
+      );
+    },
+  );
 });

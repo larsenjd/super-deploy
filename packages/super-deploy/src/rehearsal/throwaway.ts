@@ -125,7 +125,12 @@ export async function loadDesiredSchema(
               (error as { position?: string }).position,
             ),
           error instanceof Error ? error.message : String(error),
-          { cause: error, hint: externalHint(statement, externalSchemas) },
+          {
+            cause: error,
+            hint:
+              externalHint(statement, externalSchemas) ??
+              materializedViewHint(statement, error),
+          },
         );
       }
     }
@@ -146,6 +151,26 @@ function externalHint(
   }
   const names = schemas.map((schema) => `"${schema}"`).join(", ");
   return `this statement references external schema ${names}, which rehearsals don't contain. Only PL/pgSQL bodies may reference external schemas: views, defaults, foreign keys, triggers, LANGUAGE sql and BEGIN ATOMIC bodies, and PL/pgSQL variable declarations bind their references at CREATE`;
+}
+
+/**
+ * PostgreSQL creates (and refreshes) a materialized view with
+ * `search_path = pg_catalog, pg_temp`, so a LANGUAGE sql function it calls
+ * can't find unqualified tables.
+ */
+function materializedViewHint(
+  statement: ParsedStatement,
+  error: unknown,
+): string | undefined {
+  const node = statement.node as { CreateTableAsStmt?: { objtype?: string } };
+  const code = (error as { code?: string }).code;
+  if (
+    node.CreateTableAsStmt?.objtype !== "OBJECT_MATVIEW" ||
+    (code !== "42P01" && code !== "42883" && code !== "42704")
+  ) {
+    return undefined;
+  }
+  return "PostgreSQL builds a materialized view with search_path set to pg_catalog only, so a LANGUAGE sql function it calls must schema-qualify the objects it uses (or set search_path in the function)";
 }
 
 function linesBefore(text: string, position: string | undefined): number {

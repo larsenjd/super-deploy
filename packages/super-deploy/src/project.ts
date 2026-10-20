@@ -6,9 +6,12 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type ResolvedConfig, resolveConfig } from "./config/config.ts";
 import { ConfigError, ProjectNotFoundError } from "./errors.ts";
+import { interruptibleRehearsal } from "./interruption.ts";
 import { type ProjectPaths, projectPaths } from "./store/layout.ts";
 
 export const configFileName = "super-deploy.config.ts";
+
+let loads = 0;
 
 export interface Project {
   /** Absolute path of the folder holding super-deploy.config.ts. */
@@ -16,6 +19,8 @@ export interface Project {
   readonly configPath: string;
   readonly config: ResolvedConfig;
   readonly paths: ProjectPaths;
+  /** The interruption signal the project was loaded with, if any. */
+  readonly signal: AbortSignal | undefined;
   /** Closes every adapter (dropping leftover throwaway databases, stopping servers it started). */
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
@@ -24,6 +29,18 @@ export interface Project {
 export interface LoadProjectOptions {
   /** Where to start looking for super-deploy.config.ts. Default `process.cwd()`. */
   cwd?: string;
+  /**
+   * Interrupts commands running on this project when it aborts: they stop,
+   * clean up (roll back, drop throwaway databases) and reject with
+   * InterruptedError.
+   */
+  signal?: AbortSignal;
+  /**
+   * Import the config file afresh even if this process already imported it
+   * (modules it imports are still reused). For long-running processes such as
+   * the interactive menu, so edits to the config take effect.
+   */
+  reload?: boolean;
 }
 
 export async function loadProject(
@@ -34,20 +51,26 @@ export async function loadProject(
   if (configPath === undefined) {
     throw new ProjectNotFoundError(start);
   }
+  const url = pathToFileURL(configPath);
+  if (options.reload) {
+    url.search = `?load=${++loads}`;
+  }
   let module: { default?: unknown };
   try {
-    module = (await import(pathToFileURL(configPath).href)) as {
-      default?: unknown;
-    };
+    module = (await import(url.href)) as { default?: unknown };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new ConfigError(
-      `Failed to load ${configPath}: ${reason}`,
+      `Failed to load ${configFileName}: ${reason}`,
       undefined,
       { cause: error },
     );
   }
-  const config = resolveConfig(module.default);
+  const resolved = resolveConfig(module.default);
+  const config: ResolvedConfig = {
+    ...resolved,
+    rehearsal: interruptibleRehearsal(resolved.rehearsal, options.signal),
+  };
   const root = dirname(configPath);
 
   let closed: Promise<void> | undefined;
@@ -60,6 +83,7 @@ export async function loadProject(
     configPath,
     config,
     paths: projectPaths(root, config.directory),
+    signal: options.signal,
     close,
     [Symbol.asyncDispose]: close,
   };

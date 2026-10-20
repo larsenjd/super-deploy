@@ -43,6 +43,9 @@ export function targetOver(
   };
 }
 
+/** @internal Every throwaway database's name starts with this. */
+export const rehearsalDatabasePrefix = "super_deploy_rehearsal_";
+
 /** @internal A rehearsal adapter over a lazily resolved connection string. */
 export function rehearsalOver(
   connectionString: () => Promise<string>,
@@ -51,7 +54,7 @@ export function rehearsalOver(
   return {
     async createDatabase(request) {
       const adminConnection = await connectionString();
-      const name = `super_deploy_rehearsal_${randomBytes(8).toString("hex")}`;
+      const name = `${rehearsalDatabasePrefix}${randomBytes(8).toString("hex")}`;
       await withSession(adminConnection, (admin) =>
         admin.query(createDatabaseSql(name, request)),
       );
