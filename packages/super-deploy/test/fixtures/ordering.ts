@@ -19,6 +19,8 @@ export interface OrderingFixture {
    * priority, so these are dependencies, not tie-breaks).
    */
   readonly before?: readonly (readonly [string, string])[];
+  /** PostgreSQL refuses the (correctly ordered) schema with this message, on purpose. */
+  readonly postgresRefuses?: string;
   /** Expected errors, in order; when present, the fixture is refused. */
   readonly errors?: readonly ExpectedError[];
 }
@@ -307,6 +309,7 @@ create table node (id int primary key, parent_id int constraint node_parent_fk r
     },
     // Both overloads exist first, so PostgreSQL refuses fmt(3) as ambiguous
     // rather than silently binding whichever came first.
+    postgresRefuses: "function fmt(integer) is not unique",
     before: [
       ["fmt(x numeric)", "create table fmt_defaults"],
       ["fmt(x bigint)", "create table fmt_defaults"],
@@ -987,12 +990,14 @@ create view v2 as
     before: [["create table nodes", "create recursive view"]],
   },
   {
+    // Populating a materialized view runs with search_path = pg_catalog, so
+    // the function body qualifies its table.
     name: "a materialized view calling a function over a view",
     files: {
       "a.sql":
         "create materialized view daily as select day, total_of(day) as total from days;\n",
       "b.sql":
-        "create view days as select distinct created_at::date as day from orders;\ncreate function total_of(d date) returns numeric language sql stable as $$ select coalesce(sum(amount), 0) from orders where created_at::date = d $$;\n",
+        "create view days as select distinct created_at::date as day from orders;\ncreate function total_of(d date) returns numeric language sql stable as $$ select coalesce(sum(amount), 0) from public.orders where created_at::date = d $$;\n",
       "c.sql":
         "create table orders (id int primary key, amount numeric, created_at timestamptz);\n",
     },
@@ -1017,10 +1022,10 @@ create view v2 as
     ],
   },
   {
-    name: "CALL inside a BEGIN ATOMIC procedure",
+    name: "CALL inside a LANGUAGE sql procedure body",
     files: {
       "a.sql":
-        "create procedure outer_proc() language sql begin atomic call inner_proc(); end;\n",
+        "create procedure outer_proc() language sql as $$ call inner_proc() $$;\n",
       "b.sql":
         "create procedure inner_proc() language sql begin atomic insert into log (n) values (1); end;\ncreate table log (n int);\n",
     },

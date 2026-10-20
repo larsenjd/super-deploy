@@ -125,4 +125,65 @@ describe("ordering", () => {
       "create table orders (id int primary key, customer_id int constraint orders_customer_fk references customers (id))",
     ]);
   });
+
+  test("breaks ties by kind, then identity, never by file name", async () => {
+    const texts = await order({
+      "z.sql":
+        "create table alpha (id int);\ncreate view beta as select 1 as one;\n",
+      "a.sql":
+        "create table gamma (id int);\ncreate function delta() returns int language sql immutable return 1;\ncomment on table alpha is 'a';\n",
+    });
+
+    expect(texts).toEqual([
+      "create table alpha (id int)",
+      "create table gamma (id int)",
+      "create function delta() returns int language sql immutable return 1",
+      "create view beta as select 1 as one",
+      "comment on table alpha is 'a'",
+    ]);
+  });
+
+  test("runs revokes before grants", async () => {
+    const texts = await order({
+      "a.sql":
+        "create function f() returns int language sql immutable return 1;\ngrant execute on function f() to ordering_reader;\nrevoke execute on function f() from public;\n",
+    });
+
+    expect(texts.slice(1)).toEqual([
+      "revoke execute on function f() from public",
+      "grant execute on function f() to ordering_reader",
+    ]);
+  });
+
+  test("resolves names qualified with the managed schema, and only there", async () => {
+    const texts = await order(
+      {
+        "a.sql": "create view v as select id from app.customers;\n",
+        "b.sql": "create table customers (id int primary key);\n",
+      },
+      { managedSchema: "app" },
+    );
+    expect(texts[0]).toBe("create table customers (id int primary key)");
+
+    expect(
+      await errorsOf(
+        { "a.sql": "create view v as select app.now() as t;\n" },
+        { managedSchema: "app" },
+      ),
+    ).toMatchObject([
+      {
+        rule: "unknown-reference",
+        message: expect.stringContaining("function app.now"),
+      },
+    ]);
+  });
+
+  test("leaves references to other schemas to the rules", async () => {
+    expect(
+      await order({
+        "a.sql":
+          "create view v as select table_name from information_schema.tables;\n",
+      }),
+    ).toHaveLength(1);
+  });
 });

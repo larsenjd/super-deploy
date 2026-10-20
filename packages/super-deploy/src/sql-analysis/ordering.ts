@@ -145,7 +145,7 @@ function analyse(
       violation(
         statement,
         "unorderable-statement",
-        `A ${statement.nodeType} statement can't be part of the desired schema`,
+        `super-deploy can't order this ${statement.nodeType} statement, so it can't be part of the desired schema`,
       );
       continue;
     }
