@@ -1,6 +1,6 @@
 # 27: Removing an adopted grant made by the schema's admin "deploys" successfully, but the role keeps access
 
-**Status:** ready-for-human
+**Status:** wontfix
 **Category:** bug
 **Severity:** high
 **Merged:** 33, 62
@@ -134,3 +134,7 @@ and `adopt_app_reader` can still `select count(*) from app.t`. Reproduced twice 
 3. A `pg_default_acl` finding only (fixes 33 and 62, not 27).
 
 Also decide whether adoption should warn about, or refuse, adopted grants whose grantor isn't the deploy role, since super-deploy can never revoke them.
+
+### Closed, 2026-10-20
+
+Out of scope, with 33 and 62. ADR-0006 puts privileges, ownership and row-level security outside the system in V1 (`.scratch/super-deploy/issues/28-privileges-out-of-scope.md`). The desired schema can no longer declare a `REVOKE`, nothing compares ACLs, and `rebuild` no longer touches grants. So an admin-made grant stays as it is, and default privileges no longer drift a target.

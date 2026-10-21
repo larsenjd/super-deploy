@@ -1,6 +1,6 @@
 # 28: Adoption doesn't check that the deploy role owns the adopted objects, so the first change fails at deploy
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** medium
 **Merged:** 65
@@ -93,3 +93,7 @@ Before recording, adoption and `mark` list each managed-schema object whose owne
 - Adoption and `mark` refuse, listing each object and the `ALTER ... OWNER TO` fix. `status` and pre-flight warn about objects not owned by the deploy role (recommended).
 - Warn only, everywhere.
 - Adoption and `mark` only, no `status` or pre-flight check.
+
+### Decided, 2026-10-20
+
+ADR-0006 puts privileges, ownership and row-level security outside the system in V1 (`.scratch/super-deploy/issues/28-privileges-out-of-scope.md`). Ownership stays unmanaged, but the assumption is checked: `deploy`, `status`, `deploy-draft`, `adopt` and `mark` refuse a target where the managed schema or an object in it is owned by a role the deploy role isn't a member of, listing each object, its owner and the `ALTER ... OWNER TO` fix. `SECURITY DEFINER` is refused outright. Implemented by super-deploy ticket 28; close this when it lands.

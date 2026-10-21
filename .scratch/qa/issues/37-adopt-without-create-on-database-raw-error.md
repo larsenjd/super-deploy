@@ -67,3 +67,7 @@ When the history schema doesn't exist yet and the deploy role lacks `CREATE` on 
 **Out of scope:**
 - Other missing privileges (e.g. on the managed schema), unless they already have pre-flight findings.
 - README wording beyond what the Permissions section already says.
+
+### Note, 2026-10-20
+
+ADR-0006 puts privileges, ownership and row-level security outside the system in V1 (`.scratch/super-deploy/issues/28-privileges-out-of-scope.md`). The example finding `role "x" does not exist` goes with it. Model the message on the other pre-flight refusals, such as the new ownership one.

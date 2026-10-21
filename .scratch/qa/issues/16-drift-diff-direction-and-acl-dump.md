@@ -91,3 +91,7 @@ Drift lines are an unlabelled `-`/`+` pair, where `-` is what the target has and
 - Label the sides in words ("on the target:" / "expected by migrations:") and drop bare `-`/`+` (recommended).
 - Keep `-`/`+` but flip to the git convention (`-` expected, `+` found), with a legend line.
 - Whether to show the grantor when it isn't the owner (recommended yes, given 27).
+
+### Narrowed, 2026-10-20
+
+ADR-0006 puts privileges, ownership and row-level security outside the system in V1 (`.scratch/super-deploy/issues/28-privileges-out-of-scope.md`). The catalog comparison stops reading ACLs, so the ACL dump, double-escaped role names and the grantor question go away. What remains: label the sides of a difference, or flip them to the git convention, and schema-qualify names. Ignore the grant-specific acceptance criteria.

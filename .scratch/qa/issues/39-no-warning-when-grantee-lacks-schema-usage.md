@@ -1,6 +1,6 @@
 # 39: No warning when a role is granted objects in a non-public managed schema but has no USAGE on it
 
-**Status:** ready-for-human
+**Status:** wontfix
 **Category:** enhancement
 **Severity:** low
 **Area:** adopt
@@ -66,3 +66,7 @@ A warning names the role, the object grants and the missing `grant usage on sche
 **Decision needed:**
 - A `validate` and `draft` warning, with the text noting that membership-based `USAGE` makes it safe to ignore (recommended).
 - No warning; rely on the README.
+
+### Closed, 2026-10-20
+
+Out of scope. ADR-0006 puts privileges, ownership and row-level security outside the system in V1 (`.scratch/super-deploy/issues/28-privileges-out-of-scope.md`). The desired schema no longer grants to any role.

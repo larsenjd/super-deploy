@@ -78,3 +78,7 @@ targets, and with no way to connect (above) I couldn't check.
 - Rehearsal cluster: keep sharing it with `dev` and document the leniency (recommended for V1), or rehearse on a separate cluster or database so `dev` behaves like a real target.
 - Connecting: document the exported `connectionString()` with a small script (recommended), or add a command that starts the server and prints its URL, or opens `psql`.
 - External schemas on `dev`: a documented setup script that uses `connectionString()` (recommended), or a setup-SQL option on the embedded target that runs when it's created.
+
+### Note, 2026-10-20
+
+ADR-0006 puts privileges, ownership and row-level security outside the system in V1 (`.scratch/super-deploy/issues/28-privileges-out-of-scope.md`). Rehearsals stop creating placeholder roles and the pre-flight stops checking granted roles, so the role leak into `dev` goes away. What remains: a documented way to connect to `dev` (to look at it, point an app at it, or create external schemas). Ignore the role-specific acceptance criterion.

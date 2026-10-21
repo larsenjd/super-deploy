@@ -58,13 +58,21 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 
 **Research:** `.scratch/super-deploy/research/parsers-and-differs.md`.
 
-## Roles, grants and ownership
+## Privileges, ownership and row-level security
 
-**V1:** Roles are cluster-wide and out of scope: the tool never creates or drops them. Grants on managed objects and `USAGE` on the managed schema to existing roles are in scope and diffed, as are revokes of PostgreSQL's default `PUBLIC` privileges on managed objects. Objects are owned by whichever role deploys them and ownership is not diffed, so a `SECURITY DEFINER` function always runs as the deploy role. Rehearsals create placeholder roles so grants can be applied.
+**V1:** The system knows about one role, the deploy role, which owns the managed schema and everything in it. `GRANT`, `REVOKE`, `ALTER DEFAULT PRIVILEGES`, role statements, `OWNER TO`, `CREATE POLICY` and `ENABLE/FORCE ROW LEVEL SECURITY` are refused in the desired schema and in every deploy-time file. Targets may have grants, default privileges, other roles and policies, set up outside super-deploy; nothing compares, revokes or resets them, so they are never drift. `deploy`, `status`, `deploy-draft`, `adopt` and `mark` refuse a target where something in the managed schema is owned by a role the deploy role isn't a member of. See ADR-0006.
 
-**Why narrow:** Roles span every database in a cluster, so one project cannot own them safely.
+**Why narrow:** Privileges are a large area of their own, and the grant support V1 first had kept producing hard edge cases: grants an admin made that the deploy role can't revoke, default privileges that drift a target after every deploy, roles that exist in rehearsals but not on targets, and objects owned by other roles. Roles also span every database in a cluster, so one project cannot own them safely.
 
-**Revisit when:** Teams need ownership tracked (for example a dedicated, low-privilege owner for `SECURITY DEFINER` functions instead of the deploy role), default privileges (`ALTER DEFAULT PRIVILEGES`) managed, or role existence verified on targets before deploying.
+**Revisit when:** Teams want grants reviewed and deployed with the schema, need policies for row-level security, or need a dedicated low-privilege owner for some objects. Options: declared grants and policies on objects the desired schema defines, compared only for the roles a project lists in its config; checking a target's default privileges in pre-flight; rehearsing with the listed roles created as `NOLOGIN`. A migration that drops and recreates an object silently loses its hand-made grants and policies: if that bites, warn when a schema change drops an object that has grants or policies on the target.
+
+## `SECURITY DEFINER` routines
+
+**V1:** Refused in the desired schema. Every routine runs with its caller's privileges.
+
+**Why narrow:** A `SECURITY DEFINER` routine runs as its owner, the deploy role. Without `REVOKE EXECUTE ... FROM PUBLIC`, which the desired schema can no longer declare (see "Privileges, ownership and row-level security"), any role that can connect could call it.
+
+**Revisit when:** Privileges come back into scope, or there is demand for triggers that read tables the application's roles can't (for example an `auth` schema). Options: allow `SECURITY DEFINER` together with the one `REVOKE EXECUTE ... FROM PUBLIC` it needs, and compare only that.
 
 ## Extensions
 
@@ -135,14 +143,6 @@ Also refused, though the spec's first list didn't name them: temporary tables an
 **V1:** Not published. The library is used from the workspace (the example and template packages). Planned shape once published: public npm package (name to be confirmed free on npm), MIT licence, versioned with Changesets, `0.x` until migration file formats and the history schema layout are stable. Until the first release the history schema layout stays version 1 and changes in place, because no real target has it yet; from the first release on, every change to its columns raises `historyLayoutVersion` (`deploy/history.ts`) and ships an upgrade step for targets on the older layout.
 
 **Revisit when:** V1 is complete.
-
-## Placeholder roles in rehearsals
-
-**V1:** A rehearsal creates any missing role that the desired schema grants to, as `NOLOGIN`, and never drops it. The rehearsal adapter's login therefore needs `CREATEROLE`. On real targets the tool never creates roles; `status` and `deploy` check that every granted role exists, and `deploy` refuses if any is missing.
-
-**Why narrow:** Roles are cluster-wide. Leaving harmless `NOLOGIN` roles behind is simpler and safer than dropping roles another project's concurrent rehearsal may be using.
-
-**Revisit when:** Leftover roles accumulate on shared rehearsal servers, or `CREATEROLE` is unavailable there. Options: per-project role-name prefixes with cleanup, a declared list of expected roles in config, or rehearsing without grants and checking them separately.
 
 ## Virtual generated columns
 

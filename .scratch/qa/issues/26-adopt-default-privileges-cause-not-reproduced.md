@@ -1,6 +1,6 @@
 # 26: Adoption refuses a database that has ALTER DEFAULT PRIVILEGES, with a puzzling "not-reproduced" ACL diff
 
-**Status:** ready-for-agent
+**Status:** wontfix
 **Category:** bug
 **Severity:** medium
 **Area:** adopt
@@ -97,3 +97,7 @@ If the deploy role has default privileges (`ALTER DEFAULT PRIVILEGES`, in the ma
 **Out of scope:**
 - Managing default privileges (REFINEMENTS.md "Roles, grants and ownership").
 - Default privileges causing drift on deploy or rebuild; that is issue 27.
+
+### Closed, 2026-10-20
+
+Out of scope. ADR-0006 puts privileges, ownership and row-level security outside the system in V1 (`.scratch/super-deploy/issues/28-privileges-out-of-scope.md`). Adoption no longer writes grants or compares ACLs, so default privileges can't cause a "not-reproduced" refusal.

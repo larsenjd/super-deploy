@@ -46,6 +46,10 @@ _Avoid_: Dangerous command, escape hatch, suppression
 A real, named database that receives deployments, such as `dev`, `qa` or `prod`.
 _Avoid_: Environment, server
 
+**Deploy role**:
+The one database role the system connects to a target as, and the only role it knows about. It owns the managed schema and everything in it.
+_Avoid_: Owner role, migration user, superuser
+
 **Disposable target**:
 A target that its own database has marked as safe to wipe and experiment on. Only disposable targets accept drafts, rebuilds and seed data.
 _Avoid_: Scratch database, sandbox

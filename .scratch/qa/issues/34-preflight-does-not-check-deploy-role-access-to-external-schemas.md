@@ -67,3 +67,7 @@ The pre-flight checks refuse when a schema listed in `externalSchemas` doesn't e
 **Out of scope:**
 - Checking object-level privileges (e.g. `SELECT` on `auth.users`); that would need parsing PL/pgSQL bodies.
 - Making this a refusal.
+
+### Note, 2026-10-20
+
+ADR-0006 puts privileges, ownership and row-level security outside the system in V1 (`.scratch/super-deploy/issues/28-privileges-out-of-scope.md`). `SECURITY DEFINER` is refused, so routines run as their caller and the application's roles, not the deploy role, need the external schema's grants. That removes this issue's motivating case. Re-triage before implementing: it may now be wontfix.

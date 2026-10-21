@@ -78,3 +78,7 @@ A script can tell "deployable, no drift" from "would refuse" and from "drift not
 - Exit 1 for "would refuse" and for "drift not checked", so 0 means deployable with no drift (recommended).
 - A distinct exit code for "would refuse", keeping 1 for drift.
 - Keep exit 0 and document that `status` is not a deployability gate.
+
+### Note, 2026-10-20
+
+ADR-0006 puts privileges, ownership and row-level security outside the system in V1 (`.scratch/super-deploy/issues/28-privileges-out-of-scope.md`). The missing-role refusal in the reproduction goes away. The issue stands for the other reasons `status` reports "Deploy would refuse": history mismatch, a held draft, and the new ownership refusal.
