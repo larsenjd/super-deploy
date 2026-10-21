@@ -193,6 +193,58 @@ describe("adopt", () => {
     }
   });
 
+  test("refuses an extension once, not each of its functions, types and operators", async () => {
+    const { project } = await adoptableProject(`
+      create extension citext;
+      create table t (id bigint primary key);
+    `);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      expect((error as AdoptUnsupportedError).objects).toEqual([
+        {
+          object: "extension citext",
+          rule: "unsupported-object",
+          reason: "Extensions other than plpgsql are not supported in V1",
+        },
+      ]);
+      expect((error as AdoptUnsupportedError).message).toContain(
+        "has 1 thing V1 doesn't support: extension citext.",
+      );
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses a serial column once, naming the column, not its sequence", async () => {
+    const { project } = await adoptableProject(`
+      create table items (id serial primary key, name text not null);
+    `);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      expect((error as AdoptUnsupportedError).objects).toEqual([
+        {
+          object: "serial column public.items.id",
+          rule: "unsupported-object",
+          reason:
+            "serial columns are not supported: use an identity column, e.g. `bigint generated always as identity`",
+        },
+      ]);
+      expect((error as AdoptUnsupportedError).message).toContain(
+        "has 1 thing V1 doesn't support: serial column public.items.id.",
+      );
+    } finally {
+      await project.close();
+    }
+  });
+
   test("asks a reason for each function that needs an override marker and writes the marker with it", async () => {
     const { dir, project } = await adoptableProject(loaders);
     try {
@@ -792,6 +844,51 @@ describe("adopt", () => {
       expect((error as AdoptConflictError).reasons).toEqual([
         'it already records 1 migration in its history schema "deployment_history"',
       ]);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses a target without the managed schema, writing nothing anywhere, but adopts an empty one", async () => {
+    const prod = await server.createDatabase(
+      "create schema app; create table public.t (id bigint primary key);",
+    );
+    const otherTargets = `prod: { adapter: postgres.target(${JSON.stringify(prod)}) },`;
+    const mistyped = await deployProject(
+      server,
+      {},
+      { otherTargets, settings: 'managedSchema: "ap",' },
+    );
+    try {
+      const error = await adopt(mistyped.project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(AdoptConflictError);
+      expect((error as AdoptConflictError).reasons).toEqual([
+        'its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts)',
+      ]);
+      expect(mistyped.dir.exists("data-model/migrations")).toBe(false);
+      expect(mistyped.dir.exists("data-model/desired-schema")).toBe(false);
+      expect(
+        await server.query(
+          "select 1 from pg_namespace where nspname = 'deployment_history'",
+          [],
+          prod,
+        ),
+      ).toEqual([]);
+    } finally {
+      await mistyped.project.close();
+    }
+
+    const { project } = await deployProject(
+      server,
+      {},
+      { otherTargets, settings: 'managedSchema: "app",' },
+    );
+    try {
+      const result = await adopt(project, { target: "prod" });
+      expect(result.migration.folder).toBe("00001-adopt");
+      expect(result.files).toEqual([]);
     } finally {
       await project.close();
     }

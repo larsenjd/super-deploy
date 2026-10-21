@@ -44,6 +44,7 @@ export {
   deployDraft,
   RecoveryBaseMismatchError,
   TargetBehindError,
+  UndraftedChangesError,
 } from "./commands/deploy-draft.ts";
 export {
   type DiscardDraftOptions,

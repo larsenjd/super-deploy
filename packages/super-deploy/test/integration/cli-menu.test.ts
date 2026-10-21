@@ -9,7 +9,7 @@ import {
   embeddedConfig,
   stallingConfig,
 } from "../support/project.ts";
-import { keys, spawnTerminal } from "../support/terminal.ts";
+import { keys, showCursor, spawnTerminal } from "../support/terminal.ts";
 
 let server: TestServer;
 beforeAll(async () => {
@@ -101,6 +101,28 @@ describe.skipIf(process.platform === "win32")("menu", () => {
     expect(dir.exists("data-model/draft")).toBe(false);
   });
 
+  test("Ctrl+D on an empty answer cancels a question and returns to the menu; Ctrl+D there leaves", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: { "data-model/desired-schema/customers.sql": customers },
+    });
+    const terminal = spawnTerminal([], { cwd: dir.root });
+
+    await terminal.waitFor("quit");
+    await terminal.chooseMenuItem("draft");
+    await terminal.waitFor("Name");
+    terminal.type(keys.ctrlD);
+    await terminal.waitFor("Cancelled: nothing ran");
+
+    await terminal.waitFor("quit");
+    const before = terminal.output.length;
+    terminal.type(keys.ctrlD);
+    await terminal.waitFor("Bye");
+    expect(await terminal.exited).toBe(0);
+    expect(terminal.output.slice(before)).toContain(showCursor);
+    expect(dir.exists("data-model/draft")).toBe(false);
+  });
+
   test("Ctrl+C while a command runs cleans up, prints one notice and exits 130", async () => {
     const dir = await createTestProject({
       config: stallingConfig(JSON.stringify(server.dataDir)),
@@ -138,7 +160,7 @@ describe.skipIf(process.platform === "win32")("menu", () => {
 
     expect(await terminal.waitFor("quit")).toMatch(/Start\s*\n.*init/);
     terminal.type(keys.enter);
-    await terminal.waitFor("Initialised a super-deploy project in .");
+    await terminal.waitFor("Initialised a super-deploy project in");
     expect(dir.exists("super-deploy.config.ts")).toBe(true);
 
     // Back on init: inside the project now, it adopts a target, so it asks

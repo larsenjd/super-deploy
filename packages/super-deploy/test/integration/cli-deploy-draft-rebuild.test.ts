@@ -225,6 +225,38 @@ unix("deploy-draft", () => {
     ).toEqual([{ command: "deploy" }]);
   });
 
+  test("refuses, without asking, a draft generated from an older desired schema: nothing changes", async () => {
+    const { dir, database } = await deployedProject();
+    await requireCityDraft(dir);
+    await dir.write(
+      "data-model/desired-schema/orders.sql",
+      "create table orders (id bigint primary key);\n",
+    );
+
+    const terminal = spawnTerminal(["deploy-draft", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    await terminal.waitFor(
+      "Error: The desired schema has changed since draft require-city was generated: run draft again",
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    expect(
+      await server.query(
+        "select command from deployment_history.attempts",
+        [],
+        database,
+      ),
+    ).toEqual([{ command: "deploy" }]);
+    expect(
+      await server.query(
+        "select is_nullable from information_schema.columns where table_name = 'customers' and column_name = 'city'",
+        [],
+        database,
+      ),
+    ).toEqual([{ is_nullable: "YES" }]);
+  });
+
   test("refuses, without asking, a target that already holds a draft or has pending migrations", async () => {
     const { dir, database } = await deployedProject();
     await requireCityDraft(dir);
@@ -408,6 +440,11 @@ async function recoveryDraftProject({ deployed }: { deployed: boolean }) {
 unix("deploy-draft of a Recovery draft", () => {
   test("tries the Recovery of migration N on a target at N-1: its seed data (if asked), its scripts around N's schema change; recorded as a deployed draft", async () => {
     const { dir, database } = await recoveryDraftProject({ deployed: false });
+    // Like its rehearsal, a Recovery draft ignores the desired schema.
+    await dir.write(
+      "data-model/desired-schema/orders.sql",
+      "create table orders (id bigint primary key);\n",
+    );
 
     const terminal = spawnTerminal(
       ["deploy-draft", "--target", "dev", "--with-seed"],

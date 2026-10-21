@@ -90,6 +90,10 @@ const refusedObjects = {
       " (nor their dictionaries, parsers and templates)",
     ),
   baseTypes: () => v1("Base types", ": use a domain or a composite type"),
+  serialColumns: (type = "serial") =>
+    unsupported(
+      `${type} columns are not supported: use an identity column, e.g. \`bigint generated always as identity\``,
+    ),
   windowFunctions: () => routineOption("window"),
   virtualGeneratedColumns: () =>
     v1(
@@ -222,6 +226,14 @@ export function virtualGeneratedColumnFinding(): RuleFinding {
   return refusedObjects.virtualGeneratedColumns();
 }
 
+/**
+ * Why V1 refuses a serial column found in a database's managed schema (a
+ * sequence owned by a column), as the rules refuse a statement declaring one.
+ */
+export function serialColumnFinding(): RuleFinding {
+  return refusedObjects.serialColumns();
+}
+
 /** Every rule finding for one desired-schema statement. */
 export function desiredSchemaFindings(
   statement: ParsedStatement,
@@ -321,11 +333,7 @@ function columnFindings(element: unknown): RuleFinding[] {
   );
   const [only] = typeNames;
   if (typeNames.length === 1 && only !== undefined && serialTypes.has(only)) {
-    findings.push(
-      unsupported(
-        `${only} columns are not supported: use an identity column, e.g. \`bigint generated always as identity\``,
-      ),
-    );
+    findings.push(refusedObjects.serialColumns(only));
   }
   if (column.storage_name !== undefined || column.compression !== undefined) {
     findings.push(v1("Column STORAGE and COMPRESSION settings"));

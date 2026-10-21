@@ -113,7 +113,7 @@ export function historyTable(
   return `${quoteIdentifier(schema)}.${quoteIdentifier(table)}`;
 }
 
-export async function historySchemaExists(
+export async function schemaExists(
   session: Session,
   schema: string,
 ): Promise<boolean> {
@@ -136,7 +136,7 @@ export async function ensureHistorySchema(
   session: Session,
   schema: string,
 ): Promise<void> {
-  if (await historySchemaExists(session, schema)) {
+  if (await schemaExists(session, schema)) {
     return;
   }
   const migrations = historyTable(schema, "migrations");
@@ -200,7 +200,7 @@ export async function readRecordedMigrations(
   session: Session,
   schema: string,
 ): Promise<RecordedMigration[]> {
-  if (!(await historySchemaExists(session, schema))) {
+  if (!(await schemaExists(session, schema))) {
     return [];
   }
   const { rows } = await session.query<{
@@ -299,7 +299,7 @@ export async function readRecentAttempts(
   schema: string,
   limit: number,
 ): Promise<AttemptRecord[]> {
-  if (!(await historySchemaExists(session, schema))) {
+  if (!(await schemaExists(session, schema))) {
     return [];
   }
   const { rows } = await session.query<AttemptRow>(
@@ -315,7 +315,7 @@ export async function readRunningAttemptOf(
   schema: string,
   pid: number,
 ): Promise<AttemptRecord | undefined> {
-  if (!(await historySchemaExists(session, schema))) {
+  if (!(await schemaExists(session, schema))) {
     return undefined;
   }
   const { rows } = await session.query<AttemptRow>(
@@ -336,7 +336,7 @@ export async function readTargetSettings(
   session: Session,
   schema: string,
 ): Promise<TargetSettings> {
-  if (!(await historySchemaExists(session, schema))) {
+  if (!(await schemaExists(session, schema))) {
     return { disposable: false };
   }
   const { rows } = await session.query<{ disposable: boolean }>(
@@ -363,7 +363,7 @@ export async function readDeployedDraft(
   session: Session,
   schema: string,
 ): Promise<DeployedDraft | undefined> {
-  if (!(await historySchemaExists(session, schema))) {
+  if (!(await schemaExists(session, schema))) {
     return undefined;
   }
   const { rows } = await session.query<{

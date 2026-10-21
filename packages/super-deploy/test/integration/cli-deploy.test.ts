@@ -161,4 +161,22 @@ describe("deploy and status", () => {
     expect(missing.exitCode).toBe(2);
     expect(missing.stderr).toContain("Missing required option --target");
   });
+
+  test("a target without a connection string fails with exit code 1, naming the target", async () => {
+    const dir = await createTestProject({
+      config: deployConfig(server, {
+        preamble: 'import { postgresTarget } from "super-deploy";',
+        otherTargets:
+          "qa: { adapter: postgresTarget({ connectionString: process.env.SUPER_DEPLOY_TEST_UNSET_URL as string }) },",
+      }).config,
+    });
+    const result = await runCli(["status", "--target", "qa"], {
+      cwd: dir.root,
+    });
+
+    expect(result).toMatchObject({ exitCode: 1, stdout: "" });
+    expect(result.stderr).toMatch(
+      /^Error: Target qa has no connection string \(connectionString is undefined\)/,
+    );
+  });
 });

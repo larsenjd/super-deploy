@@ -342,6 +342,45 @@ alter table customers alter column phone set not null;
     expect(covered.toCover).toEqual([]);
   });
 
+  test("draft asks the scripts to cover a type change only when the cast could fail or lose data", async () => {
+    const { dir, project } = await deployProject(server, {
+      "orders.sql": `create table orders (
+  id bigint primary key,
+  total_cents integer not null,
+  note varchar(10),
+  code text,
+  quantity text
+);
+`,
+    });
+    await draft(project, { name: "add orders" });
+    await dir.write(
+      "data-model/draft/post-migration.sql",
+      "insert into orders (id, total_cents, note, code, quantity) values (1, 250, 'gift', 'ABCDEFGH', '3');\n",
+    );
+    await finalize(project);
+    await dir.write(
+      "data-model/desired-schema/orders.sql",
+      `create table orders (
+  id bigint primary key,
+  total_cents bigint not null,
+  note text,
+  code varchar(5),
+  quantity integer
+);
+`,
+    );
+
+    const result = await draft(project, { name: "reshape orders" });
+
+    expect(
+      result.toCover.map(({ kind, column }) => ({ kind, column })),
+    ).toEqual([
+      { kind: "changed-type", column: "code" },
+      { kind: "changed-type", column: "quantity" },
+    ]);
+  });
+
   test("rehearse runs the draft's scripts in deployment order, naming a failing script", async () => {
     const { dir, project } = await withFirstMigration();
     await dir.write(

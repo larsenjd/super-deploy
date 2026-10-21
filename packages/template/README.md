@@ -116,9 +116,10 @@ The generated `super-deploy.config.ts` has the `qa` line, commented out.
 command connects to `qa`, so every other command and target works without
 it. A command that uses `qa` while the variable is unset or empty fails
 before connecting, changing nothing:
-`Environment variable QA_DATABASE_URL is not set`. The variable holds a
-connection string such as
-`postgresql://deploy_role:password@db.example.com:5432/app`.
+`Target qa: environment variable QA_DATABASE_URL is not set` (or `is
+empty`). The variable holds a connection string such as
+`postgresql://deploy_role:password@db.example.com:5432/app`; one that isn't a
+`postgres://` or `postgresql://` URL is refused the same way.
 
 `postgresTarget({ connectionString: "postgresql://..." })` takes the
 connection string itself instead. The config is committed to Git, so keep
@@ -137,10 +138,11 @@ before any draft or migration exists), and set `managedSchema` if its schema
 isn't `public` (see [Project settings](#project-settings)). Then run
 `pnpm exec super-deploy init --adopt <target>`. Its managed schema becomes the
 desired schema and migration `00001-adopt`, which is recorded on that target
-as already deployed. If the database holds anything super-deploy doesn't
-support, nothing is written and every such object is listed: that includes
-a `SECURITY DEFINER` routine and objects owned by another role (see
-"Permissions"). Grants, policies and row-level security on the target stay
+as already deployed. If the target has no schema of that name (usually a
+typo in `managedSchema`), adoption refuses and writes nothing. If the
+database holds anything super-deploy doesn't support, nothing is written and
+every such object is listed: that includes a `SECURITY DEFINER` routine and
+objects owned by another role (see "Permissions"). Grants, policies and row-level security on the target stay
 as they are, left out of the desired schema; adoption says how many grants
 and policies it left.
 
