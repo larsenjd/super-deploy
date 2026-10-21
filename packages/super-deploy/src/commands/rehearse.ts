@@ -1,3 +1,6 @@
+// `rehearse`: replay every finalized migration plus the draft on a throwaway
+// database and prove the result matches the desired schema, without
+// finalizing anything.
 import { join, posix } from "node:path";
 import type { Project } from "../project.ts";
 import { rehearseDraft } from "../rehearsal/rehearse-draft.ts";
