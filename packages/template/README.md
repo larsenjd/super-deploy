@@ -97,6 +97,16 @@ again, which rebuilds it from your migrations (as `deployer`). Data you
 added to `dev` by hand is lost with it, and so is its disposable flag (see
 [Disposable targets and the guarded commands](#disposable-targets-and-the-guarded-commands)).
 
+`.super-deploy/rehearsal` holds only the throwaway databases rehearsals
+use: whenever no command is running, you can delete it, and nothing is
+lost. If a crash or reboot leaves a server folder stale or damaged, commands
+that need it fail naming what looks wrong. For a `postmaster.pid` that
+names a process which isn't its server, delete that file with no command
+running. For a folder that isn't a complete PostgreSQL data folder, delete
+the folder with no command running: for `.super-deploy/rehearsal` nothing
+is lost; for `.super-deploy/dev`, run `deploy --target dev` again, which
+loses what you added to `dev` by hand.
+
 ## What the desired schema supports
 
 The desired schema may hold only the statements below; super-deploy refuses

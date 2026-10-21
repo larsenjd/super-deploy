@@ -2,7 +2,15 @@
 // server on the port its config declares, so a local target such as `dev` is
 // always at a known URL, and one server shared by every client of its data
 // directory (ticket 14).
-import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -128,6 +136,74 @@ describe("embeddedPostgres shared by several clients of one data directory", () 
 
     await started;
     expect(await accepts(await client.connectionString())).toBe(true);
+  });
+});
+
+// A data directory left stale or damaged by a crash or by hand: the error
+// names what looks wrong and the way out, and nothing is deleted.
+describe("embeddedPostgres on a stale or damaged data directory", () => {
+  test("a postmaster.pid naming a live process that isn't its server fails at once, naming the file and the way out", async () => {
+    const dataDir = await tempDataDir();
+    const setup = embeddedPostgres({ dataDir });
+    await setup.start();
+    await setup.stop();
+    const port = await freePort();
+    // The test's own pid: alive, and no server listens on `port`.
+    const pidFile = join(dataDir, "postmaster.pid");
+    await writeFile(
+      pidFile,
+      `${process.pid}\n${dataDir}\n1792590000\n${port}\n\n127.0.0.1\n  1234567  7654321\nready   \n`,
+    );
+    const server = embeddedPostgres({ dataDir });
+    onTestFinished(() => server.stop());
+
+    const started = Date.now();
+    const error = await server.start().catch((e: unknown) => e);
+
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(error).toBeInstanceOf(AdapterError);
+    expect((error as Error).message).toBe(
+      `${pidFile} names process ${process.pid} and port ${port}, but no server answers there: if no super-deploy command is running, delete that file and try again`,
+    );
+    expect(await readFile(pidFile, "utf8")).toContain(`${port}`);
+  });
+
+  test("a data directory without PG_VERSION is refused before initdb runs, and left as it was", async () => {
+    const dataDir = await tempDataDir();
+    await mkdir(join(dataDir, "base"), { recursive: true });
+    await writeFile(join(dataDir, "postgresql.conf"), "# kept\n");
+    const server = embeddedPostgres({ dataDir });
+    onTestFinished(() => server.stop());
+
+    const error = await server.start().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(AdapterError);
+    expect((error as Error).message).toBe(
+      `${dataDir} is not a complete PostgreSQL data folder (it has no PG_VERSION): with no super-deploy command running, delete that folder; it holds only rehearsals' throwaway databases, so nothing is lost`,
+    );
+    expect((await readdir(dataDir)).sort()).toEqual([
+      "base",
+      "postgresql.conf",
+    ]);
+    expect(await readdir(join(dataDir, ".."))).toEqual(["data"]);
+  });
+
+  test("for a folder holding targets, the way out says their databases are deployed again", async () => {
+    const dataDir = await tempDataDir();
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(join(dataDir, "postgresql.conf"), "# kept\n");
+    const server = embeddedPostgres({ dataDir });
+    onTestFinished(() => server.stop());
+
+    const error = await server
+      .target("dev")
+      .connect()
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(AdapterError);
+    expect((error as Error).message).toBe(
+      `${dataDir} is not a complete PostgreSQL data folder (it has no PG_VERSION): with no super-deploy command running, delete that folder and deploy again to the targets on it (database dev), losing whatever was added to them by hand`,
+    );
   });
 });
 
