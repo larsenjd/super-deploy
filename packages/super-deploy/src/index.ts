@@ -154,11 +154,13 @@ export {
   type UndroppableObject,
 } from "./deploy/ownership.ts";
 export type {
+  ForeignHistorySchema,
   HistoryMismatch,
   HistorySchemaNotCreatable,
   PreflightFindings,
 } from "./deploy/preflight.ts";
 export {
+  ForeignHistorySchemaError,
   HistorySchemaNotCreatableError,
   PreflightFailedError,
 } from "./deploy/preflight.ts";
