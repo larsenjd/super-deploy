@@ -1,6 +1,6 @@
 # 17: A rehearsal mismatch always says "run draft again", even when re-drafting can't fix it
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Area:** newproj

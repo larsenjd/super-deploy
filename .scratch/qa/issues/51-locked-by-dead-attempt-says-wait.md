@@ -1,6 +1,6 @@
 # 51: After a SIGKILLed deploy, "locked by attempt #N ... try again when it has finished" gives no hint the CLI is gone
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** fail

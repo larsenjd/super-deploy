@@ -1,6 +1,6 @@
 # 44: A misnamed script in the draft (e.g. `post-migrate.sql`) never runs, yet is frozen into the migration
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** fail

@@ -1,6 +1,6 @@
 # 16: Drift output: the -/+ lines are unlabelled and the reverse of the usual direction, and an ACL change prints the whole ACL
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Merged:** 32

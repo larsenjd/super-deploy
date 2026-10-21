@@ -1,6 +1,6 @@
 # 11: `status` exits 0 when it reports "Deploy would refuse"
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** newproj

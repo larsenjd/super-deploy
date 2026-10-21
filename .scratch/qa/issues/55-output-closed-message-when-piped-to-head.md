@@ -1,6 +1,6 @@
 # 55: Piping output to `head` prints "Output closed: cleaning up before exiting"
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** fail

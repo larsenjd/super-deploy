@@ -1,6 +1,6 @@
 # 07: The pre-commit hook refuses any commit while a draft exists, which the README doesn't say
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** newproj

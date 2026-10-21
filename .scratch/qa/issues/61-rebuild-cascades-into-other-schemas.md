@@ -1,6 +1,6 @@
 # 61: rebuild silently drops views, foreign keys and columns in other schemas
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** high
 **Merged:** 63

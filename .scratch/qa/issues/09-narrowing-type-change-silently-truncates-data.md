@@ -1,6 +1,6 @@
 # 09: Narrowing a column type silently truncates data on the target (generated `USING col::varchar(n)`)
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** high
 **Area:** newproj

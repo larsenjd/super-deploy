@@ -1,6 +1,6 @@
 # 10: `unfinalize` moves an already-deployed, committed migration back into the draft without a warning, and the resulting refusal says nothing about how to recover
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Area:** newproj

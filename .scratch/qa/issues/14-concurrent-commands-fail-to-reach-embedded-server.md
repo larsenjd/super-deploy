@@ -1,6 +1,6 @@
 # 14: Two commands run at the same time in one project: one fails with ECONNREFUSED / "the database system is starting up"
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Merged:** 49

@@ -1,6 +1,6 @@
 # 68: The disposable and rebuild confirmations don't show what's on the target
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

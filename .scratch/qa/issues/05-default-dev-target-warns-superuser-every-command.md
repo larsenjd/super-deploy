@@ -1,6 +1,6 @@
 # 05: The template's own `dev` target prints a superuser warning on every command
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** newproj

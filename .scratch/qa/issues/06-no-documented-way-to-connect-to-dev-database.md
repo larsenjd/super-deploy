@@ -1,6 +1,6 @@
 # 06: No documented way to connect to the local `dev` database (to look at it, create roles or run the app)
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Merged:** 31
