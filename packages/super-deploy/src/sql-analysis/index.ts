@@ -13,6 +13,7 @@ export {
   type AdoptedFile,
   type AdoptionOptions,
   adoptedDesiredSchema,
+  isSequenceStatement,
 } from "./adoption.ts";
 export {
   type OverrideCandidate,
@@ -34,6 +35,7 @@ export {
 export {
   catalogObjectFinding,
   isAlreadyInstalled,
+  serialColumnFinding,
   virtualGeneratedColumnFinding,
 } from "./desired-schema-rules.ts";
 export {
