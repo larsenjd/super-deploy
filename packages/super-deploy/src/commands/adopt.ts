@@ -25,10 +25,14 @@
 //      generated columns, which pg-delta renders STORED; serial columns,
 //      once each, though the differ renders a sequence and its OWNED BY),
 //      every desired-schema rule (or ordering) violation in
-//      the generated files, and, when those pass, every object the files
-//      don't reproduce exactly (loaded on a throwaway database and compared
-//      with the target like the drift check). Nothing is written before
-//      this passes.
+//      the generated files, every statement referencing a declared external
+//      schema where PostgreSQL resolves it at CREATE (rehearsals don't
+//      contain external schemas, so it could never load), and, when those
+//      pass, every object the files don't reproduce exactly (loaded on a
+//      throwaway database and compared with the target like the drift
+//      check; a statement the throwaway database refuses is listed by its
+//      object, never by a file that was never written). Nothing is written
+//      before this passes.
 //      Statements that break only risk rules (dynamic SQL, denylisted
 //      calls) are the exception when the caller answers override reasons
 //      (`overrideReason`): the checks treat them as marked, and once nothing
@@ -68,15 +72,19 @@ import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import type { AskOverrideReason } from "../questions.ts";
 import {
+  DesiredSchemaLoadError,
   ensureManagedSchema,
+  externalSchemaExplanation,
   loadDesiredSchema,
   withThrowawayDatabase,
 } from "../rehearsal/throwaway.ts";
 import {
   type AdoptedFile,
   adoptedDesiredSchema,
+  adoptedObject,
   catalogObjectFinding,
   desiredSchemaAnalysis,
+  externalSchemaReferences,
   isSequenceStatement,
   type OverrideCandidate,
   type OverrideNeeded,
@@ -349,6 +357,15 @@ async function readTarget(
       serials.map((serial) => serial.sequence),
     );
     unsupported.push(...analysed.unsupported);
+    unsupported.push(
+      ...(
+        await externalSchemaReferences(sqlFiles(project, files), context)
+      ).map(({ object, schemas }) => ({
+        object,
+        rule: "outside-managed-schema",
+        reason: `It references ${externalSchemaExplanation(schemas)}`,
+      })),
+    );
     if (unsupported.length > 0) {
       throw new AdoptUnsupportedError(target.name, unsupported, needed);
     }
@@ -367,7 +384,16 @@ async function readTarget(
           target,
         });
       },
-    );
+    ).catch((error: unknown) => {
+      if (!(error instanceof DesiredSchemaLoadError)) {
+        throw error;
+      }
+      throw new AdoptUnsupportedError(
+        target.name,
+        [refusedStatement(error, analysed.statements, config.managedSchema)],
+        needed,
+      );
+    });
     if (differences.length > 0) {
       throw new AdoptUnsupportedError(
         target.name,
@@ -633,6 +659,34 @@ async function analyse(
     }
     return { statements: [], unsupported };
   }
+}
+
+/**
+ * A generated statement the throwaway database refused, as an adoption
+ * refusal: named by its object, since its file was never written. The
+ * statement is the last one in the error's file starting at or above its
+ * line.
+ */
+function refusedStatement(
+  error: DesiredSchemaLoadError,
+  statements: readonly ParsedStatement[],
+  managedSchema: string,
+): UnsupportedObject {
+  const statement = statements
+    .filter(({ file, line }) => file === error.file && line <= error.line)
+    .reduce<ParsedStatement | undefined>(
+      (last, next) =>
+        last === undefined || next.line > last.line ? next : last,
+      undefined,
+    );
+  return {
+    object:
+      statement === undefined
+        ? "the generated desired schema"
+        : adoptedObject(statement, managedSchema),
+    rule: "not-reproduced",
+    reason: `PostgreSQL refused to create it: ${error.detail}${error.hint === undefined ? "" : `. Hint: ${error.hint}`}`,
+  };
 }
 
 function firstLine(statement: string): string {

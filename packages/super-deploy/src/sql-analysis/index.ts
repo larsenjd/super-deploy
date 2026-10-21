@@ -13,6 +13,9 @@ export {
   type AdoptedFile,
   type AdoptionOptions,
   adoptedDesiredSchema,
+  adoptedObject,
+  type ExternalSchemaReference,
+  externalSchemaReferences,
   isSequenceStatement,
 } from "./adoption.ts";
 export {
