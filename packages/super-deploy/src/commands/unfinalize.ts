@@ -4,10 +4,12 @@
 // out), and the desired schema is reset to the snapshot frozen with it, so
 // the draft is up to date and finalizing again reproduces the migration.
 // Whether a target already recorded the migration is the developer's call:
-// unfinalize can't see targets, so it asks nothing about them and returns a
-// warning instead. Finalizing again unchanged reproduces the migration
-// byte for byte, which is the way back; restore-schema is not (it resets to
-// the migration before and deletes the draft).
+// unfinalize doesn't check targets (QA 107 decided against it), so it asks
+// nothing about them. It warns before anything moves instead: inside the
+// overwrite question when that is asked, else through `onWarning`.
+// Finalizing again unchanged reproduces the migration byte for byte, which
+// is the way back; restore-schema is not (it resets to the migration before
+// and deletes the draft). A target's refusal says the same (deploy/preflight.ts).
 //
 // Order on disk: draft and desired schema first, then index.json, then the
 // folder. A crash between the last two leaves an unindexed folder, which
@@ -66,6 +68,12 @@ export interface UnfinalizeOptions extends OverwriteOptions {
    * migration's newest Recovery if it has any, else the newest migration.
    */
   readonly recoveryOf?: number;
+  /**
+   * Called before anything moves with the warning not to change a migration
+   * a target has recorded, unless `confirm` was asked the overwrite
+   * question, which then carries it. Never called for a Recovery.
+   */
+  readonly onWarning?: (warning: string) => void;
 }
 
 export interface UnfinalizeResult extends RestoredDesiredSchema {
@@ -77,11 +85,6 @@ export interface UnfinalizeResult extends RestoredDesiredSchema {
   readonly recovery: number | undefined;
   /** Absolute path of the draft folder. */
   readonly draftPath: string;
-  /**
-   * For a migration (undefined for a Recovery): don't change it if a target
-   * recorded it, since every such target would then refuse to deploy.
-   */
-  readonly warning: string | undefined;
 }
 
 export async function unfinalize(
@@ -133,12 +136,32 @@ export async function unfinalize(
   const report = files.find((file) => file.path === handEditReportFileName);
 
   const pending = await pendingRestore(project, snapshot);
-  await acknowledgeOverwrite(options, {
-    kind: "acknowledge-overwrite",
-    command: "unfinalize",
-    message: `Move migration ${newest.folder} back into the draft and restore its desired-schema snapshot${discarding(pending)}?`,
-    paths: pending.paths,
-  });
+  // A target that recorded the migration refuses to deploy once it changes.
+  const warning = `If migration ${newest.folder} was deployed anywhere, don't change it: finalize it again unchanged to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)`;
+  let asked = false;
+  const { confirm } = options;
+  await acknowledgeOverwrite(
+    {
+      ...options,
+      ...(confirm === undefined
+        ? {}
+        : {
+            confirm: (question) => {
+              asked = true;
+              return confirm(question);
+            },
+          }),
+    },
+    {
+      kind: "acknowledge-overwrite",
+      command: "unfinalize",
+      message: `${warning}. Move migration ${newest.folder} back into the draft and restore its desired-schema snapshot${discarding(pending)}?`,
+      paths: pending.paths,
+    },
+  );
+  if (!asked) {
+    options.onWarning?.(warning);
+  }
 
   await rm(paths.draft, { recursive: true, force: true });
   await writeFiles(paths.draft, draftFiles);
@@ -185,7 +208,6 @@ export async function unfinalize(
     draftPath: paths.draft,
     ...pending.result,
     discardedDraft: pending.draft?.name,
-    warning: `If migration ${newest.folder} was deployed anywhere, don't change it: finalize it again unchanged to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)`,
   };
 }
 
@@ -253,6 +275,5 @@ async function unfinalizeRecovery(
     restored: [],
     deleted: [],
     discardedDraft: draft?.name,
-    warning: undefined,
   };
 }

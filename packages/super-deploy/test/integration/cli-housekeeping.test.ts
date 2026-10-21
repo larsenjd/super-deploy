@@ -133,6 +133,44 @@ describe("restore-schema", () => {
   });
 });
 
+const unfinalizeWarning =
+  "If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)";
+
+describe.skipIf(process.platform === "win32")(
+  "unfinalize in a terminal",
+  () => {
+    test("warns not to change a deployed migration before it moves it", async () => {
+      const dir = await finalizedProject();
+      const terminal = spawnTerminal(["unfinalize"], { cwd: dir.root });
+
+      await terminal.waitFor(unfinalizeWarning);
+      await terminal.waitFor("Moved migration 00001-add-customers back");
+      expect(await terminal.exited).toBe(0);
+    });
+
+    test("puts the warning in the overwrite question, and doesn't repeat it", async () => {
+      const dir = await finalizedProject();
+      await dir.write("data-model/desired-schema/orders.sql", "-- new\n");
+      const terminal = spawnTerminal(["unfinalize"], { cwd: dir.root });
+
+      // The question wraps at the terminal's width, behind clack's bar.
+      const question = (
+        await terminal.waitFor("data-model/desired-schema/orders.sql")
+      ).replaceAll(/[│\s]+/g, " ");
+      terminal.type("y");
+      terminal.type(keys.enter);
+      const after = await terminal.waitFor(
+        "Moved migration 00001-add-customers back",
+      );
+
+      expect(await terminal.exited).toBe(0);
+      expect(question).toContain(unfinalizeWarning);
+      expect(question).toContain("discarding 1 changed file?");
+      expect(after).not.toContain("warning:");
+    });
+  },
+);
+
 describe("unfinalize", () => {
   test("moves the newest migration back into the draft, warning not to change it if it was deployed", async () => {
     const dir = await finalizedProject();

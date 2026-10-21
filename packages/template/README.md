@@ -990,11 +990,15 @@ recorded**, even only `dev`. That target records the migration's name and
 hashes, so once the migration is gone or finalized differently, `deploy`
 refuses the target (for example
 `the target records migration 00008-tweaks with content hash ..., but the repo's is ...`).
-To change something a target has run, finalize a new migration, or a
-Recovery for the targets that haven't run it. If you already unfinalized
-one, restore its original folder and `data-model/migrations/index.json`
-from Git, then run `pnpm exec super-deploy validate` to make the restored
-files read-only again.
+`unfinalize` can't see targets, so it warns about this before it moves a
+migration, in its question when it asks one. To change something a target
+has run, finalize a new migration, or a Recovery for the targets that
+haven't run it. If you already unfinalized one, `finalize` the draft
+unchanged: it reproduces the migration byte for byte (`status` suggests
+this while the draft is that migration). Or restore its original folder and
+`data-model/migrations/index.json` from Git, then run
+`pnpm exec super-deploy validate` to make the restored files read-only
+again.
 
 ## Disposable targets and the guarded commands
 

@@ -22,7 +22,10 @@
 //     target holds no draft (deploy-draft's), which is not a migration
 // Each history mismatch's message ends with the way out: a recorded migration
 // or Recovery that the repo lacks or has differently is restored from version
-// control (see `restore`). deploy, status and mark all show these messages.
+// control (see `restore`). When the migration the repo lacks is the project's
+// draft (the next number, same name: unfinalize moved it back), finalizing
+// the draft unchanged puts it back, and the message says so first (QA 107).
+// deploy, status and mark all show these messages.
 // `status` runs the same checks and reports them.
 //
 // Declared external schemas are not checked: setting them up on each target
@@ -33,6 +36,7 @@ import type { Session } from "../adapters/types.ts";
 import { plural, SuperDeployError } from "../errors.ts";
 import { configFileName, type Project } from "../project.ts";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
+import { InvalidDraftError, readDraft } from "../store/draft.ts";
 import {
   type FinalizedMigration,
   indexFileName,
@@ -162,7 +166,7 @@ export interface PreflightInput {
 /** Runs every check on `session` (read-only queries, no transaction). */
 export async function preflightChecks(
   session: Session,
-  project: Pick<Project, "config">,
+  project: Pick<Project, "config" | "root" | "paths">,
   input: PreflightInput,
 ): Promise<PreflightFindings> {
   return {
@@ -185,6 +189,7 @@ export async function preflightChecks(
           await readTargetSettings(session, project.config.historySchema)
         ).disposable,
       },
+      await migrationDraftName(project),
     ),
     warnings: [
       ...(await deployRoleWarnings(session, input.targetName)),
@@ -336,17 +341,39 @@ export async function requireHistorySchemaUsable(
 }
 
 /**
+ * The name of the project's draft unless it is a Recovery draft; none when
+ * there is no draft or its draft.json can't be read (the draft only adds a
+ * hint, so it never stops the checks).
+ */
+async function migrationDraftName(
+  project: Pick<Project, "root" | "paths">,
+): Promise<string | undefined> {
+  try {
+    const draft = await readDraft(project.root, project.paths);
+    return draft?.recoveryOf === undefined ? draft?.name : undefined;
+  } catch (error) {
+    if (error instanceof InvalidDraftError) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+/**
  * How the recorded history disagrees with the repo: every recorded migration
  * must be the repo's migration of that number (same name, content and chain
  * hashes), with no gaps; a recorded Recovery must be the repo's Recovery of
  * that number (same chain hash), so its replica can replay it; and no draft
- * may be deployed on top of them.
+ * may be deployed on top of them. `draftName`, the project's (non-Recovery)
+ * draft's, names the draft in the way out when it is the recorded migration
+ * the repo lacks.
  */
 export function historyMismatches(
   migrations: readonly FinalizedMigration[],
   recorded: readonly RecordedMigration[],
   draft: DeployedDraft | undefined,
   holder: DraftHolder,
+  draftName?: string,
 ): HistoryMismatch[] {
   const repo = new Map(migrations.map((m) => [m.number, m]));
   const recordedNumbers = new Set(recorded.map((r) => r.number));
@@ -365,10 +392,15 @@ export function historyMismatches(
     const ours = repo.get(entry.number);
     const theirs = migrationFolderName(entry.number, entry.name);
     if (ours === undefined) {
+      const inDraft =
+        entry.number === migrations.length + 1 && entry.name === draftName;
+      const refinalize = inDraft
+        ? `finalize draft ${draftName} unchanged to put it back (unfinalize moved that migration into it), or `
+        : "";
       mismatches.push({
         number: entry.number,
         reason: "not-in-repo",
-        message: `the target records migration ${theirs}, which the repo doesn't have: ${restore(theirs)}`,
+        message: `the target records migration ${theirs}, which the repo doesn't have: ${refinalize}${restore(theirs)}`,
       });
     } else if (ours.name !== entry.name) {
       mismatches.push({

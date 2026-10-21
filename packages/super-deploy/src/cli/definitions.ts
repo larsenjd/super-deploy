@@ -724,6 +724,7 @@ const unfinalizeCommand: CommandDefinition = {
     const result = await unlessDeclined(context, () =>
       unfinalize(project, {
         ...overwriteOptions(values, context),
+        onWarning: (warning) => context.warn(`warning: ${warning}`),
         ...(typeof recoveryOf === "string"
           ? { recoveryOf: Number(recoveryOf) }
           : {}),
@@ -738,9 +739,6 @@ const unfinalizeCommand: CommandDefinition = {
         : `Moved Recovery ${result.recovery} of migration ${result.folder} back into a Recovery draft in ${context.displayPath(result.draftPath)}`,
     );
     reportRestore(project, result, context);
-    if (result.warning !== undefined) {
-      context.warn(`warning: ${result.warning}`);
-    }
   },
 };
 
