@@ -232,6 +232,27 @@ describe("draft", () => {
   });
 });
 
+describe("config", () => {
+  test("a syntax error is reported at its line with the source line, without --debug", async () => {
+    const dir = await createTestProject({
+      config: `${embeddedConfig(server)}this is not ts {\n`,
+    });
+    const line =
+      (await dir.read("super-deploy.config.ts")).split("\n").length - 1;
+
+    const result = await runCli(["validate"], { cwd: dir.root });
+
+    expect(result.exitCode).toBe(1);
+    expect(oneLine(result.stderr)).toEqual([
+      expect.stringMatching(
+        new RegExp(
+          `^Error: super-deploy\\.config\\.ts:${line}: .*this is not ts \\{`,
+        ),
+      ),
+    ]);
+  });
+});
+
 describe("embedded-postgres adapter", () => {
   const ownServerConfig = `import { defineConfig } from "super-deploy";
 import { embeddedPostgres } from "super-deploy/embedded-postgres";

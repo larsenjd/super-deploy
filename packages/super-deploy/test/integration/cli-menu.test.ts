@@ -158,17 +158,24 @@ describe.skipIf(process.platform === "win32")("menu", () => {
     await rm(dir.path("package.json"));
     const terminal = spawnTerminal([], { cwd: dir.root });
 
-    expect(await terminal.waitFor("quit")).toMatch(/Start\s*\n.*init/);
+    const menu = await terminal.waitFor("quit");
+    expect(menu).toMatch(/Start\s*\n.*init/);
+    expect(menu).toContain("an initialised project with no migrations yet");
+    expect(menu).not.toContain("empty project");
     terminal.type(keys.enter);
     await terminal.waitFor("Initialised a super-deploy project in");
     expect(dir.exists("super-deploy.config.ts")).toBe(true);
 
     // Back on init: inside the project now, it adopts a target, so it asks
-    // which one (Escape cancels).
+    // which one, in the option's menu question rather than its --help text
+    // (Escape cancels).
     await terminal.waitFor("quit");
     terminal.type(keys.enter);
-    await terminal.waitFor("turn this target's managed schema");
-    await terminal.waitFor("dev");
+    const question = await terminal.waitFor("dev");
+    expect(question).toContain(
+      "Adopt which target's existing database as migration 1?",
+    );
+    expect(question).not.toContain("Instead,");
     terminal.type(keys.escape);
     await terminal.waitFor("Cancelled: nothing ran");
     await terminal.waitFor("quit");

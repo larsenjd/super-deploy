@@ -167,8 +167,9 @@ unix("deploy-draft", () => {
       cwd: dir.root,
     });
     expect(status.stdout).toContain(
-      "Deploy would refuse:\n  the target holds draft require-city (deployed by attempt #2 on top of 00001-add-customers, without seed data), not a finalized migration: reset it with rebuild --to 1\n",
+      "Deploy would refuse:\n  the target holds draft require-city (deployed by attempt #2 on top of 00001-add-customers, without seed data), not a finalized migration: reset it with rebuild --to 1\nDrift: not checked (the target holds deployed draft require-city; rebuild resets it)\n",
     );
+    expect(status.stdout).not.toContain("recorded history doesn't match");
     const deployed = await runCli(["deploy", "--target", "dev"], {
       cwd: dir.root,
     });
@@ -281,9 +282,23 @@ unix("deploy-draft", () => {
       cwd: dir.root,
     });
     await marking.waitFor(
-      "Error: Target dev's recorded migrations don't match the project's: the target holds draft require-city",
+      "Error: Target dev holds draft require-city (deployed by attempt #2 on top of 00001-add-customers, without seed data), not a finalized migration: reset it with rebuild --to 1",
     );
     expect(await marking.exited).toBe(1);
+    expect(marking.screen).not.toContain("recorded migrations don't match");
+
+    // A real history mismatch alongside the draft keeps the mismatch wording.
+    await server.query(
+      "update deployment_history.migrations set content_hash = 'edited' where number = 1",
+      [],
+      database,
+    );
+    const mismatched = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(mismatched.stdout).toContain(
+      "Drift: not checked (the recorded history doesn't match the project's migrations)\n",
+    );
 
     // Another target at migration 0 with migration 1 pending.
     const behind = await deployedProject();

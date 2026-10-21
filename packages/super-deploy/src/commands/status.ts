@@ -6,7 +6,8 @@
 // left on the target, a history mismatch), and drift: the target's managed
 // schema compared with a replica of its recorded migrations, built on a
 // throwaway database matching its locale (the CLI exits 1 on drift). Drift is
-// not checked while the history mismatches, a deployed draft included, nor
+// not checked while the history mismatches or the target holds a deployed
+// draft (ADR-0005), told apart so a draft alone isn't called a mismatch, nor
 // while another command holds the target lock: a deploy transaction's locks
 // would block the catalog read until the lock timeout, so status names the
 // holder (`lockHolder`, as deploy's refusal does) and reports the rest.
@@ -34,13 +35,14 @@ import {
 } from "../deploy/target.ts";
 import type { Project } from "../project.ts";
 import {
+  newestVariant,
   readMigrationsWithUnits,
   replicaUnits,
   withReplica,
 } from "../rehearsal/replica.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { type DriftedObject, driftBetween } from "../verification/drift.ts";
-import type { DeployedMigration } from "./deploy.ts";
+import { type DeployedMigration, deployedMigration } from "./deploy.ts";
 
 export interface StatusOptions {
   /** The target's name in config. */
@@ -76,12 +78,20 @@ export interface StatusReport {
    */
   readonly drift: readonly DriftedObject[] | undefined;
   /**
-   * Why drift wasn't checked: `history-mismatch` when the recorded history
-   * doesn't match the project's migrations (`preflight.historyMismatches`),
-   * so no replica can be built; `target-locked` when another command holds
-   * the target lock (`lockedBy`). Undefined when drift was checked.
+   * Why drift wasn't checked: `deployed-draft` when the target's only
+   * history mismatch is the draft it holds (`draft`, then set): its recorded
+   * migrations match the project's, but a replica of them isn't its
+   * structure; `history-mismatch` when the recorded history doesn't match the
+   * project's migrations (`preflight.historyMismatches`, a draft possibly
+   * among them), so no replica can be built; `target-locked` when another
+   * command holds the target lock (`lockedBy`). Undefined when drift was
+   * checked.
    */
-  readonly driftNotChecked: "history-mismatch" | "target-locked" | undefined;
+  readonly driftNotChecked:
+    | "deployed-draft"
+    | "history-mismatch"
+    | "target-locked"
+    | undefined;
   /** Who holds the target lock (a running deploy, mark, rebuild...), if anyone. */
   readonly lockedBy: LockHolder | undefined;
 }
@@ -94,7 +104,7 @@ export async function status(
   const target = resolveTarget(project, options.target);
   const migrations = await verifiedMigrations(root, paths);
   const withUnits = await readMigrationsWithUnits(root, migrations);
-  const session = await connectTarget(target);
+  const session = await connectTarget(target, project.signal);
   try {
     const schema = config.historySchema;
     const exists = await schemaExists(session, schema);
@@ -110,12 +120,17 @@ export async function status(
     });
     const holder = await lockHolder(session, schema);
     const lockedBy = holder.pid === undefined ? undefined : holder;
+    const draft = await readDeployedDraft(session, schema);
+    const mismatches = preflight.historyMismatches;
     const driftNotChecked =
-      preflight.historyMismatches.length > 0
-        ? "history-mismatch"
-        : lockedBy !== undefined
+      mismatches.length === 0
+        ? lockedBy !== undefined
           ? "target-locked"
-          : undefined;
+          : undefined
+        : draft !== undefined &&
+            mismatches.every((mismatch) => mismatch.reason === "draft")
+          ? "deployed-draft"
+          : "history-mismatch";
     const drift =
       driftNotChecked !== undefined
         ? undefined
@@ -132,18 +147,17 @@ export async function status(
       target: target.name,
       historySchemaExists: exists,
       recorded,
-      pending: pending.map(({ number, name, folder }) => ({
-        number,
-        name,
-        folder,
-      })),
+      // Each as the variant a deployment would run: its newest.
+      pending: pending.map((migration) =>
+        deployedMigration(migration, newestVariant(migration).recovery),
+      ),
       attempts: await readRecentAttempts(
         session,
         schema,
         options.attempts ?? 10,
       ),
       disposable: (await readTargetSettings(session, schema)).disposable,
-      draft: await readDeployedDraft(session, schema),
+      draft,
       preflight,
       drift,
       driftNotChecked,

@@ -95,9 +95,9 @@ export async function withLockedTarget<T>(
   const { historySchema } = project.config;
   const { signal } = project;
   const target = resolveTarget(project, targetName);
-  const commandSession = await connectTarget(target);
+  const commandSession = await connectTarget(target, signal);
   try {
-    const log = await connectTarget(target);
+    const log = await connectTarget(target, signal);
     try {
       await requireHistorySchemaCreatable(log, target.name, historySchema);
       await ensureHistorySchema(log, historySchema);

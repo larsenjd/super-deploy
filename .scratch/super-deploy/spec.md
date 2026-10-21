@@ -156,7 +156,7 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 
 **Project and configuration** (Q56, Q59)
 - A typed `super-deploy.config.ts` at the project root, found by walking up from the working directory, loaded with Node's built-in TypeScript support (no `enum`/`namespace`).
-- Settings: `postgresVersion` (required, must be 18), `rehearsal` adapter (required), `targets` (each: deployment adapter, `lockTimeout` default 5s, optional `statementTimeout`), `managedSchema` (default `public`), `historySchema` (default `deployment_history`), `externalSchemas` (default none), `directory` (default `data-model`).
+- Settings: `postgresVersion` (required, must be 18), `rehearsal` adapter (required), `targets` (each: deployment adapter, `lockTimeout` default 5s, optional `statementTimeout`, `connectTimeout` default 10s), `managedSchema` (default `public`), `historySchema` (default `deployment_history`), `externalSchemas` (default none), `directory` (default `data-model`).
 - Never in config: credentials, the disposable flag, migration state.
 
 **Adapters** (Q19, consumer-implemented interfaces)

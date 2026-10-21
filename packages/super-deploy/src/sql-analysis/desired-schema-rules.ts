@@ -3,6 +3,10 @@
 // a reason. Kept apart from the deploy-time rules, which share only the
 // splitter, the syntax-tree helpers and the side-effect denylist.
 //
+// The template README's "What the desired schema supports" lists every
+// refusal for users: a new one needs a line there and a row in
+// test/unit/sql-analysis/readme-desired-schema.test.ts.
+//
 // Rule identifiers:
 // - `desired-schema-statement`: a statement or clause outside the allowlist.
 // - `unsupported-object`: an object type or feature V1 refuses, including

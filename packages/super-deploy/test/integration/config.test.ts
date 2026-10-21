@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { ConfigError, loadProject, ProjectNotFoundError } from "super-deploy";
 import { describe, expect, test } from "vitest";
 import { createTestProject, embeddedConfig } from "../support/project.ts";
@@ -25,6 +27,26 @@ async function loadError(config: string): Promise<ConfigError> {
   return error as ConfigError;
 }
 
+/**
+ * The ConfigError `loadProject` throws for the project in `root`, loaded by a
+ * plain Node process through dist/. Inside Vitest a config is imported through
+ * Vitest's own transform, whose syntax errors are not Node's: only Node's
+ * type stripping, which users run, reports where a syntax error is.
+ */
+async function nativeLoadError(
+  root: string,
+): Promise<{ configError: boolean; code: unknown; message: string }> {
+  const script = `import { ConfigError, loadProject } from "super-deploy";
+const error = await loadProject().then(() => new Error("loaded"), (e) => e);
+process.stdout.write(JSON.stringify({ configError: error instanceof ConfigError, code: error.code, message: error.message }));`;
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    ["--input-type=module", "--eval", script],
+    { cwd: root },
+  );
+  return JSON.parse(stdout);
+}
+
 describe("loadProject", () => {
   test("finds super-deploy.config.ts from a subdirectory and applies defaults", async () => {
     const dir = await createTestProject({
@@ -48,6 +70,7 @@ describe("loadProject", () => {
       name: "dev",
       lockTimeoutMs: 5000,
       statementTimeoutMs: undefined,
+      connectTimeoutMs: 10_000,
     });
   });
 
@@ -58,7 +81,7 @@ describe("loadProject", () => {
   historySchema: "app_history",
   externalSchemas: ["loader"],
   directory: "database",
-  targets: { qa: { adapter: postgres.target("qa"), lockTimeout: "2s", statementTimeout: "1min" } },`),
+  targets: { qa: { adapter: postgres.target("qa"), lockTimeout: "2s", statementTimeout: "1min", connectTimeout: "3s" } },`),
     });
 
     const project = await loadProject({ cwd: dir.root });
@@ -72,6 +95,7 @@ describe("loadProject", () => {
     expect(project.config.targets.qa).toMatchObject({
       lockTimeoutMs: 2000,
       statementTimeoutMs: 60_000,
+      connectTimeoutMs: 3000,
     });
     expect(project.paths.desiredSchema).toBe(
       dir.path("database/desired-schema"),
@@ -120,6 +144,11 @@ describe("loadProject", () => {
       "positive duration",
     ],
     [
+      "postgresVersion: 18, targets: { dev: { adapter: postgres.target('dev'), connectTimeout: '5 seconds' } },",
+      "targets.dev.connectTimeout",
+      'must be a positive duration such as "500ms", "5s" or "2min", got "5 seconds"',
+    ],
+    [
       "postgresVersion: 18, managedSchemas: 'app',",
       "managedSchemas",
       "Unknown setting",
@@ -144,5 +173,29 @@ describe("loadProject", () => {
     const error = await loadError(`export default {;\n`);
 
     expect(error.message).toContain("Failed to load");
+  });
+
+  test("reports a syntax error in the config with its line and the source line", async () => {
+    const dir = await createTestProject({
+      config: `${configWith("postgresVersion: 18,")}this is not ts {\n`,
+    });
+
+    const error = await nativeLoadError(dir.root);
+
+    expect(error).toMatchObject({ configError: true, code: "invalid-config" });
+    expect(error.message).toMatch(/^super-deploy\.config\.ts:10: /);
+    expect(error.message).toContain("this is not ts {");
+  });
+
+  test("reports a config that throws as it loads without a location", async () => {
+    const dir = await createTestProject({
+      config: `throw new SyntaxError("not valid here");\n`,
+    });
+
+    const error = await nativeLoadError(dir.root);
+
+    expect(error.message).toBe(
+      "Failed to load super-deploy.config.ts: not valid here",
+    );
   });
 });

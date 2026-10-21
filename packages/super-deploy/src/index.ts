@@ -14,6 +14,7 @@ export {
 } from "./adapters/node-postgres.ts";
 export type {
   CollationProvider,
+  ConnectOptions,
   DatabaseRequest,
   DeploymentAdapter,
   QueryResult,
