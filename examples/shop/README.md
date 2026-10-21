@@ -90,7 +90,7 @@ script, nothing is left to generate.
 `rehearse` refused the draft:
 
 ```
-The rehearsal does not match the desired schema (...). First difference: catalog: - constraint: customers customers_name_not_null n NOT NULL full_name ...
+The rehearsal does not match the desired schema, and running draft again won't change that (...). First difference: catalog: - constraint: customers customers_name_not_null n NOT NULL full_name ...
 ```
 
 So the script renames the constraint as well. Do the same whenever you rename
