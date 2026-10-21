@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] The desired schema refuses `GRANT`, `REVOKE`, `CREATE POLICY`, `ALTER TABLE ... ENABLE/FORCE ROW LEVEL SECURITY` and the `SECURITY DEFINER` routine option. These are structural refusals: an override marker cannot bypass them. Role statements, role membership, `OWNER TO`, `ALTER DEFAULT PRIVILEGES`, `REASSIGN OWNED` and `DROP OWNED` stay refused, with messages reworded to match.
 - [ ] Pre-migration scripts, post-migration scripts, seed data and generated schema changes refuse the same statements. `COMMENT` keeps its current rule.
