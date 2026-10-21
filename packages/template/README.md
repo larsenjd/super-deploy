@@ -494,6 +494,19 @@ default privileges as they are.
   already exists too, e.g. `grant select on all tables in schema app to
   app_reader`.
 
+  A role that refreshes materialized views needs `MAINTAIN` on them, since
+  only their owner, the deploy role, can otherwise:
+
+  ```sql
+  alter default privileges for role deploy_role in schema app
+    grant maintain on tables to app_writer;
+  ```
+
+  `MAINTAIN` on tables also allows `VACUUM`, `ANALYZE`, `REINDEX`, `CLUSTER`
+  and `LOCK TABLE`, so grant it only to a role that needs it, or by hand on
+  each materialized view (`grant maintain on app.order_totals to
+  app_writer`).
+
   Things to know about grants and policies made by hand:
 
   - A migration that drops and recreates a table (or another object) loses
