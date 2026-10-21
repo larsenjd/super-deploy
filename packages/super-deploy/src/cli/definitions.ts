@@ -23,6 +23,7 @@ import { ValidationFailedError, validate } from "../commands/validate.ts";
 import type { AttemptRecord, RecordedMigration } from "../deploy/history.ts";
 import { MarkMismatchError } from "../deploy/mark.ts";
 import { notOwnedMessage } from "../deploy/ownership.ts";
+import { historySchemaNotCreatableMessage } from "../deploy/preflight.ts";
 import type { Project } from "../project.ts";
 import type {
   AskOverrideReason,
@@ -716,6 +717,13 @@ const statusCommand: CommandDefinition = {
       ...preflight.missingExternalSchemas.map(
         (schema) => `external schema "${schema}" does not exist`,
       ),
+      ...(preflight.historySchemaNotCreatable === undefined
+        ? []
+        : [
+            historySchemaNotCreatableMessage(
+              preflight.historySchemaNotCreatable,
+            ),
+          ]),
       ...preflight.notOwned.map(notOwnedMessage),
       ...preflight.historyMismatches.map((mismatch) => mismatch.message),
     ];

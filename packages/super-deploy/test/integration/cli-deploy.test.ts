@@ -2,7 +2,12 @@
 import { userInfo } from "node:os";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
-import { deployConfig } from "../support/deploy.ts";
+import {
+  asDeployerPreamble,
+  deployConfig,
+  roleName,
+  targetDatabaseName,
+} from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject } from "../support/project.ts";
 
@@ -93,6 +98,35 @@ describe("deploy and status", () => {
       stdout: "",
       stderr: `${superuserWarning}Error: Target dev failed the deploy pre-flight checks: external schema "loader" does not exist (it is declared in externalSchemas)\n`,
     });
+  });
+
+  test("status lists a history schema the deploy role can't create as a refusal", async () => {
+    const deployer = roleName("deployer");
+    const database = targetDatabaseName();
+    await server.query(`create role ${deployer} login password 'deployer'`);
+    await server.query(`create database ${database}`);
+    await server.query(
+      `create schema app authorization ${deployer}`,
+      [],
+      database,
+    );
+    const dir = await createTestProject({
+      config: deployConfig(server, {
+        database,
+        preamble: asDeployerPreamble(database, deployer),
+        adapter: "asDeployer",
+        settings: 'managedSchema: "app",',
+      }).config,
+    });
+
+    const report = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+
+    expect(report.exitCode).toBe(0);
+    expect(report.stdout).toContain(
+      `Deploy would refuse:\n  the deploy role ${deployer} needs CREATE on database ${database} to create the history schema "deployment_history" (fix: GRANT CREATE ON DATABASE ${database} TO ${deployer})\n`,
+    );
   });
 
   test("status lists the drifted objects and exits 1; deploy refuses with exit code 1", async () => {
