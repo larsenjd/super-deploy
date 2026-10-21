@@ -267,6 +267,25 @@ describe("validate warnings", () => {
     expect(error.problems).toEqual([unfinalized, unknown]);
   });
 
+  test("with allowDraft, the failure counts and leads with only what fails it, not the draft in progress", async () => {
+    const { dir, project } = await finalizedProject();
+    await draft(project, { name: "add email" });
+    await dir.write("data-model/draft/post-migrate.sql", "select 1;\n");
+
+    const error = await validationError(project, {
+      strict: true,
+      allowDraft: true,
+    });
+
+    expect(error.message).toBe(
+      "Validation failed with 1 warning (--strict): data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql and post-migration.sql)",
+    );
+    expect(error.problems.map((problem) => problem.code)).toEqual([
+      "unfinalized-draft",
+      "unknown-draft-file",
+    ]);
+  });
+
   test("a file in the draft folder that isn't SQL is named without saying it won't run", async () => {
     const { dir, project } = await finalizedProject();
     await draft(project, { name: "add email" });

@@ -8,7 +8,7 @@
 // Warnings: an unfinalized draft, a file in the draft folder that a draft
 // doesn't hold (store/draft.ts), and desired-schema changes not yet drafted.
 // `strict` turns warnings into failures.
-// Those two are a draft in progress (the codes in `draftInProgress`):
+// The first and the last are a draft in progress (the codes in `draftInProgress`):
 // `allowDraft` keeps them warnings even under `strict`, so the template's
 // hook lets a draft be committed for review while CI (`--strict` alone)
 // refuses it until it is finalized. Any other warning, such as one a later
@@ -183,7 +183,7 @@ export async function validate(
     problem.severity === "error" ||
     (strict && !(allowDraft && draftInProgress.has(problem.code)));
   if (problems.some(fails)) {
-    throw new ValidationFailedError(problems, strict);
+    throw new ValidationFailedError(problems, problems.filter(fails), strict);
   }
 
   // Recoveries live inside their migration's folder, so this covers them.
@@ -375,16 +375,25 @@ async function ruleProblems(
   return { problems, overrides };
 }
 
-/** `validate` found errors, or warnings under `--strict`. */
+/**
+ * `validate` found errors, or warnings under `--strict`. The message counts
+ * and leads with the findings that fail the run: not the warnings that
+ * don't (without `--strict`, or a draft in progress with `--allow-draft`),
+ * though `problems` lists them too.
+ */
 export class ValidationFailedError extends SuperDeployError {
   readonly code = "validation-failed";
   /** Every finding, errors and warnings, in report order. */
   readonly problems: readonly ValidationProblem[];
   readonly strict: boolean;
 
-  constructor(problems: readonly ValidationProblem[], strict: boolean) {
-    const errors = problems.filter((p) => p.severity === "error").length;
-    const warnings = problems.length - errors;
+  constructor(
+    problems: readonly ValidationProblem[],
+    failing: readonly ValidationProblem[],
+    strict: boolean,
+  ) {
+    const errors = failing.filter((p) => p.severity === "error").length;
+    const warnings = failing.length - errors;
     const counts = [
       errors > 0 ? `${errors} error${errors === 1 ? "" : "s"}` : "",
       warnings > 0
@@ -393,7 +402,7 @@ export class ValidationFailedError extends SuperDeployError {
     ]
       .filter((part) => part !== "")
       .join(", ");
-    super(`Validation failed with ${counts}: ${summarise(problems)}`);
+    super(`Validation failed with ${counts}: ${summarise(failing)}`);
     this.problems = problems;
     this.strict = strict;
   }
