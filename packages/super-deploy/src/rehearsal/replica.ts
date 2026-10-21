@@ -1,15 +1,19 @@
 // A replica of a target: a throwaway database created with the target's
 // encoding, locale and collation provider, holding exactly what the target's
 // recorded migrations should have produced. The drift check (status, deploy)
-// compares it with the target; the deployment rehearsal then runs the
+// compares it with the target (`driftFromReplica`, shared by status, mark
+// and rebuild's confirmation); the deployment rehearsal then runs the
 // pending migrations on the same database; `mark` (ticket 20) builds one up
 // to migration N and requires an empty diff.
 
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
+import type { ResolvedTarget } from "../config/config.ts";
 import type { RecordedMigration } from "../deploy/history.ts";
+import { targetDatabaseRequest } from "../deploy/target.ts";
 import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import type { FinalizedMigration } from "../store/migrations.ts";
+import { type DriftedObject, driftBetween } from "../verification/drift.ts";
 import {
   type ReplayUnit,
   readRecoveryUnit,
@@ -88,21 +92,57 @@ export function replicaUnits(
   migrations: readonly MigrationWithUnit[],
   recorded: readonly RecordedMigration[],
 ): ReplayUnit[] {
+  const unknown = unknownRecorded(migrations, recorded);
+  if (unknown.length > 0) {
+    throw new UnknownRecordedMigrationError(target, unknown);
+  }
+  const unitOf = recordedUnit(migrations);
+  return recorded.map((r) => unitOf(r) as ReplayUnit);
+}
+
+/**
+ * The numbers of the recorded migrations whose recorded variant (the
+ * migration, or its Recovery K) the project doesn't have: no replica can be
+ * built while there are any.
+ */
+export function unknownRecorded(
+  migrations: readonly MigrationWithUnit[],
+  recorded: readonly RecordedMigration[],
+): number[] {
+  const unitOf = recordedUnit(migrations);
+  return recorded.filter((r) => unitOf(r) === undefined).map((r) => r.number);
+}
+
+function recordedUnit(
+  migrations: readonly MigrationWithUnit[],
+): (recorded: RecordedMigration) => ReplayUnit | undefined {
   const byNumber = new Map(migrations.map((m) => [m.number, m] as const));
-  const unitOf = (r: RecordedMigration) => {
+  return (r) => {
     const migration = byNumber.get(r.number);
     return r.recovery === undefined
       ? migration?.unit
       : migration?.recoveryUnits[r.recovery - 1];
   };
-  const unknown = recorded.filter((r) => unitOf(r) === undefined);
-  if (unknown.length > 0) {
-    throw new UnknownRecordedMigrationError(
-      target,
-      unknown.map((r) => r.number),
-    );
-  }
-  return recorded.map((r) => unitOf(r) as ReplayUnit);
+}
+
+/**
+ * How the target's managed schema differs from a replica of `units` built
+ * with the target's locale (`driftBetween`, column order and ownership
+ * aside). Only reads the target.
+ */
+export async function driftFromReplica(
+  project: Project,
+  target: ResolvedTarget,
+  session: Session,
+  units: readonly ReplayUnit[],
+): Promise<DriftedObject[]> {
+  return withReplica(
+    project,
+    await targetDatabaseRequest(session),
+    units,
+    (replica) =>
+      driftBetween(session, replica, project.config.managedSchema, { target }),
+  );
 }
 
 /**

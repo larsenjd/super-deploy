@@ -38,7 +38,7 @@ import {
   runMigrations,
 } from "../deploy/engine.ts";
 import { historyTable } from "../deploy/history.ts";
-import { requireDisposable, targetDatabaseRequest } from "../deploy/target.ts";
+import { requireDisposable } from "../deploy/target.ts";
 import {
   dependentsOutside,
   requireWipeable,
@@ -51,19 +51,18 @@ import {
 } from "../guard/guard.ts";
 import type { Project } from "../project.ts";
 import {
+  driftFromReplica,
   type MigrationWithUnit,
   newestVariant,
   readMigrationsWithUnits,
   replicaUnits,
-  UnknownRecordedMigrationError,
-  withReplica,
+  unknownRecorded,
 } from "../rehearsal/replica.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import {
   migrationFolderName,
   UnknownMigrationError,
 } from "../store/migrations.ts";
-import { driftBetween } from "../verification/drift.ts";
 import type { DeployedMigration } from "./deploy.ts";
 
 export interface RebuildOptions {
@@ -227,24 +226,18 @@ async function notFromMigrations(
   migrations: readonly MigrationWithUnit[],
 ): Promise<string[]> {
   const schema = project.config.managedSchema;
-  let units: ReturnType<typeof replicaUnits>;
-  try {
-    units = replicaUnits(view.target.name, migrations, view.recorded);
-  } catch (error) {
-    if (!(error instanceof UnknownRecordedMigrationError)) {
-      throw error;
-    }
+  const unknown = unknownRecorded(migrations, view.recorded);
+  if (unknown.length > 0) {
     return [
       "",
-      `Can't tell what no recorded migration created: the repo lacks migration${error.numbers.length === 1 ? "" : "s"} ${error.numbers.join(", ")}`,
+      `Can't tell what no recorded migration created: the repo lacks migration${unknown.length === 1 ? "" : "s"} ${unknown.join(", ")}`,
     ];
   }
-  const drifted = await withReplica(
+  const drifted = await driftFromReplica(
     project,
-    await targetDatabaseRequest(session),
-    units,
-    (replica) =>
-      driftBetween(session, replica, schema, { target: view.target }),
+    view.target,
+    session,
+    replicaUnits(view.target.name, migrations, view.recorded),
   );
   const extras = drifted
     .filter((drift) => drift.change === "extra")

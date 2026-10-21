@@ -23,17 +23,13 @@ import type { ResolvedTarget } from "../config/config.ts";
 import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import {
+  driftFromReplica,
   type MigrationWithUnit,
   readMigrationsWithUnits,
   replicaUnits,
-  withReplica,
 } from "../rehearsal/replica.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
-import {
-  type DriftedObject,
-  driftBetween,
-  listedDrift,
-} from "../verification/drift.ts";
+import { type DriftedObject, listedDrift } from "../verification/drift.ts";
 import { inDeployTransaction, type LockedTarget } from "./engine.ts";
 import {
   type DeployedDraft,
@@ -49,7 +45,6 @@ import {
   historyMismatches,
   onlyHeldDraft,
 } from "./preflight.ts";
-import { targetDatabaseRequest } from "./target.ts";
 
 /**
  * The project's finalized migrations with their deploy-time files, after the
@@ -114,15 +109,7 @@ export async function requireReplicaMatch(
     ...replicaUnits(target.name, input.migrations, input.recorded),
     input.next.unit,
   ];
-  const differences = await withReplica(
-    project,
-    await targetDatabaseRequest(session),
-    units,
-    (replica) =>
-      driftBetween(session, replica, project.config.managedSchema, {
-        target,
-      }),
-  );
+  const differences = await driftFromReplica(project, target, session, units);
   if (differences.length > 0) {
     throw new MarkMismatchError(target.name, input.next.folder, differences);
   }

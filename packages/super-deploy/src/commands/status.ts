@@ -31,20 +31,16 @@ import {
   type PreflightFindings,
   preflightChecks,
 } from "../deploy/preflight.ts";
-import {
-  connectTarget,
-  resolveTarget,
-  targetDatabaseRequest,
-} from "../deploy/target.ts";
+import { connectTarget, resolveTarget } from "../deploy/target.ts";
 import type { Project } from "../project.ts";
 import {
+  driftFromReplica,
   newestVariant,
   readMigrationsWithUnits,
   replicaUnits,
-  withReplica,
 } from "../rehearsal/replica.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
-import { type DriftedObject, driftBetween } from "../verification/drift.ts";
+import type { DriftedObject } from "../verification/drift.ts";
 import { type DeployedMigration, deployedMigration } from "./deploy.ts";
 
 export interface StatusOptions {
@@ -136,14 +132,11 @@ export async function status(
     const drift =
       driftNotChecked !== undefined
         ? undefined
-        : await withReplica(
+        : await driftFromReplica(
             project,
-            await targetDatabaseRequest(session),
+            target,
+            session,
             replicaUnits(target.name, withUnits, recorded),
-            (replica) =>
-              driftBetween(session, replica, config.managedSchema, {
-                target,
-              }),
           );
     return {
       target: target.name,
