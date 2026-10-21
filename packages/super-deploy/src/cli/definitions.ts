@@ -911,10 +911,17 @@ const rebuildCommand: CommandDefinition = {
   },
 };
 
+/**
+ * One line of `status`'s "Recent attempts". A deploy that succeeded with no
+ * range found nothing pending: it is recorded (it ran the checks) but says so,
+ * so it doesn't read as a deploy whose migrations are missing.
+ */
 function describeAttempt(attempt: AttemptRecord): string {
   const range =
     attempt.fromMigration === undefined
-      ? ""
+      ? attempt.command === "deploy" && attempt.outcome === "succeeded"
+        ? ", nothing to deploy,"
+        : ""
       : attempt.fromMigration === attempt.toMigration
         ? ` migration ${attempt.fromMigration}`
         : ` migrations ${attempt.fromMigration}-${attempt.toMigration}`;
