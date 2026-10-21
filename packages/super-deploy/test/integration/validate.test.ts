@@ -207,6 +207,41 @@ describe("validate warnings", () => {
     });
   });
 
+  test("allowDraft lists a draft in progress as warnings without failing --strict", async () => {
+    const { dir, project } = await finalizedProject();
+    await draft(project, { name: "add email" });
+    await dir.write(
+      "data-model/desired-schema/orders.sql",
+      "create table orders (id bigint primary key);\n",
+    );
+
+    const report = await validate(project, { strict: true, allowDraft: true });
+
+    expect(report.problems).toEqual([
+      unfinalized,
+      expect.objectContaining({
+        severity: "warning",
+        code: "undrafted-changes",
+      }),
+    ]);
+  });
+
+  test("allowDraft lets only the work-in-progress warnings through: an edited migration still fails", async () => {
+    const { project, tamper } = await finalizedProject();
+    await draft(project, { name: "add email" });
+    await tamper(`${folder}/schema-change.sql`, (text) => `${text}-- edited\n`);
+
+    const error = await validationError(project, {
+      strict: true,
+      allowDraft: true,
+    });
+
+    expect(error.problems.map((problem) => problem.code)).toEqual([
+      "content-hash-mismatch",
+      "unfinalized-draft",
+    ]);
+  });
+
   test("warn about desired-schema changes when there is no draft", async () => {
     const { dir, project } = await finalizedProject();
     await dir.write(

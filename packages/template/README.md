@@ -13,7 +13,10 @@ pnpm install
 
 Initialise Git first: `pnpm install` then also installs the pre-commit hook
 (`.husky/pre-commit`, via Husky), which runs `pnpm precommit` on every commit.
-If you install before `git init`, run `pnpm install` again afterwards.
+If you install before `git init`, run `pnpm install` again afterwards. The
+hook lets you commit a draft in progress; CI should refuse it until it is
+finalized (see
+[The files of a draft and a migration](#the-files-of-a-draft-and-a-migration)).
 
 Nothing else is needed: `super-deploy.config.ts` runs a private PostgreSQL 18
 server in `.super-deploy/postgres` (gitignored). It provides the throwaway
@@ -400,9 +403,20 @@ name.
 
 Finalized migrations are read-only and hashed: never edit them.
 `super-deploy validate` checks their hashes, and `pnpm precommit` runs
-Biome, the type checker and `super-deploy validate --strict` (the pre-commit
-hook runs it before every commit). To change the newest migration before any
-target has run it, see [Changing your mind](#changing-your-mind).
+Biome, the type checker and `super-deploy validate --strict --allow-draft`
+(the pre-commit hook runs it before every commit). To change the newest
+migration before any target has run it, see
+[Changing your mind](#changing-your-mind).
+
+The hook blocks a commit on every error `validate` finds (an edited or
+renamed finalized migration, a refused statement) and, through `--strict`,
+on every warning except a draft in progress. A draft in progress, an
+unfinalized draft or desired-schema changes not yet drafted, is listed as a
+warning and doesn't block, so you can commit a draft with its hand-written
+scripts and push it for review before finalizing it. In CI, run
+`pnpm exec super-deploy validate --strict` without `--allow-draft`: it fails
+until the draft is finalized and the desired schema matches the newest
+migration, so work in progress can't be merged.
 
 ## Overriding a refusal
 

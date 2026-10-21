@@ -455,6 +455,14 @@ const validateCommand: CommandDefinition = {
       kind: "flag",
       description: "Fail on warnings too (for pre-commit hooks and CI)",
     },
+    {
+      name: "allow-draft",
+      kind: "flag",
+      description:
+        "Never fail on a draft in progress (an unfinalized draft or undrafted desired-schema changes), even with --strict: only warn (for the pre-commit hook)",
+      question:
+        "Allow a draft in progress? An unfinalized draft and undrafted desired-schema changes only warn, even when strict",
+    },
   ],
   async run(project, values, context) {
     const report = (problem: ValidationProblem) =>
@@ -462,6 +470,7 @@ const validateCommand: CommandDefinition = {
     try {
       const result = await validate(project, {
         strict: values.strict === true,
+        allowDraft: values["allow-draft"] === true,
       });
       result.problems.forEach(report);
       for (const override of result.overrides) {

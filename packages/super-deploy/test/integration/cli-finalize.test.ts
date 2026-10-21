@@ -93,6 +93,29 @@ describe("validate", () => {
     ]);
   });
 
+  test("--strict --allow-draft warns about the draft on stderr and exits 0", async () => {
+    const dir = await draftedProject();
+
+    const result = await runCli(["validate", "--strict", "--allow-draft"], {
+      cwd: dir.root,
+    });
+
+    expect(result).toEqual({
+      exitCode: 0,
+      stdout: "Validated 0 migrations\n",
+      stderr: "warning: Draft add-customers is not finalized yet\n",
+    });
+  });
+
+  test("--help lists --allow-draft", async () => {
+    const dir = await createTestProject();
+
+    const result = await runCli(["validate", "--help"], { cwd: dir.root });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("--allow-draft");
+  });
+
   test("lists every error and exits 1 when a finalized migration was edited", async () => {
     const dir = await draftedProject();
     expect((await runCli(["finalize"], { cwd: dir.root })).exitCode).toBe(0);
