@@ -3,8 +3,11 @@
 // owns the managed schema and everything in it. Grants, policies and RLS are
 // set up on targets by hand, so every file super-deploy deploys refuses the
 // statements that would change them. Both rule sets (desired-schema-rules.ts,
-// deploy-time.ts) ask here first. The refusals are `unsupported-object`, which
-// no override marker bypasses.
+// deploy-time.ts) ask here first, and routine-bodies.ts asks for each
+// statement inside a PL/pgSQL or LANGUAGE sql string body: a trigger a script
+// fires runs its body as the deploy role. The refusals are
+// `unsupported-object`, which no override marker bypasses. Only SQL built at
+// run time (an overridden EXECUTE) is out of their reach.
 //
 // COMMENT ON POLICY is left to each rule set's COMMENT rule.
 import type { ParsedStatement } from "./parse.ts";
@@ -14,31 +17,34 @@ import {
   alterTableCommands,
   defElems,
   type Json,
-  statementBody,
   unwrap,
 } from "./syntax-tree.ts";
 
 const outside = "set up on targets outside super-deploy";
+const privileges = `privileges and row-level security are ${outside}`;
+const readme = '(see the README, "Permissions")';
 
+// Each reason says why, then what to do instead and where it's documented.
 const reasons = {
-  privileges: `privileges and row-level security are ${outside}`,
-  roles: `roles, like privileges and row-level security, are ${outside}`,
-  ownership: `the deploy role owns everything in the managed schema; privileges and row-level security are ${outside}`,
-  definer: `the routine would run with the deploy role's rights for every role allowed to call it, and privileges and row-level security are ${outside}, so nothing here limits who that is; leave the default, SECURITY INVOKER`,
+  privileges: `${privileges}; remove it and run it on each target instead ${readme}`,
+  defaultPrivileges: `${privileges}; run it on each target as the deploy role, where it grants what every deployment creates ${readme}`,
+  roles: `roles, like privileges and row-level security, are ${outside}; create and grant roles on each target instead ${readme}`,
+  ownership: `the deploy role owns everything in the managed schema, and ${privileges}; remove it: the deploy role owns everything it creates ${readme}`,
+  definer: `the routine would run with the deploy role's rights for every role allowed to call it, and ${privileges}, so nothing here limits who that is; leave the default, SECURITY INVOKER ${readme}`,
 } as const;
 
 /** Statement types refused whatever they say, with the reason. */
 const refusedStatements: Readonly<Record<string, keyof typeof reasons>> = {
   CreatePolicyStmt: "privileges",
   AlterPolicyStmt: "privileges",
-  AlterDefaultPrivilegesStmt: "privileges",
+  AlterDefaultPrivilegesStmt: "defaultPrivileges",
   CreateRoleStmt: "roles",
   AlterRoleStmt: "roles",
   AlterRoleSetStmt: "roles",
   DropRoleStmt: "roles",
-  DropOwnedStmt: "roles",
   AlterOwnerStmt: "ownership",
   ReassignOwnedStmt: "ownership",
+  DropOwnedStmt: "ownership",
 };
 
 const rowSecurityCommands: Readonly<Record<string, string>> = {
@@ -74,10 +80,10 @@ const refusedRenames: Readonly<
  * a routine SECURITY DEFINER; undefined for any other statement.
  */
 export function privilegeRefusal(
-  statement: ParsedStatement,
+  statement: Pick<ParsedStatement, "nodeType" | "node">,
 ): Refusal | undefined {
   const type = statement.nodeType;
-  const body = statementBody(statement);
+  const body = unwrap(statement.node, type) ?? {};
   const reason = refusedStatements[type];
   if (reason !== undefined) {
     return refusal(statementName(type), reason);

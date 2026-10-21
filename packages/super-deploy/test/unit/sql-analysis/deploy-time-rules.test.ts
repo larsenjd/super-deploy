@@ -165,6 +165,53 @@ describe("privileges, roles, ownership, row-level security and SECURITY DEFINER"
     expect(found[0]?.message).toMatch(/set up on targets outside super-deploy/);
   });
 
+  test.each(allKinds)(
+    "%s says what to do instead and where it's documented",
+    async (kind) => {
+      const messages = (
+        await check(
+          kind,
+          "grant select on t to reader;\nalter default privileges grant select on tables to reader;\ndrop owned by a;",
+        )
+      ).map(({ message }) => message);
+      expect(messages).toEqual([
+        expect.stringMatching(/remove it and run it on each target instead/),
+        expect.stringMatching(/run it on each target as the deploy role/),
+        expect.stringMatching(/remove it: the deploy role owns everything/),
+      ]);
+      for (const message of messages) {
+        expect(message).toMatch(/\(see the README, "Permissions"\)$/);
+      }
+    },
+  );
+
+  test("a trigger function a script creates and fires can't run them either", async () => {
+    const script = [
+      "create function sneaky() returns trigger language plpgsql as $$",
+      "begin",
+      "  grant select on app.notes to public;",
+      "  alter table app.orders disable row level security;",
+      "  return new;",
+      "end $$;",
+      "",
+      "create trigger notes_sneaky before insert on notes for each row execute function sneaky();",
+      "",
+      "insert into notes (body) values ('x');",
+      "",
+      "drop trigger notes_sneaky on notes;",
+      "",
+      "drop function sneaky();",
+    ].join("\n");
+    expect(
+      (await check("pre-migration", script, "app"))
+        .filter(({ rule }) => rule === "unsupported-object")
+        .map(({ line, message }) => [line, message.split(" is not")[0]]),
+    ).toEqual([
+      [3, "GRANT"],
+      [4, "ALTER TABLE ... DISABLE ROW LEVEL SECURITY"],
+    ]);
+  });
+
   test("an override marker can't bypass them", async () => {
     const found = await check(
       "post-migration",
@@ -229,6 +276,46 @@ describe("transaction control, CALL and DO", () => {
           "COMMIT would end the deploy transaction early; super-deploy runs every pending migration in one transaction",
       },
     ]);
+  });
+});
+
+describe("SET and RESET", () => {
+  const roleReason =
+    /a deployment runs everything as the deploy role, and roles and privileges are set up on targets outside super-deploy/;
+  const localReason =
+    /super-deploy pins the session settings for every migration in the deployment's one transaction, and SET LOCAL would change them for the rest of it/;
+  const plainReason =
+    /super-deploy pins the session settings, and a plain SET outlives the transaction/;
+
+  test.each([
+    ["set local role x", /^SET LOCAL ROLE is not allowed/, roleReason],
+    ["set role x", /^SET ROLE is not allowed/, roleReason],
+    ["reset role", /^RESET ROLE is not allowed/, roleReason],
+    [
+      "set session authorization x",
+      /^SET SESSION AUTHORIZATION is not allowed/,
+      roleReason,
+    ],
+    [
+      "reset session authorization",
+      /^RESET SESSION AUTHORIZATION is not allowed/,
+      roleReason,
+    ],
+    [
+      "set local statement_timeout = 0",
+      /^SET LOCAL is not allowed/,
+      localReason,
+    ],
+    ["set statement_timeout = 0", /^SET is not allowed/, plainReason],
+    ["reset all", /^RESET is not allowed/, plainReason],
+  ])("%s gets a reason that fits it", async (sql, what, reason) => {
+    const found = await check("pre-migration", `${sql};`);
+    expect(found).toEqual([
+      expect.objectContaining({ rule: "escapes-transaction" }),
+    ]);
+    expect(found[0]?.message).toMatch(what);
+    expect(found[0]?.message).toMatch(reason);
+    expect(found[0]?.message.includes("outlives")).toBe(reason === plainReason);
   });
 });
 

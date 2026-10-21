@@ -310,14 +310,17 @@ export interface ValidationProblem {
    * `migration-renamed`, `numbering-gap`, `invalid-encoding`,
    * `content-hash-mismatch`, `chain-hash-mismatch`, `sql-rule-violation`,
    * `recovery-schema-change-edited`, `unknown-migration` (errors);
-   * `unfinalized-draft`, `unknown-draft-file`, `undrafted-changes`
-   * (warnings).
+   * `unfinalized-draft`, `unknown-draft-file`, `undrafted-changes`,
+   * `unqualified-routine-names` (warnings).
    */
   readonly code: string;
   readonly message: string;
   /** Project-relative path with forward slashes, when the problem has one. */
   readonly path?: string;
-  /** For `sql-rule-violation`: the 1-based line and the rule id. */
+  /**
+   * For `sql-rule-violation`: the 1-based line and the rule id; for
+   * `unqualified-routine-names`, the line.
+   */
   readonly line?: number;
   readonly rule?: string;
 }
