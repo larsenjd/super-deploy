@@ -211,6 +211,7 @@ export type {
 export { SqlFileFailedError } from "./rehearsal/replay.ts";
 export { UnknownRecordedMigrationError } from "./rehearsal/replica.ts";
 export { RehearsalMismatchError } from "./rehearsal/same-structure.ts";
+export type { SchemaChangeShortfall } from "./rehearsal/schema-change-check.ts";
 export type {
   ScriptCoverage,
   ScriptCoverageKind,

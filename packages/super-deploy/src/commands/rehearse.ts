@@ -8,6 +8,7 @@ import { rehearseDraft } from "../rehearsal/rehearse-draft.ts";
 import { rehearseRecovery } from "../rehearsal/rehearse-recovery.ts";
 import { readMigrationUnits, readReplayUnit } from "../rehearsal/replay.ts";
 import {
+  hasPreMigrationScript,
   readSeededUnit,
   type SeededUnit,
   seededFiles,
@@ -147,6 +148,7 @@ export async function rehearseCurrentDraft(
     desiredSchemaChanged:
       draft.desiredSchemaHash !== desiredSchemaHash(desiredSchema),
     editedSchemaChange: editedSchemaChange(project, draft, seeded),
+    preMigrationScript: hasPreMigrationScript(seeded),
   });
   return {
     draft,
