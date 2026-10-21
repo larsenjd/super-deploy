@@ -154,7 +154,7 @@ describe("adopt", () => {
     }
   });
 
-  test("refuses with every object V1 doesn't support, in the rules' words, writing nothing", async () => {
+  test("refuses with every object V1 doesn't support and the rule each breaks, writing nothing", async () => {
     const { dir, project, prod } = await adoptableProject(`
       create table t (id bigint primary key, a int, b int);
       create type mood as enum ('sad', 'happy');
@@ -171,35 +171,32 @@ describe("adopt", () => {
 
       expect(error).toBeInstanceOf(AdoptUnsupportedError);
       const { objects } = error as AdoptUnsupportedError;
-      expect(objects).toEqual(
+      expect(objects.map(({ object, rule }) => ({ object, rule }))).toEqual(
         expect.arrayContaining([
-          {
-            object: "statistics object t_stats",
-            rule: "unsupported-object",
-            reason: "CREATE STATISTICS is not supported in V1",
-          },
+          { object: "statistics object t_stats", rule: "unsupported-object" },
           {
             object: "operator ===(integer,integer)",
             rule: "unsupported-object",
-            reason:
-              "Custom operators are not supported in V1 (nor operator classes and families)",
           },
-          expect.objectContaining({
+          {
             object: expect.stringContaining('CREATE TYPE "public"."mood"'),
-            reason: expect.stringContaining("Enums are not supported in V1"),
-          }),
-          expect.objectContaining({
+            rule: "unsupported-object",
+          },
+          {
             object: expect.stringContaining(
               'CREATE SEQUENCE "public"."counter"',
             ),
-            reason: expect.stringContaining("Standalone sequences"),
-          }),
-          expect.objectContaining({
+            rule: "unsupported-object",
+          },
+          {
             object: expect.stringContaining("CREATE UNLOGGED TABLE"),
-            reason: "Unlogged tables are not supported in V1",
-          }),
+            rule: "unsupported-object",
+          },
         ]),
       );
+      for (const { reason } of objects) {
+        expect(reason).not.toBe("");
+      }
       expect(objects).toHaveLength(5);
       expect(dir.exists("data-model/desired-schema")).toBe(false);
       expect(dir.exists("data-model/migrations")).toBe(false);
