@@ -39,7 +39,7 @@ async function finalizedProject(settings?: string) {
 }
 
 describe("deploy and status", () => {
-  test("status shows what is pending, deploy applies it, and status then shows each attempt, a deploy of nothing as such", async () => {
+  test("status shows what is pending and that drift was checked, deploy applies it, and status then shows each attempt, a deploy of nothing as such", async () => {
     const dir = await finalizedProject();
 
     const before = await runCli(["status", "--target", "dev"], {
@@ -48,7 +48,7 @@ describe("deploy and status", () => {
     expect(before).toMatchObject({
       exitCode: 0,
       stdout:
-        "Target dev: 0 migrations recorded, 1 pending\nPending:\n  00001-add-customers\n",
+        "Target dev: 0 migrations recorded, 1 pending\nDrift: none\nPending:\n  00001-add-customers\n",
       stderr: "",
     });
 
@@ -73,7 +73,7 @@ describe("deploy and status", () => {
     const user = userInfo().username;
     expect(after.stdout).toMatch(
       new RegExp(
-        `^Target dev: 1 migration recorded, 0 pending\nRecent attempts:\n  #2 deploy succeeded, nothing to deploy, by ${user} at \\S+Z\n  #1 deploy succeeded migration 1 by ${user} at \\S+Z\n$`,
+        `^Target dev: 1 migration recorded, 0 pending\nDrift: none\nRecent attempts:\n  #2 deploy succeeded, nothing to deploy, by ${user} at \\S+Z\n  #1 deploy succeeded migration 1 by ${user} at \\S+Z\n$`,
       ),
     );
   });
@@ -132,7 +132,7 @@ describe("deploy and status", () => {
     });
     expect(report).toMatchObject({
       exitCode: 1,
-      stdout: `Target dev: 0 migrations recorded, 1 pending\nDeploy would refuse:\n  ${refusal}\nPending:\n  00001-add-customers\n`,
+      stdout: `Target dev: 0 migrations recorded, 1 pending\nDeploy would refuse:\n  ${refusal}\nDrift: none\nPending:\n  00001-add-customers\n`,
       stderr: preflightFailed,
     });
 
@@ -250,8 +250,10 @@ describe("deploy and status", () => {
     );
     const drifted =
       "Error: Target dev has drifted from its recorded migrations: column name of table public.customers (changed), column note of table public.customers (only on the target), index public.customers_name_idx (missing from the target). Deployments refuse until it matches them again";
+    const wayBack =
+      'Undo the change on the target, or keep it: add it to the desired schema, draft and finalize a migration, then mark --target dev records that migration as deployed without running it (see the README, "Drift")';
     // status has just listed the differences: it doesn't point to itself.
-    expect(report.stderr).toBe(`${drifted}\n`);
+    expect(report.stderr).toBe(`${drifted}. ${wayBack}\n`);
 
     const refused = await runCli(["deploy", "--target", "dev"], {
       cwd: dir.root,
@@ -259,7 +261,7 @@ describe("deploy and status", () => {
     expect(refused).toMatchObject({
       exitCode: 1,
       stdout: "",
-      stderr: `${drifted} (status --target dev lists the differences)\n`,
+      stderr: `${drifted} (status --target dev lists the differences). ${wayBack}\n`,
     });
 
     // The refused deploy had nothing pending; its attempt still reads as failed.

@@ -289,6 +289,7 @@ describe("deploy", () => {
     expect((error as Error).message).toContain(
       "status --target dev lists the differences",
     );
+    expect((error as Error).message).toContain('see the README, "Drift"');
     expect(
       await server.query(
         `select (select array_agg(number order by number) from deployment_history.migrations) as recorded,
@@ -306,7 +307,7 @@ describe("deploy", () => {
     ]);
   });
 
-  test("refuses a drifted target with nothing pending", async () => {
+  test("refuses a drifted target with nothing pending, saying to undo the change or capture it in a migration and mark it", async () => {
     const { project, database } = await deployedProject();
     await asDeployRole(server, database, "drop table customers");
 
@@ -320,9 +321,8 @@ describe("deploy", () => {
         { object: "table public.customers", change: "missing" },
       ],
     });
-    expect((error as Error).message).not.toContain("mark");
     expect((error as Error).message).toContain(
-      "status --target dev lists the differences",
+      'status --target dev lists the differences). Undo the change on the target, or keep it: add it to the desired schema, draft and finalize a migration, then mark --target dev records that migration as deployed without running it (see the README, "Drift")',
     );
   });
 
