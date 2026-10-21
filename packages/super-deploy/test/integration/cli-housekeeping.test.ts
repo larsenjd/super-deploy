@@ -1,5 +1,6 @@
 // CLI seam for unfinalize, restore-schema and discard-draft: without a
-// terminal they refuse unless --acknowledge-overwrite is passed.
+// terminal they refuse unless --acknowledge-overwrite is passed, and
+// unfinalize warns that a deployed migration must not change.
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
@@ -133,16 +134,17 @@ describe("restore-schema", () => {
 });
 
 describe("unfinalize", () => {
-  test("moves the newest migration back into the draft", async () => {
+  test("moves the newest migration back into the draft, warning not to change it if it was deployed", async () => {
     const dir = await finalizedProject();
 
     const result = await runCli(["unfinalize"], { cwd: dir.root });
 
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       exitCode: 0,
       stdout:
         "Moved migration 00001-add-customers back into draft add-customers in data-model/draft\n",
-      stderr: "",
+      stderr:
+        "warning: If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)\n",
     });
   });
 
