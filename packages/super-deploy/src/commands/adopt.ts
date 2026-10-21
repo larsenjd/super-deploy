@@ -32,7 +32,10 @@
 //      throwaway database and compared with the target like the drift
 //      check; a statement the throwaway database refuses is listed by its
 //      object, never by a file that was never written). Nothing is written
-//      before this passes.
+//      before this passes. The refusal's advice follows the rules broken:
+//      an undeclared schema in a PL/pgSQL body goes into externalSchemas,
+//      risk rules without the callback need a terminal, anything else needs
+//      the target changed.
 //      Statements that break only risk rules (dynamic SQL, denylisted
 //      calls) are the exception when the caller answers override reasons
 //      (`overrideReason`): the checks treat them as marked, and once nothing
@@ -85,6 +88,7 @@ import {
   catalogObjectFinding,
   desiredSchemaAnalysis,
   externalSchemaReferences,
+  isOverridable,
   isSequenceStatement,
   type OverrideCandidate,
   type OverrideNeeded,
@@ -95,6 +99,7 @@ import {
   type SqlFile,
   SqlRuleViolationError,
   serialColumnFinding,
+  undeclaredSchemaOf,
   virtualGeneratedColumnFinding,
   withOverrideMarkers,
 } from "../sql-analysis/index.ts";
@@ -349,7 +354,7 @@ async function readTarget(
     const candidates = withOverrides
       ? await overrideCandidates(sqlFiles(project, files), context)
       : [];
-    const needed = overridesNeeded(candidates);
+    const needed = withOverrides ? overridesNeeded(candidates) : undefined;
     const analysed = await analyse(
       project,
       withCheckingMarkers(project, files, candidates),
@@ -796,27 +801,84 @@ export class AdoptUnsupportedError extends SuperDeployError {
    */
   readonly overridesNeeded: readonly OverrideNeeded[];
 
+  /**
+   * What to do before adopting again, each piece once, e.g. `change the
+   * target first, then adopt again`. The message ends with these too.
+   */
+  readonly advice: readonly string[];
+
+  /**
+   * `overridesNeeded`: undefined when adoption had no override-reason
+   * callback, so objects that break only risk rules are among `objects`.
+   */
   constructor(
     target: string,
     objects: readonly UnsupportedObject[],
-    overridesNeeded: readonly OverrideNeeded[] = [],
+    overridesNeeded?: readonly OverrideNeeded[],
   ) {
     const shown = objects
       .slice(0, 5)
       .map((o) => o.object)
       .join("; ");
     const more = objects.length > 5 ? `; and ${objects.length - 5} more` : "";
+    const advice = adoptionAdvice(objects, overridesNeeded !== undefined);
+    const needed = overridesNeeded ?? [];
     const later =
-      overridesNeeded.length === 0
+      needed.length === 0
         ? ""
-        : `. Once nothing else is refused, an override reason will be asked for ${overridesNeeded.map((needed) => needed.object).join(", ")}`;
+        : `. Once nothing else is refused, an override reason will be asked for ${needed.map((item) => item.object).join(", ")}`;
     super(
-      `Cannot adopt target ${target}: its managed schema has ${objects.length} thing${objects.length === 1 ? "" : "s"} V1 doesn't support: ${shown}${more}. Nothing was written; change the target first, then adopt again${later}`,
+      `Cannot adopt target ${target}: its managed schema has ${objects.length} thing${objects.length === 1 ? "" : "s"} V1 doesn't support: ${shown}${more}. Nothing was written; ${advice.join("; ")}${later}`,
     );
     this.target = target;
     this.objects = objects;
-    this.overridesNeeded = overridesNeeded;
+    this.overridesNeeded = needed;
+    this.advice = advice;
   }
+}
+
+/**
+ * The advice for a refusal, by the rules its objects break: a PL/pgSQL
+ * body's reference to an undeclared schema needs it in externalSchemas; a
+ * risk rule, without the override-reason callback (`askingOverrides`),
+ * needs a terminal; anything else needs the target changed.
+ */
+function adoptionAdvice(
+  objects: readonly UnsupportedObject[],
+  askingOverrides: boolean,
+): string[] {
+  let changeTarget = false;
+  let terminal = false;
+  const schemas = new Set<string>();
+  for (const { rule, reason } of objects) {
+    const schema =
+      rule === "undeclared-schema" ? undeclaredSchemaOf(reason) : undefined;
+    if (schema !== undefined) {
+      schemas.add(schema);
+    } else if (isOverridable(rule)) {
+      terminal ||= !askingOverrides;
+    } else {
+      changeTarget = true;
+    }
+  }
+  const changeTheTarget = "change the target first, then adopt again";
+  const advice = [
+    ...(changeTarget ? [changeTheTarget] : []),
+    ...(schemas.size > 0
+      ? [
+          `declare ${[...schemas]
+            .sort()
+            .map((schema) => `"${schema}"`)
+            .join(", ")} in externalSchemas in super-deploy.config.ts`,
+        ]
+      : []),
+    ...(terminal
+      ? [
+          "run adoption in a terminal to give an override reason for each object that breaks only risk rules",
+        ]
+      : []),
+  ];
+  return advice.length > 0 ? advice : [changeTheTarget];
 }
 
 /**

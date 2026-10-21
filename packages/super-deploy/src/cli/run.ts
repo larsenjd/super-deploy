@@ -4,6 +4,7 @@
 // error (nothing ran). After an interruption the notice is the only message
 // and the process watcher (process.ts) decides the exit code.
 import { relative } from "node:path";
+import { AdoptUnsupportedError } from "../commands/adopt.ts";
 import { settleCleanups } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { RehearsalMismatchError } from "../rehearsal/same-structure.ts";
@@ -108,8 +109,9 @@ function commandContext(io: CliIo): CommandContext {
 
 /**
  * One `Error:` line; with `debug`, every stack trace and cause too. An error
- * listing several rule violations or rehearsal differences prints each on a
- * line of its own first, and a summary as its `Error:` line.
+ * listing several rule violations or rehearsal differences, or adoption's
+ * refusal, prints each item on a line of its own first, and a summary that
+ * names none of them as its `Error:` line.
  */
 export function describeError(error: unknown, debug: boolean): string {
   const listing = listedDetails(error);
@@ -134,10 +136,16 @@ export function describeError(error: unknown, debug: boolean): string {
   return `${lines.join("\n")}\n`;
 }
 
-/** The lines an error lists and the summary after them, when it lists more than one. */
+/**
+ * The lines an error lists and the summary after them, when it lists more
+ * than one (adoption's refusal: always, for the reasons).
+ */
 function listedDetails(
   error: unknown,
 ): { details: readonly string[]; summary: string } | undefined {
+  if (error instanceof AdoptUnsupportedError) {
+    return adoptionRefusal(error);
+  }
   if (error instanceof SqlRuleViolationError && error.violations.length > 1) {
     return {
       details: error.violations.map(describeViolation),
@@ -151,4 +159,35 @@ function listedDetails(
     };
   }
   return undefined;
+}
+
+/**
+ * Each object adoption refused with its rule and reason, then the objects
+ * whose override reasons it will ask once nothing else is refused; the
+ * summary keeps only the count and the advice.
+ */
+function adoptionRefusal({
+  target,
+  objects,
+  overridesNeeded,
+  advice,
+}: AdoptUnsupportedError): { details: readonly string[]; summary: string } {
+  const things = `${objects.length} thing${objects.length === 1 ? "" : "s"} V1 doesn't support`;
+  const details = [
+    `Target ${target} has ${things}:`,
+    ...objects.flatMap(({ object, rule, reason }) => [
+      `  ${object}`,
+      `    ${rule}: ${reason}`,
+    ]),
+  ];
+  if (overridesNeeded.length > 0) {
+    const one = overridesNeeded.length === 1;
+    details.push(
+      `Once nothing else is refused, adoption will ask an override reason for ${overridesNeeded.length} object${one ? "" : "s"} that break${one ? "s" : ""} only risk rules: ${overridesNeeded.map((needed) => needed.object).join(", ")}`,
+    );
+  }
+  return {
+    details,
+    summary: `Cannot adopt target ${target}: its managed schema has ${things}, listed above. Nothing was written; ${advice.join("; ")}`,
+  };
 }

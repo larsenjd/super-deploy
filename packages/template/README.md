@@ -144,7 +144,9 @@ database holds anything super-deploy doesn't support, nothing is written and
 every such object is listed: that includes a `SECURITY DEFINER` routine,
 objects owned by another role (see "Permissions"), and views, foreign keys,
 `LANGUAGE sql` functions and the like that reference an external schema
-(only PL/pgSQL bodies may). Grants, policies and row-level security on the target stay
+(only PL/pgSQL bodies may). The refusal ends with what to do: change the
+target, declare a schema a PL/pgSQL body references in `externalSchemas`, or
+run adoption in a terminal to give override reasons (below). Grants, policies and row-level security on the target stay
 as they are, left out of the desired schema; adoption says how many grants
 and policies it left.
 
@@ -156,7 +158,7 @@ reason reviewers will read in `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`,
 which adoption writes on the line before the statement. Until then, its
 refusal names them, so you know which reasons it will ask for. An empty
 answer cancels the adoption, writing nothing. Without a terminal (in CI, for
-example) adoption refuses them like anything else it doesn't support. `finalize` and `validate` show these
+example) adoption refuses them, saying to run it in a terminal. `finalize` and `validate` show these
 overrides like any other.
 
 ## Permissions

@@ -87,7 +87,7 @@ describe("init --adopt", () => {
         "    unsupported-object: Standalone sequences are not supported in V1: use an identity column (`bigint generated always as identity`)",
         `  CREATE TYPE "public"."mood" AS ENUM ('sad')`,
         "    unsupported-object: Enums are not supported in V1: use a lookup table with a foreign key, or a CHECK constraint",
-        `Error: Cannot adopt target prod: its managed schema has 2 things V1 doesn't support: CREATE SEQUENCE "public"."counter" AS bigint INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE …; CREATE TYPE "public"."mood" AS ENUM ('sad'). Nothing was written; change the target first, then adopt again`,
+        "Error: Cannot adopt target prod: its managed schema has 2 things V1 doesn't support, listed above. Nothing was written; change the target first, then adopt again",
         "",
       ].join("\n"),
     );
@@ -138,8 +138,8 @@ describe("init --adopt", () => {
     expect(result.stderr).toContain(
       "    plpgsql-dynamic-sql: EXECUTE (dynamic SQL) is not allowed",
     );
-    expect(result.stderr).toContain(
-      "In a terminal, adoption asks for an override reason for each object that breaks only risk rules, and writes its override marker\n",
+    expect(result.stderr).toMatch(
+      /\nError: Cannot adopt target prod: its managed schema has 1 thing V1 doesn't support, listed above\. Nothing was written; run adoption in a terminal to give an override reason for each object that breaks only risk rules\n$/,
     );
     expect(dir.exists("data-model/desired-schema")).toBe(false);
   });

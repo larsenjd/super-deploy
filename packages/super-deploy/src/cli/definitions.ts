@@ -4,7 +4,7 @@
 // define it here and append it to `commands`.
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { AdoptUnsupportedError, adopt } from "../commands/adopt.ts";
+import { adopt } from "../commands/adopt.ts";
 import { deploy } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
@@ -34,11 +34,7 @@ import {
   DestructiveNotAcknowledgedError,
   OverwriteNotAcknowledgedError,
 } from "../questions.ts";
-import {
-  isOverridable,
-  type LockWarning,
-  type Override,
-} from "../sql-analysis/index.ts";
+import type { LockWarning, Override } from "../sql-analysis/index.ts";
 import { readDraft } from "../store/draft.ts";
 import type { ValidationProblem } from "../store/integrity.ts";
 import {
@@ -301,29 +297,7 @@ const initCommand: DirectoryCommandDefinition = {
           );
         }
       } catch (error) {
-        if (error instanceof AdoptUnsupportedError) {
-          context.warn(
-            `Target ${error.target} has ${plural(error.objects.length, "thing")} V1 doesn't support:`,
-          );
-          for (const item of error.objects) {
-            context.warn(`  ${item.object}`);
-            context.warn(`    ${item.rule}: ${item.reason}`);
-          }
-          if (
-            context.ask === undefined &&
-            error.objects.some((item) => isOverridable(item.rule))
-          ) {
-            context.warn(
-              "In a terminal, adoption asks for an override reason for each object that breaks only risk rules, and writes its override marker",
-            );
-          }
-          const { overridesNeeded } = error;
-          if (overridesNeeded.length > 0) {
-            context.warn(
-              `Once nothing else is refused, adoption will ask an override reason for ${plural(overridesNeeded.length, "object")} that break${overridesNeeded.length === 1 ? "s" : ""} only risk rules: ${overridesNeeded.map((needed) => needed.object).join(", ")}`,
-            );
-          }
-        } else if (error instanceof MarkMismatchError) {
+        if (error instanceof MarkMismatchError) {
           reportMarkMismatch(error, context);
         }
         throw error;
