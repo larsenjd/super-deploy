@@ -148,9 +148,9 @@ export interface DriftContext {
  * refuse until the target matches again; `status` lists the objects.
  *
  * With migrations pending, the message points to `mark`: drift is often a
- * hotfix applied by hand that the next pending migration catches up with.
- * Whether it is exactly that migration isn't checked here (it would take a
- * second replica); `mark` checks it.
+ * change made on the target by hand that the next pending migration catches
+ * up with. Whether it is exactly that migration isn't checked here (it would
+ * take a second replica); `mark` checks it.
  */
 export class DriftError extends SuperDeployError {
   readonly code = "target-drifted";

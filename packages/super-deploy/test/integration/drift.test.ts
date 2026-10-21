@@ -233,7 +233,7 @@ describe("deploy", () => {
     expect((error as Error).message).toContain(
       "Target dev has drifted from its recorded migrations: index customers_name_idx (extra)",
     );
-    // A hand-applied hotfix that the next pending migration catches up with is
+    // A change made by hand that the next pending migration catches up with is
     // what `mark` records; the differences are still listed by status.
     expect((error as Error).message).toContain("mark --target dev");
     expect((error as Error).message).toContain(
