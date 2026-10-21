@@ -949,6 +949,84 @@ describe("adopt", () => {
     }
   });
 
+  test("adopts, and deploys to, a target whose DBA pre-created an empty history schema owned by the deploy role instead of granting CREATE on the database", async () => {
+    const deployer = roleName("adopt_deployer");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create schema app authorization ${deployer};
+      create schema deployment_history authorization ${deployer};
+      set role ${deployer};
+      create table app.t (id bigint generated always as identity primary key);
+    `);
+    const { dir, project } = await asDeployerProject(prod, deployer);
+    try {
+      await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
+        migration: { folder: "00001-adopt" },
+      });
+      await dir.write(
+        "data-model/desired-schema/notes.sql",
+        "create table notes (id bigint primary key);\n",
+      );
+      await finalizeMigration(project, "add notes");
+
+      await expect(deploy(project, { target: "prod" })).resolves.toMatchObject({
+        deployed: [{ folder: "00002-add-notes" }],
+      });
+      expect(
+        (await status(project, { target: "prod" })).recorded.map(
+          (migration) => migration.number,
+        ),
+      ).toEqual([1, 2]);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses a target whose history schema holds objects super-deploy didn't make, naming the schema, what it holds and the setting, writing nothing", async () => {
+    const prod = `
+      create schema audit;
+      create table audit.migrations (x int);
+      create table audit.log (y int);
+      create table customers (id bigint primary key);
+    `;
+    const {
+      dir,
+      project,
+      prod: database,
+    } = await adoptableProject(prod, 'historySchema: "audit",');
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      expect(error).toMatchObject({
+        objects: [],
+        notOwned: [],
+        historySchemaNotCreatable: undefined,
+        foreignHistorySchema: {
+          historySchema: "audit",
+          objects: ["table audit.log", "table audit.migrations"],
+        },
+      });
+      expect((error as Error).message).toContain(
+        `the history schema "audit" exists but super-deploy didn't make it: it holds table audit.log, table audit.migrations`,
+      );
+      expect((error as Error).message).toContain("historySchema");
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+      expect(dir.exists("data-model/migrations")).toBe(false);
+      expect(
+        await server.query(
+          "select table_name from information_schema.tables where table_schema = 'audit' order by 1",
+          [],
+          database,
+        ),
+      ).toEqual([{ table_name: "log" }, { table_name: "migrations" }]);
+    } finally {
+      await project.close();
+    }
+  });
+
   test("refuses once for everything: objects owned by another role, CREATE on the database and what V1 doesn't support, listing an object that is both only as unsupported", async () => {
     const deployer = roleName("adopt_deployer");
     const other = roleName("adopt_other");

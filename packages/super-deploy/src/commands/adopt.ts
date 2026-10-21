@@ -13,9 +13,11 @@
 // warning naming the other schemas that hold objects, in case managedSchema
 // was forgotten). Its deploy role must
 // own that schema and everything in it (deploy/ownership.ts) and be able to
-// create the history schema if the target has none (deploy/preflight.ts):
-// both are refused in step 2's one refusal, with everything unsupported, so
-// a DBA fixes everything in one round.
+// create the history schema if the target has none (deploy/preflight.ts),
+// and a schema with the history schema's name must be super-deploy's or
+// empty and the deploy role's (a DBA may pre-create it instead of granting
+// CREATE on the database): all are refused in step 2's one refusal, with
+// everything unsupported, so a DBA fixes everything in one round.
 //
 // Steps, and what each one guarantees:
 //   1. Read the target (never writing to it): pg-delta generates the
@@ -30,7 +32,8 @@
 //   2. Refuse, listing everything at once, if the deploy role doesn't own
 //      something there (except what is refused as unsupported anyway: no
 //      one should re-own an object only to drop it) or can't create the
-//      history schema, or if anything there is unsupported:
+//      history schema, if a schema of that name isn't one super-deploy can
+//      use, or if anything there is unsupported:
 //      objects a desired schema can't create at all (the catalog check's
 //      `other` kind, an extension once for all its members; virtual
 //      generated columns, which pg-delta renders STORED; serial columns,
@@ -94,6 +97,9 @@ import {
   objectsNotOwnedAt,
 } from "../deploy/ownership.ts";
 import {
+  type ForeignHistorySchema,
+  foreignHistorySchema,
+  foreignHistorySchemaMessage,
   type HistorySchemaNotCreatable,
   historySchemaNotCreatable,
   historySchemaNotCreatableMessage,
@@ -390,6 +396,7 @@ async function readTarget(
     // Marking creates the history schema, after everything is written. Both
     // are refused together with everything unsupported, in one refusal.
     const notOwned = await objectsNotOwnedAt(session, config.managedSchema);
+    const foreign = await foreignHistorySchema(session, config.historySchema);
     const historySchema = await historySchemaNotCreatable(
       session,
       config.historySchema,
@@ -474,6 +481,7 @@ async function readTarget(
     if (
       unsupported.length > 0 ||
       notOwnedSupported.length > 0 ||
+      foreign !== undefined ||
       historySchema !== undefined
     ) {
       throw new AdoptUnsupportedError(
@@ -481,6 +489,7 @@ async function readTarget(
         {
           objects: unsupported,
           notOwned: notOwnedSupported,
+          foreignHistorySchema: foreign,
           historySchemaNotCreatable: historySchema,
         },
         overrides,
@@ -1183,6 +1192,8 @@ export interface AdoptRefusal {
    * whoever owns them.
    */
   readonly notOwned?: readonly NotOwnedObject[];
+  /** A schema with the history schema's name that super-deploy didn't make and can't use. */
+  readonly foreignHistorySchema?: ForeignHistorySchema | undefined;
   /** The deploy role can't create the history schema marking needs. */
   readonly historySchemaNotCreatable?: HistorySchemaNotCreatable | undefined;
 }
@@ -1216,6 +1227,11 @@ export class AdoptUnsupportedError extends SuperDeployError {
    * lists.
    */
   readonly notOwned: readonly NotOwnedObject[];
+  /**
+   * A schema with the history schema's name that super-deploy didn't make:
+   * what it holds, or its owner.
+   */
+  readonly foreignHistorySchema: ForeignHistorySchema | undefined;
   /** The deploy role can't create the history schema; with the grant that fixes it. */
   readonly historySchemaNotCreatable: HistorySchemaNotCreatable | undefined;
   /**
@@ -1250,6 +1266,7 @@ export class AdoptUnsupportedError extends SuperDeployError {
   ) {
     const { objects } = refusal;
     const notOwned = refusal.notOwned ?? [];
+    const foreign = refusal.foreignHistorySchema;
     const historySchema = refusal.historySchemaNotCreatable;
     const { needed, askable } = overrides;
     const fixes = [
@@ -1258,6 +1275,7 @@ export class AdoptUnsupportedError extends SuperDeployError {
     ];
     const advice = adoptionAdvice(objects, {
       fixes: fixes.length > 0,
+      historySchema: foreign?.historySchema,
       terminal: !askable && needed.length > 0,
     });
     const nothingWritten = `Nothing was written; ${advice.join("; ")}`;
@@ -1281,6 +1299,7 @@ export class AdoptUnsupportedError extends SuperDeployError {
         : [
             `the deploy role doesn't own everything in the managed schema: ${notOwned.map(notOwnedMessage).join("; ")}`,
           ]),
+      ...(foreign === undefined ? [] : [foreignHistorySchemaMessage(foreign)]),
       ...(historySchema === undefined
         ? []
         : [historySchemaNotCreatableMessage(historySchema)]),
@@ -1296,6 +1315,11 @@ export class AdoptUnsupportedError extends SuperDeployError {
         ? []
         : [
             `the deploy role doesn't own ${plural(notOwned.length, "object")} in the managed schema`,
+          ]),
+      ...(foreign === undefined
+        ? []
+        : [
+            `its history schema "${foreign.historySchema}" isn't super-deploy's`,
           ]),
       ...(historySchema === undefined
         ? []
@@ -1317,6 +1341,7 @@ export class AdoptUnsupportedError extends SuperDeployError {
     this.target = target;
     this.objects = objects;
     this.notOwned = notOwned;
+    this.foreignHistorySchema = foreign;
     this.historySchemaNotCreatable = historySchema;
     this.overridesNeeded = needed;
     this.advice = advice;
@@ -1331,6 +1356,9 @@ export class AdoptUnsupportedError extends SuperDeployError {
             ]),
           ]),
       ...(notOwned.length === 0 ? [] : notOwnedListing(target, notOwned)),
+      ...(foreign === undefined
+        ? []
+        : [`Target ${target}: ${foreignHistorySchemaMessage(foreign)}`]),
       ...(historySchema === undefined
         ? []
         : [
@@ -1389,12 +1417,22 @@ function listing(parts: readonly string[]): string {
  * The advice for a refusal: a PL/pgSQL body's reference to an undeclared
  * schema needs it in externalSchemas; anything else its objects break needs
  * the target changed; `fixes` (the deploy role's ownership or CREATE is
- * refused) need running as a superuser; `terminal` (override reasons are
- * needed without a callback to ask them) needs a terminal.
+ * refused) need running as a superuser; `historySchema` (a schema of that
+ * name super-deploy didn't make) needs it dropped or another name;
+ * `terminal` (override reasons are needed without a callback to ask them)
+ * needs a terminal.
  */
 function adoptionAdvice(
   objects: readonly UnsupportedObject[],
-  { fixes, terminal }: { fixes: boolean; terminal: boolean },
+  {
+    fixes,
+    historySchema,
+    terminal,
+  }: {
+    fixes: boolean;
+    historySchema: string | undefined;
+    terminal: boolean;
+  },
 ): string[] {
   const schemas = new Set(
     objects.flatMap(({ schemaToDeclare }) =>
@@ -1408,6 +1446,11 @@ function adoptionAdvice(
   const advice = [
     ...(changeTarget ? [changeTheTarget] : []),
     ...(fixes ? ["run the fixes as a superuser"] : []),
+    ...(historySchema === undefined
+      ? []
+      : [
+          `drop the schema "${historySchema}" or set another historySchema in super-deploy.config.ts`,
+        ]),
     ...(schemas.size > 0
       ? [
           `declare ${[...schemas]

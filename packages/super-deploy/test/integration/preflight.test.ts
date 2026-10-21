@@ -5,6 +5,7 @@
 
 import {
   deploy,
+  ForeignHistorySchemaError,
   finalize,
   HistorySchemaNotCreatableError,
   PreflightFailedError,
@@ -14,8 +15,10 @@ import {
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   asDeployerPreamble,
+  asDeployRole,
   asSuperuser,
   deployProject,
+  embeddedDeployRole,
   finalizeMigration,
   roleName,
   targetDatabaseName,
@@ -96,6 +99,7 @@ describe("deploy pre-flight", () => {
     await finalizeMigration(project, "add customers");
 
     expect((await status(project, { target: "dev" })).preflight).toEqual({
+      foreignHistorySchema: undefined,
       historySchemaNotCreatable: undefined,
       notOwned: [],
       historyMismatches: [],
@@ -508,6 +512,90 @@ describe("the deploy role can create the history schema", () => {
     await finalizeMigration(project, "add orders");
     await expect(deploy(project, { target: "dev" })).resolves.toMatchObject({
       deployed: [{ folder: "00002-add-orders" }],
+    });
+  });
+});
+
+describe("a schema with the history schema's name that super-deploy didn't make", () => {
+  test("status lists one holding other tables, and deploy refuses it, naming what it holds, writing nothing", async () => {
+    const { project, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { settings: 'historySchema: "audit",' },
+    );
+    await asDeployRole(
+      server,
+      database,
+      "create schema audit; create table audit.migrations (x int); create table audit.log (y int);",
+    );
+    await finalizeMigration(project, "add customers");
+    const finding = {
+      historySchema: "audit",
+      objects: ["table audit.log", "table audit.migrations"],
+      owner: embeddedDeployRole,
+      role: embeddedDeployRole,
+      fix: undefined,
+    };
+    const message = `the history schema "audit" exists but super-deploy didn't make it: it holds table audit.log, table audit.migrations (drop it, or set historySchema in super-deploy.config.ts to a schema the target doesn't have)`;
+
+    const report = await status(project, { target: "dev" });
+    expect(report.historySchemaExists).toBe(false);
+    expect(report.preflight.foreignHistorySchema).toEqual(finding);
+    const refusal = await deploy(project, { target: "dev" }).catch(
+      (error: unknown) => error,
+    );
+
+    expect(refusal).toBeInstanceOf(ForeignHistorySchemaError);
+    expect(refusal).toMatchObject({
+      code: "foreign-history-schema",
+      target: "dev",
+      finding,
+    });
+    expect((refusal as Error).message).toBe(
+      `Cannot use the history schema on target dev: ${message}`,
+    );
+    expect(await tables(database)).toEqual([]);
+    expect(
+      await server.query(
+        "select table_name from information_schema.tables where table_schema = 'audit' order by 1",
+        [],
+        database,
+      ),
+    ).toEqual([{ table_name: "log" }, { table_name: "migrations" }]);
+  });
+
+  test("an empty one another role owns, without privileges for the deploy role, is refused with the fix, not with permission denied", async () => {
+    const { project, database } = await deployProject(server, {
+      "customers.sql": customers,
+    });
+    // The embedded dev target creates its database on first connect.
+    await (await testSession(server, database)).close();
+    await server.query("create schema deployment_history", [], database);
+    await finalizeMigration(project, "add customers");
+    const finding = {
+      historySchema: "deployment_history",
+      objects: [],
+      owner: "super_deploy",
+      role: embeddedDeployRole,
+      fix: `ALTER SCHEMA deployment_history OWNER TO ${embeddedDeployRole}`,
+    };
+
+    expect(
+      (await status(project, { target: "dev" })).preflight.foreignHistorySchema,
+    ).toEqual(finding);
+    const refusal = await deploy(project, { target: "dev" }).catch(
+      (error: unknown) => error,
+    );
+
+    expect(refusal).toBeInstanceOf(ForeignHistorySchemaError);
+    expect((refusal as Error).message).toContain(
+      `it is empty, but owned by super_deploy, whose privileges the deploy role ${embeddedDeployRole} doesn't have (run ${finding.fix}, drop it, or set historySchema`,
+    );
+    expect(await tables(database)).toEqual([]);
+
+    await server.query(finding.fix, [], database);
+    await expect(deploy(project, { target: "dev" })).resolves.toMatchObject({
+      deployed: [{ folder: "00001-add-customers" }],
     });
   });
 });

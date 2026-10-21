@@ -255,7 +255,10 @@ settings; super-deploy refuses any other.
 - `historySchema`: the schema super-deploy creates on each target to record
   which migrations it ran, every deployment attempt, and whether the target
   is disposable. Default `deployment_history`. It must differ from
-  `managedSchema`.
+  `managedSchema`. If a target already has a schema of that name, it must be
+  super-deploy's, or empty and owned by the deploy role (super-deploy then
+  creates its tables in it). Every command refuses any other, naming what
+  it holds: drop it, or choose another name here.
 - `externalSchemas`: schemas outside the managed schema that PL/pgSQL
   routines in the desired schema may refer to, such as `["auth"]`.
   super-deploy neither creates them, nor reproduces them in rehearsals, nor
@@ -491,7 +494,10 @@ default privileges as they are.
   OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`.
   The deploy role also needs `CREATE` on the database for
   the first deployment, which creates the history schema (and the managed
-  schema, if the target lacks it).
+  schema, if the target lacks it). Instead, a DBA may create both schemas
+  beforehand, owned by the deploy role, e.g. `create schema
+  deployment_history authorization deploy_role`: the first deployment (or
+  adoption) creates its tables in the empty history schema.
 - **The application's roles**, their role membership and their database
   privileges: `CONNECT` (and `TEMPORARY`, if needed). super-deploy never
   creates or drops roles, apart from `deployer` on its private embedded
