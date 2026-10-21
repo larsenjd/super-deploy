@@ -874,7 +874,8 @@ draft-finalize-deploy path:
   then needs it flagged disposable again; `status` and `deploy` say so too.
   Each run's attempt records which way it set the flag, so `status`'s recent
   attempts show who made the target disposable and when
-  (`#5 disposable set yes succeeded by ana at ...`).
+  (`#5 disposable set yes succeeded by ana at ...`). In the menu, the
+  question says whether the target is disposable now, with no preselected.
 - **`deploy-draft --target X`** tries the current, unfinalized draft on a
   disposable target, so its scripts meet the target's data before you
   finalize. The target must have no pending migrations (a Recovery draft of

@@ -7,7 +7,7 @@ import { adopt, overrideListing } from "../commands/adopt.ts";
 import { deploy, describeMigration } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
-import { disposable } from "../commands/disposable.ts";
+import { disposable, readDisposableFlag } from "../commands/disposable.ts";
 import { draft } from "../commands/draft.ts";
 import { finalize } from "../commands/finalize.ts";
 import { init } from "../commands/init.ts";
@@ -113,6 +113,18 @@ export interface MigrationOption extends OptionBase {
 export interface ChoiceOption extends OptionBase {
   readonly kind: "choice";
   readonly choices: readonly string[];
+  /**
+   * The menu's question and preselected choice, worked out from the project
+   * and the answers so far (e.g. the target chosen). Without it the menu asks
+   * `question` (or `description`) with the first choice preselected.
+   */
+  menu?(project: Project, answers: OptionValues): Promise<ChoiceQuestion>;
+}
+
+export interface ChoiceQuestion {
+  readonly question: string;
+  /** One of the option's `choices`. */
+  readonly initial: string;
 }
 
 /** Free text normalised like a draft name; the menu previews the normalised result. */
@@ -908,6 +920,19 @@ const disposableCommand: CommandDefinition = {
       description:
         "yes to make the target disposable, no to make it not disposable",
       required: true,
+      // The menu says how the target is flagged now, and never steers
+      // towards a change: no is preselected whatever the flag (QA 176).
+      async menu(project, answers) {
+        const target = String(answers.target);
+        const now = await readDisposableFlag(project, target);
+        const question =
+          now.read === false
+            ? `Couldn't read whether target ${target} is disposable now (${now.reason}). Make it disposable?`
+            : now.disposable
+              ? `Target ${target} is disposable now. Keep it disposable?`
+              : `Target ${target} is not disposable now. Make it disposable?`;
+        return { question, initial: "no" };
+      },
     },
   ],
   async run(project, values, context) {

@@ -572,7 +572,7 @@ async function attemptOutcomes(database: string) {
 }
 
 describe.skipIf(process.platform === "win32")("from the menu", () => {
-  test("disposable asks for the target and the value, then goes through the guard and returns to the menu", async () => {
+  test("disposable asks for the target, then whether it should be disposable, naming its current flag with no preselected; the confirmation shows the flag too", async () => {
     const { dir, database } = await guardedProject();
     const terminal = spawnTerminal([], { cwd: dir.root });
 
@@ -580,12 +580,28 @@ describe.skipIf(process.platform === "win32")("from the menu", () => {
     await terminal.chooseMenuItem("disposable");
     await terminal.waitFor("The target to use");
     terminal.type(keys.enter);
-    await terminal.waitFor("yes to make the target disposable");
+    await terminal.waitFor(
+      "Target dev is not disposable now. Make it disposable?",
+    );
+    await terminal.waitFor(noSelected);
+    terminal.type(keys.up);
     terminal.type(keys.enter);
-    await terminal.waitFor("Last recorded migration: none");
+    await terminal.waitFor("Now: not disposable");
     await terminal.waitFor("Type YES to mark target dev as disposable");
     terminal.type(`YES${keys.enter}`);
     await terminal.waitFor("Target dev is now disposable");
+
+    await terminal.waitFor("quit");
+    await terminal.chooseMenuItem("disposable");
+    await terminal.waitFor("The target to use");
+    terminal.type(keys.enter);
+    await terminal.waitFor("Target dev is disposable now. Keep it disposable?");
+    await terminal.waitFor(noSelected);
+    terminal.type(keys.enter);
+    await terminal.waitFor("Now: disposable");
+    await terminal.waitFor("Type YES to mark target dev as not disposable");
+    terminal.type(`no${keys.enter}`);
+    await terminal.waitFor("was not confirmed");
 
     await terminal.waitFor("quit");
     terminal.type(keys.escape);
@@ -598,7 +614,35 @@ describe.skipIf(process.platform === "win32")("from the menu", () => {
       ),
     ).toEqual([{ disposable: true }]);
   });
+
+  test("disposable says when it can't read the target's current flag, and still preselects no", async () => {
+    const { dir } = await guardedProject({
+      otherTargets:
+        'down: { adapter: { connect: async () => { throw new Error("no route to host"); } } },',
+    });
+    const terminal = spawnTerminal([], { cwd: dir.root });
+
+    await terminal.waitFor("quit");
+    await terminal.chooseMenuItem("disposable");
+    await terminal.waitFor("The target to use");
+    terminal.type(keys.down);
+    terminal.type(keys.enter);
+    await terminal.waitFor(
+      "Couldn't read whether target down is disposable now (",
+    );
+    await terminal.waitFor("no route to host");
+    await terminal.waitFor("Make it disposable?");
+    await terminal.waitFor(noSelected);
+    terminal.type(keys.escape);
+    await terminal.waitFor("Cancelled: nothing ran");
+    await terminal.waitFor("quit");
+    terminal.type(keys.escape);
+    expect(await terminal.exited).toBe(0);
+  });
 });
+
+/** A yes/no select with no selected, as the screen shows it. */
+const noSelected = /○ yes[^●]*● no/;
 
 /**
  * A `dev` adapter whose deploy transaction waits at COMMIT while
