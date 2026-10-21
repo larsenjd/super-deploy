@@ -59,7 +59,7 @@ describe("seed data", () => {
       await expect(failure).rejects.toBeInstanceOf(SqlFileFailedError);
       await expect(failure).rejects.toMatchObject({
         file: "data-model/draft/schema-change.sql",
-        detail: expect.stringContaining('column "city"'),
+        postgresMessage: expect.stringContaining('column "city"'),
       });
     }
 

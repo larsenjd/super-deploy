@@ -142,6 +142,35 @@ describe("pre- and post-migration scripts", () => {
     ).toEqual([{ orders: null }]);
   });
 
+  test("a rehearsal names the failing statement's file and line, with PostgreSQL's DETAIL", async () => {
+    const { dir, project } = await withFirstMigration();
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      customers.replace(
+        "name text not null",
+        "name text not null,\n  phone text",
+      ),
+    );
+    await draft(project, { name: "add phone" });
+    await dir.write(
+      "data-model/draft/pre-migration.sql",
+      "update customers set name = name;\n\nupdate customers set name = 'x';\ninsert into customers (id, name) values (2, null);\n",
+    );
+
+    const error = await rehearse(project).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(SqlFileFailedError);
+    expect(error).toMatchObject({
+      file: "data-model/draft/pre-migration.sql",
+      line: 4,
+      sqlState: "23502",
+      detail: expect.stringContaining("Failing row contains"),
+    });
+    expect((error as SqlFileFailedError).message).toMatch(
+      /^data-model\/draft\/pre-migration\.sql:4: .*Failing row contains/,
+    );
+  });
+
   test("deferred constraints are checked at the end of each migration, not only at COMMIT", async () => {
     const { dir, project, database } = await deployProject(server, {
       "customers.sql": customers,
@@ -182,7 +211,7 @@ describe("pre- and post-migration scripts", () => {
     await expect(failure).rejects.toBeInstanceOf(SqlFileFailedError);
     await expect(failure).rejects.toMatchObject({
       file: "data-model/migrations/00002-move-ada/post-migration.sql",
-      detail: expect.stringContaining("orders_customer_fk"),
+      postgresMessage: expect.stringContaining("orders_customer_fk"),
     });
   });
 
@@ -366,7 +395,7 @@ alter table customers alter column phone set not null;
     await expect(rehearse(project)).rejects.toMatchObject({
       file: "data-model/draft/pre-migration.sql",
       line: 2,
-      detail: expect.stringContaining('column "greeting"'),
+      postgresMessage: expect.stringContaining('column "greeting"'),
     });
 
     await dir.write("data-model/draft/pre-migration.sql", "");
