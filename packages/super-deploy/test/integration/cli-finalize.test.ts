@@ -61,6 +61,28 @@ describe("rehearse and finalize", () => {
     ]);
   });
 
+  test("a rehearsal mismatch indents a multi-line difference's continuation lines", async () => {
+    const dir = await draftedProject();
+    await dir.write(
+      "data-model/desired-schema/answer.sql",
+      "create function answer() returns int language sql as 'select 42';\n",
+    );
+
+    const result = await runCli(["rehearse"], { cwd: dir.root });
+
+    expect(result.exitCode).toBe(1);
+    const lines = result.stderr.trimEnd().split("\n");
+    expect(lines).toContain(
+      "catalog: from the desired schema: routine: CREATE OR REPLACE FUNCTION public.answer()",
+    );
+    expect(lines).toContain("   RETURNS integer");
+    // Every line is a difference's label line, indented under one, or the Error line.
+    for (const line of lines.slice(0, -1)) {
+      expect(line).toMatch(/^(pg-delta: |catalog: | {2}\S| {3}\S)/);
+    }
+    expect(lines.at(-1)).toMatch(/^Error: .*listed above/);
+  });
+
   test("finalize prints the new migration's folder and exits 0", async () => {
     const dir = await draftedProject();
 

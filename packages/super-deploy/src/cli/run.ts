@@ -239,11 +239,20 @@ function listedDetails(
   }
   if (error instanceof RehearsalMismatchError && error.differences.length > 1) {
     return {
-      details: error.differences,
+      details: error.differences.map((line) => indentContinuation(line, "  ")),
       summary: `${error.subject} (${error.differences.length} differences, listed above)`,
     };
   }
   return undefined;
+}
+
+/**
+ * A listed item whose text spans lines, such as a routine's or rule's
+ * definition from the catalog: its continuation lines get `indent` before
+ * them, so they read as part of the item, and trailing blank lines go.
+ */
+export function indentContinuation(text: string, indent: string): string {
+  return text.trimEnd().split("\n").join(`\n${indent}`);
 }
 
 /**
