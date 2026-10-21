@@ -93,6 +93,48 @@ describe("init --adopt", () => {
     );
   });
 
+  test("also counts the tables with row-level security on, those forcing it, and the deploy role's default privileges it left", async () => {
+    const dir = await projectAdopting(`
+      create role cli_adopt_rls_reader nologin;
+      create table items (id bigint primary key);
+      create table parts (id bigint primary key);
+      alter table items enable row level security;
+      alter table parts enable row level security;
+      alter table parts force row level security;
+      alter default privileges in schema public grant select on tables to cli_adopt_rls_reader;
+    `);
+
+    const result = await runCli(["init", "--adopt", "prod"], {
+      cwd: dir.root,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "Left 0 grants, 0 policies, row-level security on 2 tables (forced on 1) and 1 default privilege rule on target prod as they are: privileges and row-level security are set up outside super-deploy\n",
+    );
+  });
+
+  test("lists the objects in other schemas that depend on the managed schema after what it left", async () => {
+    const dir = await projectAdopting(
+      `
+      create schema core;
+      create schema reporting;
+      create table core.items (id int primary key, qty int);
+      create view reporting.item_view as select id, qty from core.items;
+      `,
+      'managedSchema: "core",',
+    );
+
+    const result = await runCli(["init", "--adopt", "prod"], {
+      cwd: dir.root,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "Target prod has 1 object in other schemas that depends on schema core. Rehearsals don't have it, so a migration that changes or drops what it uses will fail on target prod (drop it, deploy, then create it again):\n  view reporting.item_view\n",
+    );
+  });
+
   test("refuses with the full list on stderr (exit 1)", async () => {
     const dir = await projectAdopting(
       "create type mood as enum ('sad'); create sequence counter;",

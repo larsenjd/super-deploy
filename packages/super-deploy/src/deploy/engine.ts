@@ -6,10 +6,12 @@
 //      target lock and runs the deploy transaction
 //   2. connect the attempt-log session (call #2): autocommit, used only for
 //      the history schema's attempts table
-//   3. create the history schema if the target has none (its own
-//      transaction); a deploy role without CREATE on the database is refused
-//      first, naming the grant (HistorySchemaNotCreatableError, nothing
-//      logged: there is nowhere to log it yet)
+//   3. create the history schema if the target has none, or its tables in
+//      an empty one the deploy role owns (its own transaction); a schema of
+//      that name super-deploy can't use (ForeignHistorySchemaError), and a
+//      deploy role without CREATE on the database, are refused first, naming
+//      the fix (HistorySchemaNotCreatableError; nothing logged: there is
+//      nowhere to log it yet)
 //   4. settle earlier attempts whose outcome was never recorded
 //      (`settleAttempts`: a lost COMMIT, a command that died)
 //   5. open a running attempt
@@ -66,7 +68,7 @@ import {
 } from "./history.ts";
 import { interruptibleSession } from "./interruptible-session.ts";
 import { acquireTargetLock, type TargetLock } from "./lock.ts";
-import { requireHistorySchemaCreatable } from "./preflight.ts";
+import { requireHistorySchemaUsable } from "./preflight.ts";
 import {
   markRolledBack,
   targetFailure,
@@ -112,7 +114,7 @@ export async function withLockedTarget<T>(
   try {
     const log = tracedSession(await connectTarget(target, signal));
     try {
-      await requireHistorySchemaCreatable(log, target.name, historySchema);
+      await requireHistorySchemaUsable(log, target.name, historySchema);
       await ensureHistorySchema(log, historySchema);
       await settleAttempts(log, historySchema);
       const { rows } = await commandSession.query<{ pid: number }>(

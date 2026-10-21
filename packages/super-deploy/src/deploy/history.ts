@@ -50,6 +50,14 @@
 //
 // Every statement schema-qualifies its tables: deploy transactions pin
 // search_path to the managed schema and pg_catalog.
+//
+// A schema of that name is super-deploy's when it holds the four tables
+// (`historyTablesExist`). A DBA may pre-create it, empty and owned by the
+// deploy role, instead of granting CREATE on the database:
+// `ensureHistorySchema` creates the tables in it. Any other schema of that
+// name is refused before anything is written (deploy/preflight.ts,
+// `foreignHistorySchema`). The readers below treat a target without the
+// tables as having no history yet, so `status` can report that refusal.
 import { inTransaction } from "../adapters/transaction.ts";
 import type { Session } from "../adapters/types.ts";
 import { lockKey } from "./lock.ts";
@@ -113,20 +121,34 @@ export function historyTable(
   return `${quoteIdentifier(schema)}.${quoteIdentifier(table)}`;
 }
 
-export async function schemaExists(
+/** The tables a history schema holds, by which super-deploy knows it as its own. */
+const historyTables = [
+  "migrations",
+  "attempts",
+  "settings",
+  "deployed_draft",
+] as const;
+
+/** Whether `schema` is super-deploy's history schema: it holds all of `historyTables`. */
+export async function historyTablesExist(
   session: Session,
   schema: string,
 ): Promise<boolean> {
-  const { rows } = await session.query(
-    "SELECT 1 FROM pg_namespace WHERE nspname = $1",
-    [schema],
+  const { rows } = await session.query<{ ours: boolean }>(
+    `SELECT count(*) = pg_catalog.cardinality($2::text[]) AS ours
+       FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND c.relkind = 'r' AND c.relname = ANY ($2::text[])`,
+    [schema, historyTables],
   );
-  return rows.length > 0;
+  return rows[0]?.ours === true;
 }
 
 /**
- * Creates the history schema with all three tables in one transaction of its
- * own, unless it already exists. The first deployment does this before
+ * Creates the history schema's tables in one transaction of its own, and
+ * the schema too if the target lacks it, unless the tables exist. The
+ * caller has refused a schema of that name that super-deploy can't use
+ * (`requireHistorySchemaUsable`), so an existing one without the tables is
+ * empty and the deploy role's. The first deployment does this before
  * opening its attempt: the attempt log is written outside the deploy
  * transaction and must survive that transaction rolling back, so its table
  * cannot be created inside it. Concurrent first commands are serialised by a
@@ -136,9 +158,19 @@ export async function ensureHistorySchema(
   session: Session,
   schema: string,
 ): Promise<void> {
-  if (await schemaExists(session, schema)) {
+  if (await historyTablesExist(session, schema)) {
     return;
   }
+  // CREATE SCHEMA checks CREATE on the database even when the schema
+  // exists: a pre-created one is used as it is.
+  const { rows } = await session.query(
+    "SELECT FROM pg_catalog.pg_namespace WHERE nspname = $1",
+    [schema],
+  );
+  const createSchema =
+    rows.length === 0
+      ? `CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)};\n`
+      : "";
   const migrations = historyTable(schema, "migrations");
   const attempts = historyTable(schema, "attempts");
   const settings = historyTable(schema, "settings");
@@ -147,8 +179,7 @@ export async function ensureHistorySchema(
     await session.query("SELECT pg_advisory_xact_lock($1::bigint)", [
       lockKey(schema, "create-history"),
     ]);
-    await session.execute(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)};
-CREATE TABLE IF NOT EXISTS ${attempts} (
+    await session.execute(`${createSchema}CREATE TABLE IF NOT EXISTS ${attempts} (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   command text NOT NULL,
   target text NOT NULL,
@@ -195,12 +226,12 @@ INSERT INTO ${settings} (layout_version) VALUES (${historyLayoutVersion})
   });
 }
 
-/** The target's recorded migrations in number order; none if it has no history schema yet. */
+/** The target's recorded migrations in number order; none if it has no history schema (or only a schema of that name super-deploy didn't make). */
 export async function readRecordedMigrations(
   session: Session,
   schema: string,
 ): Promise<RecordedMigration[]> {
-  if (!(await schemaExists(session, schema))) {
+  if (!(await historyTablesExist(session, schema))) {
     return [];
   }
   const { rows } = await session.query<{
@@ -299,7 +330,7 @@ export async function readRecentAttempts(
   schema: string,
   limit: number,
 ): Promise<AttemptRecord[]> {
-  if (!(await schemaExists(session, schema))) {
+  if (!(await historyTablesExist(session, schema))) {
     return [];
   }
   const { rows } = await session.query<AttemptRow>(
@@ -315,7 +346,7 @@ export async function readRunningAttemptOf(
   schema: string,
   pid: number,
 ): Promise<AttemptRecord | undefined> {
-  if (!(await schemaExists(session, schema))) {
+  if (!(await historyTablesExist(session, schema))) {
     return undefined;
   }
   const { rows } = await session.query<AttemptRow>(
@@ -336,7 +367,7 @@ export async function readTargetSettings(
   session: Session,
   schema: string,
 ): Promise<TargetSettings> {
-  if (!(await schemaExists(session, schema))) {
+  if (!(await historyTablesExist(session, schema))) {
     return { disposable: false };
   }
   const { rows } = await session.query<{ disposable: boolean }>(
@@ -363,7 +394,7 @@ export async function readDeployedDraft(
   session: Session,
   schema: string,
 ): Promise<DeployedDraft | undefined> {
-  if (!(await schemaExists(session, schema))) {
+  if (!(await historyTablesExist(session, schema))) {
     return undefined;
   }
   const { rows } = await session.query<{
