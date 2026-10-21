@@ -6,14 +6,19 @@
 // so each expression is parsed again with the SQL parser. Declared external
 // schemas are allowed here and only here.
 //
-// LANGUAGE sql string bodies bind at CREATE like the rest of the statement:
-// they get the same denylist and schema checks.
+// LANGUAGE sql string bodies get the same denylist and schema checks.
+//
+// Every statement in either kind of body gets the privilege refusals
+// (privileges.ts) on its own line, as it would at top level: a body runs as
+// whoever calls it, and a trigger fired by a deployment's script runs it as
+// the deploy role.
 //
 // Both use the *Sync parsers, so they run only after parseSqlFile has loaded
 // the WASM module (checkRules always parses the file first).
 import { parsePlPgSQLSync, parseSync } from "libpg-query";
 import { denylistFindings } from "./denylist.ts";
-import type { ParsedStatement } from "./parse.ts";
+import { lineAtByte, type ParsedStatement } from "./parse.ts";
+import { privilegeRefusal } from "./privileges.ts";
 import type { RuleContext, RuleFinding } from "./rule-types.ts";
 import { referencedSchemas, referenceFindings } from "./schemas.ts";
 import {
@@ -131,6 +136,7 @@ function plpgsqlNodeFindings(
       return [];
     }
     return [
+      ...privilegeFindings(tree, () => line),
       ...denylistFindings(tree, line),
       ...notifyFindings(tree, line),
       ...referenceFindings(
@@ -161,6 +167,30 @@ function parseEmbedded(query: string, parseMode: number): unknown {
     // PostgreSQL itself refuses an unparseable body at CREATE.
     return undefined;
   }
+}
+
+/**
+ * The privilege refusal of each statement in a parsed body, on the line
+ * `lineOf` gives for the statement's byte offset in the parsed text.
+ */
+function privilegeFindings(
+  tree: unknown,
+  lineOf: (location: number) => number,
+): RuleFinding[] {
+  const statements =
+    (tree as { stmts?: { stmt?: Json; stmt_location?: number }[] }).stmts ?? [];
+  return statements.flatMap(({ stmt, stmt_location }) => {
+    const refusal =
+      stmt === undefined
+        ? undefined
+        : privilegeRefusal({
+            nodeType: Object.keys(stmt)[0] ?? "",
+            node: stmt as unknown as ParsedStatement["node"],
+          });
+    return refusal === undefined
+      ? []
+      : [{ ...refusal, line: lineOf(stmt_location ?? 0) }];
+  });
 }
 
 function notifyFindings(tree: unknown, line: number): RuleFinding[] {
@@ -221,7 +251,12 @@ export function sqlBodyFindings(
     return [];
   }
   const line = bodyFirstLine(statement, body);
+  const bytes = Buffer.from(text, "utf8");
   return unique([
+    ...privilegeFindings(
+      tree,
+      (location) => line + lineAtByte(bytes, location) - 1,
+    ),
     ...denylistFindings(tree, line),
     ...referenceFindings(
       referencedSchemas(tree),

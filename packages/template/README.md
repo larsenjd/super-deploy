@@ -396,7 +396,10 @@ No privileges. The desired schema, and every file a deployment runs
 revokes, `ALTER DEFAULT PRIVILEGES`, roles and role membership, `OWNER TO`,
 `REASSIGN OWNED`, `DROP OWNED`, policies, turning row-level security on or
 off (`ALTER TABLE ... ENABLE ROW LEVEL SECURITY` and the like) and
-`SECURITY DEFINER` routines. No override marker gets past these refusals. Every routine runs as
+`SECURITY DEFINER` routines, including inside a function's or procedure's
+body. No override marker gets past these refusals, though an overridden
+`EXECUTE` runs SQL they never see (see
+[Overriding a refusal](#overriding-a-refusal)). Every routine runs as
 the role that calls it (`SECURITY INVOKER`, PostgreSQL's default). Each
 refusal says what to do instead: run grants, policies and `ALTER DEFAULT
 PRIVILEGES` on each target as the deploy role, and create roles there (see
@@ -542,6 +545,9 @@ $$;
   breaks any other rule (transaction control, privileges, unsupported
   objects, ...) doesn't get it past them, and a marker before a statement
   that breaks no rule is refused as unused.
+- An overridden `EXECUTE` runs SQL the rules never see, privilege
+  statements included: a trigger fired by a deployment's script runs it as
+  the deploy role. Reviewers must read what it builds.
 - Every override is recorded with its file, line, object and reason:
   `finalize` lists them and writes them to the migration's `metadata.json`,
   and `validate` lists them, so reviewers see each exception.

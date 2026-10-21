@@ -672,6 +672,57 @@ describe("privileges, roles, ownership, row-level security and SECURITY DEFINER"
       ),
     ).toEqual([]);
   });
+
+  describe("inside a routine body", () => {
+    const plpgsql = (statement: string) =>
+      `create function f() returns trigger language plpgsql as $$\nbegin\n  ${statement};\n  return new;\nend $$;`;
+
+    test.each([
+      ["grant select on notes to public", /^GRANT is not supported/],
+      ["revoke select on notes from public", /^REVOKE is not supported/],
+      [
+        "alter table orders disable row level security",
+        /^ALTER TABLE \.\.\. DISABLE ROW LEVEL SECURITY is not supported/,
+      ],
+      [
+        "create policy p on notes using (true)",
+        /^CREATE POLICY is not supported/,
+      ],
+      [
+        "alter table notes owner to someone",
+        /^ALTER TABLE \.\.\. OWNER TO is not supported/,
+      ],
+    ])("a PL/pgSQL body refuses %s on its own line", async (sql, message) => {
+      expect(await violations(plpgsql(sql))).toEqual([
+        expect.objectContaining({
+          line: 3,
+          rule: "unsupported-object",
+          message: expect.stringMatching(message),
+        }),
+      ]);
+    });
+
+    test("a LANGUAGE sql string body refuses GRANT on its own line", async () => {
+      expect(
+        await violations(
+          "create function g() returns void language sql as $$\n  select 1;\n  grant select on notes to public\n$$;",
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          line: 3,
+          rule: "unsupported-object",
+          message: expect.stringMatching(/^GRANT is not supported/),
+        }),
+      ]);
+    });
+
+    test("an override marker before the routine can't bypass them", async () => {
+      const found = await violations(
+        `-- OVERRIDE SUPER-DEPLOY REFUSAL: the app needs it\n${plpgsql("grant select on notes to public")}`,
+      );
+      expect(found.map(({ rule }) => rule)).toContain("unsupported-object");
+    });
+  });
 });
 
 describe("schemas", () => {

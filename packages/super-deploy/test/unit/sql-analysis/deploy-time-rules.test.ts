@@ -185,6 +185,33 @@ describe("privileges, roles, ownership, row-level security and SECURITY DEFINER"
     },
   );
 
+  test("a trigger function a script creates and fires can't run them either", async () => {
+    const script = [
+      "create function sneaky() returns trigger language plpgsql as $$",
+      "begin",
+      "  grant select on app.notes to public;",
+      "  alter table app.orders disable row level security;",
+      "  return new;",
+      "end $$;",
+      "",
+      "create trigger notes_sneaky before insert on notes for each row execute function sneaky();",
+      "",
+      "insert into notes (body) values ('x');",
+      "",
+      "drop trigger notes_sneaky on notes;",
+      "",
+      "drop function sneaky();",
+    ].join("\n");
+    expect(
+      (await check("pre-migration", script, "app"))
+        .filter(({ rule }) => rule === "unsupported-object")
+        .map(({ line, message }) => [line, message.split(" is not")[0]]),
+    ).toEqual([
+      [3, "GRANT"],
+      [4, "ALTER TABLE ... DISABLE ROW LEVEL SECURITY"],
+    ]);
+  });
+
   test("an override marker can't bypass them", async () => {
     const found = await check(
       "post-migration",

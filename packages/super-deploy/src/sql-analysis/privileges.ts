@@ -3,8 +3,11 @@
 // owns the managed schema and everything in it. Grants, policies and RLS are
 // set up on targets by hand, so every file super-deploy deploys refuses the
 // statements that would change them. Both rule sets (desired-schema-rules.ts,
-// deploy-time.ts) ask here first. The refusals are `unsupported-object`, which
-// no override marker bypasses.
+// deploy-time.ts) ask here first, and routine-bodies.ts asks for each
+// statement inside a PL/pgSQL or LANGUAGE sql string body: a trigger a script
+// fires runs its body as the deploy role. The refusals are
+// `unsupported-object`, which no override marker bypasses. Only SQL built at
+// run time (an overridden EXECUTE) is out of their reach.
 //
 // COMMENT ON POLICY is left to each rule set's COMMENT rule.
 import type { ParsedStatement } from "./parse.ts";
@@ -14,7 +17,6 @@ import {
   alterTableCommands,
   defElems,
   type Json,
-  statementBody,
   unwrap,
 } from "./syntax-tree.ts";
 
@@ -78,10 +80,10 @@ const refusedRenames: Readonly<
  * a routine SECURITY DEFINER; undefined for any other statement.
  */
 export function privilegeRefusal(
-  statement: ParsedStatement,
+  statement: Pick<ParsedStatement, "nodeType" | "node">,
 ): Refusal | undefined {
   const type = statement.nodeType;
-  const body = statementBody(statement);
+  const body = unwrap(statement.node, type) ?? {};
   const reason = refusedStatements[type];
   if (reason !== undefined) {
     return refusal(statementName(type), reason);
