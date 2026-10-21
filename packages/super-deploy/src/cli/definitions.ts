@@ -67,7 +67,13 @@ export const commandGroups: readonly CommandGroup[] = [
 interface OptionBase {
   /** Long option name without dashes, e.g. `name` for `--name`. */
   readonly name: string;
+  /** The `--help` text. */
   readonly description: string;
+  /**
+   * The menu's question for this option, when the `--help` text doesn't read
+   * as one on its own. The menu asks `description` without it.
+   */
+  readonly question?: string;
   /** Missing on the command line is a usage error; the menu insists on an answer. */
   readonly required?: boolean;
 }
@@ -249,7 +255,7 @@ const initCommand: DirectoryCommandDefinition = {
   name: "init",
   group: "Start",
   summary:
-    "Create a project here from the bundled template, with a local embedded PostgreSQL and a dev target; or, in an empty project, adopt an existing database",
+    "Create a project here, or adopt a database into an initialised project with no migrations yet",
   needsProject: false,
   options: [
     {
@@ -257,6 +263,8 @@ const initCommand: DirectoryCommandDefinition = {
       kind: "target",
       description:
         "Instead, in an initialised project with no migrations yet: turn this target's managed schema into the desired schema and migration 1, recorded on it as marked",
+      question:
+        "Adopt which target's existing database as migration 1? Its managed schema becomes the desired schema",
     },
   ],
   async run(directory, _values, context) {
