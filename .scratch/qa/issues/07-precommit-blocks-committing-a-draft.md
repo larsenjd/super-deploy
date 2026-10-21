@@ -79,9 +79,12 @@ The maintainer chose: **the hook lets a draft in progress through; CI stays stri
 
 - `validate` gains a mode for the hook (e.g. `--allow-draft`, combinable with `--strict`) that does not count the work-in-progress findings, "draft not finalized" and "no draft covers it", as failures. It still lists them, as warnings. Every other finding fails as under `--strict`.
 - The template's `precommit` uses it. CI (`validate --strict` without the new flag) still fails on an unfinalized draft.
+- It is a user-facing option, not just the hook's: `validate --allow-draft` is listed in `validate --help`, the interactive menu asks it (yes/no, default no) when you run `validate` from the menu, and the API takes it as `validate(project, { strict, allowDraft })`. It means the same everywhere: the two work-in-progress findings are shown as warnings and never fail the run.
 - The README says what the hook blocks, that a draft can be committed for review, and that CI refuses until it is finalized.
 
 **Acceptance criteria** (replacing the "once decided" ones):
 - [ ] CLI test: with a draft present, `validate --strict --allow-draft` exits 0 and prints the warnings; `validate --strict` exits 1.
 - [ ] A finding other than the two work-in-progress ones (e.g. an edited migration) still fails with `--allow-draft`.
+- [ ] `validate --help` lists `--allow-draft`; a pseudo-terminal test runs `validate` from the menu, answers yes to it with a draft present, and exits 0.
+- [ ] API seam: `validate(project, { strict: true, allowDraft: true })` with a draft present doesn't throw and returns the two findings as warnings.
 - [ ] The template's precommit uses the flag, and the README documents it.
