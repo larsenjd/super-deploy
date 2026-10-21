@@ -65,6 +65,13 @@ export function deployedMigration(
     : { number, name, folder, recovery };
 }
 
+/** `00004-add-country`, or `00004-add-country (Recovery 1)` when it runs, or ran, as Recovery 1. */
+export function describeMigration(migration: DeployedMigration): string {
+  return migration.recovery === undefined
+    ? migration.folder
+    : `${migration.folder} (Recovery ${migration.recovery})`;
+}
+
 export interface DeployResult {
   readonly target: string;
   /** The attempt recorded in the target's history schema. */

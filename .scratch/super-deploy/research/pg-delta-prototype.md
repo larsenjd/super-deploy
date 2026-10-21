@@ -158,7 +158,7 @@ Added 2026-10-20 from the V1 build, against the same pinned `1.0.0-alpha.59`. Wh
 | PG18 NOT NULL constraint names are ignored (F3). A column rename keeps its generated name (`t_old_not_null`), and a custom name is never applied. | `verification/catalog.ts` compares constraint names, so `rehearse` and `finalize` refuse the draft until a pre-migration script runs `ALTER TABLE … RENAME CONSTRAINT`. Adoption refuses a target with a custom name (`not-reproduced`, `commands/adopt.ts`). |
 | Comments on indexes that back a constraint (`COMMENT ON INDEX t_pkey`) are not extracted (F4). | The catalog comparison catches them; adoption refuses them as `not-reproduced`. |
 | Virtual generated columns come out `STORED` (F1). | The desired-schema rules refuse a generated column without `STORED` (`sql-analysis/desired-schema-rules.ts`). |
-| Composite-type attribute order is not diffed (pg-toolbelt #330/#332). | `verification/catalog.ts` compares each composite attribute's position among the live ones (ticket 27), so the rehearsal refuses a reordered type and a type reordered on a target is drift. |
+| Composite-type attribute order is not diffed (pg-toolbelt #330/#332). | `verification/catalog.ts` compares each composite attribute's position among the live ones (ticket 27), so the rehearsal refuses a reordered type and a type reordered on a target is drift. `draft` runs its schema change and warns, naming the type, and the rehearsal's mismatch names the same cause (`rehearsal/schema-change-check.ts`, QA 102); the README's recipe does it in the pre-migration script. |
 
 **Loud failures: the run stops with an error**
 
@@ -166,7 +166,12 @@ Added 2026-10-20 from the V1 build, against the same pinned `1.0.0-alpha.59`. Wh
 |---|---|
 | Nested `AND` with `BETWEEN` or row comparisons in a check never converges (F2, upstream #544). | The rehearsal re-diff fails, so `rehearse` and `finalize` refuse the draft. |
 | Changing the base type of a domain a column uses throws in `plan()` (F5). | `differ/pg-delta.ts` wraps it in `DifferError`, so `draft` stops with pg-delta's message. |
+| Changing the type of a column a stored generated column uses generates a bare `ALTER COLUMN … TYPE`, which PostgreSQL refuses: `cannot alter type of a column used by a generated column` (QA 104). | Output kept as generated. `draft` runs its schema change and warns (`rehearsal/schema-change-check.ts`, QA 102); the refusal's `SqlFileFailedError` names the pre-migration fix (`rehearsal/replay.ts`, `nextStep`): drop the generated column there, and the regenerated schema change retypes the column and adds it back. Upstream report below. |
 | A non-transactional action. None seen so far. | `differ/pg-delta.ts` refuses the plan with `DifferError` (ADR-0001). |
+
+**Upstream reports to file** (ready-to-file text; nothing has been posted)
+
+- *Type change of a column used by a stored generated column fails to apply* (QA 104). Against `1.0.0-alpha.59` on PostgreSQL 18: source `create table a (id bigint primary key, price numeric(10,2) not null, qty integer not null, total numeric generated always as (price * qty) stored);`, target the same with `price numeric(6,2)`. The plan is `ALTER TABLE "public"."a" ALTER COLUMN "price" DROP DEFAULT; ALTER TABLE "public"."a" ALTER COLUMN "price" TYPE numeric(6,2) USING "price"::numeric(6,2);`, which PostgreSQL refuses: `ERROR: cannot alter type of a column used by a generated column` (SQLSTATE 0A000), `DETAIL: Column "price" is used by generated column "total".` Expected: the plan drops the dependent generated columns before the type change and adds them back after it, or reports that it can't. The same holds for `qty integer` → `smallint`.
 
 **Shapes of generated SQL that other code relies on**
 

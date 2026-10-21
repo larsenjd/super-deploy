@@ -36,12 +36,14 @@ import {
   type RecordedMigration,
   readDeployedDraft,
   readRecordedMigrations,
+  readTargetSettings,
   recordMigration,
 } from "./history.ts";
 import { pendingMigrations } from "./pending.ts";
-import type { HistoryMismatch } from "./preflight.ts";
 import {
+  type DraftHolder,
   describeHeldDraft,
+  type HistoryMismatch,
   historyMismatches,
   onlyHeldDraft,
 } from "./preflight.ts";
@@ -66,23 +68,25 @@ export async function readMarkableMigrations(
  * deployed draft, and NothingToMarkError if nothing is pending.
  */
 export function nextToMark(
-  targetName: string,
+  target: DraftHolder,
   migrations: readonly MigrationWithUnit[],
   recorded: readonly RecordedMigration[],
   draft: DeployedDraft | undefined,
 ): MigrationWithUnit {
-  const mismatches = historyMismatches(migrations, recorded, draft);
+  const mismatches = historyMismatches(migrations, recorded, draft, target);
   if (mismatches.length > 0) {
     const held = onlyHeldDraft(mismatches, draft);
     throw new HistoryMismatchError(
-      targetName,
+      target.name,
       mismatches,
-      held === undefined ? undefined : describeHeldDraft(held, recorded),
+      held === undefined
+        ? undefined
+        : describeHeldDraft(held, recorded, target),
     );
   }
   const [next] = pendingMigrations(migrations, recorded);
   if (next === undefined) {
-    throw new NothingToMarkError(targetName);
+    throw new NothingToMarkError(target.name);
   }
   return next;
 }
@@ -161,7 +165,12 @@ export async function markNextPending(
     project.config.historySchema,
   );
   const next = nextToMark(
-    locked.target.name,
+    {
+      name: locked.target.name,
+      disposable: (
+        await readTargetSettings(locked.session, project.config.historySchema)
+      ).disposable,
+    },
     migrations,
     recorded,
     await readDeployedDraft(locked.session, project.config.historySchema),
