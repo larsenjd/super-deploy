@@ -8,7 +8,9 @@
 // ones are dropped too: a view on a managed table, a foreign key to one, a
 // column of a managed type (with its data). `rebuild` lists them in its
 // confirmation first (`dependentsOutside`), so the person typing YES has
-// seen exactly what goes outside the managed schema.
+// seen exactly what goes outside the managed schema. `init --adopt` names
+// them too: rehearsals lack them, so migrations touching what they use fail
+// at deploy.
 //
 // Before asking, `rebuild` refuses a managed schema holding something the
 // deploy role can't drop (`requireWipeable`, CannotWipeError, e.g. an

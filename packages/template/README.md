@@ -551,6 +551,13 @@ default privileges as they are.
     on the column. Rehearsals can't catch it, because their databases have
     no hand-made policies. The deployment rolls back and PostgreSQL's error
     names the policy: drop the policy, deploy, then create it again.
+- **Objects in other schemas that depend on managed ones**, such as a
+  reporting schema's view on a managed table, a foreign key to one, or a
+  column of a managed type. Rehearsals don't have them, so a migration that
+  changes or drops what they use passes its rehearsals and fails at deploy:
+  PostgreSQL refuses, the deployment rolls back, and its error names the
+  object. Drop it, deploy, then create it again. `init --adopt` lists the
+  ones the target has, and `rebuild` lists them before dropping them.
 - **External schemas** (`externalSchemas` in `super-deploy.config.ts`, see
   [Project settings](#project-settings)), and grants on them and their
   objects. super-deploy doesn't check them: `deploy` goes ahead on a target

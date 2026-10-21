@@ -144,6 +144,7 @@ describe("adopt", () => {
         forcedRowLevelSecurity: 0,
         defaultPrivileges: 0,
       });
+      expect(result.dependentsOutside).toEqual([]);
       // Two tables, a view and a function: indexes and identity sequences go with their table.
       expect(result.objects).toBe(4);
       expect(result.warning).toBeUndefined();
@@ -821,6 +822,31 @@ describe("adopt", () => {
         forcedRowLevelSecurity: 1,
         defaultPrivileges: 1,
       });
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("names the objects in other schemas that depend on the managed schema, which rehearsals won't have", async () => {
+    const { project } = await adoptableProject(
+      `
+      create schema core;
+      create schema reporting;
+      create table core.items (id int primary key, qty int);
+      create view reporting.item_view as select id, qty from core.items;
+      create table reporting.snap (it core.items);
+      create table reporting.lines (item_id int constraint lines_item_fk references core.items (id));
+      `,
+      'managedSchema: "core",',
+    );
+    try {
+      const result = await adopt(project, { target: "prod" });
+
+      expect(result.dependentsOutside).toEqual([
+        "column reporting.snap.it (with its data)",
+        "foreign key lines_item_fk on reporting.lines",
+        "view reporting.item_view",
+      ]);
     } finally {
       await project.close();
     }

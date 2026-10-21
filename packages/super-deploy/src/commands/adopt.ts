@@ -27,7 +27,10 @@
 //      and row-level security stay on the target as they are and are never
 //      written (ADR-0006); the result counts the grants, policies, tables
 //      with row-level security on (and forced), and the deploy role's
-//      default privileges, which a new target won't have.
+//      default privileges, which a new target won't have, and names the
+//      objects in other schemas that depend on managed ones (`rebuild`'s
+//      `dependentsOutside`): rehearsals lack them, so a migration changing
+//      or dropping what they use fails only at deploy.
 //      Reading needs no privilege on the managed schema (pg-delta and the
 //      catalog check read only the catalogs), so a target whose objects
 //      all belong to a superuser is read, and refused once, like any other.
@@ -112,6 +115,7 @@ import {
   targetDatabaseRequest,
   targetTimeouts,
 } from "../deploy/target.ts";
+import { dependentsOutside } from "../deploy/wipe.ts";
 import { differ } from "../differ/index.ts";
 import { plural, SuperDeployError } from "../errors.ts";
 import { throwIfInterrupted } from "../interruption.ts";
@@ -221,6 +225,13 @@ export interface AdoptResult {
    */
   readonly leftOnTarget: LeftOnTarget;
   /**
+   * The objects outside the managed and history schemas that depend on the
+   * managed schema, as `rebuild` describes them (`view
+   * reporting.item_view`), sorted. Rehearsals don't have them, so a
+   * migration that changes or drops what they use fails at deploy.
+   */
+  readonly dependentsOutside: readonly string[];
+  /**
    * How many objects of the managed schema it adopted: tables, views,
    * sequences, routines and types (not what goes with them, such as indexes
    * and constraints).
@@ -309,6 +320,7 @@ export async function adopt(
       files: written.map((path) => projectRelative(project.root, path)),
       overrides: finalized.metadata.overrides,
       leftOnTarget: read.leftOnTarget,
+      dependentsOutside: read.dependentsOutside,
       objects: read.objects,
       warning: read.warning,
     };
@@ -369,6 +381,7 @@ async function readTarget(
   files: AdoptedFile[];
   candidates: OverrideCandidate[];
   leftOnTarget: LeftOnTarget;
+  dependentsOutside: string[];
   objects: number;
   warning: string | undefined;
 }> {
@@ -556,6 +569,11 @@ async function readTarget(
       files,
       candidates,
       leftOnTarget: await countLeftOnTarget(session, config.managedSchema),
+      dependentsOutside: await dependentsOutside(
+        session,
+        config.managedSchema,
+        config.historySchema,
+      ),
       objects,
       warning:
         objects === 0

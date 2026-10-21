@@ -325,6 +325,19 @@ const initCommand: DirectoryCommandDefinition = {
             `Left ${left} on target ${result.target} as they are: privileges and row-level security are set up outside super-deploy`,
           );
         }
+        const dependents = result.dependentsOutside;
+        if (dependents.length > 0) {
+          const one = dependents.length === 1;
+          const [them, they, uses] = one
+            ? ["it", "it", "uses"]
+            : ["them", "they", "use"];
+          context.result(
+            `Target ${result.target} has ${plural(dependents.length, "object")} in other schemas that ${one ? "depends" : "depend"} on schema ${project.config.managedSchema}. Rehearsals don't have ${them}, so a migration that changes or drops what ${they} ${uses} will fail on target ${result.target} (drop ${them}, deploy, then create ${them} again):`,
+          );
+          for (const dependent of dependents) {
+            context.result(`  ${dependent}`);
+          }
+        }
         for (const override of result.overrides) {
           context.result(
             describeOverride(override, result.migration.path, context),

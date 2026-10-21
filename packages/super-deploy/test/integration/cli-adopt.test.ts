@@ -114,6 +114,27 @@ describe("init --adopt", () => {
     );
   });
 
+  test("lists the objects in other schemas that depend on the managed schema after what it left", async () => {
+    const dir = await projectAdopting(
+      `
+      create schema core;
+      create schema reporting;
+      create table core.items (id int primary key, qty int);
+      create view reporting.item_view as select id, qty from core.items;
+      `,
+      'managedSchema: "core",',
+    );
+
+    const result = await runCli(["init", "--adopt", "prod"], {
+      cwd: dir.root,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "Target prod has 1 object in other schemas that depends on schema core. Rehearsals don't have it, so a migration that changes or drops what it uses will fail on target prod (drop it, deploy, then create it again):\n  view reporting.item_view\n",
+    );
+  });
+
   test("refuses with the full list on stderr (exit 1)", async () => {
     const dir = await projectAdopting(
       "create type mood as enum ('sad'); create sequence counter;",
