@@ -104,7 +104,9 @@ async function checkOrderIndependence(
       if (differences.length > 0) {
         throw new OrderDependenceError(
           [...new Set(differences.map((d) => d.fact.object))].sort(),
-          differences.map((d) => `${d.side} ${factLine(d.fact)}`),
+          differences.map(
+            (d) => `${d.side === "actual" ? "-" : "+"} ${factLine(d.fact)}`,
+          ),
         );
       }
     },

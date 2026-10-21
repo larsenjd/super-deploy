@@ -119,7 +119,11 @@ import {
   catalogFacts,
   isVirtualGeneratedColumn,
 } from "../verification/catalog.ts";
-import { type DriftChange, driftBetween } from "../verification/drift.ts";
+import {
+  type DriftChange,
+  type DriftedObject,
+  driftBetween,
+} from "../verification/drift.ts";
 import { draft } from "./draft.ts";
 import { finalize } from "./finalize.ts";
 
@@ -410,7 +414,7 @@ async function readTarget(
         differences.map((drifted) => ({
           object: drifted.object,
           rule: "not-reproduced",
-          reason: `${notReproduced[drifted.change]}: ${drifted.differences.join("; ")}`,
+          reason: `${notReproduced[drifted.change]}: ${notReproducedLines(drifted)}`,
         })),
         needed,
       );
@@ -633,6 +637,20 @@ const notReproduced: Readonly<Record<DriftChange, string>> = {
   changed:
     "The desired schema generated from the target creates it differently",
 };
+
+/**
+ * A drifted object's catalog lines, `; `-separated. A changed object's say
+ * which side each is on; the reason already names a one-sided object's.
+ */
+function notReproducedLines(drifted: DriftedObject): string {
+  return drifted.differences
+    .map(({ side, line }) =>
+      drifted.change !== "changed"
+        ? line
+        : `${side === "target" ? "on the target" : "generated"}: ${line}`,
+    )
+    .join("; ");
+}
 
 /**
  * The generated files through the desired-schema rules and ordering. The
