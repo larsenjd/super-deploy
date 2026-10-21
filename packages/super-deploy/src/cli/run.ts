@@ -102,12 +102,13 @@ export async function runCommand(
   const interrupted = io.signal.aborted;
   io.interruptions.commandSettled({ command: command.name, exitCode: code });
   await settleCleanups(io.signal);
-  if (interrupted && values !== undefined && !io.interruptions.outputClosed) {
-    const outcome = interruptedOutcome(command, values, failed);
+  const outcome =
+    interrupted && values !== undefined && !io.interruptions.outputClosed
+      ? interruptedOutcome(command, values, failed)
+      : undefined;
+  if (outcome !== undefined) {
     try {
-      if (outcome !== undefined) {
-        io.stderr.write(`${outcome}\n`);
-      }
+      io.stderr.write(`${outcome}\n`);
     } catch {
       // A hung-up terminal: the exit code still tells the story.
     }

@@ -76,7 +76,7 @@ export function watchInterruptions(): ProcessInterruptions {
 
   const interrupt = (code: number, reason: string) => {
     exitCode = code;
-    process.exitCode = exitCode;
+    process.exitCode = code;
     controller.abort(new Error(reason));
   };
 
