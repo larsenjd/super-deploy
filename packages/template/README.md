@@ -82,9 +82,13 @@ Each entry in `targets` is one target:
 - `statementTimeout`: how long one statement may run on the target
   (PostgreSQL's `statement_timeout`). Default none: the server's own
   setting for the deploy role applies.
+- `connectTimeout`: how long connecting to the target may take before the
+  command fails, such as when the host is firewalled or unreachable.
+  Default `"10s"`. (`connect_timeout` in a connection string is ignored.)
 
-Both apply inside deployments, and to super-deploy's reads of the target's
-schema (its drift check, and `init --adopt`). A duration is a positive whole
+`lockTimeout` and `statementTimeout` apply inside deployments, and to
+super-deploy's reads of the target's schema (its drift check, and
+`init --adopt`). A duration is a positive whole
 number of milliseconds (`500`) or a string with the unit `ms`, `s`, `min` or
 `h`: `"500ms"`, `"5s"`, `"2min"`, `"1h"`.
 

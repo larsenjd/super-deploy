@@ -85,7 +85,7 @@ export async function runGuarded<P, T>(
   requireTerminal(action.command);
   const target = resolveTarget(project, action.target);
 
-  const session = await connectTarget(target);
+  const session = await connectTarget(target, project.signal);
   let shown: TargetView;
   let decision: Proceed<P> | NothingToDo<T>;
   try {

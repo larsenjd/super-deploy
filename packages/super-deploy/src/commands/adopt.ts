@@ -286,7 +286,7 @@ async function readTarget(
     managedSchema: config.managedSchema,
     externalSchemas: config.externalSchemas,
   };
-  const session = await connectTarget(target);
+  const session = await connectTarget(target, project.signal);
   try {
     const recorded = await readRecordedMigrations(
       session,

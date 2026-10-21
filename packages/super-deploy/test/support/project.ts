@@ -126,6 +126,29 @@ export default defineConfig({
 }
 
 /**
+ * A config with one target, `down`, a `postgresTarget` reading its URL from
+ * the environment variable `variable` (e.g. a `silentHost`'s).
+ * `targetSettings` is spliced into the target's object literal. The embedded
+ * rehearsal adapter is never started unless a command rehearses.
+ */
+export function downTargetConfig(
+  variable: string,
+  targetSettings: string,
+): string {
+  return `import { defineConfig, postgresTarget } from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
+
+const postgres = embeddedPostgres({ dataDir: "/nonexistent/super-deploy-down-target" });
+
+export default defineConfig({
+  postgresVersion: 18,
+  rehearsal: postgres.rehearsal,
+  targets: { down: { adapter: postgresTarget({ env: ${JSON.stringify(variable)} }), ${targetSettings} } },
+});
+`;
+}
+
+/**
  * A config using the embedded-postgres adapter on the test server, with a
  * `dev` target. `settings` is spliced into the defineConfig() object literal.
  */
