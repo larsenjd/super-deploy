@@ -134,7 +134,11 @@ export type {
   MigrationVariantIdentity,
   RecordedMigration,
 } from "./deploy/history.ts";
-export { type LockHolder, TargetLockedError } from "./deploy/lock.ts";
+export {
+  type LockHolder,
+  type LockHolderActivity,
+  TargetLockedError,
+} from "./deploy/lock.ts";
 export {
   HistoryMismatchError,
   MarkMismatchError,
@@ -221,7 +225,11 @@ export {
   SqlRuleViolationError,
 } from "./sql-analysis/index.ts";
 export type { Override } from "./sql-analysis/overrides.ts";
-export { InvalidDraftError, NoDraftError } from "./store/draft.ts";
+export {
+  InvalidDraftError,
+  NoDraftError,
+  type UnknownDraftFile,
+} from "./store/draft.ts";
 export {
   InvalidDraftNameError,
   maxDraftNameLength,

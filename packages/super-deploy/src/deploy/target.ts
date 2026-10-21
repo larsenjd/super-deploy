@@ -1,6 +1,15 @@
 // Reaching a target: resolve its name from config, connect through its
 // deployment adapter (only when a command actually touches it), check the
 // server, and read the locale its rehearsals must match.
+//
+// Every target session sets client_connection_check_interval (5 s). Without
+// it PostgreSQL notices a vanished client only when it next writes to it, so
+// a statement whose CLI was killed (SIGKILL, a lost laptop) runs to its end,
+// possibly hours, holding the target lock and its table locks. With it the
+// server polls the socket while the statement runs and ends the session soon
+// after the client is gone. The setting is user-settable, but a server on a
+// platform that can't poll (Windows) refuses any value but 0 with
+// invalid_parameter_value; such a server runs without the check.
 
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
 import { AdapterError } from "../adapters/types.ts";
@@ -34,8 +43,9 @@ export function targetTimeouts(target: ResolvedTarget): string[] {
 
 /**
  * Opens a session to `target` through its adapter and refuses a server that
- * isn't PostgreSQL 18. Every call is one `adapter.connect()`; a deployment
- * calls it twice (see deploy/engine.ts for which session is which). The
+ * isn't PostgreSQL 18, then sets the client connection check (see the
+ * header). Every call is one `adapter.connect()`; a deployment calls it
+ * twice (see deploy/engine.ts for which session is which). The
  * adapter is handed the target's connectTimeout and `signal`; a connect that
  * fails once `signal` has aborted is InterruptedError. A connection-string
  * problem is reported as the target's own ("Target qa has no connection
@@ -66,12 +76,22 @@ export async function connectTarget(
   );
   try {
     await requirePostgres18(session, `Target ${target.name}`);
+    await session.query(checkClientConnection);
   } catch (error) {
     await session.close().catch(() => {});
     throw error;
   }
   return session;
 }
+
+/** Sets client_connection_check_interval for the session, where the server's platform supports it (see the header). */
+const checkClientConnection = `DO $$
+BEGIN
+  PERFORM set_config('client_connection_check_interval', '5s', false);
+EXCEPTION WHEN invalid_parameter_value THEN
+  NULL;
+END
+$$`;
 
 /** The target database's encoding, locale and collation provider, for a matching throwaway database. */
 export async function targetDatabaseRequest(

@@ -310,7 +310,8 @@ export interface ValidationProblem {
    * `migration-renamed`, `numbering-gap`, `invalid-encoding`,
    * `content-hash-mismatch`, `chain-hash-mismatch`, `sql-rule-violation`,
    * `recovery-schema-change-edited`, `unknown-migration` (errors);
-   * `unfinalized-draft`, `undrafted-changes` (warnings).
+   * `unfinalized-draft`, `unknown-draft-file`, `undrafted-changes`
+   * (warnings).
    */
   readonly code: string;
   readonly message: string;

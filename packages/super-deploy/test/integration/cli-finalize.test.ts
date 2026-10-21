@@ -109,6 +109,25 @@ describe("validate", () => {
     });
   });
 
+  test("a misnamed script in the draft: draft, rehearse and finalize warn on stderr and exit 0; validate --strict --allow-draft exits 1", async () => {
+    const dir = await draftedProject();
+    await dir.write("data-model/draft/post-migrate.sql", "select 1/0;\n");
+    const warning =
+      "warning: data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql and post-migration.sql)";
+    const run = (...args: string[]) => runCli(args, { cwd: dir.root });
+
+    const validated = await run("validate", "--strict", "--allow-draft");
+    const drafted = await run("draft");
+    const rehearsed = await run("rehearse");
+    const finalized = await run("finalize");
+
+    expect(validated.exitCode).toBe(1);
+    expect(validated.stderr).toContain(`${warning}\n`);
+    for (const result of [drafted, rehearsed, finalized]) {
+      expect(result).toMatchObject({ exitCode: 0, stderr: `${warning}\n` });
+    }
+  });
+
   test("--help lists --allow-draft", async () => {
     const dir = await createTestProject();
 
