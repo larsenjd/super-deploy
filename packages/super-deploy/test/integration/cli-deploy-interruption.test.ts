@@ -140,10 +140,9 @@ describe.each([
 
     expect(result.exitCode).toBe(exitCode);
     expect(result.stdout).toBe("");
-    expect(result.stderr.trim().split("\n")).toEqual([
-      expect.stringContaining("is a superuser"),
-      expect.stringContaining(`Interrupted by ${signal}`),
-    ]);
+    const [notice, ...more] = result.stderr.trim().split("\n");
+    expect(notice).toContain(`Interrupted by ${signal}`);
+    expect(more).toEqual([]);
     // Well before the stalled statement's 60 s.
     expect(Date.now() - started).toBeLessThan(30_000);
     expect(await advisoryLocks(database)).toBe(0);

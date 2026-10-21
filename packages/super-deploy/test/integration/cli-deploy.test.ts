@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import {
   asDeployerPreamble,
+  asSuperuser,
   deployConfig,
   roleName,
   targetDatabaseName,
@@ -48,7 +49,7 @@ describe("deploy and status", () => {
       exitCode: 0,
       stdout:
         "Target dev: 0 migrations recorded, 1 pending\nPending:\n  00001-add-customers\n",
-      stderr: superuserWarning,
+      stderr: "",
     });
 
     const deployed = await runCli(["deploy", "--target", "dev"], {
@@ -57,7 +58,7 @@ describe("deploy and status", () => {
     expect(deployed).toMatchObject({
       exitCode: 0,
       stdout: "Deployed 1 migration to dev: 00001-add-customers\n",
-      stderr: superuserWarning,
+      stderr: "",
     });
 
     const again = await runCli(["deploy", "--target", "dev"], {
@@ -77,6 +78,35 @@ describe("deploy and status", () => {
     );
   });
 
+  test("a target that logs in as a superuser gets a warning on stderr from status and deploy, which still deploys", async () => {
+    const database = targetDatabaseName();
+    await server.query(`create database ${database}`);
+    const dir = await createTestProject({
+      config: deployConfig(server, {
+        database,
+        adapter: asSuperuser(database),
+      }).config,
+      files: {
+        "data-model/desired-schema/customers.sql":
+          "create table customers (id bigint primary key, name text not null);\n",
+      },
+    });
+    for (const args of [["draft", "--name", "add customers"], ["finalize"]]) {
+      expect((await runCli(args, { cwd: dir.root })).exitCode).toBe(0);
+    }
+
+    expect(
+      await runCli(["status", "--target", "dev"], { cwd: dir.root }),
+    ).toMatchObject({ exitCode: 0, stderr: superuserWarning });
+    expect(
+      await runCli(["deploy", "--target", "dev"], { cwd: dir.root }),
+    ).toMatchObject({
+      exitCode: 0,
+      stdout: "Deployed 1 migration to dev: 00001-add-customers\n",
+      stderr: superuserWarning,
+    });
+  });
+
   test("status lists what a deployment would refuse, and deploy then fails with exit code 1", async () => {
     const dir = await finalizedProject('externalSchemas: ["loader"],');
 
@@ -87,7 +117,7 @@ describe("deploy and status", () => {
       exitCode: 0,
       stdout:
         'Target dev: 0 migrations recorded, 1 pending\nDeploy would refuse:\n  external schema "loader" does not exist (it is declared in externalSchemas)\nPending:\n  00001-add-customers\n',
-      stderr: superuserWarning,
+      stderr: "",
     });
 
     const refused = await runCli(["deploy", "--target", "dev"], {
@@ -96,7 +126,7 @@ describe("deploy and status", () => {
     expect(refused).toMatchObject({
       exitCode: 1,
       stdout: "",
-      stderr: `${superuserWarning}Error: Target dev failed the deploy pre-flight checks: external schema "loader" does not exist (it is declared in externalSchemas)\n`,
+      stderr: `Error: Target dev failed the deploy pre-flight checks: external schema "loader" does not exist (it is declared in externalSchemas)\n`,
     });
   });
 
@@ -179,7 +209,7 @@ describe("deploy and status", () => {
     const drifted =
       "Error: Target dev has drifted from its recorded migrations: column note of table customers (extra). Deployments refuse until it matches them again";
     // status has just listed the differences: it doesn't point to itself.
-    expect(report.stderr).toBe(`${superuserWarning}${drifted}\n`);
+    expect(report.stderr).toBe(`${drifted}\n`);
 
     const refused = await runCli(["deploy", "--target", "dev"], {
       cwd: dir.root,
@@ -187,7 +217,7 @@ describe("deploy and status", () => {
     expect(refused).toMatchObject({
       exitCode: 1,
       stdout: "",
-      stderr: `${superuserWarning}${drifted} (status --target dev lists the differences)\n`,
+      stderr: `${drifted} (status --target dev lists the differences)\n`,
     });
 
     // The refused deploy had nothing pending; its attempt still reads as failed.

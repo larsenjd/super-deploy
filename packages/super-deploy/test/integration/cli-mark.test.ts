@@ -8,8 +8,10 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import {
   asDeployerPreamble,
+  asDeployRole,
   type DeployConfigOptions,
   deployConfig,
+  embeddedDeployRole,
   roleName,
   targetDatabaseName,
 } from "../support/deploy.ts";
@@ -84,9 +86,10 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
   test("records the next pending migration as marked once YES is typed, when the target matches a replica (column order aside), without running its scripts", async () => {
     const { dir, database } = await pendingProject();
     const owner = `mark_owner_${database}`;
-    // Fixed by hand: columns in another order, owned by another role (the
-    // superuser deploy role is a member of every role).
+    // Fixed by hand: columns in another order, owned by another role that
+    // the deploy role is a member of.
     await server.query(`create role ${owner}`);
+    await server.query(`grant ${owner} to ${embeddedDeployRole}`);
     await server.query(
       `create table orders (note text, customer_id bigint not null, id bigint primary key);
        alter table orders owner to ${owner};`,
@@ -153,11 +156,11 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
   test("refuses without asking when the target differs from the replica, listing the differences: nothing is recorded", async () => {
     const { dir, database } = await pendingProject();
     // Fixed by hand, but without orders.note, and migration 3's table added too.
-    await server.query(
+    await asDeployRole(
+      server,
+      database,
       `create table orders (id bigint primary key, customer_id bigint not null);
        create table notes (id bigint primary key);`,
-      [],
-      database,
     );
 
     const terminal = spawnTerminal(["mark", "--target", "dev"], {
@@ -278,7 +281,7 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
 
   test("checks the replica again under the lock: a target changed while waiting for YES is refused", async () => {
     const { dir, database } = await pendingProject();
-    await server.query(orders, [], database);
+    await asDeployRole(server, database, orders);
 
     const terminal = spawnTerminal(["mark", "--target", "dev"], {
       cwd: dir.root,
@@ -306,7 +309,7 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
 
   test("a mark whose COMMIT outcome was lost settles from its migrations row: failed when it never landed, succeeded when it did", async () => {
     const { dir, database } = await pendingProject({ adapter: losingAdapter });
-    await server.query(orders, [], database);
+    await asDeployRole(server, database, orders);
     const markLosingCommit = async (when: "before" | "after") => {
       const terminal = spawnTerminal(["mark", "--target", "dev"], {
         cwd: dir.root,

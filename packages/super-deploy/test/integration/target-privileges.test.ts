@@ -2,13 +2,20 @@
 // target are set up outside super-deploy (ADR-0006). Nothing compares,
 // generates, revokes or resets them: they are never drift, and deployments
 // leave them as they are. The desired schema can't declare them.
-import { deploy, draft, SqlRuleViolationError, status } from "super-deploy";
+import {
+  deploy,
+  draft,
+  postgresTarget,
+  SqlRuleViolationError,
+  status,
+} from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
+  asDeployRole,
   deployProject,
   finalizeMigration,
   roleName,
-  testSession,
 } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
@@ -20,13 +27,19 @@ afterAll(async () => {
   await server?.stop();
 });
 
-/** Runs `sql` on the target as `role`; resolves to its rows or the error message. */
+/**
+ * Runs `sql` on the target as `role` (switched to from the superuser);
+ * resolves to its rows or the error message.
+ */
 async function asRole(
   database: string,
   role: string,
   sql: string,
 ): Promise<unknown> {
-  const session = await testSession(server, database);
+  const connectionString = await embeddedPostgres({
+    dataDir: server.dataDir,
+  }).connectionString(database);
+  const session = await postgresTarget({ connectionString }).connect();
   try {
     await session.execute(`set role ${role}`);
     return (await session.query(sql)).rows;
@@ -47,16 +60,15 @@ describe("privileges on a target", () => {
     });
     await finalizeMigration(project, "add reports");
     await deploy(project, { target: "dev" });
-    // As the embedded target's login, which is its deploy role.
-    await server.query(
+    await asDeployRole(
+      server,
+      database,
       `grant usage on schema public to ${reader};
        grant select on reports to ${reader};
        alter default privileges in schema public grant select on tables to ${reader};
        alter table reports enable row level security;
        create policy reports_read on reports for select to ${reader} using (true);
        insert into reports (id, title) values (1, 'Q1');`,
-      [],
-      database,
     );
 
     expect((await status(project, { target: "dev" })).drift).toEqual([]);
