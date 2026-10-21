@@ -16,11 +16,12 @@ afterAll(async () => {
   await server?.stop();
 });
 
-async function projectAdopting(sql: string) {
+async function projectAdopting(sql: string, settings = "") {
   const prod = await server.createDatabase(sql);
   return createTestProject({
     config: deployConfig(server, {
       otherTargets: `prod: { adapter: postgres.target(${JSON.stringify(prod)}) },`,
+      settings,
     }).config,
   });
 }
@@ -91,6 +92,24 @@ describe("init --adopt", () => {
       ].join("\n"),
     );
     expect(dir.exists("data-model/desired-schema")).toBe(false);
+  });
+
+  test("refuses a target without the managed schema in one line (exit 1)", async () => {
+    const dir = await projectAdopting(
+      "create schema app; create table app.t (id bigint primary key);",
+      'managedSchema: "ap",',
+    );
+
+    const result = await runCli(["init", "--adopt", "prod"], {
+      cwd: dir.root,
+    });
+
+    expect(result).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr:
+        'Error: Cannot adopt target prod: its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts). Nothing was written\n',
+    });
   });
 
   test("an unknown target is a usage error (exit 2)", async () => {

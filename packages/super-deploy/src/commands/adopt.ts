@@ -6,9 +6,11 @@
 // Adoption needs the target's connection, so it runs in a project that is
 // already initialised (`init`, then the target added to
 // super-deploy.config.ts) and still empty: no finalized migrations, no draft
-// and no desired-schema SQL files. The target must record no migrations, and
-// its deploy role must own the managed schema and everything in it
-// (deploy/ownership.ts), checked before anything is rehearsed.
+// and no desired-schema SQL files. The target must record no migrations and
+// have the managed schema (a missing one is almost always a mistyped
+// managedSchema; an existing empty one is adopted), and its deploy role must
+// own that schema and everything in it (deploy/ownership.ts), all checked
+// before anything is rehearsed.
 //
 // Steps, and what each one guarantees:
 //   1. Read the target (never writing to it): pg-delta generates the
@@ -51,7 +53,7 @@ import {
   CommitOutcomeUnknownError,
   withLockedTarget,
 } from "../deploy/engine.ts";
-import { readRecordedMigrations } from "../deploy/history.ts";
+import { readRecordedMigrations, schemaExists } from "../deploy/history.ts";
 import { markNextPending, readMarkableMigrations } from "../deploy/mark.ts";
 import { requireOwnership } from "../deploy/ownership.ts";
 import {
@@ -158,9 +160,10 @@ export interface LeftOnTarget {
 
 /**
  * Refuses with UnknownTargetError, AdoptConflictError (the project or the
- * target isn't empty), NotOwnedError (the deploy role doesn't own the
- * managed schema or something in it) or AdoptUnsupportedError (listing
- * everything V1 doesn't support) before writing anything.
+ * target isn't empty, or the target has no managed schema), NotOwnedError
+ * (the deploy role doesn't own the managed schema or something in it) or
+ * AdoptUnsupportedError (listing everything V1 doesn't support) before
+ * writing anything.
  */
 export async function adopt(
   project: Project,
@@ -284,6 +287,11 @@ async function readTarget(
     if (recorded.length > 0) {
       throw new AdoptConflictError(target.name, [
         `it already records ${recorded.length} migration${recorded.length === 1 ? "" : "s"} in its history schema "${config.historySchema}"`,
+      ]);
+    }
+    if (!(await schemaExists(session, config.managedSchema))) {
+      throw new AdoptConflictError(target.name, [
+        `its managed schema "${config.managedSchema}" does not exist (check managedSchema in super-deploy.config.ts)`,
       ]);
     }
     // Later migrations alter what is adopted: the deploy role must own it.
@@ -687,7 +695,8 @@ async function undoAdoption(
 
 /**
  * `init --adopt` needs a project with no migrations, draft or desired
- * schema yet, and a target that records no migrations; nothing was written.
+ * schema yet, and a target that records no migrations and has the managed
+ * schema; nothing was written.
  */
 export class AdoptConflictError extends SuperDeployError {
   readonly code = "adopt-conflict";
@@ -696,7 +705,9 @@ export class AdoptConflictError extends SuperDeployError {
   readonly reasons: readonly string[];
 
   constructor(target: string, reasons: readonly string[]) {
-    super(`Cannot adopt target ${target}: ${reasons.join("; ")}`);
+    super(
+      `Cannot adopt target ${target}: ${reasons.join("; ")}. Nothing was written`,
+    );
     this.target = target;
     this.reasons = reasons;
   }

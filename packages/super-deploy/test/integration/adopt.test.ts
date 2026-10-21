@@ -849,6 +849,51 @@ describe("adopt", () => {
     }
   });
 
+  test("refuses a target without the managed schema, writing nothing anywhere, but adopts an empty one", async () => {
+    const prod = await server.createDatabase(
+      "create schema app; create table public.t (id bigint primary key);",
+    );
+    const otherTargets = `prod: { adapter: postgres.target(${JSON.stringify(prod)}) },`;
+    const mistyped = await deployProject(
+      server,
+      {},
+      { otherTargets, settings: 'managedSchema: "ap",' },
+    );
+    try {
+      const error = await adopt(mistyped.project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(AdoptConflictError);
+      expect((error as AdoptConflictError).reasons).toEqual([
+        'its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts)',
+      ]);
+      expect(mistyped.dir.exists("data-model/migrations")).toBe(false);
+      expect(mistyped.dir.exists("data-model/desired-schema")).toBe(false);
+      expect(
+        await server.query(
+          "select 1 from pg_namespace where nspname = 'deployment_history'",
+          [],
+          prod,
+        ),
+      ).toEqual([]);
+    } finally {
+      await mistyped.project.close();
+    }
+
+    const { project } = await deployProject(
+      server,
+      {},
+      { otherTargets, settings: 'managedSchema: "app",' },
+    );
+    try {
+      const result = await adopt(project, { target: "prod" });
+      expect(result.migration.folder).toBe("00001-adopt");
+      expect(result.files).toEqual([]);
+    } finally {
+      await project.close();
+    }
+  });
+
   test("removes everything it wrote when the target no longer matches at marking time", async () => {
     const prod = await server.createDatabase(
       "create table t (id bigint primary key);",
