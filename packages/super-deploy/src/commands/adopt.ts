@@ -64,7 +64,7 @@
 //   3. Write the files, then the ordinary `draft` (named `adopt`) and
 //      `finalize`, which rehearse migration 1 against the desired schema.
 //   4. Under the target lock, `markNextPending` (deploy/mark.ts) runs mark's
-//      replica check and records migration 1 as marked. No guard: like
+//      ownership and replica checks and records migration 1 as marked. No guard: like
 //      deploy, adoption may run in CI.
 // If steps 3-4 fail, every file adoption wrote is removed again, so the
 // project is as it was; except when the target's COMMIT outcome is unknown

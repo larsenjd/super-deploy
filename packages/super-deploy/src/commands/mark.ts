@@ -7,10 +7,11 @@
 // terminal-only, YES typed exactly, a manual attempt under the OS username,
 // the target lock.
 //
-// The replica check runs twice: before asking (a precondition, so a target
-// that doesn't match is refused without asking) and again under the lock,
-// right before recording, because the target's structure isn't part of the
-// guard's fingerprint and may have changed while the person read the screen.
+// The ownership and replica checks run twice: before asking (preconditions,
+// so a target that fails them is refused without asking) and again under the
+// lock, right before recording (`markNextPending`), because neither the
+// target's structure nor its owners are part of the guard's fingerprint, and
+// either may have changed while the person read the screen.
 import {
   markNextPending,
   nextToMark,
