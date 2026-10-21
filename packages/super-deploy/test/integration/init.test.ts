@@ -22,7 +22,7 @@ import {
   loadProject,
   status,
 } from "super-deploy";
-import { describe, expect, onTestFinished, test } from "vitest";
+import { describe, expect, onTestFinished, test, vi } from "vitest";
 
 /** This library's package folder, posix-style. */
 const libraryFolder = join(import.meta.dirname, "..", "..")
@@ -140,6 +140,39 @@ describe("init", () => {
     const ignored = await readFile(join(root, ".gitignore"), "utf8");
     expect(ignored).toMatch(/^\.super-deploy\/$/m);
     expect(ignored).toMatch(/^node_modules\/$/m);
+  });
+
+  test("the config's commented-out real target, once uncommented, reads its variable only when that target is used", async () => {
+    const root = await emptyDirectory();
+    await init({ directory: root });
+    const configPath = join(root, "super-deploy.config.ts");
+    const scaffolded = await readFile(configPath, "utf8");
+    const importLine = /^import \{ defineConfig \} from "super-deploy";$/m;
+    const exampleImport =
+      /^\/\/ +(import \{ defineConfig, postgresTarget \} from "super-deploy";)$/m;
+    const exampleTarget =
+      /^( +)\/\/ (qa: \{ adapter: postgresTarget\(\{ env: "QA_DATABASE_URL" \}\) \},)$/m;
+    expect(scaffolded).toMatch(importLine);
+    expect(scaffolded).toMatch(exampleImport);
+    expect(scaffolded).toMatch(exampleTarget);
+    const uncommented = scaffolded
+      .replace(importLine, exampleImport.exec(scaffolded)?.[1] ?? "")
+      .replace(exampleTarget, "$1$2");
+    await writeFile(configPath, uncommented);
+    vi.stubEnv("QA_DATABASE_URL", undefined);
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+
+    const project = await loadProject({ cwd: root });
+    try {
+      expect(Object.keys(project.config.targets)).toEqual(["dev", "qa"]);
+      await expect(status(project, { target: "qa" })).rejects.toThrow(
+        "Environment variable QA_DATABASE_URL is not set",
+      );
+    } finally {
+      await project.close();
+    }
   });
 
   test("refuses to overwrite existing files, writing nothing", async () => {
