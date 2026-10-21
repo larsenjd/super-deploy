@@ -2,7 +2,11 @@
 // the desired schema. The desired schema is loaded into one throwaway
 // database and read back from the catalogs (ADR-0003); the starting point is
 // built in another (the finalized migrations replayed, then the draft's seed
-// data and pre-migration script); the differ compares the two.
+// data and pre-migration script); the differ compares the two. Then the
+// schema change runs once on the starting point and the result is compared
+// with the desired schema (rehearsal/schema-change-check.ts): what pg-delta
+// can't generate, or generates but PostgreSQL refuses, is reported as a
+// shortfall, and the draft is written all the same.
 
 import { posix } from "node:path";
 import { differ, type PlannedStatement } from "../differ/index.ts";
@@ -16,10 +20,15 @@ import {
   replay,
 } from "../rehearsal/replay.ts";
 import {
+  checkSchemaChange,
+  type SchemaChangeShortfall,
+} from "../rehearsal/schema-change-check.ts";
+import {
   type ScriptCoverage,
   scriptCoverage,
 } from "../rehearsal/script-coverage.ts";
 import {
+  hasPreMigrationScript,
   readSeededUnit,
   seededFiles,
   seededUnits,
@@ -45,6 +54,7 @@ import {
 import { normaliseDraftName } from "../store/draft-name.ts";
 import { desiredSchemaHash } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
+import { projectRelative } from "../store/layout.ts";
 import {
   preMigrationFileName,
   schemaChangeFileName,
@@ -81,6 +91,12 @@ export interface DraftResult {
    * the affected rows in the rehearsal data. Advisory; empty when none.
    */
   readonly toCover: readonly ScriptCoverage[];
+  /**
+   * Where the schema change, run on the starting point, doesn't produce the
+   * desired schema, or fails: the rehearsal would fail the same way.
+   * Advisory; empty when it produces the desired schema.
+   */
+  readonly shortfalls: readonly SchemaChangeShortfall[];
 }
 
 export async function draft(
@@ -141,44 +157,64 @@ export async function draft(
     },
   });
 
-  const { planned, toCover } = await withThrowawayDatabase(
-    config.rehearsal,
-    draftDatabaseRequest,
-    async (desired) => {
-      await loadDesiredSchemaCheckingOrder(config, desired, statements);
-      return withThrowawayDatabase(
-        config.rehearsal,
-        draftDatabaseRequest,
-        async (source) => {
-          // The starting point: every finalized migration, then the draft's
-          // seed data and pre-migration script, in one transaction as a
-          // deployment runs them. Renames and backfills done there are not
-          // regenerated, and what to cover counts the seeded rows.
-          await ensureManagedSchema(source, config.managedSchema);
-          await replay(
-            source,
-            [...migrations, ...beforeSchemaChange],
-            config.managedSchema,
-          );
-          const statements = await differ.diff(source, desired);
-          return {
-            planned: statements,
-            toCover: await scriptCoverage(
+  const preMigrationScript = hasPreMigrationScript(seeded);
+
+  const { planned, toCover, schemaChange, shortfalls } =
+    await withThrowawayDatabase(
+      config.rehearsal,
+      draftDatabaseRequest,
+      async (desired) => {
+        await loadDesiredSchemaCheckingOrder(config, desired, statements);
+        return withThrowawayDatabase(
+          config.rehearsal,
+          draftDatabaseRequest,
+          async (source) => {
+            // The starting point: every finalized migration, then the draft's
+            // seed data and pre-migration script, in one transaction as a
+            // deployment runs them. Renames and backfills done there are not
+            // regenerated, and what to cover counts the seeded rows.
+            await ensureManagedSchema(source, config.managedSchema);
+            await replay(
+              source,
+              [...migrations, ...beforeSchemaChange],
+              config.managedSchema,
+            );
+            const statements = await differ.diff(source, desired);
+            const toCover = await scriptCoverage(
               source,
               statements,
               config.managedSchema,
-            ),
-          };
-        },
-      );
-    },
-  );
+            );
+            const schemaChange = await renderSchemaChange(
+              statements,
+              overrides,
+              rules,
+            );
+            return {
+              planned: statements,
+              toCover,
+              schemaChange,
+              shortfalls: await checkSchemaChange(
+                source,
+                desired,
+                {
+                  file: projectRelative(project.root, paths.draftSchemaChange),
+                  sql: schemaChange,
+                },
+                config.managedSchema,
+                { preMigrationScript },
+              ),
+            };
+          },
+        );
+      },
+    );
 
   throwIfInterrupted(project.signal);
   await writeDraft(
     paths,
     { name, desiredSchemaHash: desiredSchemaHash(files) },
-    await renderSchemaChange(planned, overrides, rules),
+    schemaChange,
   );
   // Generated SQL obeys the same rules as hand-written SQL, so a differ bug
   // cannot bypass them. The schema change stays on disk for review.
@@ -196,6 +232,7 @@ export async function draft(
     schemaChangePath: paths.draftSchemaChange,
     statements: planned,
     toCover,
+    shortfalls,
   };
 }
 

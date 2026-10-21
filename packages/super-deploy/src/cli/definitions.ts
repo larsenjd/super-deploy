@@ -380,6 +380,12 @@ const draftCommand: CommandDefinition = {
       result.toCover.map((item) => item.message),
       context,
     );
+    for (const shortfall of result.shortfalls) {
+      context.warn(`warning: ${shortfall.message}`);
+      for (const difference of shortfall.differences) {
+        context.warn(`  ${difference}`);
+      }
+    }
   },
 };
 

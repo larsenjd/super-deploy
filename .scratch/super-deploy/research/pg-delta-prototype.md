@@ -158,7 +158,7 @@ Added 2026-10-20 from the V1 build, against the same pinned `1.0.0-alpha.59`. Wh
 | PG18 NOT NULL constraint names are ignored (F3). A column rename keeps its generated name (`t_old_not_null`), and a custom name is never applied. | `verification/catalog.ts` compares constraint names, so `rehearse` and `finalize` refuse the draft until a pre-migration script runs `ALTER TABLE … RENAME CONSTRAINT`. Adoption refuses a target with a custom name (`not-reproduced`, `commands/adopt.ts`). |
 | Comments on indexes that back a constraint (`COMMENT ON INDEX t_pkey`) are not extracted (F4). | The catalog comparison catches them; adoption refuses them as `not-reproduced`. |
 | Virtual generated columns come out `STORED` (F1). | The desired-schema rules refuse a generated column without `STORED` (`sql-analysis/desired-schema-rules.ts`). |
-| Composite-type attribute order is not diffed (pg-toolbelt #330/#332). | `verification/catalog.ts` compares each composite attribute's position among the live ones (ticket 27), so the rehearsal refuses a reordered type and a type reordered on a target is drift. |
+| Composite-type attribute order is not diffed (pg-toolbelt #330/#332). | `verification/catalog.ts` compares each composite attribute's position among the live ones (ticket 27), so the rehearsal refuses a reordered type and a type reordered on a target is drift. `draft` runs its schema change and warns, naming the type, and the rehearsal's mismatch names the same cause (`rehearsal/schema-change-check.ts`, QA 102); the README's recipe does it in the pre-migration script. |
 
 **Loud failures: the run stops with an error**
 
