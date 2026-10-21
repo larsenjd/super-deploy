@@ -2,7 +2,6 @@
 // deployment adapter (only when a command actually touches it), check the
 // server, and read the locale its rehearsals must match.
 
-import { ConnectionStringError } from "../adapters/node-postgres.ts";
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
 import { AdapterError } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
@@ -59,7 +58,7 @@ export async function connectTarget(
         if (signal?.aborted) {
           throw new InterruptedError({ cause: error });
         }
-        throw error instanceof ConnectionStringError
+        throw error instanceof AdapterError
           ? error.about(`Target ${target.name}`)
           : error;
       }

@@ -6,7 +6,7 @@
 // connection is attempted (ConnectionStringError): node-postgres's parser
 // turns undefined, "" or a non-URL into odd errors such as "ENOTFOUND base".
 // The adapter doesn't know its target's name, so connectTarget renames the
-// error's subject (deploy/target.ts).
+// error's subject through AdapterError.about (deploy/target.ts).
 //
 // A target connect honours ConnectOptions with its own deadline and the
 // interruption signal, racing client.connect(), rather than node-postgres's
@@ -100,7 +100,7 @@ export function rehearsalOver(
   };
 }
 
-/** @internal What is wrong with a ConnectionSource. */
+/** What is wrong with a ConnectionSource. */
 export type ConnectionStringProblem =
   | { kind: "missing"; value: "undefined" | "empty" | "not a string" }
   | { kind: "variable-unset"; variable: string }
@@ -108,10 +108,11 @@ export type ConnectionStringProblem =
   | { kind: "not-postgres-url" };
 
 /**
- * @internal A ConnectionSource gives no usable connection string. `subject`
- * names who it belongs to ("Target qa"); see `about`.
+ * A ConnectionSource gives no usable connection string. `subject` names who
+ * it belongs to ("Target qa"); see `about`.
  */
 export class ConnectionStringError extends AdapterError {
+  override readonly code = "connection-string-invalid";
   readonly problem: ConnectionStringProblem;
 
   constructor(problem: ConnectionStringProblem, subject: string) {
@@ -119,8 +120,7 @@ export class ConnectionStringError extends AdapterError {
     this.problem = problem;
   }
 
-  /** The same problem, attributed to `subject`. */
-  about(subject: string): ConnectionStringError {
+  override about(subject: string): ConnectionStringError {
     return new ConnectionStringError(this.problem, subject);
   }
 }

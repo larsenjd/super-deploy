@@ -75,11 +75,25 @@ export interface RehearsalAdapter {
   close?(): Promise<void>;
 }
 
-/** An adapter failed to provide a database or connection. */
+/**
+ * An adapter failed to provide a database or connection. A subclass may
+ * narrow `code` to one of its own (ConnectionStringError).
+ */
 export class AdapterError extends SuperDeployError {
-  readonly code = "adapter-failed";
+  readonly code: "adapter-failed" | "connection-string-invalid" =
+    "adapter-failed";
 
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
+  }
+
+  /**
+   * The same failure, attributed to `subject` ("Target qa"): an adapter
+   * doesn't know its target's name, so the caller names it. A subclass whose
+   * message names a subject rebuilds it; this one names none and is returned
+   * as it is.
+   */
+  about(_subject: string): AdapterError {
+    return this;
   }
 }

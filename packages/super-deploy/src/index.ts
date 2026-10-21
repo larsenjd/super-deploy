@@ -9,6 +9,8 @@
 
 export {
   type ConnectionSource,
+  ConnectionStringError,
+  type ConnectionStringProblem,
   postgresRehearsal,
   postgresTarget,
 } from "./adapters/node-postgres.ts";

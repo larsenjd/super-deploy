@@ -84,6 +84,7 @@ describe("a qa target's connection string", () => {
           (e: unknown) => e,
         );
         expect(error).toBeInstanceOf(AdapterError);
+        expect(error).toMatchObject({ code: "connection-string-invalid" });
         expect((error as AdapterError).message).toMatch(message);
         expect((error as AdapterError).message).not.toContain("secretpw");
       }
