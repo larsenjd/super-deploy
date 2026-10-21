@@ -76,6 +76,7 @@ export {
   type FileKind,
   type RuleContext,
 } from "./rules.ts";
+export { undeclaredSchemaOf } from "./schemas.ts";
 
 export interface DesiredSchemaAnalysis {
   /** The statements in load order. */

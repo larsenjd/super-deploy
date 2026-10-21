@@ -77,6 +77,14 @@ export function referenceFindings(
 }
 
 /**
+ * The schema an `undeclared-schema` finding's message names, so a caller
+ * holding only the message (adoption's advice) can name it too.
+ */
+export function undeclaredSchemaOf(message: string): string | undefined {
+  return /^Schema "(.*)" is not declared: /.exec(message)?.[1];
+}
+
+/**
  * Schemas named by qualified references anywhere in a syntax tree: relations,
  * types (including `%TYPE`), function calls and routine signatures. Objects
  * in `skip` (and everything inside them) are ignored.

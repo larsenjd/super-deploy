@@ -363,6 +363,22 @@ describe("adopt", () => {
     }
   });
 
+  test("refusing only functions that need an override marker, advises a terminal, not changing the target", async () => {
+    const { project } = await adoptableProject(loaders);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      expect((error as AdoptUnsupportedError).message).toMatch(
+        /\. Nothing was written; run adoption in a terminal to give an override reason for each object that breaks only risk rules$/,
+      );
+    } finally {
+      await project.close();
+    }
+  });
+
   test("asks no reason while anything else is refused, never uses one for it, and says which it will ask for", async () => {
     const { project } = await adoptableProject(`${loaders}
       create type mood as enum ('sad', 'happy');
@@ -802,6 +818,61 @@ describe("adopt", () => {
       );
       const result = await adopt(project, { target: "prod" });
       expect(result.migration.folder).toBe("00001-adopt");
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refusing a PL/pgSQL body's reference to an undeclared schema, advises declaring it in externalSchemas, not changing the target", async () => {
+    const { project } = await adoptableProject(`
+      create schema auth;
+      create table auth.users (id bigint primary key, name text);
+      create function user_count() returns bigint language plpgsql stable
+        as $$ begin return (select count(*) from auth.users); end $$;
+    `);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      expect((error as AdoptUnsupportedError).message).toMatch(
+        /\. Nothing was written; declare "auth" in externalSchemas in super-deploy\.config\.ts$/,
+      );
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refusing for several causes, gives each piece of advice once", async () => {
+    const { project } = await adoptableProject(`${loaders}
+      create type mood as enum ('sad', 'happy');
+      create schema auth;
+      create schema billing;
+      create table auth.users (id bigint primary key, name text);
+      create table billing.accounts (id bigint primary key);
+      create function user_count() returns bigint language plpgsql stable
+        as $$ begin return (select count(*) from auth.users); end $$;
+      create function first_user() returns text language plpgsql stable
+        as $$ begin return (select name from auth.users limit 1); end $$;
+      create function account_count() returns bigint language plpgsql stable
+        as $$ begin return (select count(*) from billing.accounts); end $$;
+    `);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const advice = [
+        "change the target first, then adopt again",
+        'declare "auth", "billing" in externalSchemas in super-deploy.config.ts',
+        "run adoption in a terminal to give an override reason for each object that breaks only risk rules",
+      ];
+      expect((error as AdoptUnsupportedError).advice).toEqual(advice);
+      expect((error as AdoptUnsupportedError).message).toMatch(
+        new RegExp(`\\. Nothing was written; ${advice.join("; ")}$`),
+      );
     } finally {
       await project.close();
     }
