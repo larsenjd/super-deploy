@@ -521,7 +521,9 @@ describe("validate", () => {
       {
         severity: "error",
         code: "content-hash-mismatch",
-        message: `${recovery1} was changed after it was finalized (its content hash does not match data-model/migrations/index.json)`,
+        message: expect.stringContaining(
+          `${recovery1} was changed after it was finalized (its content hash does not match data-model/migrations/index.json): restore it from Git`,
+        ),
         path: recovery1,
       },
     ]);

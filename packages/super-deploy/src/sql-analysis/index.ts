@@ -46,6 +46,7 @@ export {
   catalogObjectFinding,
   isAlreadyInstalled,
   serialColumnFinding,
+  viewColumnCommentFinding,
   virtualGeneratedColumnFinding,
 } from "./desired-schema-rules.ts";
 export {

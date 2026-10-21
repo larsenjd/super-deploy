@@ -123,6 +123,16 @@ again, which rebuilds it from your migrations (as `deployer`). Data you
 added to `dev` by hand is lost with it, and so is its disposable flag (see
 [Disposable targets and the guarded commands](#disposable-targets-and-the-guarded-commands)).
 
+`.super-deploy/rehearsal` holds only the throwaway databases rehearsals
+use: whenever no command is running, you can delete it, and nothing is
+lost. If a crash or reboot leaves a server folder stale or damaged, commands
+that need it fail naming what looks wrong. For a `postmaster.pid` that
+names a process which isn't its server, delete that file with no command
+running. For a folder that isn't a complete PostgreSQL data folder, delete
+the folder with no command running: for `.super-deploy/rehearsal` nothing
+is lost; for `.super-deploy/dev`, run `deploy --target dev` again, which
+loses what you added to `dev` by hand.
+
 ## What the desired schema supports
 
 The desired schema may hold only the statements below; super-deploy refuses
@@ -149,7 +159,8 @@ first version: these may be supported later, but none is yet.
   [Permissions](#what-each-target-needs-set-up-outside-super-deploy)).
 - Functions and procedures in `sql` or `plpgsql`, and triggers.
 - Domains and composite types.
-- `COMMENT ON` the objects above.
+- `COMMENT ON` the objects above, except on a view's or materialized
+  view's columns (refused below).
 - `CREATE EXTENSION plpgsql`, which is installed in every database anyway.
 
 ### Refused
@@ -199,7 +210,12 @@ Table, view and routine features:
 - routine options other than `LANGUAGE`, volatility, `STRICT`,
   `LEAKPROOF`, `PARALLEL`, `COST`, `ROWS` and `SET` (such as `WINDOW` and
   `SUPPORT`);
-- view options other than the three above.
+- view options other than the three above;
+- comments on view and materialized-view columns (`COMMENT ON COLUMN
+  <view>.<column>`): the differ doesn't generate them, so no migration
+  would add one. Describe the column in the view's own comment instead.
+  Adopting a database that has one is refused until it is removed there
+  (`COMMENT ON COLUMN <view>.<column> IS NULL`).
 
 Physical storage settings:
 
@@ -756,6 +772,31 @@ NOT NULL, rename its constraint too: PostgreSQL 18 names NOT NULL constraints
 would refuse the draft. For example,
 `alter table t rename constraint t_old_not_null to t_new_not_null`.
 
+## Column order
+
+A table's columns may not be in the order the desired schema declares
+them, and their order may differ between targets:
+
+- A column added to an existing table goes at the end of it.
+- A new table gets its columns in the declared order, except a column whose
+  type (a domain or a composite type) or default (a function) is created in
+  the same migration as the table: the differ creates the table first and
+  adds that column afterwards, after the table's other columns. Declaring
+  the type or function first in the desired schema doesn't change this.
+- A column whose collation or generation expression changes is dropped and
+  added again, at the end (see [Destructive changes](#destructive-changes)).
+
+For an adopted database, this means the adopted target keeps its own
+column order, while `dev`, rehearsals and every target built from
+`00001-adopt` can have such columns at the end of their tables.
+
+A table's column order is never compared: rehearsals, drift and `mark`
+ignore it, so nothing refuses or warns about it. What depends on it is SQL that uses
+columns by position. A draft's scripts and seed data refuse it: `INSERT`
+without a column list, `SELECT *`, `ORDER BY` or `GROUP BY` by position,
+`NATURAL JOIN` and whole-row references. Write your application's SQL the
+same way, naming its columns.
+
 ## Reordering a composite type's attributes
 
 `draft` can't reorder a composite type's attributes, or add one anywhere
@@ -837,6 +878,21 @@ the rehearsal data don't fit (for such a `numeric`, how many are rounded and
 how many are too large, which makes the rehearsal fail too), and `finalize`
 asks for the change to be acknowledged. If those values matter, shorten or
 move them in the pre-migration script.
+
+Changing a column's collation, or a stored generated column's expression,
+makes `draft` drop the column and add it again (the differ can't change
+either in place), at the end of the table. `draft` warns, and `finalize`
+asks, naming the column as dropped and re-added and giving the statement
+that makes the change in place instead. Put that statement in the
+pre-migration script and run `draft` again; the schema change then has
+nothing left to do for the column:
+
+- a collation: the drop loses every value in the column, on every target.
+  Change it in place with
+  `ALTER TABLE customers ALTER COLUMN nickname TYPE text COLLATE "C"`;
+- a generation expression: the values are computed again, so none is lost,
+  but the drop still needs acknowledging. Change it in place with
+  `ALTER TABLE a ALTER COLUMN total SET EXPRESSION AS (price * qty * 1.2)`.
 
 `rehearse` lists a draft's destructive statements, and `finalize` needs them
 acknowledged. In a terminal, `finalize` lists them and asks. Without a
@@ -1000,6 +1056,14 @@ this while the draft is that migration). Or restore its original folder and
 `pnpm exec super-deploy validate` to make the restored files read-only
 again.
 
+If a finalized migration (or Recovery) was edited, had a file added, or had
+its `desired-schema/` snapshot changed, `validate`, `status` and `deploy`
+refuse it as `changed after it was finalized`. Restore its folder from Git
+(`git checkout HEAD -- data-model/migrations/00002-add-orders`, and delete
+any file you added to it), then run `pnpm exec super-deploy validate`, which
+makes it read-only again. To change what the migration does, finalize a new
+migration, or a Recovery for the targets where it failed.
+
 ## Disposable targets and the guarded commands
 
 A disposable target is one flagged as safe to wipe and experiment on, with
@@ -1028,6 +1092,10 @@ path:
   real data stands out. Marking a target that holds a deployed draft not
   disposable warns that `deploy` refuses it until `rebuild` resets it, which
   then needs it flagged disposable again; `status` and `deploy` say so too.
+  Each run's attempt records which way it set the flag, so `status`'s recent
+  attempts show who made the target disposable and when
+  (`#5 disposable set yes succeeded by ana at ...`). In the menu, the
+  question says whether the target is disposable now, with no preselected.
 - **`deploy-draft --target X`** tries the current, unfinalized draft on a
   disposable target, so its scripts meet the target's data before you
   finalize. The target must have no pending migrations (a Recovery draft of
@@ -1073,7 +1141,10 @@ path:
   migrations up to that one. The comparison ignores column order and
   ownership, and separately the deploy role must own the managed schema and
   everything in it (see [Permissions](#permissions)). Each run marks one
-  migration.
+  migration. None of the migration's files run, its pre-migration and
+  post-migration scripts included: make their changes by hand too, such as
+  a backfill of the column you added, since the comparison sees structure,
+  not data. The confirmation names each script that won't run.
 
 All four need a person at a terminal. Each shows the target's name, host,
 database and last recorded migration, and goes ahead only when you type
@@ -1081,4 +1152,5 @@ database and last recorded migration, and goes ahead only when you type
 address the server reports when that differs, e.g.
 `db.prod.internal:5432 (10.0.4.7:5432)`. They refuse in CI (when the `CI` environment variable is set
 to anything but `false` or `0`) and without a terminal, and no flag skips
-the question.
+the question. While another command holds the target, they refuse before
+asking, naming it as `deploy` does.

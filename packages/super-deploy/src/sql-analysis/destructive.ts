@@ -17,6 +17,13 @@
 // says that values which don't fit are cut or rounded with no error: the
 // generated `USING col::newtype` is an explicit cast (QA 09).
 //
+// A column dropped and then added again with the same name and type is
+// pg-delta changing its collation or generation expression (it can't alter
+// either in place; research §8, QA 103). The drop stays destructive, and its
+// reason says so, with the statement that changes the column in place
+// (`columnReplacement`, `replacedColumnReason`; the draft's script coverage
+// words its warning alike).
+//
 // Warnings: statements that rewrite or fully scan an existing table while
 // holding its lock until the deployment commits. Tables created in the same
 // migration are exempt. Calling a volatile function is never a warning by
@@ -34,6 +41,7 @@ import type {
   TypeCast,
   TypeName,
 } from "@pgsql/types";
+import { scanSync } from "libpg-query";
 import type { ParsedStatement } from "./parse.ts";
 import {
   pgCatalogFunctions,
@@ -42,9 +50,12 @@ import {
 import { objectTypeName } from "./statement-names.ts";
 import {
   alterTableCommands,
+  closingParen,
   type Json,
+  nesting,
   statementBody,
   stringList,
+  type Token,
   unwrap,
   walkNodes,
 } from "./syntax-tree.ts";
@@ -119,8 +130,11 @@ export function columnTypesOf(
 }
 
 interface Drop {
-  readonly found: DestructiveStatement;
+  /** Reworded when the column dropped is added again (`replacedColumnReason`). */
+  found: DestructiveStatement;
   readonly key: string;
+  /** For a dropped column: its type when dropped, if known. */
+  readonly columnType?: TypeName | undefined;
   /** Holds no data, so creating it again later in the migration loses nothing. */
   readonly recreatable: boolean;
   /** Created again, or part of a table the migration drops later. */
@@ -181,8 +195,52 @@ export class ChangeTracker {
       }
       this.#found.push(drop);
     }
+    this.#rewordReplacedColumns(statement);
     this.warnings.push(...this.#warningsIn(statement));
     this.remember(statement);
+  }
+
+  /**
+   * An ADD COLUMN of a column this migration dropped, with the same type:
+   * the drop's reason says the column is replaced, and how to change it in
+   * place instead.
+   */
+  #rewordReplacedColumns(statement: ParsedStatement): void {
+    const body = statementBody(statement);
+    if (
+      statement.nodeType !== "AlterTableStmt" ||
+      body.objtype !== "OBJECT_TABLE"
+    ) {
+      return;
+    }
+    const relation = body.relation as RangeVar | undefined;
+    const table = this.#relationName(relation);
+    for (const cmd of alterTableCommands(body)) {
+      const { column } = commandDefinition(cmd);
+      if (cmd.subtype !== "AT_AddColumn" || column?.typeName === undefined) {
+        continue;
+      }
+      const dropped = this.#found.findLast(
+        (drop) =>
+          drop.found.kind === "drop-column" &&
+          drop.key === `column:${table}.${column.colname}`,
+      );
+      const replacement = columnReplacement(
+        dropped?.columnType,
+        statement,
+        column,
+        this.#managedSchema,
+      );
+      if (dropped !== undefined && replacement !== undefined) {
+        dropped.found = {
+          ...dropped.found,
+          message: replacedColumnReason(
+            `${display(relation)}.${column.colname}`,
+            replacement,
+          ),
+        };
+      }
+    }
   }
 
   /** Updates what the migration has created and the column types after a statement. */
@@ -215,9 +273,11 @@ export class ChangeTracker {
       key: string,
       message: string,
       cascade: boolean,
+      columnType?: TypeName,
     ) => {
       const objectKind = key.slice(0, key.indexOf(":"));
       drops.push({
+        columnType: cascade ? undefined : columnType,
         found: {
           file: statement.file,
           line: statement.line,
@@ -268,6 +328,7 @@ export class ChangeTracker {
               ? `ALTER TYPE ${display(relation)} DROP ATTRIBUTE ${cmd.name ?? ""} drops the attribute and its values in every column of that type`
               : `ALTER TABLE ${display(relation)} DROP COLUMN ${cmd.name ?? ""} drops the column and its data`,
             cascade,
+            isType ? undefined : this.columns.get(table)?.get(cmd.name ?? ""),
           );
         }
         if (table !== undefined && cmd.subtype === "AT_AlterColumnType") {
@@ -1098,6 +1159,144 @@ export function narrowingReason(subject: string, narrowing: Narrowing): string {
       ? `, and values too large for ${narrowing.to} make the deployment fail`
       : "";
   return `${subject} narrows from ${narrowing.from} to ${narrowing.to}: ${happens} on every target, without an error${overflows}`;
+}
+
+/** What re-adding a dropped column changes, and the statement changing it in place. */
+export interface ColumnReplacement {
+  readonly change: "collation" | "generation expression";
+  /** `ALTER TABLE ... ALTER COLUMN ... TYPE ... COLLATE ...` or `... SET EXPRESSION AS (...)`. */
+  readonly inPlace: string;
+}
+
+/** Words that end a column's type in a column definition. */
+const afterType = new Set([
+  "COLLATE",
+  "CONSTRAINT",
+  "NOT",
+  "NULL",
+  "DEFAULT",
+  "GENERATED",
+  "CHECK",
+  "REFERENCES",
+  "UNIQUE",
+  "PRIMARY",
+  "STORAGE",
+  "COMPRESSION",
+]);
+
+/**
+ * For `column`, added by `statement` (an ALTER TABLE ... ADD COLUMN) after
+ * the same column, of type `dropped`, was dropped: what pg-delta replaced
+ * it to change, and the statement that makes that change in place, cut
+ * from the statement's own text. A generated column's expression, else its
+ * collation (`"default"` when it names none). Undefined when the type
+ * differs or isn't known (a real drop and add), or the text can't be cut.
+ */
+export function columnReplacement(
+  dropped: TypeName | undefined,
+  statement: ParsedStatement,
+  column: ColumnDef,
+  managedSchema: string,
+): ColumnReplacement | undefined {
+  const prefix = `${managedSchema}.`;
+  const typeName = (type: TypeName) => {
+    const shown = typeDisplay(type);
+    return shown.startsWith(prefix) ? shown.slice(prefix.length) : shown;
+  };
+  if (
+    dropped === undefined ||
+    column.typeName === undefined ||
+    typeName(dropped) !== typeName(column.typeName)
+  ) {
+    return undefined;
+  }
+  const bytes = Buffer.from(statement.text, "utf8");
+  const cut = (start: number | undefined, end?: number) =>
+    bytes.subarray(start, end).toString("utf8");
+  const tokens: readonly Token[] = scanSync(statement.text).tokens;
+  const tokenAt = (location: number | undefined) =>
+    location === undefined
+      ? -1
+      : tokens.findIndex(
+          (token) => token.start === location - statement.offset,
+        );
+  const name = tokens[tokenAt(column.location)];
+  const head = cut(0, name?.start).replace(
+    /\bADD\s+(?:COLUMN\s+)?$/i,
+    "ALTER COLUMN ",
+  );
+  if (name === undefined || !head.endsWith("ALTER COLUMN ")) {
+    return undefined;
+  }
+  const alter = `${head}${name.text}`;
+  const generated = (column.constraints ?? [])
+    .map((item) => unwrap<Constraint>(item, "Constraint"))
+    .find((constraint) => constraint?.contype === "CONSTR_GENERATED");
+  if (generated !== undefined) {
+    const from = tokenAt(generated.location);
+    const open = tokens.findIndex(
+      (token, index) => index > from && token.text === "(",
+    );
+    const close = from < 0 ? undefined : closingParen(tokens, open);
+    return close === undefined
+      ? undefined
+      : {
+          change: "generation expression",
+          inPlace: `${alter} SET EXPRESSION AS ${cut(tokens[open]?.start, tokens[close]?.end)}`,
+        };
+  }
+  const type = tokenAt(column.typeName?.location);
+  let end = type;
+  let depth = 0;
+  for (let index = type; index >= 0 && index < tokens.length; index += 1) {
+    const token = tokens[index] as Token;
+    depth += nesting(token);
+    if (depth === 0 && afterType.has(token.text.toUpperCase())) {
+      break;
+    }
+    end = index;
+  }
+  if (type < 0) {
+    return undefined;
+  }
+  const collation =
+    (column.collClause?.collname ?? []).length > 0
+      ? collationText(tokens, tokenAt(column.collClause?.location), cut)
+      : '"default"';
+  return {
+    change: "collation",
+    inPlace: `${alter} TYPE ${cut(tokens[type]?.start, tokens[end]?.end)} COLLATE ${collation}`,
+  };
+}
+
+/** The (possibly qualified) collation name after the COLLATE token at `at`. */
+function collationText(
+  tokens: readonly Token[],
+  at: number,
+  cut: (start: number | undefined, end?: number) => string,
+): string {
+  let last = at + 1;
+  while (tokens[last + 1]?.text === ".") {
+    last += 2;
+  }
+  return cut(tokens[at + 1]?.start, tokens[last]?.end);
+}
+
+/**
+ * Why dropping `subject` (`table.column`) and adding it again loses what it
+ * does, and the in-place statement to use instead; `detail` follows the
+ * change, e.g. the rehearsal data's count.
+ */
+export function replacedColumnReason(
+  subject: string,
+  replacement: ColumnReplacement,
+  detail = "",
+): string {
+  const replaced = `${subject} is dropped and re-added to change its ${replacement.change}${detail}`;
+  const inPlace = `change it in place in the pre-migration script: ${replacement.inPlace}`;
+  return replacement.change === "collation"
+    ? `${replaced}: its values are lost. To keep them, ${inPlace}`
+    : `${replaced}: its values are computed again, but it moves to the end of the table and finalize needs the drop acknowledged. To avoid both, ${inPlace}`;
 }
 
 /** USING keeps the values when it is absent, the column itself, or a cast of it. */

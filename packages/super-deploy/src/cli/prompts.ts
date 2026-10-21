@@ -1,6 +1,7 @@
 // Terminal questions with @clack/prompts: the menu's command list, one
 // question per option kind (worded by the option's `question`, else its
-// `--help` description), and yes/no confirmations (default no). Every
+// `--help` description; a choice may work out its question and preselection
+// from the answers so far), and yes/no confirmations (default no). Every
 // prompt is cancelled by Escape or Ctrl+C (clack reads them in raw mode), by
 // Ctrl+D on an empty answer (`askUntilEndOfInput`) and by the interruption
 // signal.
@@ -147,7 +148,7 @@ export async function askOptions(
 ): Promise<OptionValues | undefined> {
   const values: Record<string, string | boolean> = {};
   for (const option of command.options) {
-    const answer = await askOption(io, option, project);
+    const answer = await askOption(io, option, project, values);
     if (answer === cancelled) {
       return undefined;
     }
@@ -164,6 +165,7 @@ async function askOption(
   io: PromptIo,
   option: OptionDefinition,
   project: Project | undefined,
+  answers: OptionValues,
 ): Promise<string | boolean | undefined | typeof cancelled> {
   const message = menuQuestion(option);
   switch (option.kind) {
@@ -216,19 +218,22 @@ async function askOption(
       );
       return answer === none ? undefined : answer;
     }
-    case "choice":
+    case "choice": {
+      const asked = await option.menu?.(needed(project, option), answers);
       return answered(
         await ask(io, (streams) =>
           select({
             ...streams,
-            message,
+            message: asked?.question ?? message,
             options: option.choices.map((choice) => ({
               value: choice,
               label: choice,
             })),
+            ...(asked === undefined ? {} : { initialValue: asked.initial }),
           }),
         ),
       );
+    }
     case "name":
       return askName(io, option, project);
     case "flag": {

@@ -4,9 +4,13 @@
 //
 // A syntax error in the config is reported at its line, which Node gives only
 // as the first line of the SyntaxError's stack (`<path or file URL>:<line>`,
-// then the source line and a caret). Inside Vitest the config goes through
-// Vitest's transform instead, whose errors carry no location, so tests of this
-// load the project in a plain Node process (`config.test.ts`).
+// then the source line and a caret). An error thrown as the config runs is
+// reported at the topmost frame of its stack in the config itself (type
+// stripping keeps lines), so a function the config calls is located at the
+// call; one with no such frame (thrown while an imported module loads) keeps
+// no location. Inside Vitest the config goes through Vitest's transform
+// instead, whose errors carry no location, so tests of this load the project
+// in a plain Node process (`config.test.ts`).
 
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -98,39 +102,57 @@ export async function loadProject(
 }
 
 /**
- * `super-deploy.config.ts:<line>: <reason> in \`<source line>\`` for a syntax
- * error Node located in the config file itself; otherwise
+ * `super-deploy.config.ts:<line>: <reason> in \`<source line>\`` for an error
+ * located in the config file itself; otherwise
  * `Failed to load super-deploy.config.ts: <reason>`.
  */
 function describeLoadFailure(error: unknown, configPath: string): string {
   const reason = errorReason(error);
-  const line =
-    error instanceof SyntaxError ? syntaxErrorLine(error) : undefined;
-  if (line !== undefined && line.path === configPath) {
-    const source = readFileSync(configPath, "utf8").split(/\r?\n/)[
-      line.number - 1
-    ];
+  const number = configLine(error, configPath);
+  if (number !== undefined) {
+    const source = readFileSync(configPath, "utf8").split(/\r?\n/)[number - 1];
     if (source !== undefined) {
-      return `${configFileName}:${line.number}: ${reason} in \`${source.trim()}\``;
+      return `${configFileName}:${number}: ${reason} in \`${source.trim()}\``;
     }
   }
   return `Failed to load ${configFileName}: ${reason}`;
 }
 
-/** The file and line a module's SyntaxError names in its stack's first line. */
-function syntaxErrorLine(
-  error: SyntaxError,
-): { path: string; number: number } | undefined {
-  const match = /^(.+):(\d+)$/.exec(error.stack?.split("\n", 1)[0] ?? "");
-  if (match === null) {
+/**
+ * The config's line an error comes from: for a module's SyntaxError, the
+ * `<location>:<line>` its stack's first line names; for anything else, the
+ * topmost stack frame (`at … <location>:<line>:<column>`) in the config.
+ */
+function configLine(error: unknown, configPath: string): number | undefined {
+  if (!(error instanceof Error) || error.stack === undefined) {
     return undefined;
   }
-  const [, location = "", number = ""] = match;
+  const [first = "", ...frames] = error.stack.split("\n");
+  if (error instanceof SyntaxError) {
+    const match = /^(.+):(\d+)$/.exec(first);
+    if (match !== null) {
+      const [, location = "", number = ""] = match;
+      return filePath(location) === configPath ? Number(number) : undefined;
+    }
+  }
+  for (const frame of frames) {
+    const match = /^\s+at (?:.* \()?(.+):(\d+):\d+\)?$/.exec(frame);
+    if (match !== null) {
+      const [, location = "", number = ""] = match;
+      if (filePath(location) === configPath) {
+        return Number(number);
+      }
+    }
+  }
+  return undefined;
+}
+
+/** A stack's location as a path: file URLs converted, `?load=N` dropped. */
+function filePath(location: string): string {
   const withoutQuery = location.replace(/\?[^/]*$/, "");
-  const path = withoutQuery.startsWith("file:")
+  return withoutQuery.startsWith("file:")
     ? fileURLToPath(withoutQuery)
     : withoutQuery;
-  return { path, number: Number(number) };
 }
 
 /** The super-deploy.config.ts in `start` or its nearest parent, if any. */

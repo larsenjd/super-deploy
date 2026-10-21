@@ -19,7 +19,7 @@ import {
 } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject } from "../support/project.ts";
-import { keys, spawnTerminal } from "../support/terminal.ts";
+import { keys, spawnTerminal, type Terminal } from "../support/terminal.ts";
 
 let server: TestServer;
 beforeAll(async () => {
@@ -155,6 +155,37 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
     );
     expect(status.stdout).toContain("Pending:\n  00003-add-notes\n");
   });
+  test("the confirmation names the migration's scripts that will not run, and only when it has some", async () => {
+    const { dir, database } = await pendingProject();
+    await asDeployRole(server, database, orders);
+
+    const withScript = spawnTerminal(["mark", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    const shown = await withScript.waitFor("Type YES");
+    expect(shown).toContain(
+      "00002-add-orders/post-migration.sql will not run: make the changes it makes by hand before typing YES",
+    );
+    withScript.type(`YES${keys.enter}`);
+    expect(await withScript.exited).toBe(0);
+
+    await asDeployRole(
+      server,
+      database,
+      "create table notes (id bigint primary key);",
+    );
+    const schemaChangeOnly = spawnTerminal(["mark", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    const shownAgain = await schemaChangeOnly.waitFor(
+      "Type YES to mark migration 00003-add-notes",
+    );
+    expect(shownAgain).not.toContain("will not run");
+    expect(shownAgain).toContain("Its schema change is not run");
+    schemaChangeOnly.type(keys.ctrlC);
+    expect(await schemaChangeOnly.exited).toBe(1);
+  });
+
   test("refuses without asking when the target differs from the replica, listing the differences: nothing is recorded", async () => {
     const { dir, database } = await pendingProject();
     // Fixed by hand, but without orders.note, and migration 3's table added too.
@@ -350,31 +381,26 @@ create index orders_customer_idx on orders (customer_id);
   });
 
   test("checks the replica again under the lock: a target changed while waiting for YES is refused", async () => {
-    const { dir, database } = await pendingProject();
-    await asDeployRole(server, database, orders);
-
-    const terminal = spawnTerminal(["mark", "--target", "dev"], {
-      cwd: dir.root,
-    });
-
-    await terminal.waitFor("Type YES");
-    await server.query("alter table orders drop column note", [], database);
-    terminal.type(`YES${keys.enter}`);
-    await terminal.waitFor(
-      "Error: Target dev does not match a replica of its migrations up to 00002-add-orders: column note of table public.orders (missing from the target)",
+    const refusal =
+      "Target dev does not match a replica of its migrations up to 00002-add-orders: column note of table public.orders (missing from the target)";
+    const terminal = await refusedAfterChangeWhileWaiting(
+      "alter table orders drop column note",
+      refusal,
     );
-    expect(await terminal.exited).toBe(1);
-    expect(await recordedMigrations(database)).toEqual([
-      { number: 1, recorded_how: "deployed", recovery: null, attempt: 1 },
-    ]);
-    expect(await attempts(database)).toEqual([
-      { command: "deploy", outcome: "succeeded", error: null },
-      {
-        command: "mark",
-        outcome: "failed",
-        error: expect.stringContaining("does not match a replica"),
-      },
-    ]);
+    expect(terminal.screen).toContain(`Error: ${refusal}`);
+  });
+
+  test("checks ownership again under the lock: an object given to another role while waiting for YES is refused", async () => {
+    const terminal = await refusedAfterChangeWhileWaiting(
+      "alter table orders owner to super_deploy",
+      "The deploy role on target dev doesn't own everything in the managed schema: table public.orders is owned by super_deploy",
+    );
+    expect(terminal.screen).toContain(
+      "table public.orders (owned by super_deploy)",
+    );
+    expect(terminal.screen).toContain(
+      "Error: The deploy role on target dev doesn't own 1 object in the managed schema, listed above",
+    );
   });
 
   test("a mark whose COMMIT outcome was lost settles from its migrations row: failed when it never landed, succeeded when it did", async () => {
@@ -426,6 +452,40 @@ create index orders_customer_idx on orders (customer_id);
     ]);
   });
 });
+
+/**
+ * Migration 2 made by hand, then `mark` at a terminal; `change` runs as the
+ * superuser while it waits for YES. Expects mark to refuse after YES with an
+ * error containing `refusal`, recording nothing and a failed attempt.
+ */
+async function refusedAfterChangeWhileWaiting(
+  change: string,
+  refusal: string,
+): Promise<Terminal> {
+  const { dir, database } = await pendingProject();
+  await asDeployRole(server, database, orders);
+
+  const terminal = spawnTerminal(["mark", "--target", "dev"], {
+    cwd: dir.root,
+  });
+
+  await terminal.waitFor("Type YES");
+  await server.query(change, [], database);
+  terminal.type(`YES${keys.enter}`);
+  expect(await terminal.exited).toBe(1);
+  expect(await recordedMigrations(database)).toEqual([
+    { number: 1, recorded_how: "deployed", recovery: null, attempt: 1 },
+  ]);
+  expect(await attempts(database)).toEqual([
+    { command: "deploy", outcome: "succeeded", error: null },
+    {
+      command: "mark",
+      outcome: "failed",
+      error: expect.stringContaining(refusal),
+    },
+  ]);
+  return terminal;
+}
 
 /**
  * A \`dev\` adapter whose next transaction that sets lock_timeout (outside a
