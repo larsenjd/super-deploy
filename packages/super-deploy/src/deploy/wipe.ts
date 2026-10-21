@@ -318,6 +318,9 @@ export class WipeDropFailedError extends SuperDeployError {
   }
 }
 
+/** How `objectsNotDroppable` names an extension, e.g. `extension citext`. */
+const extensionPrefix = "extension ";
+
 /**
  * rebuild refused before asking: the managed schema holds objects the deploy
  * role can't drop (e.g. an extension a superuser installed, or a member of
@@ -340,12 +343,23 @@ export class CannotWipeError extends SuperDeployError {
       extension === undefined
         ? `${object} (owned by ${owner})`
         : `${object} (a member of extension ${extension}, owned by ${owner})`;
+    // PostgreSQL can't give an extension another owner: only its owner or a
+    // superuser can drop it.
     const owned = objects.filter(({ extension }) => extension === undefined);
+    const extensions = owned
+      .filter(({ object }) => object.startsWith(extensionPrefix))
+      .map(({ object }) => object.slice(extensionPrefix.length));
+    const others = owned.length - extensions.length;
     const members = objects.length - owned.length;
     const advice = [
-      owned.length === 0
+      extensions.length === 0
         ? ""
-        : owned.length === 1
+        : extensions.length === 1
+          ? `Have the extension's owner or a superuser run DROP EXTENSION ${extensions.join(", ")} CASCADE`
+          : `Have the extensions' owners or a superuser run DROP EXTENSION ${extensions.join(", ")} CASCADE`,
+      others === 0
+        ? ""
+        : others === 1
           ? "Drop it, change its owner to the deploy role, or ask its owner to"
           : "Drop them, change their owners to the deploy role, or ask their owners to",
       members === 0
@@ -355,6 +369,9 @@ export class CannotWipeError extends SuperDeployError {
           : "Take them out of their extensions (ALTER EXTENSION ... DROP) or drop the extensions, as their owners",
     ]
       .filter((part) => part !== "")
+      .map((part, i) =>
+        i === 0 ? part : part.charAt(0).toLowerCase() + part.slice(1),
+      )
       .join("; ");
     super(
       `rebuild can't wipe schema ${schema} on target ${target}: the deploy role can't drop ${objects.map(describe).join(", ")}. ${advice}, then run rebuild again (nothing changed)`,

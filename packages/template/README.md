@@ -823,7 +823,9 @@ draft-finalize-deploy path:
   `YES`, rebuild refuses without changing anything. It refuses before
   asking when the managed schema holds something the deploy role can't
   drop, such as an extension a superuser installed or a member of an
-  extension installed in another schema, naming each object and its owner. The managed schema itself stays, with its owner, grants and
+  extension installed in another schema, naming each object and its owner.
+  PostgreSQL can't give an extension another owner, so have its owner or a
+  superuser drop it (`DROP EXTENSION ... CASCADE`). The managed schema itself stays, with its owner, grants and
   default privileges. Then it deletes the target's record of migrations and of any
   deployed draft, and runs migrations 1 to N as a deployment does, each as
   its newest Recovery if it has one; the confirmation and the result name

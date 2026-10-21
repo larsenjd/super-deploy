@@ -18,6 +18,7 @@ import {
   asDeployerPreamble,
   asDeployRole,
   deployConfig,
+  embeddedDeployRole,
   roleName,
   targetDatabaseName,
 } from "../support/deploy.ts";
@@ -723,6 +724,26 @@ const reportingObjects = `select object from (
      where connamespace = 'reporting'::regnamespace and contype <> 'n'
   ) o order by object collate "C"`;
 
+/**
+ * Migration 1 (customers) deployed to a disposable \`dev\` managing schema
+ * app, which a superuser then took over, granting the deploy role USAGE and
+ * CREATE on it.
+ */
+async function appOwnedBySuperuser() {
+  const { config, database } = deployConfig(server, {
+    settings: 'managedSchema: "app",',
+  });
+  const dir = await customersDeployed(config);
+  await server.query(
+    `update deployment_history.settings set disposable = true;
+     alter schema app owner to current_user;
+     grant usage, create on schema app to ${embeddedDeployRole};`,
+    [],
+    database,
+  );
+  return { dir, database };
+}
+
 /** The confirmation box's lines, without its borders. */
 function boxLines(shown: string): string[] {
   return shown
@@ -1160,8 +1181,9 @@ unix("rebuild", () => {
       { cwd: dir.root },
     );
     await terminal.waitFor(
-      "Error: rebuild can't wipe schema public on target dev: the deploy role can't drop extension citext (owned by super_deploy). Drop it, change its owner to the deploy role, or ask its owner to, then run rebuild again (nothing changed)",
+      "Error: rebuild can't wipe schema public on target dev: the deploy role can't drop extension citext (owned by super_deploy). Have the extension's owner or a superuser run DROP EXTENSION citext CASCADE, then run rebuild again (nothing changed)",
     );
+    expect(terminal.screen).not.toContain("change its owner");
     expect(await terminal.exited).toBe(1);
     expect(terminal.screen).not.toContain("Type YES");
     expect(
@@ -1178,6 +1200,47 @@ unix("rebuild", () => {
         database,
       ),
     ).toEqual([{ command: "deploy" }]);
+  });
+
+  test("refuses, without asking, an extension and a member of another extension at once, with each its own advice", async () => {
+    const { dir, database } = await twoMigrations();
+    await server.query(
+      `create extension citext;
+       alter extension plpgsql add function twice(int);`,
+      [],
+      database,
+    );
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor(
+      "Error: rebuild can't wipe schema public on target dev: the deploy role can't drop extension citext (owned by super_deploy), function public.twice(x integer) (a member of extension plpgsql, owned by super_deploy). Have the extension's owner or a superuser run DROP EXTENSION citext CASCADE; take it out of its extension (ALTER EXTENSION ... DROP) or drop the extension, as its owner, then run rebuild again (nothing changed)",
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    await server.query(
+      `alter extension plpgsql drop function twice(int);
+       drop extension citext;`,
+      [],
+      database,
+    );
+  });
+
+  test("refuses, without asking, a table a superuser made in a managed schema the deploy role doesn't own, advising to change its owner", async () => {
+    const { dir, database } = await appOwnedBySuperuser();
+    await server.query("create table app.su_owned (id int)", [], database);
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor(
+      "Error: rebuild can't wipe schema app on target dev: the deploy role can't drop table app.su_owned (owned by super_deploy). Drop it, change its owner to the deploy role, or ask its owner to, then run rebuild again (nothing changed)",
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
   });
 
   test("says it rolled back when PostgreSQL refuses a drop after YES", async () => {
