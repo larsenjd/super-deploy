@@ -1,6 +1,7 @@
 // API seam: pre- and post-migration scripts in draft, rehearsals and deploy.
 
 import {
+  DestructiveNotAcknowledgedError,
   deploy,
   draft,
   finalize,
@@ -379,6 +380,81 @@ alter table customers alter column phone set not null;
       { kind: "changed-type", column: "code" },
       { kind: "changed-type", column: "quantity" },
     ]);
+  });
+
+  test("a narrowing type change says values that don't fit are cut without an error, in draft and finalize", async () => {
+    const { dir, project } = await withFirstMigration();
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      customers.replace("name text", "name varchar(5)"),
+    );
+    await draft(project, { name: "shorten names" });
+    // Ada (3 characters) is already there from migration 1.
+    await dir.write(
+      "data-model/draft/seed-data.sql",
+      "insert into customers (id, name) values (2, 'Real One');\n",
+    );
+
+    const result = await draft(project);
+
+    const narrowing =
+      "customers.name narrows from text to varchar(5): values longer than 5 characters are cut to 5 on every target, without an error";
+    expect(result.toCover).toEqual([
+      expect.objectContaining({
+        kind: "changed-type",
+        column: "name",
+        rows: 1,
+        message: `${narrowing} (1 value in the rehearsal data doesn't fit): shorten or move them in the pre-migration script if they matter`,
+      }),
+    ]);
+    // The generated schema change keeps pg-delta's explicit cast (QA 09).
+    expect(await dir.read("data-model/draft/schema-change.sql")).toContain(
+      'USING "name"::character varying(5)',
+    );
+    const refusal = await finalize(project).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(DestructiveNotAcknowledgedError);
+    expect(
+      (refusal as DestructiveNotAcknowledgedError).question.statements.map(
+        ({ message }) => message,
+      ),
+    ).toEqual([narrowing]);
+  });
+
+  test("draft counts the bit strings cut and the numerics rounded by a narrowing", async () => {
+    const { dir, project } = await deployProject(server, {
+      "orders.sql": `create table orders (
+  id bigint primary key,
+  flags bit(4),
+  cost numeric(6,2)
+);
+`,
+    });
+    await draft(project, { name: "add orders" });
+    await dir.write(
+      "data-model/draft/post-migration.sql",
+      "insert into orders (id, flags, cost) values (1, B'1010', 1.25), (2, null, 2.50), (3, B'0000', 3.10);\n",
+    );
+    await finalize(project);
+    await dir.write(
+      "data-model/desired-schema/orders.sql",
+      `create table orders (
+  id bigint primary key,
+  flags bit(2),
+  cost numeric(4,1)
+);
+`,
+    );
+
+    const result = await draft(project, { name: "narrow orders" });
+
+    const counts = result.toCover.map(({ column, rows }) => ({ column, rows }));
+    expect(counts).toHaveLength(2);
+    expect(counts).toEqual(
+      expect.arrayContaining([
+        { column: "flags", rows: 2 },
+        { column: "cost", rows: 1 },
+      ]),
+    );
   });
 
   test("rehearse runs the draft's scripts in deployment order, naming a failing script", async () => {

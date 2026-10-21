@@ -478,6 +478,16 @@ or constraint that the migration then creates again (as `draft` does to
 change one). A table or column dropped and created again has lost its rows,
 so that stays destructive, and so does anything with `CASCADE`.
 
+Narrowing a column is destructive in a quieter way. `draft` changes a
+column's type with an explicit cast (`USING col::newtype`), so values that
+don't fit the new type are cut short or rounded, without an error, on every
+target. That applies to a shorter `varchar(n)`, `char(n)`, `bit(n)` or
+`varbit(n)`, such as `text` to `varchar(5)`, and to a `numeric` with fewer
+decimal places, such as `numeric(6,2)` to `numeric(4,1)`. The deployment
+doesn't fail. `draft` says how many values in the rehearsal data don't fit,
+and `finalize` asks for the change to be acknowledged. If those values
+matter, shorten or move them in the pre-migration script.
+
 `rehearse` lists a draft's destructive statements, and `finalize` needs them
 acknowledged. In a terminal, `finalize` lists them and asks. Without a
 terminal (in CI, for example) it refuses, listing them:

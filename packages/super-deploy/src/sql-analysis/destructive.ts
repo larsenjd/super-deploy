@@ -13,6 +13,10 @@
 //   trigger, type or constraint (a table or column dropped and created
 //   again has lost its rows, so that stays destructive). CASCADE always is.
 //
+// A narrowing type change (`narrowingOf`) is destructive too, and its reason
+// says that values which don't fit are cut or rounded with no error: the
+// generated `USING col::newtype` is an explicit cast (QA 09).
+//
 // Warnings: statements that rewrite or fully scan an existing table while
 // holding its lock until the deployment commits. Tables created in the same
 // migration are exempt. Calling a volatile function is never a warning by
@@ -27,6 +31,7 @@ import type {
   Node,
   ObjectWithArgs,
   RangeVar,
+  TypeCast,
   TypeName,
 } from "@pgsql/types";
 import type { ParsedStatement } from "./parse.ts";
@@ -267,15 +272,18 @@ export class ChangeTracker {
         }
         if (table !== undefined && cmd.subtype === "AT_AlterColumnType") {
           const column = cmd.name ?? "";
-          const loss = this.#typeChangeLoss(table, column, cmd);
-          if (loss !== undefined) {
-            const target = unwrap(cmd.def, "ColumnDef") as
-              | ColumnDef
-              | undefined;
+          const target = unwrap(cmd.def, "ColumnDef") as ColumnDef | undefined;
+          const reason = this.#typeChangeLoss(
+            table,
+            column,
+            cmd,
+            `ALTER ${isType ? "TYPE" : "TABLE"} ${display(relation)} ALTER ${isType ? "ATTRIBUTE" : "COLUMN"} ${column} TYPE ${target?.typeName === undefined ? "" : typeDisplay(target.typeName)}`,
+          );
+          if (reason !== undefined) {
             add(
               "lossy-type-change",
               `column:${table}.${column}`,
-              `ALTER ${isType ? "TYPE" : "TABLE"} ${display(relation)} ALTER ${isType ? "ATTRIBUTE" : "COLUMN"} ${column} TYPE ${target?.typeName === undefined ? "" : typeDisplay(target.typeName)} can lose data: ${loss}`,
+              reason,
               false,
             );
           }
@@ -484,11 +492,16 @@ export class ChangeTracker {
     return warnings;
   }
 
-  /** Why changing the column's type can lose data, or undefined for a widening. */
+  /**
+   * Why changing the column's type can lose data, or undefined for a
+   * widening. A narrowing says what happens to the values that don't fit;
+   * any other loss is `statement` (the change, as it reads) and its cause.
+   */
   #typeChangeLoss(
     table: string,
     column: string,
     cmd: AlterTableCmd,
+    statement: string,
   ): string | undefined {
     const target = unwrap(cmd.def, "ColumnDef") as ColumnDef | undefined;
     const current = this.columns.get(table)?.get(column);
@@ -496,14 +509,18 @@ export class ChangeTracker {
       return undefined;
     }
     if (current === undefined) {
-      return "super-deploy cannot tell the column's current type";
+      return `${statement} can lose data: super-deploy cannot tell the column's current type`;
     }
     if (!keepsValues(target.raw_default, column)) {
-      return "the USING expression computes new values";
+      return `${statement} can lose data: the USING expression computes new values`;
     }
-    return widens(current, target.typeName)
-      ? undefined
-      : `not every ${typeDisplay(current)} value fits ${typeDisplay(target.typeName)} unchanged`;
+    if (widens(current, target.typeName)) {
+      return undefined;
+    }
+    const narrowing = narrowingOf(current, column, cmd);
+    return narrowing === undefined
+      ? `${statement} can lose data: not every ${typeDisplay(current)} value fits ${typeDisplay(target.typeName)} unchanged`
+      : narrowingReason(`${table}.${column}`, narrowing);
   }
 
   #relationName(relation: RangeVar | undefined): string | undefined {
@@ -867,9 +884,13 @@ function typeKey(type: TypeName): string {
   return `${baseTypeName(type)}${"[]".repeat((type.arrayBounds ?? []).length)}`;
 }
 
+/** Names messages show instead of PostgreSQL's internal ones. */
+const typeDisplayNames: Record<string, string> = { bpchar: "char" };
+
 function typeDisplay(type: TypeName): string {
   const mods = typeModifiers(type);
-  return `${baseTypeName(type)}${mods.length === 0 ? "" : `(${mods.join(",")})`}${"[]".repeat((type.arrayBounds ?? []).length)}`;
+  const name = baseTypeName(type);
+  return `${typeDisplayNames[name] ?? name}${mods.length === 0 ? "" : `(${mods.join(",")})`}${"[]".repeat((type.arrayBounds ?? []).length)}`;
 }
 
 /** Integer literal type modifiers, e.g. [10, 2] for numeric(10,2). */
@@ -968,6 +989,96 @@ function widens(from: TypeName, to: TypeName): boolean {
     return newLength === undefined || newLength >= (length ?? 6);
   }
   return false;
+}
+
+/**
+ * A type change that shortens values rather than refusing them (QA 09).
+ * pg-delta generates every type change with `USING col::newtype`, an
+ * explicit cast, which cuts text and bit strings to the new length and
+ * rounds numerics to the new scale, with no error. That `USING` is kept on
+ * purpose and warned about here instead. Without it PostgreSQL's assignment
+ * cast refuses an over-long string (so that is no narrowing), but still
+ * rounds.
+ */
+export type Narrowing = {
+  /** The current and new types, as messages show them. */
+  readonly from: string;
+  readonly to: string;
+} & (
+  | {
+      readonly kind: "length";
+      /** Longer values are cut to this many characters or bits. */
+      readonly length: number;
+      readonly unit: "characters" | "bits";
+    }
+  | {
+      readonly kind: "scale";
+      /** Values are rounded to this many decimal places. */
+      readonly scale: number;
+    }
+);
+
+/** Types an explicit cast cuts to length, with what the length counts. */
+const lengthFamilies: readonly (readonly [
+  ReadonlySet<string>,
+  "characters" | "bits",
+])[] = [
+  [new Set(["text", "varchar", "bpchar"]), "characters"],
+  [new Set(["bit", "varbit"]), "bits"],
+];
+
+/**
+ * How `command` (ALTER COLUMN ... TYPE on `column`, currently of type
+ * `current`) narrows the column, or undefined when it is no narrowing:
+ * to `varchar(n)`, `char(n)`, `bit(n)` or `varbit(n)` from a text or bit
+ * type with no length or a greater one, by an explicit cast; or to
+ * `numeric(p,s)` from a numeric with a greater scale (or none).
+ */
+export function narrowingOf(
+  current: TypeName,
+  column: string,
+  command: AlterTableCmd,
+): Narrowing | undefined {
+  const definition = unwrap<ColumnDef>(command.def, "ColumnDef");
+  const target = definition?.typeName;
+  if (
+    target === undefined ||
+    (current.arrayBounds ?? []).length > 0 ||
+    (target.arrayBounds ?? []).length > 0 ||
+    !keepsValues(definition?.raw_default, column)
+  ) {
+    return undefined;
+  }
+  const source = baseTypeName(current);
+  const destination = baseTypeName(target);
+  const types = { from: typeDisplay(current), to: typeDisplay(target) };
+  const [length, scale = 0] = typeModifiers(current);
+  const [newLength, newScale = 0] = typeModifiers(target);
+  if (source === "numeric" && destination === "numeric") {
+    return newLength !== undefined && (length === undefined || newScale < scale)
+      ? { ...types, kind: "scale", scale: newScale }
+      : undefined;
+  }
+  const family = lengthFamilies.find(
+    ([names]) => names.has(source) && names.has(destination),
+  );
+  const using = unwrap<TypeCast>(definition?.raw_default, "TypeCast");
+  return family !== undefined &&
+    newLength !== undefined &&
+    (length === undefined || length > newLength) &&
+    using?.typeName !== undefined &&
+    typeDisplay(using.typeName) === types.to
+    ? { ...types, kind: "length", length: newLength, unit: family[1] }
+    : undefined;
+}
+
+/** What a narrowing of `subject` (`table.column`) does on every target. */
+export function narrowingReason(subject: string, narrowing: Narrowing): string {
+  const happens =
+    narrowing.kind === "length"
+      ? `values longer than ${narrowing.length} ${narrowing.unit} are cut to ${narrowing.length}`
+      : `values are rounded to ${narrowing.scale === 0 ? "whole numbers" : `${narrowing.scale} decimal place${narrowing.scale === 1 ? "" : "s"}`}`;
+  return `${subject} narrows from ${narrowing.from} to ${narrowing.to}: ${happens} on every target, without an error`;
 }
 
 /** USING keeps the values when it is absent, the column itself, or a cast of it. */

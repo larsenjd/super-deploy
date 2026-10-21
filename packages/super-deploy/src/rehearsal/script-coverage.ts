@@ -9,7 +9,9 @@
 //
 // A type change whose cast keeps every value (a widening of the column's
 // type in the starting point, judged as finalize judges destructiveness)
-// needs nothing covered.
+// needs nothing covered. A narrowing (`narrowingOf` in destructive.ts) is
+// reported with what the generated cast does to the values that don't fit,
+// counting only those.
 //
 // Advisory only: `draft` reports these and carries on. Acknowledging data
 // loss at finalize is ticket 11's, from the same statements.
@@ -17,7 +19,12 @@ import type { AlterTableCmd, TypeCast, TypeName } from "@pgsql/types";
 import type { Session } from "../adapters/types.ts";
 import { quoteIdentifier } from "../deploy/history.ts";
 import type { PlannedStatement } from "../differ/index.ts";
-import { keepsEveryValue } from "../sql-analysis/destructive.ts";
+import {
+  keepsEveryValue,
+  type Narrowing,
+  narrowingOf,
+  narrowingReason,
+} from "../sql-analysis/destructive.ts";
 import { parseSqlFile } from "../sql-analysis/parse.ts";
 import {
   isObject,
@@ -50,7 +57,8 @@ export interface ScriptCoverage {
   /**
    * Affected rows in the rehearsal data: every row (`dropped-table`,
    * `added-required-column`), the non-null values (`dropped-column`,
-   * `changed-type`) or the nulls (`set-not-null`).
+   * `changed-type`) or the nulls (`set-not-null`). For a `changed-type`
+   * that narrows the column, only the values it would cut or round.
    */
   readonly rows: number;
   /** One line saying what is at risk and what the pre-migration script can do. */
@@ -77,18 +85,22 @@ export async function scriptCoverage(
   for (const statement of planned) {
     for (const candidate of await candidatesIn(statement.sql)) {
       const schema = candidate.schema ?? managedSchema;
-      const rows = await affectedRows(source, schema, candidate);
-      if (
-        rows !== undefined &&
-        !(await keepsValuesOn(source, schema, candidate))
-      ) {
+      const { keepsValues, narrowing } = await typeChangeOn(
+        source,
+        schema,
+        candidate,
+      );
+      const rows = keepsValues
+        ? undefined
+        : await affectedRows(source, schema, candidate, narrowing);
+      if (rows !== undefined) {
         found.push({
           kind: candidate.kind,
           table: candidate.table,
           column: candidate.column,
           statement: candidate.statement,
           rows,
-          message: messageFor(candidate, rows),
+          message: messageFor(candidate, rows, narrowing),
         });
       }
     }
@@ -197,11 +209,13 @@ function isRequired(column: Json): boolean {
 /**
  * The affected rows on `source`, or undefined when the table (or column)
  * doesn't exist there: the schema change creates it, so it holds no data.
+ * For a `narrowing`, only the values it would change.
  */
 async function affectedRows(
   source: Session,
   schema: string,
   candidate: Candidate,
+  narrowing: Narrowing | undefined,
 ): Promise<number | undefined> {
   const relation = `${quoteIdentifier(schema)}.${quoteIdentifier(candidate.table)}`;
   const existing = await source.query<{ found: boolean }>(
@@ -223,11 +237,16 @@ async function affectedRows(
   const column =
     candidate.column === undefined ? "" : quoteIdentifier(candidate.column);
   const where =
-    candidate.kind === "dropped-column" || candidate.kind === "changed-type"
-      ? ` WHERE ${column} IS NOT NULL`
-      : candidate.kind === "set-not-null"
-        ? ` WHERE ${column} IS NULL`
-        : "";
+    narrowing?.kind === "length"
+      ? ` WHERE length(${column}) > ${narrowing.length}`
+      : narrowing?.kind === "scale"
+        ? ` WHERE ${column} <> round(${column}, ${narrowing.scale})`
+        : candidate.kind === "dropped-column" ||
+            candidate.kind === "changed-type"
+          ? ` WHERE ${column} IS NOT NULL`
+          : candidate.kind === "set-not-null"
+            ? ` WHERE ${column} IS NULL`
+            : "";
   const counted = await source.query<{ rows: number }>(
     `SELECT count(*)::integer AS rows FROM ${relation}${where}`,
   );
@@ -235,17 +254,38 @@ async function affectedRows(
 }
 
 /**
- * True when the candidate is a type change that keeps every value of the
- * column's current type on `source`.
+ * For a type change, judged against the column's current type on `source`:
+ * whether it keeps every value, and how it narrows the column. Neither for
+ * any other candidate.
  */
-async function keepsValuesOn(
+async function typeChangeOn(
   source: Session,
   schema: string,
   candidate: Candidate,
-): Promise<boolean> {
-  if (candidate.retype === undefined || candidate.column === undefined) {
-    return false;
+): Promise<{
+  readonly keepsValues: boolean;
+  readonly narrowing: Narrowing | undefined;
+}> {
+  const neither = { keepsValues: false, narrowing: undefined };
+  const { retype, column } = candidate;
+  if (retype === undefined || column === undefined) {
+    return neither;
   }
+  const current = await currentType(source, schema, candidate);
+  return current === undefined
+    ? neither
+    : {
+        keepsValues: keepsEveryValue(current, column, retype),
+        narrowing: narrowingOf(current, column, retype),
+      };
+}
+
+/** The column's type on `source`, or undefined when it doesn't exist there. */
+async function currentType(
+  source: Session,
+  schema: string,
+  candidate: Candidate,
+): Promise<TypeName | undefined> {
   const current = await source.query<{ type: string }>(
     `SELECT pg_catalog.format_type(atttypid, atttypmod) AS type
      FROM pg_catalog.pg_attribute
@@ -256,11 +296,7 @@ async function keepsValuesOn(
     ],
   );
   const type = current.rows[0]?.type;
-  const typeName = type === undefined ? undefined : await parseTypeName(type);
-  return (
-    typeName !== undefined &&
-    keepsEveryValue(typeName, candidate.column, candidate.retype)
-  );
+  return type === undefined ? undefined : await parseTypeName(type);
 }
 
 /** The syntax tree of a type as `format_type` prints it, e.g. `character varying(10)`. */
@@ -276,9 +312,20 @@ async function parseTypeName(type: string): Promise<TypeName | undefined> {
   return unwrap<TypeCast>(target?.val, "TypeCast")?.typeName;
 }
 
-function messageFor(candidate: Candidate, rows: number): string {
+function messageFor(
+  candidate: Candidate,
+  rows: number,
+  narrowing: Narrowing | undefined,
+): string {
   const { kind, table, column } = candidate;
   const subject = `${table}.${column ?? ""}`;
+  if (narrowing !== undefined) {
+    const fit =
+      rows === 0
+        ? "every value in the rehearsal data fits"
+        : `${rows} ${rows === 1 ? "value" : "values"} in the rehearsal data ${rows === 1 ? "doesn't" : "don't"} fit`;
+    return `${narrowingReason(subject, narrowing)} (${fit}): shorten or move them in the pre-migration script if they matter`;
+  }
   const count = (one: string, many: string) =>
     `(${rows === 0 ? `no ${many}` : `${rows} ${rows === 1 ? one : many}`} in the rehearsal data)`;
   switch (kind) {
