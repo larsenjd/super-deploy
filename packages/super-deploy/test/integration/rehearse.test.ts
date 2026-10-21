@@ -202,7 +202,7 @@ comment on column t.b is 'bee';
 
     expect(error).toBeInstanceOf(SqlFileFailedError);
     expect(error).toMatchObject({ file, line: 7 });
-    expect((error as SqlFileFailedError).detail).toContain(
+    expect((error as SqlFileFailedError).postgresMessage).toContain(
       'column "nmae" does not exist',
     );
     expect(await server.databases()).toEqual(before);

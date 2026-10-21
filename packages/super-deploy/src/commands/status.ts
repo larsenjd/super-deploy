@@ -95,7 +95,7 @@ export async function status(
   const target = resolveTarget(project, options.target);
   const migrations = await verifiedMigrations(root, paths);
   const withUnits = await readMigrationsWithUnits(root, migrations);
-  const session = await connectTarget(target);
+  const session = await connectTarget(target, project.signal);
   try {
     const schema = config.historySchema;
     const exists = await schemaExists(session, schema);

@@ -82,9 +82,13 @@ Each entry in `targets` is one target:
 - `statementTimeout`: how long one statement may run on the target
   (PostgreSQL's `statement_timeout`). Default none: the server's own
   setting for the deploy role applies.
+- `connectTimeout`: how long connecting to the target may take before the
+  command fails, such as when the host is firewalled or unreachable.
+  Default `"10s"`. (`connect_timeout` in a connection string is ignored.)
 
-Both apply inside deployments, and to super-deploy's reads of the target's
-schema (its drift check, and `init --adopt`). A duration is a positive whole
+`lockTimeout` and `statementTimeout` apply inside deployments, and to
+super-deploy's reads of the target's schema (its drift check, and
+`init --adopt`). A duration is a positive whole
 number of milliseconds (`500`) or a string with the unit `ms`, `s`, `min` or
 `h`: `"500ms"`, `"5s"`, `"2min"`, `"1h"`.
 
@@ -141,8 +145,10 @@ desired schema and migration `00001-adopt`, which is recorded on that target
 as already deployed. If the target has no schema of that name (usually a
 typo in `managedSchema`), adoption refuses and writes nothing. If the
 database holds anything super-deploy doesn't support, nothing is written and
-every such object is listed: that includes a `SECURITY DEFINER` routine and
-objects owned by another role (see "Permissions"). Grants, policies and row-level security on the target stay
+every such object is listed: that includes a `SECURITY DEFINER` routine,
+objects owned by another role (see "Permissions"), and views, foreign keys,
+`LANGUAGE sql` functions and the like that reference an external schema
+(only PL/pgSQL bodies may). Grants, policies and row-level security on the target stay
 as they are, left out of the desired schema; adoption says how many grants
 and policies it left.
 

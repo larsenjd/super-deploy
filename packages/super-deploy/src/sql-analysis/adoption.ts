@@ -26,9 +26,20 @@
 //
 // ALTER TABLEs the differ splits off a table's CREATE TABLE (columns,
 // storage parameters) are folded back into it (adoption-folding.ts).
+//
+// Rehearsals never contain external schemas, so a generated statement that
+// references one where PostgreSQL resolves it at CREATE (a view, a foreign
+// key, a LANGUAGE sql body...) can never load. Adoption finds them all
+// statically (`externalSchemaReferences`) and refuses them at once, named
+// by object (`adoptedObject`), rather than at the first statement the
+// throwaway database refuses.
 import { foldTableAlters, type KeptStatement } from "./adoption-folding.ts";
-import { parseSqlFile } from "./parse.ts";
+import { overrideObject } from "./overrides.ts";
+import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
+import { externalSchemasBoundAtCreate } from "./routine-bodies.ts";
+import type { RuleContext } from "./rule-types.ts";
 import {
+  alterTableCommands,
   defElems,
   isObject,
   type Json,
@@ -169,6 +180,66 @@ export async function isSequenceStatement(
       statement?.type === "AlterSeqStmt") &&
     sequences.includes(String(rangeVar(statement.node.sequence).relname))
   );
+}
+
+/** A generated statement that references external schemas bound at CREATE. */
+export interface ExternalSchemaReference {
+  /** What the statement creates, as `adoptedObject` names it. */
+  readonly object: string;
+  /** The declared external schemas it references. */
+  readonly schemas: readonly string[];
+}
+
+/**
+ * Every statement in the generated files, in file order, that references a
+ * declared external schema where PostgreSQL resolves it at CREATE
+ * (`externalSchemasBoundAtCreate`). A file that doesn't parse is skipped:
+ * the rules report it.
+ */
+export async function externalSchemaReferences(
+  files: readonly SqlFile[],
+  context: RuleContext,
+): Promise<ExternalSchemaReference[]> {
+  const references: ExternalSchemaReference[] = [];
+  for (const file of files) {
+    const parsed = await parseSqlFile(file);
+    for (const statement of parsed.ok ? parsed.statements : []) {
+      const schemas = externalSchemasBoundAtCreate(
+        statement,
+        context.externalSchemas,
+      );
+      if (schemas.length > 0) {
+        references.push({
+          object: adoptedObject(statement, context.managedSchema),
+          schemas,
+        });
+      }
+    }
+  }
+  return references;
+}
+
+/**
+ * The object a generated statement creates, named as override markers name
+ * it (`overrideObject`, e.g. `function user_name(bigint)`), except that an
+ * ALTER TABLE adding one constraint names the constraint as the drift check
+ * does: `constraint profiles_user_id_fkey on table profiles`.
+ */
+export function adoptedObject(
+  statement: ParsedStatement,
+  managedSchema: string,
+): string {
+  const object = overrideObject(statement, managedSchema);
+  if (statement.nodeType !== "AlterTableStmt") {
+    return object;
+  }
+  const commands = alterTableCommands(statementBody(statement));
+  const constraint = unwrap(commands[0]?.def, "Constraint");
+  return commands.length === 1 &&
+    commands[0]?.subtype === "AT_AddConstraint" &&
+    typeof constraint?.conname === "string"
+    ? `constraint ${constraint.conname} on ${object}`
+    : object;
 }
 
 /**

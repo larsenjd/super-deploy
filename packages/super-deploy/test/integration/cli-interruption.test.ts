@@ -6,7 +6,12 @@ import { embeddedPostgres } from "super-deploy/embedded-postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli, spawnCli, waitForFile } from "../support/cli.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
-import { createTestProject, stallingConfig } from "../support/project.ts";
+import {
+  createTestProject,
+  downTargetConfig,
+  stallingConfig,
+} from "../support/project.ts";
+import { silentHost } from "../support/silent-host.ts";
 
 let server: TestServer;
 beforeAll(async () => {
@@ -61,6 +66,30 @@ describe.each([
     expect(await rehearsalDatabases()).toEqual([]);
     expect(dir.exists("data-model/draft")).toBe(false);
   });
+});
+
+test("SIGTERM while connecting to a target that doesn't answer exits 143 at once", async () => {
+  const host = await silentHost();
+  const variable = "SUPER_DEPLOY_TEST_DOWN_URL";
+  const dir = await createTestProject({
+    config: downTargetConfig(variable, 'connectTimeout: "1min"'),
+  });
+  const cli = spawnCli(["status", "--target", "down"], {
+    cwd: dir.root,
+    env: { [variable]: host.url },
+  });
+  await host.connected;
+
+  const signalled = Date.now();
+  cli.signal("SIGTERM");
+  const result = await cli.result;
+
+  expect(result.exitCode).toBe(143);
+  expect(result.stderr.trim().split("\n")).toEqual([
+    expect.stringContaining("Interrupted by SIGTERM"),
+  ]);
+  // Well before the 1 min connectTimeout; a second leaves room for a loaded machine.
+  expect(Date.now() - signalled).toBeLessThan(2000);
 });
 
 test("a second interrupt exits at once, even while cleanup is still running", async () => {

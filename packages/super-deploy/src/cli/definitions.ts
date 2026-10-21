@@ -804,6 +804,9 @@ const recoveryCommand: CommandDefinition = {
     context.result(
       `Created a Recovery draft of migration ${result.folder} in ${context.displayPath(result.draftPath)} (it becomes Recovery ${result.recovery} when finalized)`,
     );
+    context.result(
+      "Next: fix its scripts, add seed data that reproduces the failure, then rehearse, finalize and deploy",
+    );
   },
 };
 
