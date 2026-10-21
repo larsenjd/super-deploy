@@ -2,7 +2,8 @@
 // flags, parse.ts) and the interactive menu (menu.ts). Each command's `run`
 // calls the exported API function and prints its result. To add a command,
 // define it here and append it to `commands`.
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { AdoptUnsupportedError, adopt } from "../commands/adopt.ts";
 import { deploy } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
@@ -205,6 +206,18 @@ export function needsProject(
   );
 }
 
+/** True if `directory` or a folder above it has a `.git` (a folder, or a file in linked worktrees). */
+function insideGitWorkTree(directory: string): boolean {
+  for (let folder = directory; ; folder = dirname(folder)) {
+    if (existsSync(join(folder, ".git"))) {
+      return true;
+    }
+    if (dirname(folder) === folder) {
+      return false;
+    }
+  }
+}
+
 /** A command refused to go ahead (exit 1). */
 export class RefusedError extends Error {
   override name = "RefusedError";
@@ -248,11 +261,16 @@ const initCommand: DirectoryCommandDefinition = {
   ],
   async run(directory, _values, context) {
     const result = await init({ directory });
+    // The absolute path: init runs in the working directory, which
+    // displayPath would show as ".".
+    context.result(`Initialised a super-deploy project in ${result.root}`);
+    // Git before pnpm install, as the template README says: Husky installs
+    // the pre-commit hook only into an existing repo.
+    const install = insideGitWorkTree(result.root)
+      ? "pnpm install"
+      : "git init, then pnpm install";
     context.result(
-      `Initialised a super-deploy project in ${context.displayPath(result.root)}`,
-    );
-    context.result(
-      "Next: pnpm install, add CREATE statements under data-model/desired-schema/, then run draft",
+      `Next: ${install}, add CREATE statements under data-model/desired-schema/, then run draft`,
     );
   },
   projectMode: {
