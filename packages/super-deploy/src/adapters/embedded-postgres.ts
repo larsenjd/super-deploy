@@ -222,7 +222,7 @@ export function embeddedPostgres(
         }
         return connectionString(database);
       });
-      return { connect: () => target.connect(), close: stop };
+      return { connect: (options) => target.connect(options), close: stop };
     },
     start: async () => {
       await port();

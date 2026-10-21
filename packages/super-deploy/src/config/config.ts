@@ -15,6 +15,8 @@ export interface TargetConfig {
   lockTimeout?: Duration;
   /** `statement_timeout` inside deployments. Default none. */
   statementTimeout?: Duration;
+  /** How long a connection to this target may take before it fails. Default `"10s"`. */
+  connectTimeout?: Duration;
 }
 
 export interface SuperDeployConfig {
@@ -44,6 +46,7 @@ export interface ResolvedTarget {
   readonly adapter: DeploymentAdapter;
   readonly lockTimeoutMs: number;
   readonly statementTimeoutMs: number | undefined;
+  readonly connectTimeoutMs: number;
 }
 
 /** A validated configuration with every default applied. */
@@ -66,7 +69,12 @@ const settings = new Set([
   "externalSchemas",
   "directory",
 ]);
-const targetSettings = new Set(["adapter", "lockTimeout", "statementTimeout"]);
+const targetSettings = new Set([
+  "adapter",
+  "lockTimeout",
+  "statementTimeout",
+  "connectTimeout",
+]);
 const identifier = /^[a-z_][a-z0-9_]{0,62}$/;
 const targetName = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
@@ -170,6 +178,8 @@ export function resolveConfig(raw: unknown): ResolvedConfig {
           value.statementTimeout,
           `${path}.statementTimeout`,
         ),
+        connectTimeoutMs:
+          duration(value.connectTimeout, `${path}.connectTimeout`) ?? 10_000,
       };
     }
   }
@@ -231,6 +241,14 @@ function duration(value: unknown, setting: string): number | undefined {
     );
   }
   return amount * unit;
+}
+
+/** A duration in milliseconds as config would write it: `"500ms"`, `"5s"`, `"2min"`. */
+export function durationText(ms: number): string {
+  const [unit, size] = Object.entries(units).findLast(
+    ([, size]) => ms % size === 0,
+  ) ?? ["ms", 1];
+  return `${ms / size}${unit}`;
 }
 
 function rejectUnknown(

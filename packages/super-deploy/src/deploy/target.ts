@@ -8,6 +8,7 @@ import { AdapterError } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { SuperDeployError } from "../errors.ts";
 import type { GuardedCommand } from "../guard/guard.ts";
+import { InterruptedError } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { adapterCall, requirePostgres18 } from "../rehearsal/throwaway.ts";
 
@@ -35,18 +36,29 @@ export function targetTimeouts(target: ResolvedTarget): string[] {
 /**
  * Opens a session to `target` through its adapter and refuses a server that
  * isn't PostgreSQL 18. Every call is one `adapter.connect()`; a deployment
- * calls it twice (see deploy/engine.ts for which session is which). A
- * connection-string problem is reported as the target's own ("Target qa has
- * no connection string"): the adapter doesn't know the target's name.
+ * calls it twice (see deploy/engine.ts for which session is which). The
+ * adapter is handed the target's connectTimeout and `signal`; a connect that
+ * fails once `signal` has aborted is InterruptedError. A connection-string
+ * problem is reported as the target's own ("Target qa has no connection
+ * string"): the adapter doesn't know the target's name.
  */
-export async function connectTarget(target: ResolvedTarget): Promise<Session> {
+export async function connectTarget(
+  target: ResolvedTarget,
+  signal: AbortSignal | undefined,
+): Promise<Session> {
   const session = await adapterCall(
     `The deployment adapter of target ${target.name}`,
     "connect",
     async () => {
       try {
-        return await target.adapter.connect();
+        return await target.adapter.connect({
+          timeoutMs: target.connectTimeoutMs,
+          signal,
+        });
       } catch (error) {
+        if (signal?.aborted) {
+          throw new InterruptedError({ cause: error });
+        }
         throw error instanceof ConnectionStringError
           ? error.about(`Target ${target.name}`)
           : error;

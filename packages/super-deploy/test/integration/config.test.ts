@@ -48,6 +48,7 @@ describe("loadProject", () => {
       name: "dev",
       lockTimeoutMs: 5000,
       statementTimeoutMs: undefined,
+      connectTimeoutMs: 10_000,
     });
   });
 
@@ -58,7 +59,7 @@ describe("loadProject", () => {
   historySchema: "app_history",
   externalSchemas: ["loader"],
   directory: "database",
-  targets: { qa: { adapter: postgres.target("qa"), lockTimeout: "2s", statementTimeout: "1min" } },`),
+  targets: { qa: { adapter: postgres.target("qa"), lockTimeout: "2s", statementTimeout: "1min", connectTimeout: "3s" } },`),
     });
 
     const project = await loadProject({ cwd: dir.root });
@@ -72,6 +73,7 @@ describe("loadProject", () => {
     expect(project.config.targets.qa).toMatchObject({
       lockTimeoutMs: 2000,
       statementTimeoutMs: 60_000,
+      connectTimeoutMs: 3000,
     });
     expect(project.paths.desiredSchema).toBe(
       dir.path("database/desired-schema"),
@@ -118,6 +120,11 @@ describe("loadProject", () => {
       "postgresVersion: 18, targets: { dev: { adapter: postgres.target('dev'), lockTimeout: 'soon' } },",
       "targets.dev.lockTimeout",
       "positive duration",
+    ],
+    [
+      "postgresVersion: 18, targets: { dev: { adapter: postgres.target('dev'), connectTimeout: '5 seconds' } },",
+      "targets.dev.connectTimeout",
+      'must be a positive duration such as "500ms", "5s" or "2min", got "5 seconds"',
     ],
     [
       "postgresVersion: 18, managedSchemas: 'app',",
