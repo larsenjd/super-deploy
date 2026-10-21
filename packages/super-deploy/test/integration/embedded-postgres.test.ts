@@ -10,8 +10,21 @@ import { setTimeout as delay } from "node:timers/promises";
 import pg from "pg";
 import { AdapterError } from "super-deploy";
 import { embeddedPostgres } from "super-deploy/embedded-postgres";
-import { describe, expect, onTestFinished, test } from "vitest";
-import { freePort, serverRunning } from "../support/postgres.ts";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  onTestFinished,
+  test,
+} from "vitest";
+import { embeddedDeployRole } from "../support/deploy.ts";
+import {
+  freePort,
+  serverRunning,
+  startTestServer,
+  type TestServer,
+} from "../support/postgres.ts";
 
 /** A new temp folder for a data directory, deleted when the test finishes. */
 async function tempDataDir(): Promise<string> {
@@ -145,3 +158,80 @@ async function postmasterPid(dataDir: string): Promise<number> {
     await delay(20);
   }
 }
+
+// Commands run at the same time each connect to `dev`, and each connect
+// creates the database or hands it to the deploy role: losing that race to
+// another client is not an error.
+describe("embeddedPostgres targets connected to at the same time", () => {
+  let server: TestServer;
+  beforeAll(async () => {
+    server = await startTestServer();
+  });
+  afterAll(async () => {
+    await server?.stop();
+  });
+
+  /** Who `count` clients connecting to `database` as a target at once log in as. */
+  async function connectAtOnce(
+    database: string,
+    count: number,
+  ): Promise<(string | undefined)[]> {
+    const clients = Array.from({ length: count }, () =>
+      embeddedPostgres({ dataDir: server.dataDir }),
+    );
+    try {
+      // Registered first, which goes one client at a time, so the connects
+      // below do start together.
+      for (const client of clients) {
+        await client.start();
+      }
+      const sessions = await Promise.all(
+        clients.map((client) => client.target(database).connect()),
+      );
+      return await Promise.all(
+        sessions.map(async (session) => {
+          try {
+            const { rows } = await session.query<{ user: string }>(
+              "select current_user as user",
+            );
+            return rows[0]?.user;
+          } finally {
+            await session.close();
+          }
+        }),
+      );
+    } finally {
+      await Promise.all(clients.map((client) => client.stop()));
+    }
+  }
+
+  async function owner(database: string): Promise<string | undefined> {
+    const rows = await server.query<{ owner: string }>(
+      "select pg_get_userbyid(datdba) as owner from pg_database where datname = $1",
+      [database],
+    );
+    return rows[0]?.owner;
+  }
+
+  test("all create a missing database without failing each other", async () => {
+    for (let round = 1; round <= 5; round++) {
+      const database = `race_create_${process.pid}_${round}`;
+
+      const users = await connectAtOnce(database, 8);
+
+      expect(users).toEqual(Array(8).fill(embeddedDeployRole));
+      expect(await owner(database)).toBe(embeddedDeployRole);
+    }
+  });
+
+  test("all hand a database the superuser created to the deploy role without failing each other", async () => {
+    for (let round = 1; round <= 5; round++) {
+      const database = await server.createDatabase();
+
+      const users = await connectAtOnce(database, 8);
+
+      expect(users).toEqual(Array(8).fill(embeddedDeployRole));
+      expect(await owner(database)).toBe(embeddedDeployRole);
+    }
+  });
+});

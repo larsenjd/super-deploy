@@ -32,7 +32,8 @@
 // not a superuser and holds no predefined roles, so `dev` gets none of the
 // deploy pre-flight's superuser warnings. On each connect the superuser
 // creates the role if it is missing and the database if it is missing, and
-// makes the role the database's owner. Owning the database gives it CREATE
+// makes the role the database's owner, one connect at a time
+// (`targetSetupLock`). Owning the database gives it CREATE
 // there (for the history schema) and `public`, through `pg_database_owner`.
 // A database created before the deploy role existed keeps what the superuser
 // created in it: the ownership pre-flight lists those objects.
@@ -117,6 +118,14 @@ BEGIN
   END IF;
 EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
 END $$`;
+
+// The session-level advisory lock (two-key form, in the `postgres` database)
+// a target's connect holds while it sets the deploy role and the database up,
+// released when its admin session closes. Commands connecting at the same
+// time would otherwise both create the database (a duplicate key on
+// pg_database_datname_index) or both hand it over ("tuple concurrently
+// updated"). The two-key form never meets the target lock's one-key form.
+const targetSetupLock = [0x73757065, 1] as const;
 
 export function embeddedPostgres(
   options: EmbeddedPostgresOptions,
@@ -246,6 +255,9 @@ export function embeddedPostgres(
       const target = targetOver(async () => {
         const admin = await connectSession(await connectionString());
         try {
+          await admin.query(
+            `SELECT pg_advisory_lock(${targetSetupLock.join(", ")})`,
+          );
           await admin.query(createDeployRole);
           const existing = await admin.query<{ owner: string }>(
             "SELECT pg_catalog.pg_get_userbyid(datdba) AS owner FROM pg_catalog.pg_database WHERE datname = $1",
