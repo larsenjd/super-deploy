@@ -8,6 +8,9 @@
 //     that reach outside the database (a warning, never a refusal)
 //   - what the target's history schema records matches the repo, and the
 //     target holds no draft (deploy-draft's), which is not a migration
+// Each history mismatch's message ends with the way out: a recorded migration
+// or Recovery that the repo lacks or has differently is restored from version
+// control (see `restore`). deploy, status and mark all show these messages.
 // `status` runs the same checks and reports them.
 
 import type { Session } from "../adapters/types.ts";
@@ -16,6 +19,8 @@ import type { Project } from "../project.ts";
 import {
   type FinalizedMigration,
   migrationFolderName,
+  recoveriesFolderName,
+  recoveryFolderName,
 } from "../store/migrations.ts";
 import {
   type DeployedDraft,
@@ -149,40 +154,41 @@ export function historyMismatches(
       mismatches.push({
         number: entry.number,
         reason: "not-in-repo",
-        message: `the target records migration ${theirs}, which the repo doesn't have`,
+        message: `the target records migration ${theirs}, which the repo doesn't have: ${restore(theirs)}`,
       });
     } else if (ours.name !== entry.name) {
       mismatches.push({
         number: entry.number,
         reason: "name",
-        message: `the target records migration ${entry.number} as ${theirs}, but the repo's is ${ours.folder}`,
+        message: `the target records migration ${entry.number} as ${theirs}, but the repo's is ${ours.folder}: ${restore(theirs, ` in place of ${ours.folder}`)}`,
       });
     } else if (ours.contentHash !== entry.contentHash) {
       mismatches.push({
         number: entry.number,
         reason: "content-hash",
-        message: `the target records migration ${ours.folder} with content hash ${entry.contentHash}, but the repo's is ${ours.contentHash}`,
+        message: `the target records migration ${ours.folder} with content hash ${entry.contentHash}, but the repo's is ${ours.contentHash}: ${restore(ours.folder)}`,
       });
     } else if (ours.chainHash !== entry.chainHash) {
       mismatches.push({
         number: entry.number,
         reason: "chain-hash",
-        message: `the target records migration ${ours.folder} with chain hash ${entry.chainHash}, but the repo's is ${ours.chainHash}`,
+        message: `the target records migration ${ours.folder} with chain hash ${entry.chainHash}, but the repo's is ${ours.chainHash}, so ${earlierChange(entry.number, repo, recorded)}`,
       });
     } else if (entry.recovery !== undefined) {
       const k = entry.recovery;
       const recovery = ours.recoveries[k - 1];
+      const folder = `${ours.folder}/${recoveriesFolderName}/${recoveryFolderName(k)}`;
       if (recovery === undefined) {
         mismatches.push({
           number: entry.number,
           reason: "recovery",
-          message: `the target records migration ${ours.folder} with Recovery ${k}, which the repo doesn't have`,
+          message: `the target records migration ${ours.folder} with Recovery ${k}, which the repo doesn't have: ${restore(folder)}`,
         });
       } else if (recovery.chainHash !== entry.recoveryChainHash) {
         mismatches.push({
           number: entry.number,
           reason: "recovery",
-          message: `the target records migration ${ours.folder} Recovery ${k} with chain hash ${entry.recoveryChainHash ?? "(none)"}, but the repo's is ${recovery.chainHash}`,
+          message: `the target records migration ${ours.folder} Recovery ${k} with chain hash ${entry.recoveryChainHash ?? "(none)"}, but the repo's is ${recovery.chainHash}: ${restore(folder)}`,
         });
       }
     }
@@ -191,6 +197,36 @@ export function historyMismatches(
     mismatches.push(draftMismatch(draft, recorded));
   }
   return mismatches.sort((a, b) => a.number - b.number);
+}
+
+/** Why a refusal says to restore what a target recorded. */
+const keepRecorded =
+  "a migration a target has recorded must never change, so put new changes in a new migration";
+
+/** The way out of a mismatch: restore `folder` (in the migrations directory) as the target recorded it. */
+function restore(folder: string, where = ""): string {
+  return `restore ${folder} from version control${where} (${keepRecorded})`;
+}
+
+/**
+ * The way out of a chain-hash mismatch on migration `number` whose content
+ * hash matches: a migration before it changed. Names the first recorded one
+ * whose chain hash differs from the repo's (it changed, or the repo lacks
+ * it), when there is one.
+ */
+function earlierChange(
+  number: number,
+  repo: ReadonlyMap<number, FinalizedMigration>,
+  recorded: readonly RecordedMigration[],
+): string {
+  const first = recorded.find(
+    (entry) =>
+      entry.number < number &&
+      repo.get(entry.number)?.chainHash !== entry.chainHash,
+  );
+  return first === undefined
+    ? `a migration up to it changed: restore those from version control (${keepRecorded})`
+    : `an earlier migration changed, first ${migrationFolderName(first.number, first.name)}: restore it from version control (${keepRecorded})`;
 }
 
 function draftMismatch(

@@ -36,6 +36,10 @@ async function roles(): Promise<string[]> {
   return rows.map((row) => row.rolname);
 }
 
+/** Why a refusal for a changed recorded migration says to restore it. */
+const keepRecorded =
+  "a migration a target has recorded must never change, so put new changes in a new migration";
+
 const customers =
   "create table customers (id bigint primary key, name text not null);\n";
 const orders =
@@ -108,6 +112,61 @@ describe("deploy pre-flight", () => {
     expect(await tables(database)).toEqual(["customers"]);
   });
 
+  test("a refusal for a recorded migration whose content changed says to restore its folder and put the change in a new migration", async () => {
+    const { project, dir } = await deployProject(server, {
+      "customers.sql": customers,
+    });
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    await unfinalize(project, { acknowledgeOverwrite: true });
+    await dir.write(
+      "data-model/draft/post-migration.sql",
+      "update customers set name = trim(name);\n",
+    );
+    await finalize(project);
+
+    const refusal = await deploy(project, { target: "dev" }).catch(
+      (error: unknown) => error,
+    );
+
+    expect(refusal).toBeInstanceOf(PreflightFailedError);
+    const advice = `restore 00001-add-customers from version control (${keepRecorded})`;
+    expect((refusal as Error).message).toContain(advice);
+    const [mismatch] = (refusal as PreflightFailedError).findings
+      .historyMismatches;
+    expect(mismatch).toMatchObject({ reason: "content-hash" });
+    expect(mismatch?.message).toContain(advice);
+    expect(
+      (await status(project, { target: "dev" })).preflight.historyMismatches,
+    ).toEqual([mismatch]);
+  });
+
+  test("a chain-hash refusal says an earlier migration changed and names the first that differs", async () => {
+    const { project, dir, database } = await deployProject(server, {
+      "customers.sql": customers,
+    });
+    await finalizeMigration(project, "add customers");
+    await dir.write("data-model/desired-schema/orders.sql", orders);
+    const second = await finalizeMigration(project, "add orders");
+    await deploy(project, { target: "dev" });
+    await server.query(
+      "update deployment_history.migrations set content_hash = 'edited', chain_hash = 'edited' where number = 1; update deployment_history.migrations set chain_hash = 'edited' where number = 2",
+      [],
+      database,
+    );
+
+    expect(
+      (await status(project, { target: "dev" })).preflight.historyMismatches,
+    ).toMatchObject([
+      { number: 1, reason: "content-hash" },
+      {
+        number: 2,
+        reason: "chain-hash",
+        message: `the target records migration 00002-add-orders with chain hash edited, but the repo's is ${second.chainHash}, so an earlier migration changed, first 00001-add-customers: restore it from version control (${keepRecorded})`,
+      },
+    ]);
+  });
+
   test("refuses when what the target records doesn't match the repo's migrations", async () => {
     const { project, database } = await deployProject(server, {
       "customers.sql": customers,
@@ -128,7 +187,7 @@ describe("deploy pre-flight", () => {
           {
             number: 1,
             reason: "content-hash",
-            message: `the target records migration 00001-add-customers with content hash edited, but the repo's is ${first.contentHash}`,
+            message: `the target records migration 00001-add-customers with content hash edited, but the repo's is ${first.contentHash}: restore 00001-add-customers from version control (${keepRecorded})`,
           },
         ],
       },
@@ -143,8 +202,7 @@ describe("deploy pre-flight", () => {
       {
         number: 1,
         reason: "name",
-        message:
-          "the target records migration 1 as 00001-add-clients, but the repo's is 00001-add-customers",
+        message: `the target records migration 1 as 00001-add-clients, but the repo's is 00001-add-customers: restore 00001-add-clients from version control in place of 00001-add-customers (${keepRecorded})`,
       },
     ]);
 
@@ -152,7 +210,15 @@ describe("deploy pre-flight", () => {
       "update deployment_history.migrations set name = 'add-customers' where number = 1",
     );
     expect(await refusal()).toMatchObject({
-      findings: { historyMismatches: [{ number: 1, reason: "chain-hash" }] },
+      findings: {
+        historyMismatches: [
+          {
+            number: 1,
+            reason: "chain-hash",
+            message: `the target records migration 00001-add-customers with chain hash edited, but the repo's is ${first.chainHash}, so a migration up to it changed: restore those from version control (${keepRecorded})`,
+          },
+        ],
+      },
     });
     await history(
       `update deployment_history.migrations set chain_hash = '${first.chainHash}' where number = 1`,
@@ -180,8 +246,7 @@ describe("deploy pre-flight", () => {
           {
             number: 2,
             reason: "not-in-repo",
-            message:
-              "the target records migration 00002-add-orders, which the repo doesn't have",
+            message: `the target records migration 00002-add-orders, which the repo doesn't have: restore 00002-add-orders from version control (${keepRecorded})`,
           },
         ],
       },
