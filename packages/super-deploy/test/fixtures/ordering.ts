@@ -1133,7 +1133,7 @@ comment on constraint "a_table_name_that_is_exactl_ünïcödé_column_name_th_no
   // ---------------------------------------------------------------------------
   // Static refusals and errors
   {
-    name: "unnamed unique, check, foreign key and exclusion constraints are refused",
+    name: "unnamed unique, check, foreign key and exclusion constraints are refused, each at its own line",
     files: {
       "a.sql": `create table parent (id int primary key);
 create table t (
@@ -1149,31 +1149,31 @@ create table t (
     errors: [
       {
         file: "a.sql",
-        line: 2,
+        line: 3,
         rule: "unnamed-constraint",
         message: ["unique constraint on t.a"],
       },
       {
         file: "a.sql",
-        line: 2,
+        line: 4,
         rule: "unnamed-constraint",
         message: ["check constraint on t.b"],
       },
       {
         file: "a.sql",
-        line: 2,
+        line: 5,
         rule: "unnamed-constraint",
         message: ["foreign key constraint on t.c"],
       },
       {
         file: "a.sql",
-        line: 2,
+        line: 7,
         rule: "unnamed-constraint",
         message: ["check constraint on table t"],
       },
       {
         file: "a.sql",
-        line: 2,
+        line: 8,
         rule: "unnamed-constraint",
         message: ["exclusion constraint on table t"],
       },
@@ -1194,12 +1194,12 @@ create table t (
     ],
   },
   {
-    name: "an unnamed domain check is refused",
-    files: { "a.sql": "create domain positive as int check (value > 0);\n" },
+    name: "an unnamed domain check is refused at its own line",
+    files: { "a.sql": "create domain positive as int\n  check (value > 0);\n" },
     errors: [
       {
         file: "a.sql",
-        line: 1,
+        line: 2,
         rule: "unnamed-constraint",
         message: ["domain positive"],
       },
