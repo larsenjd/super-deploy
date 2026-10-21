@@ -10,7 +10,7 @@ import { userInfo } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli, spawnCli, waitForFile } from "../support/cli.ts";
-import { deployConfig } from "../support/deploy.ts";
+import { asDeployRole, deployConfig } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject } from "../support/project.ts";
 
@@ -25,7 +25,11 @@ afterAll(async () => {
 // With TEST_STALL=rehearsal the deployment's rehearsal stalls in its first
 // throwaway session; with TEST_STALL=transaction the deploy transaction stalls
 // on the target before its first migration file. Either way the file named by
-// TEST_MARKER is written first, then `pg_sleep(60)` runs. `rehearsal` is the
+// TEST_MARKER is written first, then `pg_sleep(60)` runs. With
+// TEST_STALL=committed the deploy transaction's COMMIT succeeds, then the
+// marker is written and the deployment waits for SIGINT before going on. With
+// TEST_STALL=close, closing the project (after the command has finished)
+// writes the marker, then takes 2 s. `rehearsal` is the
 // real rehearsal adapter's expression.
 const stalling = (rehearsal: string) => `
 import { writeFileSync } from "node:fs";
@@ -57,7 +61,13 @@ const stallingRehearsal = {
       },
     };
   },
-  close: () => ${rehearsal}.close(),
+  async close() {
+    if (stall === "close") {
+      writeFileSync(process.env.TEST_MARKER, "");
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    await ${rehearsal}.close();
+  },
 };
 const stallingTarget = {
   async connect() {
@@ -73,7 +83,12 @@ const stallingTarget = {
         }
         // The drift check reads the catalogs under the same timeouts, READ ONLY.
         deploying ||= sql.includes("lock_timeout") && !sql.includes("READ ONLY");
-        return session.execute(sql);
+        const result = await session.execute(sql);
+        if (stall === "committed" && deploying && sql === "COMMIT") {
+          writeFileSync(process.env.TEST_MARKER, "");
+          await new Promise((resolve) => process.once("SIGINT", resolve));
+        }
+        return result;
       },
     };
   },
@@ -142,9 +157,10 @@ describe.each([
 
     expect(result.exitCode).toBe(exitCode);
     expect(result.stdout).toBe("");
-    const [notice, ...more] = result.stderr.trim().split("\n");
-    expect(notice).toContain(`Interrupted by ${signal}`);
-    expect(more).toEqual([]);
+    expect(result.stderr.trim().split("\n")).toEqual([
+      expect.stringContaining(`Interrupted by ${signal}`),
+      "The deployment rolled back: target dev is unchanged, with no migration recorded.",
+    ]);
     // Well before the stalled statement's 60 s.
     expect(Date.now() - started).toBeLessThan(30_000);
     expect(await advisoryLocks(database)).toBe(0);
@@ -172,6 +188,76 @@ describe.each([
       "Deployed 1 migration to dev: 00001-add-customers\n",
     );
   });
+});
+
+/** `finalizedProject`, deployed, then a second migration pending on `dev`. */
+async function secondMigrationPending() {
+  const project = await finalizedProject();
+  const { dir } = project;
+  await dir.write(
+    "data-model/desired-schema/orders.sql",
+    "create table orders (id bigint primary key);\n",
+  );
+  for (const args of [
+    ["deploy", "--target", "dev"],
+    ["draft", "--name", "add orders"],
+    ["finalize"],
+  ]) {
+    expect((await runCli(args, { cwd: dir.root })).exitCode).toBe(0);
+  }
+  return project;
+}
+
+// 110: once cleanup has finished, a command that changes a target says what
+// happened to it.
+describe.each([
+  ["SIGINT", 130],
+  ["SIGTERM", 143],
+  ["SIGHUP", 129],
+] as const)("%s during a deploy transaction", (signal, exitCode) => {
+  test(`exits ${exitCode}, ending with the rolled-back line naming the target's last recorded migration`, async () => {
+    const { dir, marker } = await secondMigrationPending();
+    const cli = spawnCli(["deploy", "--target", "dev"], {
+      cwd: dir.root,
+      env: { TEST_STALL: "transaction", TEST_MARKER: marker },
+    });
+    await waitForFile(marker);
+
+    cli.signal(signal);
+    const result = await cli.result;
+
+    expect(result.exitCode).toBe(exitCode);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim().split("\n")).toEqual([
+      expect.stringContaining(`Interrupted by ${signal}`),
+      "The deployment rolled back: target dev is unchanged, still at migration 00001-add-customers.",
+    ]);
+  });
+});
+
+test("SIGINT after the deploy transaction committed exits 130, saying the deployment had already finished", async () => {
+  const { dir, marker } = await finalizedProject();
+  const cli = spawnCli(["deploy", "--target", "dev"], {
+    cwd: dir.root,
+    env: { TEST_STALL: "committed", TEST_MARKER: marker },
+  });
+  await waitForFile(marker);
+
+  cli.signal("SIGINT");
+  const result = await cli.result;
+
+  expect(result.exitCode).toBe(130);
+  expect(result.stdout).toBe(
+    "Deployed 1 migration to dev: 00001-add-customers\n",
+  );
+  expect(result.stderr.trim().split("\n")).toEqual([
+    expect.stringContaining("Interrupted by SIGINT"),
+    "The deployment had already finished: the interruption came too late to stop it on target dev.",
+  ]);
+  const status = await runCli(["status", "--target", "dev"], {
+    cwd: dir.root,
+  });
+  expect(status.stdout).toContain("#1 deploy succeeded migration 1 by ");
 });
 
 // Ctrl+C in a terminal reaches the whole process group. The project's own
@@ -213,6 +299,56 @@ describe.each([
     });
   },
 );
+
+// 144: once the command has finished, an interruption while the CLI closes
+// the project (stopping embedded servers) doesn't change its exit code.
+describe("SIGINT after the command has finished, while the project closes", () => {
+  test("exits 0 after a deploy that succeeded, which stays succeeded", async () => {
+    const { dir, marker } = await finalizedProject();
+    const cli = spawnCli(["deploy", "--target", "dev"], {
+      cwd: dir.root,
+      env: { TEST_STALL: "close", TEST_MARKER: marker },
+      detached: true,
+    });
+    await waitForFile(marker);
+
+    cli.signalGroup("SIGINT");
+    const result = await cli.result;
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(
+      "Deployed 1 migration to dev: 00001-add-customers\n",
+    );
+    expect(result.stderr).toContain(
+      "Interrupted by SIGINT after deploy finished",
+    );
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).toContain("#1 deploy succeeded migration 1 by ");
+  });
+
+  test("exits 1 after a deploy that failed", async () => {
+    const { dir, database, marker } = await finalizedProject();
+    await asDeployRole(
+      server,
+      database,
+      "create table customers (id bigint primary key)",
+    );
+    const cli = spawnCli(["deploy", "--target", "dev"], {
+      cwd: dir.root,
+      env: { TEST_STALL: "close", TEST_MARKER: marker },
+      detached: true,
+    });
+    await waitForFile(marker);
+
+    cli.signalGroup("SIGINT");
+    const result = await cli.result;
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/^Error: /m);
+  });
+});
 
 test("status during a deployment names the holder, leaves drift unchecked and exits 1", async () => {
   const { dir, marker } = await finalizedProject();

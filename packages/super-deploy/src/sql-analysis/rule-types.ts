@@ -13,7 +13,7 @@ export interface RuleFinding {
   readonly message: string;
   /** Absolute 1-based line, when it isn't the statement's own first line. */
   readonly line?: number;
-  /** For `undeclared-schema`: the schema referenced, and where. */
+  /** For `undeclared-schema`: the schema referenced, by which names, and where. */
   readonly reference?: SchemaReference;
 }
 
@@ -25,5 +25,7 @@ export interface RuleFinding {
  */
 export interface SchemaReference {
   readonly schema: string;
+  /** Each qualified name referencing it, once, e.g. `public.citext`. */
+  readonly names: readonly string[];
   readonly where: "plpgsql-body" | "bound-at-create";
 }

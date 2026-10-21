@@ -210,8 +210,12 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
     });
 
     await terminal.waitFor(
-      `Error: The deploy role on target dev doesn't own everything in the managed schema: table public.orders is owned by super_deploy, whose privileges the deploy role doesn't have (fix: ${fix})`,
+      "Error: The deploy role on target dev doesn't own 1 object in the managed schema, listed above",
     );
+    expect(terminal.screen).toContain(
+      "table public.orders (owned by super_deploy)",
+    );
+    expect(terminal.screen).toContain(`  ${fix};`);
     expect(await terminal.exited).toBe(1);
     expect(terminal.screen).not.toContain("Type YES");
     expect(await recordedMigrations(database)).toEqual([

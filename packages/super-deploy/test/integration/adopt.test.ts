@@ -10,9 +10,7 @@ import {
   adopt,
   deploy,
   draft,
-  HistorySchemaNotCreatableError,
   MarkMismatchError,
-  NotOwnedError,
   type Override,
   type OverrideReasonQuestion,
   type Project,
@@ -114,6 +112,17 @@ const reasons: Record<string, string> = {
   "function ping()": "wakes the order worker",
 };
 
+/** The reporter's functions (QA 132): dynamic SQL, pg_notify, and both. */
+const functionsNeedingReasons = `
+  create table events (id bigint primary key, kind text not null);
+  create function count_rows(tbl text) returns bigint language plpgsql
+    as $$ declare n bigint; begin execute format('select count(*) from %I', tbl) into n; return n; end $$;
+  create function notify_event() returns void language plpgsql
+    as $$ begin perform pg_notify('events', 'changed'); end $$;
+  create function purge_kind(k text) returns void language plpgsql
+    as $$ begin execute 'delete from events where kind = $1' using k; perform pg_notify('events', k); end $$;
+`;
+
 describe("adopt", () => {
   test("turns the target's managed schema into migration 1 and records it there as marked", async () => {
     const { dir, project, prod } = await adoptableProject(shop);
@@ -185,20 +194,9 @@ describe("adopt", () => {
             object: "operator public.===(integer,integer)",
             rule: "unsupported-object",
           },
-          {
-            object: expect.stringContaining('CREATE TYPE "public"."mood"'),
-            rule: "unsupported-object",
-          },
-          {
-            object: expect.stringContaining(
-              'CREATE SEQUENCE "public"."counter"',
-            ),
-            rule: "unsupported-object",
-          },
-          {
-            object: expect.stringContaining("CREATE UNLOGGED TABLE"),
-            rule: "unsupported-object",
-          },
+          { object: "type public.mood", rule: "unsupported-object" },
+          { object: "sequence public.counter", rule: "unsupported-object" },
+          { object: "table public.scratch", rule: "unsupported-object" },
         ]),
       );
       for (const { reason } of objects) {
@@ -365,8 +363,8 @@ describe("adopt", () => {
       );
       expect(refused).toBeInstanceOf(AdoptUnsupportedError);
       expect(
-        (refused as AdoptUnsupportedError).objects.map((o) => o.rule),
-      ).toEqual(["plpgsql-dynamic-sql", "denylisted-call"]);
+        (refused as AdoptUnsupportedError).overridesNeeded.map((o) => o.object),
+      ).toEqual(["function load_staging(text)", "function ping()"]);
 
       const cancelled = await adopt(project, {
         target: "prod",
@@ -392,16 +390,55 @@ describe("adopt", () => {
     }
   });
 
-  test("refusing only functions that need an override marker, advises a terminal, not changing the target", async () => {
-    const { project } = await adoptableProject(loaders);
+  test("without a reason callback, refuses objects that need only an override reason apart, once each with all their rules, not as unsupported", async () => {
+    const { project } = await adoptableProject(functionsNeedingReasons);
     try {
       const error = await adopt(project, { target: "prod" }).catch(
         (e: unknown) => e,
       );
 
       expect(error).toBeInstanceOf(AdoptUnsupportedError);
-      expect((error as AdoptUnsupportedError).message).toMatch(
-        /\. Nothing was written; run adoption in a terminal to give an override reason for each object that breaks only risk rules$/,
+      const refusal = error as AdoptUnsupportedError;
+      expect(refusal.objects).toEqual([]);
+      expect(
+        refusal.overridesNeeded.map(({ object, rules }) => ({ object, rules })),
+      ).toEqual([
+        {
+          object: "function count_rows(text)",
+          rules: ["plpgsql-dynamic-sql"],
+        },
+        { object: "function notify_event()", rules: ["denylisted-call"] },
+        {
+          object: "function purge_kind(text)",
+          rules: ["denylisted-call", "plpgsql-dynamic-sql"],
+        },
+      ]);
+      expect(refusal.message).not.toContain("doesn't support");
+      expect(refusal.advice).toEqual([
+        "run adoption in a terminal to give an override reason for each object that breaks only risk rules",
+      ]);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("without a reason callback, counts only what V1 doesn't support as such, listing the objects that need a reason apart", async () => {
+    const { project } = await adoptableProject(
+      `${functionsNeedingReasons} create type mood as enum ('sad', 'happy');`,
+    );
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const refusal = error as AdoptUnsupportedError;
+      expect(refusal.objects.map(({ object }) => object)).toEqual([
+        "type public.mood",
+      ]);
+      expect(refusal.overridesNeeded).toHaveLength(3);
+      expect(refusal.summary).toContain(
+        "its managed schema has 1 thing V1 doesn't support and 3 objects need an override reason",
       );
     } finally {
       await project.close();
@@ -428,16 +465,10 @@ describe("adopt", () => {
       const { objects } = error as AdoptUnsupportedError;
       expect(objects.map(({ object, rule }) => ({ object, rule }))).toEqual(
         expect.arrayContaining([
+          { object: "type public.mood", rule: "unsupported-object" },
+          { object: "function public.batch()", rule: "plpgsql-dynamic-sql" },
           {
-            object: expect.stringContaining('CREATE TYPE "public"."mood"'),
-            rule: "unsupported-object",
-          },
-          {
-            object: expect.stringContaining("CREATE PROCEDURE public.batch()"),
-            rule: "plpgsql-dynamic-sql",
-          },
-          {
-            object: expect.stringContaining("CREATE PROCEDURE public.batch()"),
+            object: "function public.batch()",
             rule: "plpgsql-transaction-control",
           },
         ]),
@@ -563,22 +594,81 @@ describe("adopt", () => {
       expect(objects).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            object: expect.stringContaining('CREATE TABLE "public"."child"'),
+            object: "table public.child",
             reason: expect.stringContaining("Table inheritance"),
           }),
           expect.objectContaining({
-            object: expect.stringContaining('CREATE TABLE "public"."tmp_like"'),
+            object: "table public.tmp_like",
             reason: expect.stringContaining("Table storage parameters"),
           }),
           expect.objectContaining({
-            object: expect.stringContaining(
-              'CREATE TYPE "public"."order_status"',
-            ),
+            object: "type public.order_status",
             reason: expect.stringContaining("Enums are not supported in V1"),
           }),
         ]),
       );
       expect(objects).toHaveLength(3);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("names every refused statement by its object, and its reason by the references or parameters refused", async () => {
+    const { project } = await adoptableProject(
+      `
+      create extension citext;
+      create extension pgcrypto;
+      create schema app;
+      create table app.users (
+        id int primary key,
+        email public.citext not null,
+        token bytea not null default public.gen_random_bytes(16)
+      );
+      create table app.logs (
+        id bigint primary key,
+        created timestamp with time zone not null default now(),
+        note text
+      ) with (fillfactor = 70);
+      create sequence app.ticket_seq;
+      create table app.base (id int primary key);
+      create function app.check_base() returns trigger language plpgsql as $$ begin return null; end $$;
+      create constraint trigger ct after insert on app.base deferrable for each row execute function app.check_base();
+      create function app.users_named(wanted public.citext) returns bigint language sql stable
+        as $$ select count(*) from app.users where email = wanted $$;
+    `,
+      'managedSchema: "app",',
+    );
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const { objects } = error as AdoptUnsupportedError;
+      expect(objects).toEqual(
+        expect.arrayContaining([
+          {
+            object: "table app.users",
+            rule: "undeclared-schema",
+            reason: expect.stringMatching(
+              /public\.citext, public\.gen_random_bytes.*declaring it in externalSchemas won't help/,
+            ),
+          },
+          {
+            object: "table app.logs",
+            rule: "unsupported-object",
+            reason: expect.stringContaining("fillfactor=70"),
+          },
+          expect.objectContaining({ object: "sequence app.ticket_seq" }),
+          expect.objectContaining({ object: "trigger ct on table app.base" }),
+          expect.objectContaining({
+            object: "function app.users_named(public.citext)",
+          }),
+        ]),
+      );
+      for (const { object } of objects) {
+        expect(object).not.toMatch(/^(CREATE|ALTER) |…$/);
+      }
     } finally {
       await project.close();
     }
@@ -704,7 +794,7 @@ describe("adopt", () => {
     }
   });
 
-  test("refuses a target whose table, view and function belong to another role, naming each, before rehearsing or writing anything, until the deploy role owns them", async () => {
+  test("refuses a target whose table, view and function belong to another role, naming each with its fix, writing nothing, until the deploy role owns them", async () => {
     const deployer = "adopt_owned_deployer";
     const admin = "adopt_owned_admin";
     const prod = await server.createDatabase(`
@@ -726,11 +816,13 @@ describe("adopt", () => {
         (e: unknown) => e,
       );
 
-      expect(error).toBeInstanceOf(NotOwnedError);
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
       expect(error).toMatchObject({
-        code: "not-owned",
+        code: "adopt-unsupported",
         target: "prod",
-        objects: [
+        objects: [],
+        historySchemaNotCreatable: undefined,
+        notOwned: [
           {
             object: "function app.widget_count()",
             owner: admin,
@@ -748,12 +840,17 @@ describe("adopt", () => {
           },
         ],
       });
+      expect((error as Error).message).toContain(
+        `table app.widgets is owned by ${admin}, whose privileges the deploy role doesn't have (fix: ALTER TABLE app.widgets OWNER TO ${deployer})`,
+      );
       expect(await server.databases()).toEqual(databases);
       expect(dir.exists("data-model/desired-schema")).toBe(false);
       expect(dir.exists("data-model/migrations")).toBe(false);
 
       await server.query(
-        (error as NotOwnedError).objects.map(({ fix }) => fix).join(";\n"),
+        (error as AdoptUnsupportedError).notOwned
+          .map(({ fix }) => fix)
+          .join(";\n"),
         [],
         prod,
       );
@@ -787,8 +884,8 @@ describe("adopt", () => {
         (e: unknown) => e,
       );
 
-      expect(error).toBeInstanceOf(NotOwnedError);
-      expect((error as NotOwnedError).objects).toEqual([
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      expect((error as AdoptUnsupportedError).notOwned).toEqual([
         {
           object: "schema public",
           owner: `pg_database_owner (the owner of database ${prod}, super_deploy)`,
@@ -808,7 +905,7 @@ describe("adopt", () => {
     }
   });
 
-  test("refuses a target whose deploy role can't create the history schema, naming the grant, before rehearsing or writing anything, until it can", async () => {
+  test("refuses a target whose deploy role can't create the history schema, naming the grant, writing nothing, until it can", async () => {
     const deployer = roleName("adopt_deployer");
     const prod = await server.createDatabase(`
       create role ${deployer} login password 'deployer';
@@ -818,17 +915,17 @@ describe("adopt", () => {
     `);
     const { dir, project } = await asDeployerProject(prod, deployer);
     try {
-      const databases = await server.databases();
-
       const error = await adopt(project, { target: "prod" }).catch(
         (e: unknown) => e,
       );
 
-      expect(error).toBeInstanceOf(HistorySchemaNotCreatableError);
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
       expect(error).toMatchObject({
-        code: "history-schema-not-creatable",
+        code: "adopt-unsupported",
         target: "prod",
-        finding: {
+        objects: [],
+        notOwned: [],
+        historySchemaNotCreatable: {
           role: deployer,
           database: prod,
           historySchema: "deployment_history",
@@ -838,11 +935,107 @@ describe("adopt", () => {
       expect((error as Error).message).toContain(
         `the deploy role ${deployer} needs CREATE on database ${prod} to create the history schema "deployment_history"`,
       );
-      expect(await server.databases()).toEqual(databases);
       expect(dir.exists("data-model/desired-schema")).toBe(false);
       expect(dir.exists("data-model/migrations")).toBe(false);
 
-      await server.query((error as HistorySchemaNotCreatableError).finding.fix);
+      await server.query(
+        (error as AdoptUnsupportedError).historySchemaNotCreatable?.fix ?? "",
+      );
+      await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
+        migration: { folder: "00001-adopt" },
+      });
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses once for everything: objects owned by another role, CREATE on the database and what V1 doesn't support, listing an object that is both only as unsupported", async () => {
+    const deployer = roleName("adopt_deployer");
+    const other = roleName("adopt_other");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create role ${other} nologin;
+      create schema app authorization ${deployer};
+      grant usage, create on schema app to ${other};
+      set role ${deployer};
+      create unlogged table app.scratch (id bigint primary key, a int, b int);
+      set role ${other};
+      create table app.owned_by_other (id bigint primary key);
+      reset role;
+      create statistics app.scratch_stats (dependencies) on a, b from app.scratch;
+    `);
+    const { dir, project } = await asDeployerProject(prod, deployer);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const refusal = error as AdoptUnsupportedError;
+      expect(refusal.notOwned.map(({ object }) => object)).toEqual([
+        "table app.owned_by_other",
+      ]);
+      expect(refusal.historySchemaNotCreatable?.fix).toBe(
+        `GRANT CREATE ON DATABASE ${prod} TO ${deployer}`,
+      );
+      expect(refusal.objects.map(({ object }) => object)).toEqual(
+        expect.arrayContaining([
+          "table app.scratch",
+          "statistics object app.scratch_stats",
+        ]),
+      );
+      expect(refusal.objects).toHaveLength(2);
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("reads a target whose schema and everything in it belong to a superuser, refusing once with every fix, and adopts once they are run", async () => {
+    const deployer = roleName("adopt_deployer");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create schema shop;
+      create domain shop.email as text constraint email_has_at check (value like '%@%');
+      create table shop.customers (id bigint generated always as identity primary key, email shop.email not null);
+      create view shop.customer_emails as select email from shop.customers;
+      create function shop.customer_count(since bigint) returns bigint language sql stable
+        as $$ select count(*) from shop.customers where id > since $$;
+    `);
+    const { project } = await deployProject(
+      server,
+      {},
+      {
+        settings: 'managedSchema: "shop",',
+        preamble: asDeployerPreamble(prod, deployer),
+        otherTargets: "prod: { adapter: asDeployer },",
+      },
+    );
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const refusal = error as AdoptUnsupportedError;
+      expect(refusal.objects).toEqual([]);
+      expect(refusal.notOwned.map(({ object }) => object)).toEqual([
+        "schema shop",
+        "domain shop.email",
+        "function shop.customer_count(since bigint)",
+        "table shop.customers",
+        "view shop.customer_emails",
+      ]);
+      expect(refusal.historySchemaNotCreatable).toBeDefined();
+
+      await server.query(
+        [
+          ...refusal.notOwned.map(({ fix }) => fix),
+          refusal.historySchemaNotCreatable?.fix,
+        ].join(";\n"),
+        [],
+        prod,
+      );
       await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
         migration: { folder: "00001-adopt" },
       });
@@ -882,17 +1075,17 @@ describe("adopt", () => {
       expect(objects).toEqual(
         expect.arrayContaining([
           {
-            object: "constraint profiles_user_id_fkey on table profiles",
+            object: "constraint profiles_user_id_fkey on table public.profiles",
             rule: "outside-managed-schema",
             reason,
           },
           {
-            object: "view profile_names",
+            object: "view public.profile_names",
             rule: "outside-managed-schema",
             reason,
           },
           {
-            object: "function user_name(int8)",
+            object: "function public.user_name(bigint)",
             rule: "outside-managed-schema",
             reason,
           },
@@ -1018,7 +1211,7 @@ describe("adopt", () => {
       const { objects, message } = error as AdoptUnsupportedError;
       expect(objects).toEqual([
         {
-          object: "function no_name()",
+          object: "function public.no_name()",
           rule: "not-reproduced",
           reason: expect.stringContaining('relation "users" does not exist'),
         },

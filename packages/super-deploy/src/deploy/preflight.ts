@@ -2,10 +2,10 @@
 // before any rehearsal, that catch what would otherwise fail mid-transaction
 // or weaken safety (spec "Deployment engine"):
 //   - the deploy role can create the history schema, if the target has none
-//     yet: it needs CREATE on the database. `withLockedTarget` and
-//     `init --adopt` refuse up front with HistorySchemaNotCreatableError
-//     (there is nowhere to log an attempt yet), so deploy never gets this
-//     far without it; `status` lists it with the others
+//     yet: it needs CREATE on the database. `withLockedTarget` refuses up
+//     front with HistorySchemaNotCreatableError (there is nowhere to log an
+//     attempt yet), so deploy never gets this far without it; `status`
+//     lists it with the others, and `init --adopt` in its one refusal
 //   - the deploy role owns the managed schema and everything in it, or is a
 //     member of their owner (deploy/ownership.ts)
 //   - the deploy role is not superuser and holds none of the predefined roles
@@ -22,7 +22,7 @@
 // runs (ticket 06).
 
 import type { Session } from "../adapters/types.ts";
-import { SuperDeployError } from "../errors.ts";
+import { plural, SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import {
   type FinalizedMigration,
@@ -39,6 +39,7 @@ import {
 } from "./history.ts";
 import {
   type NotOwnedObject,
+  notOwnedDetails,
   notOwnedMessage,
   objectsNotOwned,
 } from "./ownership.ts";
@@ -429,13 +430,35 @@ export class PreflightFailedError extends SuperDeployError {
   readonly code = "preflight-failed";
   readonly target: string;
   readonly findings: PreflightFindings;
+  /**
+   * The refusals as lines for people, the way the CLI prints them: one per
+   * line, then the objects the deploy role doesn't own with their fixes as
+   * a script. `summary` follows them.
+   */
+  readonly details: readonly string[];
+  /** The message without the refusals `details` lists: their count. */
+  readonly summary: string;
 
   constructor(target: string, findings: PreflightFindings) {
+    const refusals = preflightRefusals(findings);
     super(
-      `Target ${target} failed the deploy pre-flight checks: ${preflightRefusals(findings).join("; ")}`,
+      `Target ${target} failed the deploy pre-flight checks: ${refusals.join("; ")}`,
     );
     this.target = target;
     this.findings = findings;
+    const others = preflightRefusals({ ...findings, notOwned: [] });
+    this.details = [
+      ...(others.length === 0
+        ? []
+        : [
+            `Target ${target} failed the deploy pre-flight checks:`,
+            ...others.map((refusal) => `  ${refusal}`),
+          ]),
+      ...(findings.notOwned.length === 0
+        ? []
+        : notOwnedDetails(target, findings.notOwned)),
+    ];
+    this.summary = `Target ${target} failed the deploy pre-flight checks (${plural(refusals.length, "finding")}, listed above)`;
   }
 }
 

@@ -3,7 +3,7 @@
 // calls the exported API function and prints its result. To add a command,
 // define it here and append it to `commands`.
 import { join } from "node:path";
-import { adopt } from "../commands/adopt.ts";
+import { adopt, overrideListing } from "../commands/adopt.ts";
 import { deploy, describeMigration } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
@@ -56,6 +56,7 @@ import {
   type DriftedObject,
   driftLabel,
 } from "../verification/drift.ts";
+import { ReportedError } from "./run.ts";
 
 export type CommandGroup =
   | "Start"
@@ -170,6 +171,12 @@ interface CommandBase {
   readonly group: CommandGroup;
   readonly summary: string;
   readonly options: readonly OptionDefinition[];
+  /**
+   * For a command that changes a target: the option naming it, and what the
+   * change is called (`deployment`). After an interruption the CLI then says
+   * what happened to the target (run.ts).
+   */
+  readonly changesTarget?: { readonly option: string; readonly noun: string };
 }
 
 /** A command on the project found from the working directory (most commands). */
@@ -264,6 +271,7 @@ const initCommand: DirectoryCommandDefinition = {
   summary:
     "Create a project here, or adopt a database into an initialised project with no migrations yet",
   needsProject: false,
+  changesTarget: { option: "adopt", noun: "adoption" },
   options: [
     {
       name: "adopt",
@@ -331,7 +339,7 @@ const initCommand: DirectoryCommandDefinition = {
 /**
  * `init --adopt`'s override reasons, asked at the terminal after listing
  * every object that needs one. Undefined without a terminal: adoption then
- * refuses them.
+ * refuses them, listed apart from anything unsupported.
  */
 function overrideReasonCallback(
   context: CommandContext,
@@ -345,11 +353,8 @@ function overrideReasonCallback(
       context.warn(
         `Target ${question.target} has ${plural(question.needed.length, "object")} that need${question.needed.length === 1 ? "s" : ""} an override marker:`,
       );
-      for (const item of question.needed) {
-        context.warn(`  ${item.object}`);
-        for (const finding of item.findings) {
-          context.warn(`    ${finding.rule}: ${finding.message}`);
-        }
+      for (const line of overrideListing(question.needed)) {
+        context.warn(line);
       }
     }
     return ask(`${question.message} (empty cancels the adoption)`);
@@ -741,6 +746,7 @@ const deployCommand: CommandDefinition = {
   summary:
     "Rehearse every pending migration, then apply them all to the target in one transaction",
   options: [targetOption],
+  changesTarget: { option: "target", noun: "deployment" },
   async run(project, values, context) {
     const result = await deploy(project, {
       target: String(values.target),
@@ -831,10 +837,12 @@ const statusCommand: CommandDefinition = {
       throw report.driftNotChecked === "target-locked" &&
         report.lockedBy !== undefined
         ? new TargetLockedError(report.target, report.lockedBy)
-        : new PreflightFailedError(report.target, preflight);
+        : new ReportedError(new PreflightFailedError(report.target, preflight));
     }
     if (refusals.length > 0) {
-      throw new PreflightFailedError(report.target, preflight);
+      throw new ReportedError(
+        new PreflightFailedError(report.target, preflight),
+      );
     }
   },
 };
@@ -872,6 +880,7 @@ const markCommand: CommandDefinition = {
   summary:
     "Record the target's next pending migration as deployed after fixing the target by hand, if it matches a replica exactly; asks you to type YES",
   options: [targetOption],
+  changesTarget: { option: "target", noun: "mark" },
   async run(project, values, context) {
     try {
       const result = await mark(project, { target: String(values.target) });
@@ -892,6 +901,7 @@ const disposableCommand: CommandDefinition = {
   group: "Disposable",
   summary:
     "Flag the target as disposable (or not) in its own history schema; asks you to type YES",
+  changesTarget: { option: "target", noun: "flag change" },
   options: [
     targetOption,
     {
@@ -948,6 +958,7 @@ const deployDraftCommand: CommandDefinition = {
   group: "Disposable",
   summary:
     "Try the unfinalized draft on a disposable target, in one transaction; asks you to type YES",
+  changesTarget: { option: "target", noun: "draft's deployment" },
   options: [
     targetOption,
     {
@@ -995,6 +1006,7 @@ const rebuildCommand: CommandDefinition = {
   group: "Disposable",
   summary:
     "Wipe a disposable target and replay migrations 1 to N, without seed data; asks you to type YES",
+  changesTarget: { option: "target", noun: "rebuild" },
   options: [
     targetOption,
     {

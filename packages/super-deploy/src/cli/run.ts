@@ -1,13 +1,25 @@
 // Running one command, shared by direct mode (main.ts) and the menu
 // (menu.ts): load the project, get the option values, run, print any failure,
 // close the project. Exit codes: 0 success; 1 failed or refused; 2 usage
-// error (nothing ran). After an interruption the notice is the only message
-// and the process watcher (process.ts) decides the exit code.
+// error (nothing ran). After an interruption the process watcher
+// (process.ts) decides the exit code; the command's outcome is settled with
+// it before the project closes, so an interruption while closing keeps that
+// outcome. An interrupted command prints no error: its notice is the only
+// message, except that once cleanup has finished a command that changes a
+// target says in one more line what happened to it (rolled back, already
+// finished, unknown), unless the output was closed.
 import { relative } from "node:path";
 import { AdoptUnsupportedError } from "../commands/adopt.ts";
+import { CommitOutcomeUnknownError } from "../deploy/engine.ts";
+import { NotOwnedError } from "../deploy/ownership.ts";
+import {
+  PreflightFailedError,
+  preflightRefusals,
+} from "../deploy/preflight.ts";
 import { errorReason } from "../errors.ts";
-import { settleCleanups } from "../interruption.ts";
+import { InterruptedError, settleCleanups } from "../interruption.ts";
 import type { Project } from "../project.ts";
+import { unchangedTarget } from "../rehearsal/replay.ts";
 import { RehearsalMismatchError } from "../rehearsal/same-structure.ts";
 import {
   describeViolation,
@@ -19,6 +31,7 @@ import type {
   OptionValues,
 } from "./definitions.ts";
 import { UsageError } from "./parse.ts";
+import type { ProcessInterruptions } from "./process.ts";
 import { askAtTerminal, confirmAtTerminal } from "./prompts.ts";
 
 export interface CliIo {
@@ -30,6 +43,10 @@ export interface CliIo {
   readonly interactive: boolean;
   /** Aborts when the process is interrupted. */
   readonly signal: AbortSignal;
+  readonly interruptions: Pick<
+    ProcessInterruptions,
+    "commandSettled" | "outputClosed"
+  >;
 }
 
 export const exitCodes = { success: 0, failure: 1, usage: 2 } as const;
@@ -58,11 +75,15 @@ export async function runCommand(
     io.stderr.write(describeError(error, debug));
     return error instanceof UsageError ? exitCodes.usage : exitCodes.failure;
   };
+  io.interruptions.commandSettled(undefined);
   let project: Project | undefined;
+  let values: OptionValues | undefined;
   let code: number = exitCodes.success;
+  let failed: { error: unknown } | undefined;
   try {
     const prepared = await prepare();
     project = prepared.project;
+    values = prepared.values;
     if (prepared.values !== undefined) {
       const context = commandContext(io);
       if (project === undefined) {
@@ -80,9 +101,23 @@ export async function runCommand(
       }
     }
   } catch (error) {
+    failed = { error };
     code = report(error);
   }
+  const interrupted = io.signal.aborted;
+  io.interruptions.commandSettled({ command: command.name, exitCode: code });
   await settleCleanups(io.signal);
+  const outcome =
+    interrupted && values !== undefined && !io.interruptions.outputClosed
+      ? interruptedOutcome(command, values, failed)
+      : undefined;
+  if (outcome !== undefined) {
+    try {
+      io.stderr.write(`${outcome}\n`);
+    } catch {
+      // A hung-up terminal: the exit code still tells the story.
+    }
+  }
   try {
     await project?.close();
   } catch (error) {
@@ -91,6 +126,36 @@ export async function runCommand(
     }
   }
   return code;
+}
+
+/**
+ * After an interruption while it ran, what a command that changes a target
+ * (`changesTarget`) did to it, in one line; undefined for other commands.
+ * `failed` holds what it threw, if it did not finish.
+ */
+function interruptedOutcome(
+  command: CommandDefinition,
+  values: OptionValues,
+  failed: { error: unknown } | undefined,
+): string | undefined {
+  const target = command.changesTarget;
+  const name = target === undefined ? undefined : values[target.option];
+  if (target === undefined || typeof name !== "string") {
+    return undefined;
+  }
+  const { noun } = target;
+  if (failed === undefined) {
+    return `The ${noun} had already finished: the interruption came too late to stop it on target ${name}.`;
+  }
+  const { error } = failed;
+  if (error instanceof InterruptedError && error.rollback !== undefined) {
+    const { rollback } = error;
+    return `The ${noun} rolled back: ${unchangedTarget(rollback.target, rollback.lastRecorded)}.`;
+  }
+  if (error instanceof CommitOutcomeUnknownError) {
+    return `Whether the ${noun} committed on target ${name} is unknown: the next status or deploy settles it.`;
+  }
+  return `Target ${name} is unchanged: the interruption came before the ${noun} started.`;
 }
 
 function commandContext(io: CliIo): CommandContext {
@@ -137,12 +202,27 @@ export function describeError(error: unknown, debug: boolean): string {
 
 /**
  * The lines an error lists and the summary after them, when it lists more
- * than one (adoption's refusal: always, for the reasons).
+ * than one (adoption's refusal: always, for the reasons; a refusal for
+ * objects the deploy role doesn't own: always, for the fixes as a script).
+ * An error a command already reported (`ReportedError`) is its message alone.
  */
 function listedDetails(
   error: unknown,
 ): { details: readonly string[]; summary: string } | undefined {
-  if (error instanceof AdoptUnsupportedError) {
+  if (error instanceof ReportedError) {
+    return undefined;
+  }
+  if (
+    error instanceof AdoptUnsupportedError ||
+    error instanceof NotOwnedError
+  ) {
+    return { details: error.details, summary: error.summary };
+  }
+  if (
+    error instanceof PreflightFailedError &&
+    (error.findings.notOwned.length > 0 ||
+      preflightRefusals(error.findings).length > 1)
+  ) {
     return { details: error.details, summary: error.summary };
   }
   if (error instanceof SqlRuleViolationError && error.violations.length > 1) {
@@ -158,4 +238,15 @@ function listedDetails(
     };
   }
   return undefined;
+}
+
+/**
+ * An error whose items the command has printed already, as `status` prints
+ * what deploy would refuse: the CLI prints only its one-line message.
+ */
+export class ReportedError extends Error {
+  constructor(reported: Error) {
+    super(reported.message, { cause: reported });
+    this.name = reported.name;
+  }
 }
