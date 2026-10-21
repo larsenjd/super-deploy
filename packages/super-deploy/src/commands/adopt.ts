@@ -19,8 +19,10 @@
 //      written (ADR-0006); the result counts the grants and policies.
 //   2. Refuse, listing everything at once, if anything there is unsupported:
 //      objects a desired schema can't create at all (the catalog check's
-//      `other` kind, and virtual generated columns, which pg-delta renders
-//      STORED), every desired-schema rule (or ordering) violation in
+//      `other` kind, an extension once for all its members; virtual
+//      generated columns, which pg-delta renders STORED; serial columns,
+//      once each, though the differ renders a sequence and its OWNED BY),
+//      every desired-schema rule (or ordering) violation in
 //      the generated files, and, when those pass, every object the files
 //      don't reproduce exactly (loaded on a throwaway database and compared
 //      with the target like the drift check). Nothing is written before
@@ -73,6 +75,7 @@ import {
   adoptedDesiredSchema,
   catalogObjectFinding,
   desiredSchemaAnalysis,
+  isSequenceStatement,
   type OverrideCandidate,
   type OverrideNeeded,
   oneLine,
@@ -81,6 +84,7 @@ import {
   type RuleContext,
   type SqlFile,
   SqlRuleViolationError,
+  serialColumnFinding,
   virtualGeneratedColumnFinding,
   withOverrideMarkers,
 } from "../sql-analysis/index.ts";
@@ -292,6 +296,7 @@ async function readTarget(
         .join(";\n"),
     );
     const request = await targetDatabaseRequest(session);
+    const serials = await serialColumns(session, config.managedSchema);
     const statements = await withThrowawayDatabase(
       config.rehearsal,
       request,
@@ -317,6 +322,14 @@ async function readTarget(
         settings: targetTimeouts(target),
       })
     ).flatMap(unsupportedFact);
+    const serial = serialColumnFinding();
+    unsupported.push(
+      ...serials.map(({ column }) => ({
+        object: `serial column ${column}`,
+        rule: serial.rule,
+        reason: serial.message,
+      })),
+    );
     const candidates = withOverrides
       ? await overrideCandidates(sqlFiles(project, files), context)
       : [];
@@ -325,6 +338,7 @@ async function readTarget(
       project,
       withCheckingMarkers(project, files, candidates),
       context,
+      serials.map((serial) => serial.sequence),
     );
     unsupported.push(...analysed.unsupported);
     if (unsupported.length > 0) {
@@ -451,6 +465,32 @@ async function columnOrder(
   return Object.fromEntries(rows.map((row) => [row.table, row.columns]));
 }
 
+/**
+ * The managed schema's serial columns: each sequence a table column owns
+ * (pg_depend deptype 'a'; an identity column's is 'i'), with the column as
+ * `schema.table.column`. OWNED BY keeps both in one schema.
+ */
+async function serialColumns(
+  session: Session,
+  managedSchema: string,
+): Promise<{ sequence: string; column: string }[]> {
+  const { rows } = await session.query<{ sequence: string; column: string }>(
+    `SELECT s.relname AS sequence,
+            pg_catalog.format('%s.%s.%s', n.nspname, t.relname, a.attname) AS column
+       FROM pg_catalog.pg_depend d
+       JOIN pg_catalog.pg_class s ON s.oid = d.objid AND s.relkind = 'S'
+       JOIN pg_catalog.pg_namespace n ON n.oid = s.relnamespace
+       JOIN pg_catalog.pg_class t ON t.oid = d.refobjid
+       JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
+      WHERE d.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+        AND d.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass
+        AND d.deptype = 'a' AND n.nspname = $1
+      ORDER BY 2`,
+    [managedSchema],
+  );
+  return rows;
+}
+
 /** One reason per candidate, in order; an empty answer cancels. */
 async function askReasons(
   project: Project,
@@ -550,11 +590,15 @@ const notReproduced: Readonly<Record<DriftChange, string>> = {
     "The desired schema generated from the target creates it differently",
 };
 
-/** The generated files through the desired-schema rules and ordering. */
+/**
+ * The generated files through the desired-schema rules and ordering. The
+ * statements about `serialSequences` aren't listed: their serial column is.
+ */
 async function analyse(
   project: Project,
   files: readonly AdoptedFile[],
   context: RuleContext,
+  serialSequences: readonly string[],
 ): Promise<{
   statements: readonly ParsedStatement[];
   unsupported: UnsupportedObject[];
@@ -569,14 +613,17 @@ async function analyse(
     if (!(error instanceof SqlRuleViolationError)) {
       throw error;
     }
-    return {
-      statements: [],
-      unsupported: error.violations.map((violation) => ({
-        object: firstLine(violation.statement) || violation.file,
-        rule: violation.rule,
-        reason: violation.message,
-      })),
-    };
+    const unsupported: UnsupportedObject[] = [];
+    for (const violation of error.violations) {
+      if (!(await isSequenceStatement(violation.statement, serialSequences))) {
+        unsupported.push({
+          object: firstLine(violation.statement) || violation.file,
+          rule: violation.rule,
+          reason: violation.message,
+        });
+      }
+    }
+    return { statements: [], unsupported };
   }
 }
 
