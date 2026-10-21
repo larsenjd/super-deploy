@@ -5,7 +5,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { AdoptUnsupportedError, adopt } from "../commands/adopt.ts";
-import { deploy } from "../commands/deploy.ts";
+import { type DeployedMigration, deploy } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
 import { disposable } from "../commands/disposable.ts";
@@ -20,7 +20,7 @@ import { restoreSchema } from "../commands/restore-schema.ts";
 import { status } from "../commands/status.ts";
 import { unfinalize } from "../commands/unfinalize.ts";
 import { ValidationFailedError, validate } from "../commands/validate.ts";
-import type { AttemptRecord } from "../deploy/history.ts";
+import type { AttemptRecord, RecordedMigration } from "../deploy/history.ts";
 import { MarkMismatchError } from "../deploy/mark.ts";
 import { notOwnedMessage } from "../deploy/ownership.ts";
 import type { Project } from "../project.ts";
@@ -67,7 +67,13 @@ export const commandGroups: readonly CommandGroup[] = [
 interface OptionBase {
   /** Long option name without dashes, e.g. `name` for `--name`. */
   readonly name: string;
+  /** The `--help` text. */
   readonly description: string;
+  /**
+   * The menu's question for this option, when the `--help` text doesn't read
+   * as one on its own. The menu asks `description` without it.
+   */
+  readonly question?: string;
   /** Missing on the command line is a usage error; the menu insists on an answer. */
   readonly required?: boolean;
 }
@@ -249,7 +255,7 @@ const initCommand: DirectoryCommandDefinition = {
   name: "init",
   group: "Start",
   summary:
-    "Create a project here from the bundled template, with a local embedded PostgreSQL and a dev target; or, in an empty project, adopt an existing database",
+    "Create a project here, or adopt a database into an initialised project with no migrations yet",
   needsProject: false,
   options: [
     {
@@ -257,6 +263,8 @@ const initCommand: DirectoryCommandDefinition = {
       kind: "target",
       description:
         "Instead, in an initialised project with no migrations yet: turn this target's managed schema into the desired schema and migration 1, recorded on it as marked",
+      question:
+        "Adopt which target's existing database as migration 1? Its managed schema becomes the desired schema",
     },
   ],
   async run(directory, _values, context) {
@@ -696,7 +704,7 @@ const deployCommand: CommandDefinition = {
     context.result(
       result.deployed.length === 0
         ? `Target ${result.target} is up to date: nothing to deploy`
-        : `Deployed ${plural(result.deployed.length, "migration")} to ${result.target}: ${result.deployed.map((m) => m.folder).join(", ")}`,
+        : `Deployed ${plural(result.deployed.length, "migration")} to ${result.target}: ${result.deployed.map(describeMigration).join(", ")}`,
     );
   },
 };
@@ -743,7 +751,11 @@ const statusCommand: CommandDefinition = {
         context.result(`  ${refusal}`);
       }
     }
-    if (report.driftNotChecked === "history-mismatch") {
+    if (report.driftNotChecked === "deployed-draft") {
+      context.result(
+        `Drift: not checked (the target holds deployed draft ${report.draft?.name}; rebuild resets it)`,
+      );
+    } else if (report.driftNotChecked === "history-mismatch") {
       context.result(
         "Drift: not checked (the recorded history doesn't match the project's migrations)",
       );
@@ -764,13 +776,13 @@ const statusCommand: CommandDefinition = {
     if (report.pending.length > 0) {
       context.result("Pending:");
       for (const migration of report.pending) {
-        context.result(`  ${migration.folder}`);
+        context.result(`  ${describeMigration(migration)}`);
       }
     }
     if (report.attempts.length > 0) {
       context.result("Recent attempts:");
       for (const attempt of report.attempts) {
-        context.result(`  ${describeAttempt(attempt)}`);
+        context.result(`  ${describeAttempt(attempt, report.recorded)}`);
       }
     }
     if (report.drift !== undefined && report.drift.length > 0) {
@@ -951,20 +963,44 @@ const rebuildCommand: CommandDefinition = {
   },
 };
 
+/** `00004-add-country`, or `00004-add-country (Recovery 1)` when it runs, or ran, as Recovery 1. */
+function describeMigration(migration: DeployedMigration): string {
+  return migration.recovery === undefined
+    ? migration.folder
+    : `${migration.folder} (Recovery ${migration.recovery})`;
+}
+
 /**
  * One line of `status`'s "Recent attempts". A deploy that succeeded with no
  * range found nothing pending: it is recorded (it ran the checks) but says so,
- * so it doesn't read as a deploy whose migrations are missing.
+ * so it doesn't read as a deploy whose migrations are missing. The migrations
+ * the target records as this attempt's (`recorded`) that ran as a Recovery
+ * are named: `migration 4 (Recovery 1)`, `migrations 3-5 (migration 4 as
+ * Recovery 1)`. A failed attempt, or one whose rows a later rebuild replaced,
+ * records none.
  */
-function describeAttempt(attempt: AttemptRecord): string {
+function describeAttempt(
+  attempt: AttemptRecord,
+  recorded: readonly RecordedMigration[],
+): string {
+  const recoveries = recorded.filter(
+    (migration) =>
+      migration.attemptId === attempt.id && migration.recovery !== undefined,
+  );
+  const variants =
+    recoveries.length === 0
+      ? ""
+      : attempt.fromMigration === attempt.toMigration
+        ? ` (Recovery ${recoveries[0]?.recovery})`
+        : ` (${recoveries.map((m) => `migration ${m.number} as Recovery ${m.recovery}`).join(", ")})`;
   const range =
     attempt.fromMigration === undefined
       ? attempt.command === "deploy" && attempt.outcome === "succeeded"
         ? ", nothing to deploy,"
         : ""
       : attempt.fromMigration === attempt.toMigration
-        ? ` migration ${attempt.fromMigration}`
-        : ` migrations ${attempt.fromMigration}-${attempt.toMigration}`;
+        ? ` migration ${attempt.fromMigration}${variants}`
+        : ` migrations ${attempt.fromMigration}-${attempt.toMigration}${variants}`;
   const error = attempt.error === undefined ? "" : `: ${attempt.error}`;
   return `#${attempt.id} ${attempt.command} ${attempt.outcome}${range} by ${attempt.osUser} at ${attempt.startedAt.toISOString()}${error}`;
 }

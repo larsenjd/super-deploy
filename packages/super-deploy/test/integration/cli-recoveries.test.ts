@@ -1,8 +1,10 @@
 // CLI seam for Recoveries: the `recovery` command (Recover section of the
-// menu, asking for a migration), and how finalize, validate and unfinalize
-// report Recoveries.
+// menu, asking for a migration), and how finalize, validate, unfinalize,
+// status and deploy report Recoveries.
+import { userInfo } from "node:os";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
+import { deployConfig, targetDatabaseName } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import {
   createTestProject,
@@ -87,6 +89,72 @@ test("recovery, rehearse, finalize, validate and unfinalize report Recoveries", 
       "Moved Recovery 1 of migration 00002-require-email back into a Recovery draft in data-model/draft\n",
   });
   expect(dir.exists(recovery1)).toBe(false);
+});
+
+test("status and deploy show the migrations that run as a Recovery", async () => {
+  const dir = await createTestProject({
+    config: deployConfig(server, {
+      otherTargets: `qa: { adapter: postgres.target(${JSON.stringify(targetDatabaseName())}) },`,
+    }).config,
+    files: {
+      [schema]: "create table customers (id bigint primary key, email text);\n",
+    },
+  });
+  const cli = (args: string[]) => runCli(args, { cwd: dir.root });
+  for (const args of [
+    ["draft", "--name", "add customers"],
+    ["finalize"],
+    ["deploy", "--target", "dev"],
+  ]) {
+    expect((await cli(args)).exitCode).toBe(0);
+  }
+  await dir.write(
+    schema,
+    "create table customers (id bigint primary key, email text not null);\n",
+  );
+  for (const args of [
+    ["draft", "--name", "require email"],
+    ["finalize"],
+    ["recovery", "--migration", "2"],
+  ]) {
+    expect((await cli(args)).exitCode).toBe(0);
+  }
+  await dir.write(
+    "data-model/draft/pre-migration.sql",
+    "update customers set email = 'unknown@example.com' where email is null;\n",
+  );
+  expect((await cli(["finalize"])).exitCode).toBe(0);
+
+  expect((await cli(["status", "--target", "dev"])).stdout).toContain(
+    "Pending:\n  00002-require-email (Recovery 1)\n",
+  );
+  expect(await cli(["deploy", "--target", "dev"])).toMatchObject({
+    exitCode: 0,
+    stdout: "Deployed 1 migration to dev: 00002-require-email (Recovery 1)\n",
+  });
+  // qa runs both in one deployment: the original of 1, Recovery 1 of 2.
+  expect((await cli(["status", "--target", "qa"])).stdout).toContain(
+    "Pending:\n  00001-add-customers\n  00002-require-email (Recovery 1)\n",
+  );
+  expect(await cli(["deploy", "--target", "qa"])).toMatchObject({
+    exitCode: 0,
+    stdout:
+      "Deployed 2 migrations to qa: 00001-add-customers, 00002-require-email (Recovery 1)\n",
+  });
+
+  const user = userInfo().username;
+  const dev = await cli(["status", "--target", "dev"]);
+  expect(dev.stdout).toMatch(
+    new RegExp(
+      `\n  #2 deploy succeeded migration 2 \\(Recovery 1\\) by ${user} at \\S+Z\n  #1 deploy succeeded migration 1 by ${user} at \\S+Z\n$`,
+    ),
+  );
+  const qa = await cli(["status", "--target", "qa"]);
+  expect(qa.stdout).toMatch(
+    new RegExp(
+      `\n  #1 deploy succeeded migrations 1-2 \\(migration 2 as Recovery 1\\) by ${user} at \\S+Z\n$`,
+    ),
+  );
 });
 
 describe.skipIf(process.platform === "win32")("menu", () => {

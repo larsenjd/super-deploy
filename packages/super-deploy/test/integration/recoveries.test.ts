@@ -347,6 +347,23 @@ describe("deploying with Recoveries", () => {
     ).toEqual([{ n: 0 }]);
   });
 
+  test("status and deploy report the Recovery a pending migration runs", async () => {
+    const setup = await failedMigration();
+    await finalizeRecovery(setup);
+    const viaRecovery1 = {
+      number: 2,
+      name: "require-email",
+      folder: "00002-require-email",
+      recovery: 1,
+    };
+
+    const before = await status(setup.project, { target: "dev" });
+    const result = await deploy(setup.project, { target: "dev" });
+
+    expect(before.pending).toStrictEqual([viaRecovery1]);
+    expect(result.deployed).toStrictEqual([viaRecovery1]);
+  });
+
   test("the drift replica replays each target's recorded variant", async () => {
     const qa = targetDatabaseName();
     const setup = await failedMigration({

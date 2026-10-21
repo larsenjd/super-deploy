@@ -512,7 +512,8 @@ in migration 8:
    own files and hashes don't change.
 6. The next `deploy` to a target that hasn't recorded migration 8 runs its
    newest Recovery in place of the original scripts, and records which one
-   it ran.
+   it ran. `status` and `deploy` show it next to the migration
+   (`00008-... (Recovery 1)`), and `status`'s recent attempts name it too.
 
 The schema change never changes: a Recovery always runs its migration's
 `schema-change.sql`, and `draft` refuses to regenerate it. Don't edit the
@@ -568,7 +569,8 @@ draft-finalize-deploy path:
   rehearsal first. `--with-seed` loads the draft's seed data first, which
   may clash with data already on the target. The target then records that
   it holds the draft, not a migration: `deploy`, `mark` and another
-  `deploy-draft` refuse it until `rebuild` resets it.
+  `deploy-draft` refuse it, and `status` doesn't check it for drift, until
+  `rebuild` resets it.
 - **`rebuild --target X --to N`** resets a disposable target to migration
   N, in one transaction. It drops everything in the managed schema, with
   `CASCADE`, so objects in other schemas that depend on it are dropped too.
