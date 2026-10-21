@@ -52,6 +52,7 @@ export async function disposable(
   return runGuarded<undefined, DisposableResult>(project, {
     command: "disposable",
     target: options.target,
+    disposableSet: options.set,
     async check(view, session) {
       if (view.disposable === options.set) {
         return {

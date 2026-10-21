@@ -17,8 +17,8 @@
 //      pooler the server's address alone is one the user may never have
 //      seen. The fingerprint compares the server's address.
 //   5. require YES, typed exactly (anything else, Escape or Ctrl+C refuses)
-//   6. withLockedTarget: open the manual attempt (command name, OS username),
-//      take the target lock
+//   6. withLockedTarget: open the manual attempt (command name, OS username,
+//      and for disposable the value it sets), take the target lock
 //   7. re-read the view under the lock: if what was shown has changed, refuse
 //   8. run the command's body; the attempt ends as withLockedTarget decides
 //
@@ -78,6 +78,8 @@ export interface GuardedAction<P, T> {
   readonly command: GuardedCommand;
   /** The target's name in config. */
   readonly target: string;
+  /** For `disposable`: the value it sets, recorded on its attempt from the start. */
+  readonly disposableSet?: boolean;
   /**
    * Preconditions, before asking. Throw a typed error to refuse (nothing has
    * been written yet). `session` is the guard's read-only session.
@@ -129,10 +131,11 @@ export async function runGuarded<P, T>(
     throw new NotConfirmedError(action.command, target.name, answer);
   }
 
+  const { command, disposableSet } = action;
   return withLockedTarget(
     project,
     target.name,
-    action.command,
+    disposableSet === undefined ? { command } : { command, disposableSet },
     async (locked) => {
       const view = await readTargetView(project, target, locked.session);
       if (fingerprint(view) !== fingerprint(shown)) {

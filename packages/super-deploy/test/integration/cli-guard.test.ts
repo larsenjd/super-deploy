@@ -208,6 +208,30 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
     expect(status.stdout).toMatch(/^Target dev \(disposable\):/);
   });
 
+  test("each disposable attempt records which way it set the flag, and status shows it", async () => {
+    const { dir } = await deployedProject();
+    for (const [set, now] of [
+      ["yes", "disposable"],
+      ["no", "not disposable"],
+    ] as const) {
+      const terminal = spawnTerminal(
+        ["disposable", "--target", "dev", "--set", set],
+        { cwd: dir.root },
+      );
+      await terminal.waitFor("Type YES");
+      terminal.type(`YES${keys.enter}`);
+      await terminal.waitFor(`Target dev is now ${now}`);
+      expect(await terminal.exited).toBe(0);
+    }
+
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).toMatch(
+      /^ {2}#3 disposable set no succeeded by \S+ at \S+\n {2}#2 disposable set yes succeeded by \S+ at \S+\n {2}#1 deploy succeeded migration 1 by /m,
+    );
+  });
+
   test("disposable --set yes says how many tables the managed schema holds and about how many rows, and what the flag allows", async () => {
     const { dir, database } = await deployedProject();
     await asDeployRole(
@@ -453,6 +477,10 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
       { command: "deploy", outcome: "succeeded" },
       { command: "disposable", outcome: "failed" },
     ]);
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).toContain("#2 disposable set yes failed by ");
   });
 
   test("refuses before asking while a deployment holds the target lock, naming that attempt: no attempt is recorded", async () => {

@@ -9,9 +9,15 @@ import { SqlFileFailedError } from "../rehearsal/replay.ts";
 import { toolVersion } from "../version.ts";
 import { type AttemptOutcome, historyTable } from "./history.ts";
 
-export interface AttemptStart {
+/** What an attempt records about the command that opens it. */
+export interface AttemptCommand {
   /** e.g. `deploy`. */
   readonly command: string;
+  /** For `disposable`: the value it sets the flag to. */
+  readonly disposableSet?: boolean;
+}
+
+export interface AttemptStart extends AttemptCommand {
   /** The target's name in config. */
   readonly target: string;
   /** Server process of the command's own session (the lock holder). */
@@ -37,14 +43,15 @@ export async function openAttempt(
 ): Promise<Attempt> {
   const table = historyTable(historySchema, "attempts");
   const { rows } = await log.query<{ id: string }>(
-    `INSERT INTO ${table} (command, target, os_user, tool_version, backend_pid)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    `INSERT INTO ${table} (command, target, os_user, tool_version, backend_pid, disposable_set)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
     [
       start.command,
       start.target,
       osUsername(),
       toolVersion,
       start.backendPid ?? null,
+      start.disposableSet ?? null,
     ],
   );
   const id = Number(rows[0]?.id);

@@ -274,7 +274,7 @@ export async function adopt(
     const attemptId = await withLockedTarget(
       project,
       target.name,
-      "init --adopt",
+      { command: "init --adopt" },
       async (locked) => {
         await markNextPending(project, locked, migrations);
         return locked.attempt.id;

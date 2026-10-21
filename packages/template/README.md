@@ -872,6 +872,9 @@ draft-finalize-deploy path:
   real data stands out. Marking a target that holds a deployed draft not
   disposable warns that `deploy` refuses it until `rebuild` resets it, which
   then needs it flagged disposable again; `status` and `deploy` say so too.
+  Each run's attempt records which way it set the flag, so `status`'s recent
+  attempts show who made the target disposable and when
+  (`#5 disposable set yes succeeded by ana at ...`).
 - **`deploy-draft --target X`** tries the current, unfinalized draft on a
   disposable target, so its scripts meet the target's data before you
   finalize. The target must have no pending migrations (a Recovery draft of

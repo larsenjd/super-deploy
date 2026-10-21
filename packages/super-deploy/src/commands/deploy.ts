@@ -91,7 +91,7 @@ export async function deploy(
   return withLockedTarget(
     project,
     options.target,
-    "deploy",
+    { command: "deploy" },
     async ({ target, session, attempt }) => {
       const recorded = await readRecordedMigrations(
         session,

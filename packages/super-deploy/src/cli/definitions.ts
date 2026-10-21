@@ -1060,7 +1060,11 @@ function describeAttempt(
         ? ` migration ${attempt.fromMigration}${variants}`
         : ` migrations ${attempt.fromMigration}-${attempt.toMigration}${variants}`;
   const error = attempt.error === undefined ? "" : `: ${attempt.error}`;
-  return `#${attempt.id} ${attempt.command} ${attempt.outcome}${range} by ${attempt.osUser} at ${attempt.startedAt.toISOString()}${error}`;
+  const command =
+    attempt.disposableSet === undefined
+      ? attempt.command
+      : `${attempt.command} set ${attempt.disposableSet ? "yes" : "no"}`;
+  return `#${attempt.id} ${command} ${attempt.outcome}${range} by ${attempt.osUser} at ${attempt.startedAt.toISOString()}${error}`;
 }
 
 /** `override: <file>:<line>: <object> [<rules>]: <reason>`; `file` is relative to `base`. */
