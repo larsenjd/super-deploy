@@ -6,7 +6,10 @@
 // rebuild, deploy-draft, disposable and init --adopt. Contention fails at
 // once, naming the holder's running attempt and what its server process is
 // doing (pg_stat_activity), so a user can tell a live command from a dead
-// CLI's statement still running, and how to end that.
+// CLI's statement still running, and how to end that. When the holder's
+// statement itself waits for a lock (a table another session holds), the
+// description names each session it waits on (`pg_blocking_pids`), so a
+// stuck deployment's cause shows in `status`.
 //
 // The advice is `pg_terminate_backend`, not `pg_cancel_backend` (ticket 51's
 // decision said cancel): cancelling ends only the running statement, and the
@@ -105,12 +108,18 @@ export async function lockHolder(
   );
   const [row] = rows;
   if (row === undefined) {
-    return { pid: undefined, attempt: undefined, activity: undefined };
+    return {
+      pid: undefined,
+      attempt: undefined,
+      activity: undefined,
+      blockedBy: [],
+    };
   }
   const { pid } = row;
   const attempt = await readRunningAttemptOf(session, historySchema, pid);
   return {
     pid,
+    blockedBy: await blockingSessions(session, pid),
     activity:
       row.state === null
         ? undefined
@@ -131,6 +140,39 @@ export async function lockHolder(
   };
 }
 
+/**
+ * The sessions holding a lock that server process `pid` waits for, as
+ * `pg_stat_activity` shows them (its columns are null for another role's
+ * session unless the reading role has pg_read_all_stats).
+ */
+async function blockingSessions(
+  session: Session,
+  pid: number,
+): Promise<BlockingSession[]> {
+  const { rows } = await session.query<{
+    pid: number;
+    application_name: string | null;
+    usename: string | null;
+    state: string | null;
+    state_change: Date | null;
+    query: string | null;
+  }>(
+    `SELECT b.pid, a.application_name, a.usename, a.state, a.state_change, a.query
+       FROM unnest(pg_blocking_pids($1)) AS b(pid)
+       LEFT JOIN pg_stat_activity a ON a.pid = b.pid
+      ORDER BY b.pid`,
+    [pid],
+  );
+  return rows.map((row) => ({
+    pid: row.pid,
+    applicationName: row.application_name ?? undefined,
+    user: row.usename ?? undefined,
+    state: row.state ?? undefined,
+    stateSince: row.state_change ?? undefined,
+    statement: row.query ?? undefined,
+  }));
+}
+
 /** The holder of a target's lock, as recorded in its history schema. */
 export interface LockHolder {
   /** The server process holding the lock. */
@@ -140,6 +182,11 @@ export interface LockHolder {
    * holder is gone or the session's role may not see it.
    */
   readonly activity: LockHolderActivity | undefined;
+  /**
+   * The sessions holding a lock that process's statement waits for: empty
+   * unless it is waiting for one.
+   */
+  readonly blockedBy: readonly BlockingSession[];
   /** The running attempt that process recorded, if one is found. */
   readonly attempt:
     | {
@@ -161,6 +208,22 @@ export interface LockHolderActivity {
   readonly statement: string;
 }
 
+/**
+ * A session holding a lock the target lock's holder waits for, as
+ * `pg_stat_activity` shows it; a field is undefined where it hides it.
+ */
+export interface BlockingSession {
+  readonly pid: number;
+  readonly applicationName: string | undefined;
+  readonly user: string | undefined;
+  /** `idle in transaction`, `active`, ... */
+  readonly state: string | undefined;
+  /** When it entered that state. */
+  readonly stateSince: Date | undefined;
+  /** Its current statement (its last one, unless active). */
+  readonly statement: string | undefined;
+}
+
 /** Who holds a lock, briefly: "attempt #N", or "another session" when the holder recorded no running attempt. */
 export function lockHolderName(holder: LockHolder): string {
   return holder.attempt === undefined
@@ -172,10 +235,13 @@ export function lockHolderName(holder: LockHolder): string {
  * Who holds a lock, in full: "attempt #N (deploy by ana, started <time>,
  * server process P, active, statement started <time>: ALTER TABLE ...)", or
  * "another session (server process P, ...)". So a user can tell a live
- * command from a dead CLI's statement still running on the server.
+ * command from a dead CLI's statement still running on the server. When
+ * that statement waits for a lock, it goes on ", waiting for a lock held by
+ * server process N (psql, ana, idle in transaction since <time>: SELECT
+ * ...)", naming every session it waits on.
  */
 export function describeLockHolder(holder: LockHolder): string {
-  const { attempt, pid, activity } = holder;
+  const { attempt, pid, activity, blockedBy } = holder;
   const details = [
     ...(attempt === undefined
       ? []
@@ -187,20 +253,50 @@ export function describeLockHolder(holder: LockHolder): string {
     ...(activity === undefined ? [] : [describeActivity(activity)]),
   ];
   const name = lockHolderName(holder);
-  return details.length === 0 ? name : `${name} (${details.join(", ")})`;
+  const described =
+    details.length === 0 ? name : `${name} (${details.join(", ")})`;
+  return blockedBy.length === 0
+    ? described
+    : `${described}, waiting for a lock held by ${blockedBy.map(describeBlocking).join(" and ")}`;
+}
+
+/** "server process N (psql, ana, idle in transaction since <time>: SELECT ...)" */
+function describeBlocking(blocking: BlockingSession): string {
+  const { applicationName, user, state, stateSince, statement } = blocking;
+  const stateText =
+    state === undefined
+      ? undefined
+      : stateSince === undefined
+        ? state
+        : `${state} since ${stateSince.toISOString()}`;
+  const details = [
+    applicationName === "" ? undefined : applicationName,
+    user,
+    stateText,
+  ].filter((detail) => detail !== undefined);
+  const text = oneLineStatement(statement ?? "");
+  const inside =
+    text === "" ? details.join(", ") : `${details.join(", ")}: ${text}`;
+  return inside === ""
+    ? `server process ${blocking.pid}`
+    : `server process ${blocking.pid} (${inside})`;
 }
 
 /** The longest statement text a lock holder's description quotes. */
 const statementLength = 200;
 
+/** A statement on one line, cut at statementLength. */
+function oneLineStatement(statement: string): string {
+  const oneLine = statement.replace(/\s+/g, " ").trim();
+  return oneLine.length > statementLength
+    ? `${oneLine.slice(0, statementLength)}...`
+    : oneLine;
+}
+
 /** "active, statement started <time>: <statement on one line>" */
 function describeActivity(activity: LockHolderActivity): string {
   const { state, statementStartedAt, statement } = activity;
-  const oneLine = statement.replace(/\s+/g, " ").trim();
-  const text =
-    oneLine.length > statementLength
-      ? `${oneLine.slice(0, statementLength)}...`
-      : oneLine;
+  const text = oneLineStatement(statement);
   const started =
     statementStartedAt === undefined
       ? []

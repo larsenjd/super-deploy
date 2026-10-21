@@ -29,7 +29,9 @@
 //      all belong to a superuser is read, and refused once, like any other.
 //      The read runs under the target's lockTimeout and statementTimeout:
 //      one that runs out, anywhere in it, is AdoptTimedOutError, never the
-//      differ's own error (which would name pg-delta).
+//      differ's own error (which would name pg-delta). Interrupted, it
+//      ends at once: its server process is terminated (`terminatedOnAbort`),
+//      even while it waits for a lock.
 //   2. Refuse, listing everything at once, if the deploy role doesn't own
 //      something there (except what is refused as unsupported anyway: no
 //      one should re-own an object only to drop it) or can't create the
@@ -87,6 +89,7 @@ import {
   withLockedTarget,
 } from "../deploy/engine.ts";
 import { readRecordedMigrations } from "../deploy/history.ts";
+import { terminatedOnAbort } from "../deploy/interruptible-session.ts";
 import { markNextPending, readMarkableMigrations } from "../deploy/mark.ts";
 import {
   fixScript,
@@ -370,18 +373,20 @@ async function readTarget(
     externalSchemas: config.externalSchemas,
   };
   const session = await connectTarget(target, project.signal);
+  const close = await terminatedOnAbort(target, session, project.signal);
   try {
     return await readTargetOn(session, project, target, {
       withOverrides,
       context,
     });
   } catch (error) {
+    throwIfInterrupted(project.signal);
     const sqlState = timeoutState(error);
     throw sqlState === undefined
       ? error
       : new AdoptTimedOutError(target, sqlState, { cause: error });
   } finally {
-    await session.close().catch(() => {});
+    await close();
   }
 }
 

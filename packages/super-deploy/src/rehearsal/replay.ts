@@ -458,7 +458,7 @@ function nextStep(
     const { setting, change } = timeoutThatRanOut(target, sqlState);
     const subject = `T${setting.slice(1)}`;
     return sqlState === "55P03"
-      ? `${subject} ran out waiting for a lock: retry once whatever held the lock has finished, or ${change}.`
+      ? `${subject} ran out waiting for a lock: retry once whatever held the lock has finished, or ${change}. To see which session holds it next time, run status --target ${target.name} while the deployment waits, or select * from pg_stat_activity where pid = any(pg_blocking_pids(<its server process>)).`
       : `${subject} cancelled the statement: retry once whatever held it up has finished, or ${change}.`;
   }
   if (

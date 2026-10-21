@@ -311,6 +311,13 @@ statement it is running and since when. If you know that command is dead,
 the deployment back and releases the lock. Cancelling only its statement
 (`pg_cancel_backend`) isn't enough: the lock belongs to the session.
 
+A deployment that waits for a lock another session holds on a table (a
+long transaction, a `VACUUM FULL`) shows in `status` as `waiting for a lock
+held by server process N`, with that session's application name, user, state
+and statement. If the wait outlasts `lockTimeout`, the deployment rolls back
+and says which setting ran out; run `status` during the next wait to see the
+session, or query `pg_stat_activity` for `pg_blocking_pids(<server process>)`.
+
 ### Adding a real target
 
 A real target connects to an existing PostgreSQL 18 server with

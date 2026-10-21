@@ -3,6 +3,7 @@
 import { chmod } from "node:fs/promises";
 import { type AddressInfo, createServer } from "node:net";
 import { userInfo } from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   AdapterError,
   deploy,
@@ -364,6 +365,8 @@ describe("deploy", () => {
     expect(message).toContain(
       "The target's lockTimeout (200ms) ran out waiting for a lock: retry once whatever held the lock has finished, or raise lockTimeout for target dev in super-deploy.config.ts.",
     );
+    expect(message).toContain("status --target dev");
+    expect(message).toContain("pg_blocking_pids");
     expect(message).not.toMatch(/recovery/i);
     expect(
       await server.query(
@@ -593,6 +596,15 @@ const pausingAdapter = `{
  * from `target`) while a test session holds a lock on customers; `before`
  * runs first, e.g. to change the target database's settings.
  */
+/** How many sessions on `database` are waiting for a lock. */
+async function waitingForLocks(database: string): Promise<number> {
+  const [row] = await server.query<{ count: number }>(
+    "select count(*)::int as count from pg_stat_activity where datname = $1 and wait_event_type = 'Lock'",
+    [database],
+  );
+  return row?.count ?? 0;
+}
+
 async function deployWhileCustomersLocked(
   target: string,
   before?: (database: string) => Promise<unknown>,
@@ -826,6 +838,64 @@ describe("the target lock", () => {
     expect(after.lockedBy).toBeUndefined();
     expect(after.drift).toEqual([]);
     expect(after.driftNotChecked).toBeUndefined();
+  });
+
+  test("status and the lock refusal name the session a holding deployment waits on for a lock", async () => {
+    const { dir, project, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { target: 'lockTimeout: "20s",' },
+    );
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      customers.replace(
+        "name text not null",
+        "name text not null,\n  email text",
+      ),
+    );
+    await finalizeMigration(project, "add email");
+    const holder = await testSession(server, database);
+    let deploying: Promise<unknown> | undefined;
+    try {
+      const { rows } = await holder.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
+      const holderPid = rows[0]?.pid;
+      await holder.execute("SET application_name = 'blocking_holder'");
+      await holder.execute("BEGIN");
+      await holder.execute("SELECT * FROM customers");
+      deploying = deploy(project, { target: "dev" });
+      while ((await waitingForLocks(database)) === 0) {
+        await delay(50);
+      }
+
+      const report = await status(project, { target: "dev" });
+      const refusal = await deploy(project, { target: "dev" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(report.lockedBy?.blockedBy).toEqual([
+        {
+          pid: holderPid,
+          applicationName: "blocking_holder",
+          user: "deployer",
+          state: "idle in transaction",
+          stateSince: expect.any(Date),
+          statement: "SELECT * FROM customers",
+        },
+      ]);
+      expect(refusal).toBeInstanceOf(TargetLockedError);
+      expect((refusal as TargetLockedError).message).toMatch(
+        new RegExp(
+          `waiting for a lock held by server process ${holderPid} \\(blocking_holder, deployer, idle in transaction since \\S+: SELECT \\* FROM customers\\)`,
+        ),
+      );
+    } finally {
+      await holder.close();
+      await deploying;
+    }
   });
 
   test("is keyed from the history schema name: a project with another history schema on the same database is not blocked", async () => {

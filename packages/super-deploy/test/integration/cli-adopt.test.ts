@@ -2,13 +2,16 @@
 // working directory, prints what it wrote, and lists what V1 doesn't support
 // on stderr when it refuses. In a terminal it asks for override reasons.
 import { rm } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { runCli } from "../support/cli.ts";
+import { runCli, spawnCli } from "../support/cli.ts";
 import {
   asDeployerPreamble,
+  asDeployRole,
   asSuperuser,
   deployConfig,
   roleName,
+  testSession,
 } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject } from "../support/project.ts";
@@ -21,6 +24,15 @@ beforeAll(async () => {
 afterAll(async () => {
   await server?.stop();
 });
+
+/** How many sessions on `database` are waiting for a lock. */
+async function waitingForLocks(database: string): Promise<number> {
+  const [row] = await server.query<{ count: number }>(
+    "select count(*)::int as count from pg_stat_activity where datname = $1 and wait_event_type = 'Lock'",
+    [database],
+  );
+  return row?.count ?? 0;
+}
 
 async function projectAdopting(sql: string, settings = "") {
   const prod = await server.createDatabase(sql);
@@ -220,6 +232,43 @@ describe("init --adopt", () => {
 
     await server.query("drop schema deployment_history cascade", [], prod);
     expect((await adopt()).exitCode).toBe(0);
+  });
+
+  test("SIGINT while its read of the target waits for a lock ends the read at once and exits 130, writing nothing", async () => {
+    const prod = await server.createDatabase();
+    await asDeployRole(server, prod, "create table t (id bigint primary key)");
+    const dir = await createTestProject({
+      config: deployConfig(server, {
+        otherTargets: `prod: { adapter: postgres.target(${JSON.stringify(prod)}), lockTimeout: "30s" },`,
+      }).config,
+    });
+    const holder = await testSession(server, prod);
+    try {
+      await holder.execute("BEGIN; LOCK TABLE t IN ACCESS EXCLUSIVE MODE");
+      const cli = spawnCli(["init", "--adopt", "prod"], { cwd: dir.root });
+      while ((await waitingForLocks(prod)) === 0) {
+        await delay(100);
+      }
+      const interrupted = Date.now();
+
+      cli.signal("SIGINT");
+      const result = await cli.result;
+
+      expect(Date.now() - interrupted).toBeLessThan(3_000);
+      expect(result.exitCode).toBe(130);
+      expect(await waitingForLocks(prod)).toBe(0);
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+      expect(dir.exists("data-model/migrations")).toBe(false);
+      expect(
+        await server.query(
+          "select 1 from pg_namespace where nspname = 'deployment_history'",
+          [],
+          prod,
+        ),
+      ).toEqual([]);
+    } finally {
+      await holder.close();
+    }
   });
 
   test("an unknown target is a usage error (exit 2)", async () => {
