@@ -151,7 +151,8 @@ super-deploy (see [Permissions](#permissions)).
   `EXECUTE` in a PL/pgSQL body, and built-ins whose effects escape the
   transaction (such as `pg_notify`), are refused unless an override marker,
   `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>` on the line before the
-  statement, says why. No marker gets past any other refusal.
+  statement, says why (see [Overriding a refusal](#overriding-a-refusal)).
+  No marker gets past any other refusal.
 
 ## Configuration
 
@@ -278,7 +279,8 @@ and policies it left.
 
 Functions (or other statements) that use dynamic SQL (`EXECUTE`) or call a
 built-in whose effects escape the transaction (such as `pg_notify`) need an
-override marker in the desired schema. Once nothing else is refused,
+override marker in the desired schema (see
+[Overriding a refusal](#overriding-a-refusal)). Once nothing else is refused,
 adoption run in a terminal lists them and asks for a reason for each: the
 reason reviewers will read in `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`,
 which adoption writes on the line before the statement. Until then, its
@@ -398,6 +400,41 @@ Finalized migrations are read-only and hashed: never edit them.
 Biome, the type checker and `super-deploy validate --strict` (the pre-commit
 hook runs it before every commit). To change the newest migration before any
 target has run it, see [Changing your mind](#changing-your-mind).
+
+## Overriding a refusal
+
+Two refusals are risks rather than impossibilities: dynamic SQL (`EXECUTE`
+in a PL/pgSQL body, `[plpgsql-dynamic-sql]`) and calls to built-ins whose
+effects escape the transaction, such as `pg_notify` or `setval`
+(`[denylisted-call]`). When such a statement is safe, accept it with an
+override marker on its own line, directly before the statement:
+
+```sql
+-- OVERRIDE SUPER-DEPLOY REFUSAL: loads the staging table named by the caller
+create function load_staging(source text) returns void
+language plpgsql as $$
+begin
+  execute format('insert into staging select * from %I', source);
+end
+$$;
+```
+
+- It works in the desired schema and in the hand-written files of a draft
+  (`pre-migration.sql`, `post-migration.sql` and `seed-data.sql`). `draft`
+  copies a desired-schema marker into `schema-change.sql` for the statement
+  that changes the same object.
+- It applies to the one statement after it, and needs a reason: a marker
+  without one, written any other way, or not directly before a statement is
+  refused.
+- It overrides only those two refusals. A marker before a statement that
+  breaks any other rule (transaction control, privileges, unsupported
+  objects, ...) doesn't get it past them, and a marker before a statement
+  that breaks no rule is refused as unused.
+- Every override is recorded with its file, line, object and reason:
+  `finalize` lists them and writes them to the migration's `metadata.json`,
+  and `validate` lists them, so reviewers see each exception.
+
+The refusals a marker can override end with how to write it.
 
 ## Renaming a column
 

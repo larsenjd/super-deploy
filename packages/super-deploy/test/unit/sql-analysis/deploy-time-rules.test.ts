@@ -1253,7 +1253,7 @@ describe("function calls", () => {
       {
         rule: "denylisted-call",
         message:
-          "pg_advisory_lock() is not allowed: it takes or releases a session-level advisory lock, which a failed deployment's rollback cannot undo",
+          'pg_advisory_lock() is not allowed: it takes or releases a session-level advisory lock, which a failed deployment\'s rollback cannot undo. If the statement is safe, override the refusal with "-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>" on the line before it',
       },
     ]);
   });

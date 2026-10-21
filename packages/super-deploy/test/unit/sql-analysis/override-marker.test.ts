@@ -93,6 +93,57 @@ $$;
   });
 });
 
+describe("refusals say how to override them", () => {
+  const overrideHint =
+    '. If the statement is safe, override the refusal with "-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>" on the line before it';
+
+  test("dynamic SQL without a marker ends with the override hint", async () => {
+    const [violation] = await checkRules(
+      { path: desiredPath, text: loader("") },
+      "desired-schema",
+    );
+    expect(violation?.rule).toBe("plpgsql-dynamic-sql");
+    expect(violation?.message).toBe(
+      `EXECUTE (dynamic SQL) is not allowed in PL/pgSQL bodies: SQL built at run time can't be checked by the rules${overrideHint}`,
+    );
+  });
+
+  test("a denylisted call in a script without a marker ends with the override hint", async () => {
+    const analysis = await analyseMigration([
+      {
+        path: "data-model/draft/post-migration.sql",
+        kind: "post-migration",
+        text: "update counters set value = setval('orders_id_seq', 1000) where name = 'orders';\n",
+      },
+    ]);
+    expect(analysis.violations.map((v) => v.rule)).toEqual(["denylisted-call"]);
+    expect(analysis.violations[0]?.message.endsWith(overrideHint)).toBe(true);
+  });
+
+  test("a refusal no marker can override has no override hint", async () => {
+    const violations = await checkRules(
+      {
+        path: desiredPath,
+        text: `create table t (id bigint primary key) tablespace fast;
+create procedure batch() language plpgsql as $$
+begin
+  commit;
+end
+$$;
+`,
+      },
+      "desired-schema",
+    );
+    expect(violations.map((v) => v.rule)).toEqual([
+      "unsupported-object",
+      "plpgsql-transaction-control",
+    ]);
+    for (const violation of violations) {
+      expect(violation.message).not.toContain("OVERRIDE");
+    }
+  });
+});
+
 describe("where the marker goes", () => {
   const dynamic = `create function f() returns void language plpgsql as $$
 begin

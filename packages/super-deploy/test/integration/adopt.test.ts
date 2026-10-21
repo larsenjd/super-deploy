@@ -286,6 +286,13 @@ describe("adopt", () => {
         "function load_staging(text)",
         "function ping()",
       ]);
+      // Adoption writes the marker itself, so the findings it shows don't
+      // tell the person to write one.
+      for (const finding of asked[0]?.needed.flatMap(
+        (needed) => needed.findings,
+      ) ?? []) {
+        expect(finding.message).not.toContain("OVERRIDE");
+      }
       const routines = (
         await dir.read("data-model/desired-schema/routines.sql")
       ).split("\n");
