@@ -9,8 +9,17 @@
 // process that started it, which its exit hooks stop when that process ends
 // and which Ctrl+C reaches with the rest of the process group, so it could not
 // outlive its starter for other commands. `pg_ctl` starts the server in a
-// session of its own instead (a detached child), and stops it wherever it was
-// started; both work on Windows too.
+// session of its own instead (a detached child), which works on Windows too.
+//
+// Stopping spawns no child on POSIX: it sends the server SIGINT (a fast
+// shutdown, as `pg_ctl stop -m fast` does) and waits for it to go. A child
+// spawned while the CLI cleans up after a signal to its process group could
+// be killed by a repeat of that signal (ticket 141: a wrapper forwarding it,
+// or the terminal and a wrapper both delivering it): the child is in the
+// CLI's group until it makes its own session, and a signal arriving before
+// then stays pending and kills it once it runs. A killed `pg_ctl stop` left
+// the server running. Windows has no such group signals and no SIGINT to
+// send, so `pg_ctl stop` stops it there.
 //
 // A new data directory is initialised in a sibling folder and renamed into
 // place, so two commands initialising at once both end with the same
@@ -21,9 +30,10 @@
 // process. After a reboot or crash that pid may belong to an unrelated
 // process: when the file says the server is `ready` and nothing answers on
 // its port, the wait for connections fails at once naming the file, and the
-// caller must not `stopServer` (pg_ctl would signal that process). The server's output goes to `super-deploy-server.log`
-// in the data directory, emptied at each start; a failed start reports its
-// last lines.
+// caller must not `stopServer` (it would signal that process).
+//
+// The server's output goes to `super-deploy-server.log` in the data
+// directory, emptied at each start; a failed start reports its last lines.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -50,6 +60,8 @@ const logFileName = "super-deploy-server.log";
 // How long a client waits for a server that reports it is starting up
 // (SQLSTATE 57P03), e.g. one started by a command that was killed meanwhile.
 const startingUpWaitMs = 30_000;
+// How long a stop waits for the server to shut down, as `pg_ctl stop -t 60`.
+const stopWaitMs = 60_000;
 
 interface Binaries {
   readonly initdb: string;
@@ -176,20 +188,46 @@ export async function startServer(
 
 /**
  * Stops the data directory's server, if it is running, and waits until it
- * has. `pg_ctl` runs in a session of its own, so a signal to the terminal's
- * group (closing it, a wrapper forwarding SIGTERM) can't cut the stop short.
+ * has. A repeat of the signal that interrupted the CLI can't cut it short.
  */
 export async function stopServer(dataDir: string): Promise<void> {
-  const { pg_ctl } = await postgresBinaries();
-  const result = await run(
-    pg_ctl,
-    ["stop", "-D", dataDir, "-m", "fast", "-w", "-t", "60"],
-    { detached: true },
-  );
-  if (result.code !== 0 && (await runningPort(dataDir)) !== undefined) {
-    throw new AdapterError(
-      `Embedded PostgreSQL failed to stop in ${dataDir}: ${lastLines(result.output)}`,
+  if (process.platform === "win32") {
+    const { pg_ctl } = await postgresBinaries();
+    const result = await run(
+      pg_ctl,
+      ["stop", "-D", dataDir, "-m", "fast", "-w", "-t", "60"],
+      { detached: true },
     );
+    if (result.code !== 0 && (await runningPort(dataDir)) !== undefined) {
+      throw new AdapterError(
+        `Embedded PostgreSQL failed to stop in ${dataDir}: ${lastLines(result.output)}`,
+      );
+    }
+    return;
+  }
+  const pid = (await readPidFile(dataDir))?.pid;
+  if (pid === undefined || !isAlive(pid)) {
+    return;
+  }
+  try {
+    process.kill(pid, "SIGINT");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      return;
+    }
+    throw new AdapterError(`Embedded PostgreSQL failed to stop in ${dataDir}`, {
+      cause: error,
+    });
+  }
+  // Gone once it has removed postmaster.pid, as `pg_ctl stop -w` waits.
+  const deadline = Date.now() + stopWaitMs;
+  while ((await readPidFile(dataDir))?.pid === pid && isAlive(pid)) {
+    if (Date.now() > deadline) {
+      throw new AdapterError(
+        `Embedded PostgreSQL failed to stop in ${dataDir}: still running after ${stopWaitMs / 1000} s`,
+      );
+    }
+    await delay(50);
   }
 }
 
@@ -266,7 +304,8 @@ async function readPidFile(
   }
   const pid = Number(lines[0]);
   const port = Number(lines[3]);
-  if (!Number.isInteger(pid) || !Number.isInteger(port)) {
+  // A single-user backend records its pid negated: not a server.
+  if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) {
     return undefined;
   }
   return { path, pid, port, status: lines[7]?.trim() ?? "" };

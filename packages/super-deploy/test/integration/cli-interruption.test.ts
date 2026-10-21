@@ -1,7 +1,8 @@
 // Interruption at the CLI process seam: signals and closed output stop the
 // running command, clean up and exit 129, 130, 141 or 143. Signals print one
 // notice; closed output prints none. The same signal twice within a second
-// is one interruption; a later second one exits at once.
+// is one interruption; a later second one exits at once. The repeats of a
+// signal to the process group also reach whatever child cleanup starts.
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -262,6 +263,31 @@ describe.each([
     expect(await serverRunning(dataDir)).toBe(false);
     expect(await ownServerDatabases(dataDir)).toEqual([]);
   });
+});
+
+// A repeat that lands while cleanup starts a child process reaches the child
+// too, until it is in a session of its own: it killed `pg_ctl stop` and left
+// the server running. Signalling every millisecond makes that window certain.
+test("SIGHUP repeated to the group throughout cleanup still stops the embedded server and exits 129", async () => {
+  const { dir, marker, env } = await ownServerProject();
+  const dataDir = dir.path(".super-deploy/postgres");
+  onTestFinished(() => stopServerOn(dataDir));
+  const cli = spawnCli(["draft", "--name", "add customers"], {
+    cwd: dir.root,
+    env,
+    detached: true,
+  });
+  await waitForFile(marker);
+
+  const repeating = setInterval(() => {
+    if (cli.child.exitCode === null && cli.child.signalCode === null) {
+      cli.signalGroup("SIGHUP");
+    }
+  }, 1);
+  const result = await cli.result.finally(() => clearInterval(repeating));
+
+  expect(result.exitCode).toBe(129);
+  expect(await serverRunning(dataDir)).toBe(false);
 });
 
 // 162: at a guarded command's YES prompt, closing the terminal under
