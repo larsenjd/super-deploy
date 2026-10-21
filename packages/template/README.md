@@ -42,7 +42,7 @@ in `super-deploy.config.ts` (before any draft or migration exists), then run
 desired schema and migration `00001-adopt`, which is recorded on that target
 as already deployed. If the database holds anything super-deploy doesn't
 support, nothing is written and every such object is listed: that includes
-a `SECURITY DEFINER` routine and objects the deploy role doesn't own (see
+a `SECURITY DEFINER` routine and objects owned by another role (see
 "Permissions"). Grants, policies and row-level security on the target stay
 as they are, left out of the desired schema; adoption says how many grants
 and policies it left.
@@ -66,11 +66,12 @@ may use the database is set up on each target outside super-deploy.
 
 ### What the desired schema declares
 
-No privileges. The desired schema, and every pre-migration script,
-post-migration script and seed data file, refuses grants, revokes,
-`ALTER DEFAULT PRIVILEGES`, roles and role membership, `OWNER TO`, policies,
-`ALTER TABLE ... ENABLE/FORCE ROW LEVEL SECURITY` and `SECURITY DEFINER`
-routines. No override marker gets past these refusals. Every routine runs as
+No privileges. The desired schema, and every file a deployment runs
+(scripts, seed data and generated schema changes alike), refuses grants,
+revokes, `ALTER DEFAULT PRIVILEGES`, roles and role membership, `OWNER TO`,
+`REASSIGN OWNED`, `DROP OWNED`, policies, turning row-level security on or
+off (`ALTER TABLE ... ENABLE ROW LEVEL SECURITY` and the like) and
+`SECURITY DEFINER` routines. No override marker gets past these refusals. Every routine runs as
 the role that calls it (`SECURITY INVOKER`, PostgreSQL's default).
 
 super-deploy never compares, creates, revokes or resets the grants, default
@@ -84,10 +85,10 @@ default privileges as they are.
 
 - **The deploy role.** It must own the managed schema and everything in it,
   or be a member of the role that owns them (one granted `WITH INHERIT FALSE`
-  doesn't count). `deploy`, `deploy-draft`, `status`, `mark` and
-  `init --adopt` refuse a target where something in the managed schema
-  belongs to another role, listing each object with the `ALTER ... OWNER TO`
-  that fixes it. For `public`, which `pg_database_owner` owns, deploy as the
+  doesn't count). `deploy`, `deploy-draft`, `mark` and `init --adopt`
+  refuse a target where something in the managed schema is owned by another
+  role, listing each object with the `ALTER ... OWNER TO` that fixes it;
+  `status` lists them under "Deploy would refuse". For `public`, which `pg_database_owner` owns, deploy as the
   database's owner. The deploy role also needs `CREATE` on the database for
   the first deployment, which creates the history schema (and the managed
   schema, if the target lacks it).
