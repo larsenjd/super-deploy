@@ -485,7 +485,16 @@ default privileges as they are.
     grant select on tables to app_reader;
   alter default privileges for role deploy_role in schema app
     grant select, insert, update, delete on tables to app_writer;
+  alter default privileges for role deploy_role
+    revoke execute on functions from public;
+  alter default privileges for role deploy_role in schema app
+    grant execute on functions to app_writer;
   ```
+
+  Functions and procedures are callable by `PUBLIC`, every role, unless
+  default privileges revoke it. That revoke has to be global, without `in
+  schema`: per-schema default privileges can only add privileges, so `in
+  schema app revoke execute on functions from public` silently does nothing.
 
   Default privileges apply only to objects created afterwards: grant on what
   already exists too, e.g. `grant select on all tables in schema app to
@@ -494,9 +503,13 @@ default privileges as they are.
   Two things to know about grants and policies made by hand:
 
   - A migration that drops and recreates a table (or another object) loses
-    the grants and policies made on it by hand. Default privileges grant the
-    new object again; anything else has to be made again after the
-    deployment. `status`, `deploy` and `deploy-draft` warn about each object
+    the grants, revokes and policies made on it by hand. Default privileges
+    grant the new object again; anything else has to be made again after the
+    deployment. A lost revoke widens access: a function whose `EXECUTE` was
+    revoked from `PUBLIC` by hand is callable by every role again, unless
+    default privileges revoke it as above. A function is recreated when its
+    arguments or return type change; a change to its body alone keeps its
+    privileges. `status`, `deploy` and `deploy-draft` warn about each object
     the pending migrations (or the draft) recreate that has grants, revokes,
     policies or row-level security its default privileges won't give back,
     e.g. `warning: view app.order_totals is recreated by 00007-wider-total:
