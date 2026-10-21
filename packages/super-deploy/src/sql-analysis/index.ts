@@ -60,7 +60,6 @@ export {
   isOverridable,
   type Override,
   overrideObject,
-  withoutOverrideHint,
 } from "./overrides.ts";
 export { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 export { externalSchemasBoundAtCreate } from "./routine-bodies.ts";
@@ -77,7 +76,6 @@ export {
   type FileKind,
   type RuleContext,
 } from "./rules.ts";
-export { undeclaredSchemaOf } from "./schemas.ts";
 
 export interface DesiredSchemaAnalysis {
   /** The statements in load order. */

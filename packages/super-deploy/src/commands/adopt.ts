@@ -101,10 +101,8 @@ import {
   type SqlFile,
   SqlRuleViolationError,
   serialColumnFinding,
-  undeclaredSchemaOf,
   virtualGeneratedColumnFinding,
   withOverrideMarkers,
-  withoutOverrideHint,
 } from "../sql-analysis/index.ts";
 import type { Override } from "../sql-analysis/overrides.ts";
 import { isSqlFile } from "../store/desired-schema.ts";
@@ -662,10 +660,12 @@ async function analyse(
     const unsupported: UnsupportedObject[] = [];
     for (const violation of error.violations) {
       if (!(await isSequenceStatement(violation.statement, serialSequences))) {
+        const schema = violation.reference?.schema;
         unsupported.push({
           object: firstLine(violation.statement) || violation.file,
           rule: violation.rule,
-          reason: withoutOverrideHint(violation.message),
+          reason: violation.message,
+          ...(schema === undefined ? {} : { schemaToDeclare: schema }),
         });
       }
     }
@@ -817,6 +817,11 @@ export interface UnsupportedObject {
   readonly rule: string;
   /** Why, in the rules' words. */
   readonly reason: string;
+  /**
+   * For an `undeclared-schema` reference that declaring the schema in
+   * externalSchemas would allow: the schema.
+   */
+  readonly schemaToDeclare?: string;
 }
 
 /**
@@ -906,11 +911,9 @@ function adoptionAdvice(
   let changeTarget = false;
   let terminal = false;
   const schemas = new Set<string>();
-  for (const { rule, reason } of objects) {
-    const schema =
-      rule === "undeclared-schema" ? undeclaredSchemaOf(reason) : undefined;
-    if (schema !== undefined) {
-      schemas.add(schema);
+  for (const { rule, schemaToDeclare } of objects) {
+    if (schemaToDeclare !== undefined) {
+      schemas.add(schemaToDeclare);
     } else if (isOverridable(rule)) {
       terminal ||= !askingOverrides;
     } else {

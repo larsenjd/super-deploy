@@ -118,7 +118,7 @@ function plpgsqlNodeFindings(
       const schema = declaredTypeSchema(typname);
       return schema === undefined
         ? []
-        : referenceFindings([schema], context, true, line);
+        : referenceFindings([schema], context, "bound-at-create", line);
     }
   }
   const expression = object.PLpgSQL_expr;
@@ -133,7 +133,12 @@ function plpgsqlNodeFindings(
     return [
       ...denylistFindings(tree, line),
       ...notifyFindings(tree, line),
-      ...referenceFindings(referencedSchemas(tree), context, true, line),
+      ...referenceFindings(
+        referencedSchemas(tree),
+        context,
+        "plpgsql-body",
+        line,
+      ),
     ];
   }
   return [];
@@ -218,7 +223,12 @@ export function sqlBodyFindings(
   const line = bodyFirstLine(statement, body);
   return unique([
     ...denylistFindings(tree, line),
-    ...referenceFindings(referencedSchemas(tree), context, true, line),
+    ...referenceFindings(
+      referencedSchemas(tree),
+      context,
+      "bound-at-create",
+      line,
+    ),
   ]);
 }
 

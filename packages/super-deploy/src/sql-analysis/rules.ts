@@ -18,9 +18,14 @@ import {
   violationOf,
 } from "./overrides.ts";
 import { parseSqlFile, type SqlFile } from "./parse.ts";
-import type { RuleContext } from "./rule-types.ts";
 
-export type { RuleContext, RuleFinding } from "./rule-types.ts";
+import type { RuleContext, SchemaReference } from "./rule-types.ts";
+
+export type {
+  RuleContext,
+  RuleFinding,
+  SchemaReference,
+} from "./rule-types.ts";
 
 export type FileKind = "desired-schema" | DeployTimeKind;
 
@@ -90,11 +95,19 @@ export interface RuleViolation {
   /** Stable rule identifier, e.g. `desired-schema-statement`. */
   rule: string;
   message: string;
+  /**
+   * What to do about it, when the rule offers a way: an unmarked risk-rule
+   * violation's says how to write the override marker.
+   */
+  hint?: string;
+  /** For `undeclared-schema`: the schema referenced, and where. */
+  reference?: SchemaReference;
 }
 
-/** One violation as one line: `<file>:<line>: <message> [<rule>]`. */
+/** One violation as one line: `<file>:<line>: <message>[. <hint>] [<rule>]`. */
 export function describeViolation(violation: RuleViolation): string {
-  return `${violation.file}:${violation.line}: ${violation.message} [${violation.rule}]`;
+  const hint = violation.hint === undefined ? "" : `. ${violation.hint}`;
+  return `${violation.file}:${violation.line}: ${violation.message}${hint} [${violation.rule}]`;
 }
 
 /**

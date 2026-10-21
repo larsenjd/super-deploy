@@ -5,7 +5,11 @@
 // externalSchemasBoundAtCreate).
 
 import type { ParsedStatement } from "./parse.ts";
-import type { RuleContext, RuleFinding } from "./rule-types.ts";
+import type {
+  RuleContext,
+  RuleFinding,
+  SchemaReference,
+} from "./rule-types.ts";
 import {
   isObject,
   type Json,
@@ -41,21 +45,22 @@ export function schemaFindings(
     ...referenceFindings(
       references.filter((schema) => !reported.has(schema)),
       context,
-      true,
+      "bound-at-create",
     ),
   );
   return findings;
 }
 
 /**
- * `undeclared-schema` findings for referenced schemas. External schemas are
- * accepted when `allowExternal` is true: in PL/pgSQL bodies, and (for the
- * rules only) in statements that bind at CREATE, which rehearsal refuses.
+ * `undeclared-schema` findings for referenced schemas, `where` they are
+ * referenced (each finding records it). External schemas are accepted: in
+ * PL/pgSQL bodies, and (for the rules only) in statements that bind at
+ * CREATE, which rehearsal refuses.
  */
 export function referenceFindings(
   schemas: readonly string[],
   context: RuleContext,
-  allowExternal: boolean,
+  where: SchemaReference["where"],
   line?: number,
 ): RuleFinding[] {
   const findings: RuleFinding[] = [];
@@ -63,7 +68,7 @@ export function referenceFindings(
     if (
       schema === context.managedSchema ||
       schema === "pg_catalog" ||
-      (allowExternal && context.externalSchemas.includes(schema))
+      context.externalSchemas.includes(schema)
     ) {
       continue;
     }
@@ -71,17 +76,10 @@ export function referenceFindings(
       rule: "undeclared-schema",
       message: `Schema "${schema}" is not declared: the desired schema may reference only the managed schema "${context.managedSchema}" and pg_catalog (PL/pgSQL bodies may also reference the externalSchemas in super-deploy.config.ts)`,
       ...(line === undefined ? {} : { line }),
+      reference: { schema, where },
     });
   }
   return findings;
-}
-
-/**
- * The schema an `undeclared-schema` finding's message names, so a caller
- * holding only the message (adoption's advice) can name it too.
- */
-export function undeclaredSchemaOf(message: string): string | undefined {
-  return /^Schema "(.*)" is not declared: /.exec(message)?.[1];
 }
 
 /**

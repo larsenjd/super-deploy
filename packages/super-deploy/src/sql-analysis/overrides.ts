@@ -44,17 +44,8 @@ export interface Override {
 export const markerPrefix = "-- OVERRIDE SUPER-DEPLOY REFUSAL:";
 
 const exactForm = `"${markerPrefix} <reason>"`;
-/** Ends an unmarked risk-rule violation's message (applyMarker). */
+/** An unmarked risk-rule violation's hint (applyMarker). */
 const overrideHint = `If the statement is safe, override the refusal with ${exactForm} on the line before it`;
-
-/**
- * A violation message without applyMarker's override hint, for adoption:
- * it writes the marker itself, after asking for the reason.
- */
-export function withoutOverrideHint(message: string): string {
-  const hint = `. ${overrideHint}`;
-  return message.endsWith(hint) ? message.slice(0, -hint.length) : message;
-}
 const lookalike = /override\s+super-deploy\s+refusal/i;
 /** The marker's form before ticket 24; no longer a marker, but hinted at. */
 const oldFormPrefix = "-- OVERRIDE DANGEROUS COMMAND";
@@ -214,8 +205,8 @@ export function checkMarkedStatements(
  * Applies a statement's marker to the statement's violations: risk-rule
  * violations become an override; every other violation stands. A marker
  * that overrides nothing is itself a violation. Without a marker, risk-rule
- * violations end with a hint: how to write the marker, or, after the old
- * marker form, that the marker is now the new one.
+ * violations get a hint: how to write the marker, or, after the old marker
+ * form, that the marker is now the new one.
  */
 export function applyMarker(
   statement: ParsedStatement,
@@ -231,9 +222,7 @@ export function applyMarker(
       : overrideHint;
     return {
       violations: violations.map((violation) =>
-        isOverridable(violation.rule)
-          ? { ...violation, message: `${violation.message}. ${hint}` }
-          : violation,
+        isOverridable(violation.rule) ? { ...violation, hint } : violation,
       ),
     };
   }

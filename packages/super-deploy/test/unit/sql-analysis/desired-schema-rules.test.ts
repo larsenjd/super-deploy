@@ -735,6 +735,7 @@ describe("schemas", () => {
         statement: sql,
         rule: "undeclared-schema",
         message: `Schema "${schema}" is not declared: the desired schema may reference only the managed schema "public" and pg_catalog (PL/pgSQL bodies may also reference the externalSchemas in super-deploy.config.ts)`,
+        reference: { schema, where: "bound-at-create" },
       },
     ]);
   });

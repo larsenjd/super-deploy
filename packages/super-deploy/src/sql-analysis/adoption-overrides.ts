@@ -2,12 +2,7 @@
 // desired-schema statements only an override marker stands between and
 // adoption, and writing the markers into the generated files once a person
 // has given a reason for each.
-import {
-  isOverridable,
-  markerPrefix,
-  overrideObject,
-  withoutOverrideHint,
-} from "./overrides.ts";
+import { isOverridable, markerPrefix, overrideObject } from "./overrides.ts";
 import { parseSqlFile, type SqlFile } from "./parse.ts";
 import type { RuleContext } from "./rule-types.ts";
 import { analyseFile } from "./rules.ts";
@@ -57,7 +52,7 @@ export async function overrideCandidates(
         const findings = new Map(
           own.map(({ rule, message }) => [
             `${rule}\0${message}`,
-            { rule, message: withoutOverrideHint(message) },
+            { rule, message },
           ]),
         );
         candidates.push({
