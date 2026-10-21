@@ -55,6 +55,7 @@ import {
   type DriftedObject,
   driftLabel,
 } from "../verification/drift.ts";
+import { ReportedError } from "./run.ts";
 
 export type CommandGroup =
   | "Start"
@@ -793,10 +794,12 @@ const statusCommand: CommandDefinition = {
       throw report.driftNotChecked === "target-locked" &&
         report.lockedBy !== undefined
         ? new TargetLockedError(report.target, report.lockedBy)
-        : new PreflightFailedError(report.target, preflight);
+        : new ReportedError(new PreflightFailedError(report.target, preflight));
     }
     if (refusals.length > 0) {
-      throw new PreflightFailedError(report.target, preflight);
+      throw new ReportedError(
+        new PreflightFailedError(report.target, preflight),
+      );
     }
   },
 };

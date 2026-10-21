@@ -375,7 +375,7 @@ unix("deploy-draft", () => {
     });
 
     await terminal.waitFor(
-      `table public.customers is owned by super_deploy, whose privileges the deploy role doesn't have (fix: ALTER TABLE public.customers OWNER TO ${deployer})`,
+      `ALTER TABLE public.customers OWNER TO ${deployer};`,
     );
     expect(await terminal.exited).toBe(1);
     expect(terminal.screen).not.toContain("Type YES");

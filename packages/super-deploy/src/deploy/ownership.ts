@@ -30,7 +30,7 @@
 // with its extension and the extension's owner.
 
 import type { Session } from "../adapters/types.ts";
-import { SuperDeployError } from "../errors.ts";
+import { plural, SuperDeployError } from "../errors.ts";
 
 /** A managed-schema object (or the managed schema) the deploy role doesn't own. */
 export interface NotOwnedObject {
@@ -201,6 +201,44 @@ export function notOwnedMessage(notOwned: NotOwnedObject): string {
   return `${notOwned.object} is owned by ${notOwned.owner}, whose privileges the deploy role doesn't have (fix: ${notOwned.fix})`;
 }
 
+/** `The deploy role on target <target> doesn't own <n> objects in the managed schema`. */
+export function notOwnedHeadline(
+  target: string,
+  objects: readonly NotOwnedObject[],
+): string {
+  return `The deploy role on target ${target} doesn't own ${plural(objects.length, "object")} in the managed schema`;
+}
+
+/**
+ * The objects as lines for people, the way the CLI prints a refusal: each
+ * object with its owner, then every fix as a script a DBA can paste into
+ * psql as it is (one statement per line, each ending in `;`).
+ */
+export function notOwnedListing(
+  target: string,
+  objects: readonly NotOwnedObject[],
+): string[] {
+  return [
+    `${notOwnedHeadline(target, objects)}:`,
+    ...objects.map(({ object, owner }) => `  ${object} (owned by ${owner})`),
+    ...fixScript(
+      "a superuser or as each object's owner",
+      objects.map(({ fix }) => fix),
+    ),
+  ];
+}
+
+/** `statements` as a script under a line saying who must run it. */
+export function fixScript(
+  who: string,
+  statements: readonly string[],
+): string[] {
+  return [
+    `To fix, run as ${who}:`,
+    ...statements.map((statement) => `  ${statement};`),
+  ];
+}
+
 /**
  * Throws NotOwnedError if the deploy role doesn't own the managed schema and
  * everything in it.
@@ -226,6 +264,13 @@ export class NotOwnedError extends SuperDeployError {
   readonly target: string;
   /** The managed schema first, then the objects; never empty. */
   readonly objects: readonly NotOwnedObject[];
+  /**
+   * The refusal as lines for people, the way the CLI prints it: each object
+   * with its owner, then the fixes as a script. `summary` follows them.
+   */
+  readonly details: readonly string[];
+  /** The message without the objects `details` lists: their count. */
+  readonly summary: string;
 
   constructor(target: string, objects: readonly NotOwnedObject[]) {
     super(
@@ -233,5 +278,7 @@ export class NotOwnedError extends SuperDeployError {
     );
     this.target = target;
     this.objects = objects;
+    this.details = notOwnedListing(target, objects);
+    this.summary = `${notOwnedHeadline(target, objects)}, listed above`;
   }
 }

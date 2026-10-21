@@ -5,6 +5,11 @@
 // and the process watcher (process.ts) decides the exit code.
 import { relative } from "node:path";
 import { AdoptUnsupportedError } from "../commands/adopt.ts";
+import { NotOwnedError } from "../deploy/ownership.ts";
+import {
+  PreflightFailedError,
+  preflightRefusals,
+} from "../deploy/preflight.ts";
 import { errorReason } from "../errors.ts";
 import { settleCleanups } from "../interruption.ts";
 import type { Project } from "../project.ts";
@@ -137,12 +142,27 @@ export function describeError(error: unknown, debug: boolean): string {
 
 /**
  * The lines an error lists and the summary after them, when it lists more
- * than one (adoption's refusal: always, for the reasons).
+ * than one (adoption's refusal: always, for the reasons; a refusal for
+ * objects the deploy role doesn't own: always, for the fixes as a script).
+ * An error a command already reported (`ReportedError`) is its message alone.
  */
 function listedDetails(
   error: unknown,
 ): { details: readonly string[]; summary: string } | undefined {
-  if (error instanceof AdoptUnsupportedError) {
+  if (error instanceof ReportedError) {
+    return undefined;
+  }
+  if (
+    error instanceof AdoptUnsupportedError ||
+    error instanceof NotOwnedError
+  ) {
+    return { details: error.details, summary: error.summary };
+  }
+  if (
+    error instanceof PreflightFailedError &&
+    (error.findings.notOwned.length > 0 ||
+      preflightRefusals(error.findings).length > 1)
+  ) {
     return { details: error.details, summary: error.summary };
   }
   if (error instanceof SqlRuleViolationError && error.violations.length > 1) {
@@ -158,4 +178,15 @@ function listedDetails(
     };
   }
   return undefined;
+}
+
+/**
+ * An error whose items the command has printed already, as `status` prints
+ * what deploy would refuse: the CLI prints only its one-line message.
+ */
+export class ReportedError extends Error {
+  constructor(reported: Error) {
+    super(reported.message, { cause: reported });
+    this.name = reported.name;
+  }
 }

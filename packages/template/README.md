@@ -412,8 +412,10 @@ default privileges as they are.
   or be a member of the role that owns them (one granted `WITH INHERIT FALSE`
   doesn't count). `deploy`, `deploy-draft`, `mark` and `init --adopt`
   refuse a target where something in the managed schema is owned by another
-  role, listing each object with the `ALTER ... OWNER TO` that fixes it;
-  `status` lists them under "Deploy would refuse". For `public`, which `pg_database_owner` owns, deploy as the
+  role, listing each object with its owner, then the `ALTER ... OWNER TO`
+  statements that fix them as a script to run as a superuser (it can be
+  pasted into `psql` as it is); `status` lists them under "Deploy would
+  refuse". For `public`, which `pg_database_owner` owns, deploy as the
   database's owner. The deploy role also needs `CREATE` on the database for
   the first deployment, which creates the history schema (and the managed
   schema, if the target lacks it).

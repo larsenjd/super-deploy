@@ -3,7 +3,12 @@
 // on stderr when it refuses. In a terminal it asks for override reasons.
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
-import { asSuperuser, deployConfig } from "../support/deploy.ts";
+import {
+  asDeployerPreamble,
+  asSuperuser,
+  deployConfig,
+  roleName,
+} from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject } from "../support/project.ts";
 import { keys, spawnTerminal } from "../support/terminal.ts";
@@ -110,6 +115,59 @@ describe("init --adopt", () => {
       stderr:
         'Error: Cannot adopt target prod: its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts). Nothing was written\n',
     });
+  });
+
+  test("lists each object the deploy role doesn't own, then the fixes as a script that, run as a superuser, lets adoption through (exit 1)", async () => {
+    const deployer = roleName("cli_adopt_deployer");
+    const admin = roleName("cli_adopt_admin");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create role ${admin} nologin;
+      do $$ begin execute format('grant connect, create on database %I to ${deployer}, ${admin}', current_database()); end $$;
+      create schema app authorization ${deployer};
+      grant usage, create on schema app to ${admin};
+      set role ${admin};
+      create table app.widgets (id bigint generated always as identity primary key, name text not null);
+      create view app.widget_names as select name from app.widgets;
+      create function app.widget_named(wanted text, since bigint) returns bigint language sql stable
+        as $$ select count(*) from app.widgets where name = wanted and id > since $$;
+    `);
+    const dir = await createTestProject({
+      config: deployConfig(server, {
+        settings: 'managedSchema: "app",',
+        preamble: asDeployerPreamble(prod, deployer),
+        otherTargets: "prod: { adapter: asDeployer },",
+      }).config,
+    });
+
+    const result = await runCli(["init", "--adopt", "prod"], {
+      cwd: dir.root,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe(
+      [
+        "The deploy role on target prod doesn't own 3 objects in the managed schema:",
+        `  function app.widget_named(wanted text, since bigint) (owned by ${admin})`,
+        `  table app.widgets (owned by ${admin})`,
+        `  view app.widget_names (owned by ${admin})`,
+        "To fix, run as a superuser or as each object's owner:",
+        `  ALTER FUNCTION app.widget_named(wanted text, since bigint) OWNER TO ${deployer};`,
+        `  ALTER TABLE app.widgets OWNER TO ${deployer};`,
+        `  ALTER VIEW app.widget_names OWNER TO ${deployer};`,
+        "Error: The deploy role on target prod doesn't own 3 objects in the managed schema, listed above",
+        "",
+      ].join("\n"),
+    );
+
+    const script = result.stderr
+      .split("\n")
+      .filter((line) => line.startsWith("  ALTER "))
+      .join("\n");
+    await server.query(script, [], prod);
+    expect(
+      await runCli(["init", "--adopt", "prod"], { cwd: dir.root }),
+    ).toMatchObject({ exitCode: 0 });
   });
 
   test("an unknown target is a usage error (exit 2)", async () => {

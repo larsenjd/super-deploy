@@ -22,7 +22,7 @@
 // runs (ticket 06).
 
 import type { Session } from "../adapters/types.ts";
-import { SuperDeployError } from "../errors.ts";
+import { plural, SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import {
   type FinalizedMigration,
@@ -38,6 +38,7 @@ import {
 } from "./history.ts";
 import {
   type NotOwnedObject,
+  notOwnedListing,
   notOwnedMessage,
   objectsNotOwned,
 } from "./ownership.ts";
@@ -408,13 +409,35 @@ export class PreflightFailedError extends SuperDeployError {
   readonly code = "preflight-failed";
   readonly target: string;
   readonly findings: PreflightFindings;
+  /**
+   * The refusals as lines for people, the way the CLI prints them: one per
+   * line, then the objects the deploy role doesn't own with their fixes as
+   * a script. `summary` follows them.
+   */
+  readonly details: readonly string[];
+  /** The message without the refusals `details` lists: their count. */
+  readonly summary: string;
 
   constructor(target: string, findings: PreflightFindings) {
+    const refusals = preflightRefusals(findings);
     super(
-      `Target ${target} failed the deploy pre-flight checks: ${preflightRefusals(findings).join("; ")}`,
+      `Target ${target} failed the deploy pre-flight checks: ${refusals.join("; ")}`,
     );
     this.target = target;
     this.findings = findings;
+    const others = preflightRefusals({ ...findings, notOwned: [] });
+    this.details = [
+      ...(others.length === 0
+        ? []
+        : [
+            `Target ${target} failed the deploy pre-flight checks:`,
+            ...others.map((refusal) => `  ${refusal}`),
+          ]),
+      ...(findings.notOwned.length === 0
+        ? []
+        : notOwnedListing(target, findings.notOwned)),
+    ];
+    this.summary = `Target ${target} failed the deploy pre-flight checks (${plural(refusals.length, "finding")}, listed above)`;
   }
 }
 
