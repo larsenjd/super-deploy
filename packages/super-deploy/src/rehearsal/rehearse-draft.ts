@@ -42,11 +42,12 @@ export async function rehearseDraft(
         async (replayed) => {
           await ensureManagedSchema(replayed, config.managedSchema);
           await replay(replayed, units, config.managedSchema);
+          const subject = draftMismatchSubject(since);
           await requireSameStructure(
             replayed,
             desired,
             config.managedSchema,
-            draftMismatchSubject(since),
+            subject === undefined ? {} : { subject },
           );
           return { serverVersion: await replayed.serverVersion() };
         },
