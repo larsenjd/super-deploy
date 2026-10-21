@@ -2,6 +2,11 @@
 // before any rehearsal, that catch what would otherwise fail mid-transaction
 // or weaken safety (spec "Deployment engine"):
 //   - every declared external schema exists
+//   - the deploy role can create the history schema, if the target has none
+//     yet: it needs CREATE on the database. `withLockedTarget` and
+//     `init --adopt` refuse up front with HistorySchemaNotCreatableError
+//     (there is nowhere to log an attempt yet), so deploy never gets this
+//     far without it; `status` lists it with the others
 //   - the deploy role owns the managed schema and everything in it, or is a
 //     member of their owner (deploy/ownership.ts)
 //   - the deploy role is not superuser and holds none of the predefined roles
@@ -65,6 +70,11 @@ export interface PreflightFindings {
   /** Declared external schemas the target lacks, in config order. Refuses a deployment. */
   readonly missingExternalSchemas: readonly string[];
   /**
+   * The target has no history schema and the deploy role can't create it.
+   * Undefined when it has one or can create it. Refuses a deployment.
+   */
+  readonly historySchemaNotCreatable: HistorySchemaNotCreatable | undefined;
+  /**
    * The managed schema and the objects in it whose owner the deploy role
    * isn't a member of, schema first. Empty when the target has no managed
    * schema yet. Refuses a deployment.
@@ -74,6 +84,16 @@ export interface PreflightFindings {
   readonly historyMismatches: readonly HistoryMismatch[];
   /** Why the deploy role is more privileged than a deployment needs. Never refuses. */
   readonly warnings: readonly string[];
+}
+
+/** The target has no history schema, and the deploy role lacks CREATE on its database to create one. */
+export interface HistorySchemaNotCreatable {
+  /** The deploy role (the session's current role). */
+  readonly role: string;
+  readonly database: string;
+  readonly historySchema: string;
+  /** The statement that lets the deploy role create it, e.g. `GRANT CREATE ON DATABASE shop TO deployer`. */
+  readonly fix: string;
 }
 
 /** Predefined roles that reach outside the database, and what they allow. */
@@ -104,6 +124,10 @@ export async function preflightChecks(
       "SELECT nspname AS name FROM pg_catalog.pg_namespace WHERE nspname = ANY($1::text[])",
       project.config.externalSchemas,
     ),
+    historySchemaNotCreatable: await historySchemaNotCreatable(
+      session,
+      project.config.historySchema,
+    ),
     notOwned: await objectsNotOwned(session, project.config.managedSchema),
     historyMismatches: historyMismatches(
       input.migrations,
@@ -118,9 +142,56 @@ export async function preflightChecks(
 export function refusesDeployment(findings: PreflightFindings): boolean {
   return (
     findings.missingExternalSchemas.length > 0 ||
+    findings.historySchemaNotCreatable !== undefined ||
     findings.notOwned.length > 0 ||
     findings.historyMismatches.length > 0
   );
+}
+
+/**
+ * Whether the deploy role can't create the history schema `historySchema`:
+ * the target has none, and the session's current role lacks CREATE on the
+ * database. Read-only.
+ */
+export async function historySchemaNotCreatable(
+  session: Session,
+  historySchema: string,
+): Promise<HistorySchemaNotCreatable | undefined> {
+  const { rows } = await session.query<{
+    role: string;
+    database: string;
+    fix: string;
+  }>(
+    `SELECT current_user AS role, pg_catalog.current_database() AS database,
+            pg_catalog.format('GRANT CREATE ON DATABASE %I TO %I', pg_catalog.current_database(), current_user) AS fix
+      WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_namespace WHERE nspname = $1)
+        AND NOT pg_catalog.has_database_privilege(current_user, pg_catalog.current_database(), 'CREATE')`,
+    [historySchema],
+  );
+  const [row] = rows;
+  return row === undefined ? undefined : { ...row, historySchema };
+}
+
+/** The refusal's line: what the deploy role needs, and the fix. */
+export function historySchemaNotCreatableMessage(
+  finding: HistorySchemaNotCreatable,
+): string {
+  return `the deploy role ${finding.role} needs CREATE on database ${finding.database} to create the history schema "${finding.historySchema}" (fix: ${finding.fix})`;
+}
+
+/**
+ * Throws HistorySchemaNotCreatableError if the target has no history schema
+ * and the deploy role can't create it.
+ */
+export async function requireHistorySchemaCreatable(
+  session: Session,
+  target: string,
+  historySchema: string,
+): Promise<void> {
+  const finding = await historySchemaNotCreatable(session, historySchema);
+  if (finding !== undefined) {
+    throw new HistorySchemaNotCreatableError(target, finding);
+  }
 }
 
 /**
@@ -305,9 +376,10 @@ async function deployRoleWarnings(
 
 /**
  * The deploy pre-flight refused the target: a declared external schema is
- * missing, the deploy role doesn't own the managed schema or something in
- * it, or its recorded history doesn't match the repo. Nothing was rehearsed
- * or changed; the attempt is logged as failed.
+ * missing, the deploy role can't create the history schema or doesn't own
+ * the managed schema or something in it, or its recorded history doesn't
+ * match the repo. Nothing was rehearsed or changed; the attempt is logged as
+ * failed.
  */
 export class PreflightFailedError extends SuperDeployError {
   readonly code = "preflight-failed";
@@ -322,10 +394,38 @@ export class PreflightFailedError extends SuperDeployError {
     const history = findings.historyMismatches.map(
       (mismatch) => mismatch.message,
     );
+    const historySchema =
+      findings.historySchemaNotCreatable === undefined
+        ? []
+        : [
+            historySchemaNotCreatableMessage(
+              findings.historySchemaNotCreatable,
+            ),
+          ];
     super(
-      `Target ${target} failed the deploy pre-flight checks: ${[...schemas, ...findings.notOwned.map(notOwnedMessage), ...history].join("; ")}`,
+      `Target ${target} failed the deploy pre-flight checks: ${[...schemas, ...historySchema, ...findings.notOwned.map(notOwnedMessage), ...history].join("; ")}`,
     );
     this.target = target;
     this.findings = findings;
+  }
+}
+
+/**
+ * A command that records on the target (deploy, mark, init --adopt, ...)
+ * refused before doing anything: the target has no history schema yet and
+ * the deploy role lacks CREATE on the database to create it. Nothing was
+ * written, and no attempt was logged (there is nowhere to log it yet).
+ */
+export class HistorySchemaNotCreatableError extends SuperDeployError {
+  readonly code = "history-schema-not-creatable";
+  readonly target: string;
+  readonly finding: HistorySchemaNotCreatable;
+
+  constructor(target: string, finding: HistorySchemaNotCreatable) {
+    super(
+      `Cannot create the history schema on target ${target}: ${historySchemaNotCreatableMessage(finding)}`,
+    );
+    this.target = target;
+    this.finding = finding;
   }
 }

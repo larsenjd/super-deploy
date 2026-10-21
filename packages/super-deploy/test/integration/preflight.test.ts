@@ -6,6 +6,7 @@
 import {
   deploy,
   finalize,
+  HistorySchemaNotCreatableError,
   PreflightFailedError,
   status,
   unfinalize,
@@ -441,6 +442,73 @@ describe("the deploy role owns the managed schema", () => {
       await server.query(fix, [], database);
     }
     expect(await notOwned()).toEqual([]);
+  });
+});
+
+describe("the deploy role can create the history schema", () => {
+  test("refuses the first deployment while the deploy role lacks CREATE on the database, naming the grant, and needs it no longer once the history schema exists", async () => {
+    const deployer = roleName("deployer");
+    const database = targetDatabaseName();
+    await server.query(`create role ${deployer} login password 'deployer'`);
+    await server.query(`create database ${database}`);
+    await server.query(
+      `create schema app authorization ${deployer}`,
+      [],
+      database,
+    );
+    const { project, dir } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      {
+        database,
+        preamble: asDeployerPreamble(database, deployer),
+        adapter: "asDeployer",
+        settings: 'managedSchema: "app",',
+      },
+    );
+    await finalizeMigration(project, "add customers");
+    const finding = {
+      role: deployer,
+      database,
+      historySchema: "deployment_history",
+      fix: `GRANT CREATE ON DATABASE ${database} TO ${deployer}`,
+    };
+    expect(
+      (await status(project, { target: "dev" })).preflight
+        .historySchemaNotCreatable,
+    ).toEqual(finding);
+
+    const refusal = await deploy(project, { target: "dev" }).catch(
+      (error: unknown) => error,
+    );
+
+    expect(refusal).toBeInstanceOf(HistorySchemaNotCreatableError);
+    expect(refusal).toMatchObject({ target: "dev", finding });
+    expect((refusal as Error).message).toContain(
+      `the deploy role ${deployer} needs CREATE on database ${database} to create the history schema "deployment_history" (fix: ${finding.fix})`,
+    );
+    expect(
+      await server.query(
+        "select nspname from pg_namespace where nspname = 'deployment_history'",
+        [],
+        database,
+      ),
+    ).toEqual([]);
+
+    await server.query(finding.fix);
+    await deploy(project, { target: "dev" });
+    await server.query(
+      `revoke create on database ${database} from ${deployer}`,
+    );
+    expect(
+      (await status(project, { target: "dev" })).preflight
+        .historySchemaNotCreatable,
+    ).toBeUndefined();
+    await dir.write("data-model/desired-schema/orders.sql", orders);
+    await finalizeMigration(project, "add orders");
+    await expect(deploy(project, { target: "dev" })).resolves.toMatchObject({
+      deployed: [{ folder: "00002-add-orders" }],
+    });
   });
 });
 

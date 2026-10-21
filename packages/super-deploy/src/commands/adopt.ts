@@ -9,8 +9,9 @@
 // and no desired-schema SQL files. The target must record no migrations and
 // have the managed schema (a missing one is almost always a mistyped
 // managedSchema; an existing empty one is adopted), and its deploy role must
-// own that schema and everything in it (deploy/ownership.ts), all checked
-// before anything is rehearsed.
+// own that schema and everything in it (deploy/ownership.ts) and be able to
+// create the history schema if the target has none (deploy/preflight.ts),
+// all checked before anything is rehearsed.
 //
 // Steps, and what each one guarantees:
 //   1. Read the target (never writing to it): pg-delta generates the
@@ -60,6 +61,7 @@ import {
 import { readRecordedMigrations, schemaExists } from "../deploy/history.ts";
 import { markNextPending, readMarkableMigrations } from "../deploy/mark.ts";
 import { requireOwnership } from "../deploy/ownership.ts";
+import { requireHistorySchemaCreatable } from "../deploy/preflight.ts";
 import {
   connectTarget,
   resolveTarget,
@@ -169,9 +171,10 @@ export interface LeftOnTarget {
 /**
  * Refuses with UnknownTargetError, AdoptConflictError (the project or the
  * target isn't empty, or the target has no managed schema), NotOwnedError
- * (the deploy role doesn't own the managed schema or something in it) or
- * AdoptUnsupportedError (listing everything V1 doesn't support) before
- * writing anything.
+ * (the deploy role doesn't own the managed schema or something in it),
+ * HistorySchemaNotCreatableError (the target has no history schema and the
+ * deploy role lacks CREATE on the database) or AdoptUnsupportedError
+ * (listing everything V1 doesn't support) before writing anything.
  */
 export async function adopt(
   project: Project,
@@ -194,11 +197,8 @@ export async function adopt(
   const files = markOverrides(project, read.files, read.candidates, reasons);
   throwIfInterrupted(project.signal);
 
-  const index = await readFile(
-    join(project.paths.migrations, indexFileName),
-    "utf8",
-  ).catch(() => undefined);
-  const written = await writeAdoptedFiles(project, files, index);
+  const before = await projectBefore(project);
+  const written = await writeAdoptedFiles(project, files, before);
   try {
     await draft(project, { name: migrationName });
     const finalized = await finalize(project);
@@ -227,7 +227,7 @@ export async function adopt(
     };
   } catch (error) {
     if (!(error instanceof CommitOutcomeUnknownError)) {
-      await undoAdoption(project, written, index);
+      await undoAdoption(project, written, before);
     }
     throw error;
   }
@@ -304,6 +304,12 @@ async function readTarget(
     }
     // Later migrations alter what is adopted: the deploy role must own it.
     await requireOwnership(session, target.name, config.managedSchema);
+    // Marking creates the history schema, after everything is written.
+    await requireHistorySchemaCreatable(
+      session,
+      target.name,
+      config.historySchema,
+    );
     // The differ reads definitions that wait for table locks: never longer
     // than the target allows.
     await session.execute(
@@ -694,11 +700,35 @@ function firstLine(statement: string): string {
   return line.length > 120 ? `${line.slice(0, 119)}…` : line;
 }
 
+/** What undoing adoption restores: the project as adoption found it. */
+interface ProjectBefore {
+  /** The migrations index's text, or undefined if there was none. */
+  readonly index: string | undefined;
+  /** The desired-schema and migrations directories the project lacked. */
+  readonly missingDirectories: readonly string[];
+}
+
+async function projectBefore(project: Project): Promise<ProjectBefore> {
+  const { paths } = project;
+  const missingDirectories: string[] = [];
+  for (const path of [paths.desiredSchema, paths.migrations]) {
+    if (!(await exists(path))) {
+      missingDirectories.push(path);
+    }
+  }
+  return {
+    index: await readFile(join(paths.migrations, indexFileName), "utf8").catch(
+      () => undefined,
+    ),
+    missingDirectories,
+  };
+}
+
 /** Writes the files (absolute paths returned); never overwrites one. */
 async function writeAdoptedFiles(
   project: Project,
   files: readonly AdoptedFile[],
-  index: string | undefined,
+  before: ProjectBefore,
 ): Promise<string[]> {
   const written: string[] = [];
   await mkdir(project.paths.desiredSchema, { recursive: true });
@@ -709,7 +739,7 @@ async function writeAdoptedFiles(
       written.push(path);
     }
   } catch (error) {
-    await undoAdoption(project, written, index);
+    await undoAdoption(project, written, before);
     throw error;
   }
   return written;
@@ -717,13 +747,13 @@ async function writeAdoptedFiles(
 
 /**
  * Puts the project back as adoption found it: without the files adoption
- * wrote, a draft or any migration folder (it had none), and with its index
- * as it was (`index`: its text, or undefined if there was none).
+ * wrote, a draft or any migration folder (it had none), with its index as
+ * it was, and without the directories adoption created.
  */
 async function undoAdoption(
   project: Project,
   written: readonly string[],
-  index: string | undefined,
+  { index, missingDirectories }: ProjectBefore,
 ): Promise<void> {
   const { paths } = project;
   for (const path of written) {
@@ -744,6 +774,9 @@ async function undoAdoption(
     await rm(indexPath, { force: true });
   } else {
     await writeFile(indexPath, index);
+  }
+  for (const path of missingDirectories) {
+    await rm(path, { recursive: true, force: true });
   }
 }
 

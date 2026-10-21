@@ -143,9 +143,13 @@ export {
 } from "./deploy/ownership.ts";
 export type {
   HistoryMismatch,
+  HistorySchemaNotCreatable,
   PreflightFindings,
 } from "./deploy/preflight.ts";
-export { PreflightFailedError } from "./deploy/preflight.ts";
+export {
+  HistorySchemaNotCreatableError,
+  PreflightFailedError,
+} from "./deploy/preflight.ts";
 export {
   TargetNotDisposableError,
   UnknownTargetError,

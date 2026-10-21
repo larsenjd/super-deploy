@@ -10,6 +10,7 @@ import {
   adopt,
   deploy,
   draft,
+  HistorySchemaNotCreatableError,
   MarkMismatchError,
   NotOwnedError,
   type Override,
@@ -23,6 +24,7 @@ import {
   asDeployerPreamble,
   deployProject,
   finalizeMigration,
+  roleName,
 } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
@@ -49,6 +51,22 @@ async function adoptableProject(sql: string, settings = "") {
     },
   );
   return { ...deployed, prod };
+}
+
+/**
+ * A project managing schema `app` whose `prod` target is database `prod`,
+ * reached as `deployer` (password `deployer`).
+ */
+function asDeployerProject(prod: string, deployer: string) {
+  return deployProject(
+    server,
+    {},
+    {
+      settings: 'managedSchema: "app",',
+      preamble: asDeployerPreamble(prod, deployer),
+      otherTargets: "prod: { adapter: asDeployer },",
+    },
+  );
 }
 
 /**
@@ -613,15 +631,7 @@ describe("adopt", () => {
       alter table app.notes enable row level security;
       create policy notes_read on app.notes for select to adopt_app using (true);
     `);
-    const { dir, project } = await deployProject(
-      server,
-      {},
-      {
-        settings: 'managedSchema: "app",',
-        preamble: asDeployerPreamble(prod, deployer),
-        otherTargets: "prod: { adapter: asDeployer },",
-      },
-    );
+    const { dir, project } = await asDeployerProject(prod, deployer);
     try {
       const result = await adopt(project, { target: "prod" });
 
@@ -656,15 +666,7 @@ describe("adopt", () => {
       create table app.notes (id bigint generated always as identity primary key, body text not null);
       create function app.note_count() returns bigint language sql stable as $$ select count(*) from app.notes $$;
     `);
-    const { project } = await deployProject(
-      server,
-      {},
-      {
-        settings: 'managedSchema: "app",',
-        preamble: asDeployerPreamble(prod, deployer),
-        otherTargets: "prod: { adapter: asDeployer },",
-      },
-    );
+    const { project } = await asDeployerProject(prod, deployer);
     try {
       const result = await adopt(project, { target: "prod" });
 
@@ -689,15 +691,7 @@ describe("adopt", () => {
       create view app.widget_names as select name from app.widgets;
       create function app.widget_count() returns bigint language sql stable as $$ select count(*) from app.widgets $$;
     `);
-    const { dir, project } = await deployProject(
-      server,
-      {},
-      {
-        settings: 'managedSchema: "app",',
-        preamble: asDeployerPreamble(prod, deployer),
-        otherTargets: "prod: { adapter: asDeployer },",
-      },
-    );
+    const { dir, project } = await asDeployerProject(prod, deployer);
     try {
       const databases = await server.databases();
 
@@ -736,6 +730,49 @@ describe("adopt", () => {
         [],
         prod,
       );
+      await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
+        migration: { folder: "00001-adopt" },
+      });
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses a target whose deploy role can't create the history schema, naming the grant, before rehearsing or writing anything, until it can", async () => {
+    const deployer = roleName("adopt_deployer");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create schema app authorization ${deployer};
+      set role ${deployer};
+      create table app.t (id bigint generated always as identity primary key);
+    `);
+    const { dir, project } = await asDeployerProject(prod, deployer);
+    try {
+      const databases = await server.databases();
+
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(HistorySchemaNotCreatableError);
+      expect(error).toMatchObject({
+        code: "history-schema-not-creatable",
+        target: "prod",
+        finding: {
+          role: deployer,
+          database: prod,
+          historySchema: "deployment_history",
+          fix: `GRANT CREATE ON DATABASE ${prod} TO ${deployer}`,
+        },
+      });
+      expect((error as Error).message).toContain(
+        `the deploy role ${deployer} needs CREATE on database ${prod} to create the history schema "deployment_history"`,
+      );
+      expect(await server.databases()).toEqual(databases);
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+      expect(dir.exists("data-model/migrations")).toBe(false);
+
+      await server.query((error as HistorySchemaNotCreatableError).finding.fix);
       await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
         migration: { folder: "00001-adopt" },
       });
@@ -1027,9 +1064,10 @@ const changing = {
       expect((error as MarkMismatchError).objects.map((o) => o.object)).toEqual(
         ["index added_meanwhile_pkey", "table added_meanwhile"],
       );
-      expect(await readdir(dir.path("data-model/desired-schema"))).toEqual([]);
+      // The project had neither directory: adoption created both.
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
       expect(dir.exists("data-model/draft")).toBe(false);
-      expect(await readdir(dir.path("data-model/migrations"))).toEqual([]);
+      expect(dir.exists("data-model/migrations")).toBe(false);
       const report = await status(project, { target: "prod" });
       expect(report.recorded).toEqual([]);
       expect(report.attempts).toMatchObject([
