@@ -644,7 +644,44 @@ describe("the target lock", () => {
     ]);
   });
 
-  test("the refusal names the holder's server process, what it is running since when, and how to cancel it", async () => {
+  test("the refusal's advice for a dead holder frees the lock even while its session is idle", async () => {
+    const { project, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { adapter: pausingAdapter },
+    );
+    await finalizeMigration(project, "add customers");
+    const advisoryLocks = async () =>
+      server.query(
+        `select count(*)::int as count from pg_locks
+          where locktype = 'advisory' and granted
+            and database = (select oid from pg_database where datname = $1)`,
+        [database],
+      );
+    // Paused before COMMIT, the holder's session is idle in its transaction,
+    // as a dead CLI's half-open connection would leave it.
+    const paused = pauseAtCommit();
+    const first = deploy(project, { target: "dev" }).catch((e: unknown) => e);
+    await paused.reached;
+    try {
+      const refusal = await deploy(project, { target: "dev" }).catch(
+        (e: unknown) => e,
+      );
+      expect(refusal).toBeInstanceOf(TargetLockedError);
+      const advice = /select (pg_\w+\(\d+\))$/.exec(
+        (refusal as TargetLockedError).message,
+      );
+
+      await server.query(`select ${advice?.[1]}`);
+
+      await expect.poll(advisoryLocks).toEqual([{ count: 0 }]);
+    } finally {
+      paused.release();
+      await first;
+    }
+  });
+
+  test("the refusal names the holder's server process, what it is running since when, and how to end it", async () => {
     const { dir, project, database } = await deployProject(
       server,
       { "customers.sql": customers },
@@ -693,7 +730,7 @@ describe("the target lock", () => {
       expect(holder.activity?.statementStartedAt?.getTime()).toBeLessThan(
         before.getTime(),
       );
-      expect(message).toContain(`select pg_cancel_backend(${pid})`);
+      expect(message).toContain(`select pg_terminate_backend(${pid})`);
     } finally {
       await blocker.close();
       await first;

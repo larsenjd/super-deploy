@@ -5,7 +5,7 @@
 // running, and the next `status` settles it; killed mid-statement, its
 // server process ends within seconds (the client connection check). A
 // `status` while a deployment holds the target names the holder, what its
-// server process runs and how to cancel it, and leaves drift unchecked.
+// server process runs and how to end it, and leaves drift unchecked.
 import { userInfo } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -236,7 +236,7 @@ test("status during a deployment names the holder, leaves drift unchecked and ex
     const pid = locked?.[1];
     expect(result.stderr).toMatch(
       new RegExp(
-        `^Error: Target dev is locked by ${holder}; try again when it has finished, or, if it is known to be dead, end it with select pg_cancel_backend\\(${pid}\\)$`,
+        `^Error: Target dev is locked by ${holder}; try again when it has finished, or, if it is known to be dead, end its session with select pg_terminate_backend\\(${pid}\\)$`,
         "m",
       ),
     );

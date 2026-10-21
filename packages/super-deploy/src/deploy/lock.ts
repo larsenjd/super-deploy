@@ -6,7 +6,14 @@
 // rebuild, deploy-draft, disposable and init --adopt. Contention fails at
 // once, naming the holder's running attempt and what its server process is
 // doing (pg_stat_activity), so a user can tell a live command from a dead
-// CLI's statement still running, and how to cancel that.
+// CLI's statement still running, and how to end that.
+//
+// The advice is `pg_terminate_backend`, not `pg_cancel_backend` (ticket 51's
+// decision said cancel): cancelling ends only the running statement, and the
+// session, idle or in a failed transaction, keeps the session-level lock. That
+// is exactly the case the advice is for: a half-open connection, or a server
+// that can't check the client's connection (Windows). Terminating ends the
+// session, which rolls its transaction back and releases the lock.
 //
 // Advisory locks are per database, so the key only has to tell projects
 // apart that share one database with different history schemas.
@@ -217,12 +224,12 @@ export class TargetLockedError extends SuperDeployError {
     // A CLI killed mid-statement leaves its server process running until the
     // server notices (target.ts's client connection check, where the
     // platform has one): the user can end it once they know it is dead.
-    const cancel =
+    const terminate =
       holder.pid === undefined
         ? ""
-        : `, or, if it is known to be dead, end it with select pg_cancel_backend(${holder.pid})`;
+        : `, or, if it is known to be dead, end its session with select pg_terminate_backend(${holder.pid})`;
     super(
-      `Target ${target} is locked by ${describeLockHolder(holder)}; try again when it has finished${cancel}`,
+      `Target ${target} is locked by ${describeLockHolder(holder)}; try again when it has finished${terminate}`,
     );
     this.target = target;
     this.holder = holder;

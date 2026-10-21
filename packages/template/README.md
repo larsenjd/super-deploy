@@ -272,7 +272,9 @@ super-deploy has the server check every 5 seconds while a statement runs
 and runs the statement to its end). Until then the target stays locked:
 `deploy` and `status` name the holding attempt, its server process, and the
 statement it is running and since when. If you know that command is dead,
-`select pg_cancel_backend(<server process>)` ends it.
+`select pg_terminate_backend(<server process>)` ends its session, which rolls
+the deployment back and releases the lock. Cancelling only its statement
+(`pg_cancel_backend`) isn't enough: the lock belongs to the session.
 
 ### Adding a real target
 
