@@ -221,7 +221,11 @@ export {
   SqlRuleViolationError,
 } from "./sql-analysis/index.ts";
 export type { Override } from "./sql-analysis/overrides.ts";
-export { InvalidDraftError, NoDraftError } from "./store/draft.ts";
+export {
+  InvalidDraftError,
+  NoDraftError,
+  type UnknownDraftFile,
+} from "./store/draft.ts";
 export {
   InvalidDraftNameError,
   maxDraftNameLength,
@@ -235,6 +239,10 @@ export {
 } from "./store/integrity.ts";
 export type { ProjectPaths } from "./store/layout.ts";
 export { NoMigrationError, UnknownMigrationError } from "./store/migrations.ts";
-export type { DriftChange, DriftedObject } from "./verification/drift.ts";
+export type {
+  DriftChange,
+  DriftDifference,
+  DriftedObject,
+} from "./verification/drift.ts";
 export { DriftError } from "./verification/drift.ts";
 export { toolVersion } from "./version.ts";

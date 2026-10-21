@@ -1,7 +1,9 @@
-// The one draft: draft/draft.json holds its name (editable) and the hash of
+// The one draft: draft/draft.json holds its name (editable), the hash of
 // the desired schema it was generated from (written by `draft`, used by
-// `validate` to warn about undrafted changes); draft/schema-change.sql is the
-// generated schema change.
+// `validate` to warn about undrafted changes) and the hash of the schema
+// change `draft` wrote (so a rehearsal mismatch can name a hand edit; drafts
+// written before it existed have none, and count as not edited);
+// draft/schema-change.sql is the generated schema change.
 //
 // A Recovery draft (created by `recovery --migration N`) has
 // `"recoveryOf": N` in draft.json and the name of migration N; its
@@ -10,14 +12,28 @@
 // The copy's header comment says so (recoverySchemaChange) instead of the
 // generated one's "run draft again"; its statements are migration N's,
 // unchanged, and the migration's own hashed file is never touched.
+//
+// A draft holds only draftFileNames. Anything else in its folder (a misnamed
+// script such as `post-migrate.sql`, or notes) never runs, yet finalize
+// copies it into the migration, so `draft`, `rehearse`, `finalize` and
+// `validate` warn about each one (unknownDraftFiles) and carry on: the
+// maintainer chose a warning over a refusal (QA 44).
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SuperDeployError } from "../errors.ts";
+import { isSqlFile } from "./desired-schema.ts";
 import { normaliseDraftName } from "./draft-name.ts";
-import { normaliseLineEndings } from "./hashing.ts";
+import { fileHash, normaliseLineEndings } from "./hashing.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";
-import { type FinalizedMigration, schemaChangeFileName } from "./migrations.ts";
+import {
+  type FinalizedMigration,
+  listFiles,
+  postMigrationFileName,
+  preMigrationFileName,
+  schemaChangeFileName,
+  seedDataFileName,
+} from "./migrations.ts";
 
 /** The header comment `draft` writes at the top of the schema change. */
 export const schemaChangeHeader = [
@@ -61,10 +77,47 @@ export async function writeRecoverySchemaChange(
 /** The draft's own metadata file; never copied into the finalized migration. */
 export const draftMetadataFileName = "draft.json";
 
+/** Every file a draft may hold: its metadata, then its SQL in the order it runs. */
+export const draftFileNames: readonly string[] = [
+  draftMetadataFileName,
+  seedDataFileName,
+  preMigrationFileName,
+  schemaChangeFileName,
+  postMigrationFileName,
+];
+
+/** A file in the draft folder that isn't one of draftFileNames. */
+export interface UnknownDraftFile {
+  /** Project-relative path. */
+  readonly file: string;
+  /** Names the file and the files a draft holds; for a `.sql` file, says it will not run. */
+  readonly message: string;
+}
+
+/** The files under the draft folder that a draft doesn't hold; none without a draft. */
+export async function unknownDraftFiles(
+  root: string,
+  paths: ProjectPaths,
+): Promise<UnknownDraftFile[]> {
+  const holds = `a draft holds ${draftFileNames.slice(0, -1).join(", ")} and ${draftFileNames.at(-1)}`;
+  return (await listFiles(paths.draft))
+    .filter((path) => !draftFileNames.includes(path))
+    .map((path) => {
+      const file = projectRelative(root, join(paths.draft, path));
+      const runs = isSqlFile(path) ? ", so it will not run" : "";
+      return {
+        file,
+        message: `${file} is not one of a draft's files${runs} (${holds})`,
+      };
+    });
+}
+
 export interface DraftMetadata {
   readonly name: string;
   /** store/hashing.ts desiredSchemaHash() of the desired schema `draft` last generated from. */
   readonly desiredSchemaHash?: string | undefined;
+  /** store/hashing.ts fileHash() of the schema-change.sql `draft` last wrote. */
+  readonly schemaChangeHash?: string | undefined;
   /** For a Recovery draft: the number of the migration it recovers. */
   readonly recoveryOf?: number | undefined;
 }
@@ -107,6 +160,10 @@ export async function readDraft(
     typeof parsed.desiredSchemaHash === "string"
       ? parsed.desiredSchemaHash
       : undefined;
+  const schemaChangeHash =
+    "schemaChangeHash" in parsed && typeof parsed.schemaChangeHash === "string"
+      ? parsed.schemaChangeHash
+      : undefined;
   const recoveryOf = "recoveryOf" in parsed ? parsed.recoveryOf : undefined;
   if (
     recoveryOf !== undefined &&
@@ -124,16 +181,21 @@ export async function readDraft(
   return {
     name: normaliseDraftName(parsed.name),
     desiredSchemaHash: hash,
+    schemaChangeHash,
     ...(recoveryOf === undefined ? {} : { recoveryOf }),
   };
 }
 
+/** Writes draft.json, with the hash of `schemaChange`, and the schema change. */
 export async function writeDraft(
   paths: ProjectPaths,
-  metadata: DraftMetadata,
+  metadata: Omit<DraftMetadata, "schemaChangeHash">,
   schemaChange: string,
 ): Promise<void> {
-  await writeDraftMetadata(paths, metadata);
+  await writeDraftMetadata(paths, {
+    ...metadata,
+    schemaChangeHash: fileHash(schemaChange),
+  });
   await writeFile(paths.draftSchemaChange, schemaChange);
 }
 
@@ -145,7 +207,7 @@ export async function writeDraftMetadata(
   await mkdir(paths.draft, { recursive: true });
   await writeFile(
     paths.draftMetadata,
-    `${JSON.stringify({ name: metadata.name, desiredSchemaHash: metadata.desiredSchemaHash, recoveryOf: metadata.recoveryOf }, null, 2)}\n`,
+    `${JSON.stringify({ name: metadata.name, desiredSchemaHash: metadata.desiredSchemaHash, schemaChangeHash: metadata.schemaChangeHash, recoveryOf: metadata.recoveryOf }, null, 2)}\n`,
   );
 }
 

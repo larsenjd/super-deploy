@@ -242,6 +242,47 @@ describe("validate warnings", () => {
     ]);
   });
 
+  test("warn about a file in the draft folder that isn't a draft's; --strict fails on it even with allowDraft", async () => {
+    const { dir, project } = await finalizedProject();
+    await draft(project, { name: "add email" });
+    await dir.write(
+      "data-model/draft/post-migrate.sql",
+      "update customers set name = lower(name);\n",
+    );
+    const unknown = {
+      severity: "warning",
+      code: "unknown-draft-file",
+      message:
+        "data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql and post-migration.sql)",
+      path: "data-model/draft/post-migrate.sql",
+    };
+
+    const report = await validate(project);
+    const error = await validationError(project, {
+      strict: true,
+      allowDraft: true,
+    });
+
+    expect(report.problems).toEqual([unfinalized, unknown]);
+    expect(error.problems).toEqual([unfinalized, unknown]);
+  });
+
+  test("a file in the draft folder that isn't SQL is named without saying it won't run", async () => {
+    const { dir, project } = await finalizedProject();
+    await draft(project, { name: "add email" });
+    await dir.write("data-model/draft/notes/NOTES.md", "Why the backfill\n");
+
+    const report = await validate(project);
+
+    expect(report.problems).toContainEqual({
+      severity: "warning",
+      code: "unknown-draft-file",
+      message:
+        "data-model/draft/notes/NOTES.md is not one of a draft's files (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql and post-migration.sql)",
+      path: "data-model/draft/notes/NOTES.md",
+    });
+  });
+
   test("warn about desired-schema changes when there is no draft", async () => {
     const { dir, project } = await finalizedProject();
     await dir.write(

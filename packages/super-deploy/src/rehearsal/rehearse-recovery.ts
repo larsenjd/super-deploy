@@ -49,12 +49,13 @@ export async function rehearseRecovery(
         draftDatabaseRequest,
         async (recovered) => {
           await build(recovered, [...input.before, ...input.recovery]);
-          await requireSameStructure(
-            recovered,
-            original,
-            managedSchema,
-            `The Recovery's rehearsal does not end in the same structure as migration ${input.folder}; a Recovery may change only data`,
-          );
+          await requireSameStructure(recovered, original, managedSchema, {
+            subject: `The Recovery's rehearsal does not end in the same structure as migration ${input.folder}; a Recovery may change only data`,
+            sides: {
+              actual: "from the Recovery",
+              expected: "from the original migration",
+            },
+          });
           return { serverVersion: await recovered.serverVersion() };
         },
       );

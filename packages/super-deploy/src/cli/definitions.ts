@@ -43,14 +43,18 @@ import {
   OverwriteNotAcknowledgedError,
 } from "../questions.ts";
 import type { LockWarning, Override } from "../sql-analysis/index.ts";
-import { readDraft } from "../store/draft.ts";
+import { readDraft, type UnknownDraftFile } from "../store/draft.ts";
 import type { ValidationProblem } from "../store/integrity.ts";
 import {
   migrationFolderName,
   parseMigrationFolderName,
   readIndex,
 } from "../store/migrations.ts";
-import { DriftError } from "../verification/drift.ts";
+import {
+  DriftError,
+  type DriftedObject,
+  driftLabel,
+} from "../verification/drift.ts";
 
 export type CommandGroup =
   | "Start"
@@ -369,7 +373,7 @@ const draftCommand: CommandDefinition = {
         ? `Renamed draft ${result.renamedFrom} to ${result.name}`
         : `Regenerated draft ${result.name}`;
     context.result(`${what}: ${count} in ${where}`);
-    for (const item of result.toCover) {
+    for (const item of [...result.toCover, ...result.unknownFiles]) {
       context.warn(`warning: ${item.message}`);
     }
   },
@@ -383,7 +387,7 @@ const rehearseCommand: CommandDefinition = {
   options: [],
   async run(project, _values, context) {
     const result = await rehearse(project);
-    reportWarnings(result.warnings, context);
+    reportWarnings(result, context);
     for (const statement of result.destructive) {
       context.warn(
         `destructive: ${statement.file}:${statement.line}: ${statement.message} (finalize needs it acknowledged)`,
@@ -397,15 +401,24 @@ const rehearseCommand: CommandDefinition = {
   },
 };
 
-/** One warning line per statement that rewrites or scans an existing table. */
+/**
+ * One warning line per statement that rewrites or scans an existing table,
+ * then one per file in the draft folder that a draft doesn't hold.
+ */
 function reportWarnings(
-  warnings: readonly LockWarning[],
+  result: {
+    readonly warnings: readonly LockWarning[];
+    readonly unknownFiles: readonly UnknownDraftFile[];
+  },
   context: CommandContext,
 ): void {
-  for (const warning of warnings) {
+  for (const warning of result.warnings) {
     context.warn(
       `warning: ${warning.file}:${warning.line}: ${warning.message}`,
     );
+  }
+  for (const unknown of result.unknownFiles) {
+    context.warn(`warning: ${unknown.message}`);
   }
 }
 
@@ -434,7 +447,7 @@ const finalizeCommand: CommandDefinition = {
     if (result === undefined) {
       return;
     }
-    reportWarnings(result.warnings, context);
+    reportWarnings(result, context);
     context.result(
       result.recovery === undefined
         ? `Finalized migration ${result.folder} in ${context.displayPath(result.path)}`
@@ -734,15 +747,11 @@ const statusCommand: CommandDefinition = {
         `Drift: not checked (the target is locked by ${lockHolderName(report.lockedBy)})`,
       );
     } else if (report.drift !== undefined && report.drift.length > 0) {
-      // `-` lines are on the target only, `+` lines what its recorded migrations produce.
       context.result(
         "Drift (the target differs from its recorded migrations):",
       );
-      for (const drifted of report.drift) {
-        context.result(`  ${drifted.change}: ${drifted.object}`);
-        for (const line of drifted.differences) {
-          context.result(`    ${line}`);
-        }
+      for (const line of driftListing(report.drift)) {
+        context.result(line);
       }
     }
     if (report.pending.length > 0) {
@@ -860,16 +869,25 @@ function reportMarkMismatch(
   error: MarkMismatchError,
   context: CommandContext,
 ): void {
-  // `-` lines are on the target only, `+` lines what the replica has.
   context.warn(
     `The target differs from a replica of its migrations up to ${error.migration}:`,
   );
-  for (const drifted of error.objects) {
-    context.warn(`  ${drifted.change}: ${drifted.object}`);
-    for (const line of drifted.differences) {
-      context.warn(`    ${line}`);
-    }
+  for (const line of driftListing(error.objects)) {
+    context.warn(line);
   }
+}
+
+/**
+ * Each drifted object, then its catalog lines, each saying which side it is
+ * on (`driftLabel`), as `status` and `mark` list them.
+ */
+function driftListing(objects: readonly DriftedObject[]): string[] {
+  return objects.flatMap((drifted) => [
+    `  ${drifted.object}:`,
+    ...drifted.differences.map(
+      ({ side, line }) => `    ${driftLabel(drifted.change, side)}: ${line}`,
+    ),
+  ]);
 }
 
 const deployDraftCommand: CommandDefinition = {

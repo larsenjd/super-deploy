@@ -174,9 +174,12 @@ describe("adopt", () => {
       const { objects } = error as AdoptUnsupportedError;
       expect(objects.map(({ object, rule }) => ({ object, rule }))).toEqual(
         expect.arrayContaining([
-          { object: "statistics object t_stats", rule: "unsupported-object" },
           {
-            object: "operator ===(integer,integer)",
+            object: "statistics object public.t_stats",
+            rule: "unsupported-object",
+          },
+          {
+            object: "operator public.===(integer,integer)",
             rule: "unsupported-object",
           },
           {
@@ -594,7 +597,7 @@ describe("adopt", () => {
       expect(error).toBeInstanceOf(AdoptUnsupportedError);
       expect((error as AdoptUnsupportedError).objects).toEqual([
         {
-          object: "column v of table people",
+          object: "column v of table public.people",
           rule: "unsupported-object",
           reason:
             "Virtual generated columns are not supported in V1 (a generated column without STORED is virtual in PostgreSQL 18): add STORED",
@@ -993,10 +996,10 @@ describe("adopt", () => {
 
       expect(error).toBeInstanceOf(AdoptUnsupportedError);
       expect((error as AdoptUnsupportedError).objects).toContainEqual({
-        object: "constraint people_name_required on table people",
+        object: "constraint people_name_required on table public.people",
         rule: "not-reproduced",
         reason:
-          "The desired schema generated from the target can't create it: - constraint: people people_name_required n NOT NULL name deferrable=false deferred=false validated=true",
+          "The desired schema generated from the target can't create it: constraint: people people_name_required n NOT NULL name deferrable=false deferred=false validated=true",
       });
       expect(dir.exists("data-model/desired-schema")).toBe(false);
     } finally {
@@ -1166,7 +1169,7 @@ const changing = {
 
       expect(error).toBeInstanceOf(MarkMismatchError);
       expect((error as MarkMismatchError).objects.map((o) => o.object)).toEqual(
-        ["index added_meanwhile_pkey", "table added_meanwhile"],
+        ["index public.added_meanwhile_pkey", "table public.added_meanwhile"],
       );
       // The project had neither directory: adoption created both.
       expect(dir.exists("data-model/desired-schema")).toBe(false);
