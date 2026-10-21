@@ -73,7 +73,8 @@ program or set another `port`.
 The server runs only while something uses it: the first command that needs
 `dev` starts it, commands run at the same time share it, and it stops when
 the last of them ends. A command that was killed outright (`kill -9`, a
-crash) can leave it running; the next command that uses `dev` takes it over
+crash, or interrupted twice: see
+[Interrupting a command](#interrupting-a-command)) can leave it running; the next command that uses `dev` takes it over
 and stops it when it ends. To keep it running while you connect, run this
 in the project folder and leave it running; Ctrl+C stops it, unless a
 command is still using it:
@@ -573,7 +574,9 @@ warning and doesn't block, so you can commit a draft with its hand-written
 scripts and push it for review before finalizing it. In CI, run
 `pnpm exec super-deploy validate --strict` without `--allow-draft`: it fails
 until the draft is finalized and the desired schema matches the newest
-migration, so work in progress can't be merged.
+migration, so work in progress can't be merged. (`validate` changes
+nothing, so `pnpm exec` is fine there; for `deploy` in CI, see
+[Interrupting a command](#interrupting-a-command).)
 
 ## Overriding a refusal
 
@@ -749,6 +752,40 @@ The schema change never changes: a Recovery always runs its migration's
 `schema-change.sql`, and `draft` refuses to regenerate it. Don't edit the
 draft's copy: `rehearse` and `finalize` refuse a Recovery draft whose schema
 change is no longer the migration's.
+
+## Interrupting a command
+
+Ctrl+C (SIGINT), SIGTERM, or closing the terminal (SIGHUP) stops the
+running command. It cleans up first, then exits 130, 143 or 129: a
+deployment in progress rolls back and its attempt is recorded as abandoned,
+throwaway databases are dropped, and the embedded servers the command
+started are stopped. It prints one line when the interruption arrives. A
+command that changes a target (`deploy`, `deploy-draft`, `rebuild`,
+`mark`, `disposable`, `init --adopt`) prints one more once it has cleaned
+up, saying what happened to the target:
+
+- `The deployment rolled back: target qa is unchanged, still at migration 00009-add-tier.`
+- `The deployment had already finished: the interruption came too late to stop it on target qa.`
+  when the interruption came after its COMMIT. It still exits 130, 143 or
+  129, and `status --target qa` shows the attempt succeeded.
+
+An interruption after the command has finished, while it stops its
+servers, doesn't change its exit code: a deployment that committed exits 0.
+
+**In CI or under a supervisor** (a CI runner cancelling a step, `docker
+stop`, systemd), run the binary directly, as
+`./node_modules/.bin/super-deploy deploy --target prod`, or make sure the
+stop signal reaches the whole process group. With pnpm installed through
+corepack, SIGTERM to `pnpm exec super-deploy ...` alone stops only pnpm's
+launcher: the job ends with 143 while the deployment carries on unseen and
+commits. After a cancelled job, `status --target prod` shows whether the
+attempt was abandoned or succeeded.
+
+Interrupting again while it cleans up exits at once, leaving whatever
+wasn't cleaned up yet (the next command takes over a server left running).
+The same signal again within a second doesn't count: in a terminal,
+`pnpm exec` passes on a SIGTERM or SIGHUP the command has already had. Nor
+does a second SIGHUP: no one is left at the terminal to insist.
 
 ## Changing your mind
 
