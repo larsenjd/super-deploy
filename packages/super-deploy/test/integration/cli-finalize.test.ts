@@ -54,7 +54,9 @@ describe("rehearse and finalize", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr.trimEnd().split("\n")).toEqual([
       'pg-delta: ALTER TABLE "public"."customers" ADD COLUMN "email" text;',
-      expect.stringMatching(/^catalog: \+ column: customers\.email text /),
+      expect.stringMatching(
+        /^catalog: from the desired schema: column: customers\.email text /,
+      ),
       "Error: The rehearsal does not match the desired schema; run draft again (2 differences, listed above)",
     ]);
   });

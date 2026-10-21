@@ -50,7 +50,11 @@ import {
   parseMigrationFolderName,
   readIndex,
 } from "../store/migrations.ts";
-import { DriftError } from "../verification/drift.ts";
+import {
+  DriftError,
+  type DriftedObject,
+  driftLabel,
+} from "../verification/drift.ts";
 
 export type CommandGroup =
   | "Start"
@@ -734,15 +738,11 @@ const statusCommand: CommandDefinition = {
         `Drift: not checked (the target is locked by ${lockHolderName(report.lockedBy)})`,
       );
     } else if (report.drift !== undefined && report.drift.length > 0) {
-      // `-` lines are on the target only, `+` lines what its recorded migrations produce.
       context.result(
         "Drift (the target differs from its recorded migrations):",
       );
-      for (const drifted of report.drift) {
-        context.result(`  ${drifted.change}: ${drifted.object}`);
-        for (const line of drifted.differences) {
-          context.result(`    ${line}`);
-        }
+      for (const line of driftListing(report.drift)) {
+        context.result(line);
       }
     }
     if (report.pending.length > 0) {
@@ -860,16 +860,25 @@ function reportMarkMismatch(
   error: MarkMismatchError,
   context: CommandContext,
 ): void {
-  // `-` lines are on the target only, `+` lines what the replica has.
   context.warn(
     `The target differs from a replica of its migrations up to ${error.migration}:`,
   );
-  for (const drifted of error.objects) {
-    context.warn(`  ${drifted.change}: ${drifted.object}`);
-    for (const line of drifted.differences) {
-      context.warn(`    ${line}`);
-    }
+  for (const line of driftListing(error.objects)) {
+    context.warn(line);
   }
+}
+
+/**
+ * Each drifted object, then its catalog lines, each saying which side it is
+ * on (`driftLabel`), as `status` and `mark` list them.
+ */
+function driftListing(objects: readonly DriftedObject[]): string[] {
+  return objects.flatMap((drifted) => [
+    `  ${drifted.object}:`,
+    ...drifted.differences.map(
+      ({ side, line }) => `    ${driftLabel(drifted.change, side)}: ${line}`,
+    ),
+  ]);
 }
 
 const deployDraftCommand: CommandDefinition = {

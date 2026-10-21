@@ -232,8 +232,10 @@ describe("finalizing a Recovery", () => {
     expect((error as Error).message).toContain(
       "does not end in the same structure as migration 00002-require-email",
     );
-    expect((error as RehearsalMismatchError).differences.join("\n")).toContain(
-      "note",
+    expect((error as RehearsalMismatchError).differences).toContainEqual(
+      expect.stringMatching(
+        /^catalog: from the Recovery: column: customers\.note text /,
+      ),
     );
     expect(dir.exists(`${migration2}/recoveries`)).toBe(false);
   });
