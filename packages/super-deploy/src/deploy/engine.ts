@@ -18,7 +18,9 @@
 //   7. run the body; if the project's signal aborts meanwhile, the command
 //      session's server process is terminated (interruptible-session.ts)
 //   8. end the attempt: succeeded, or the outcome `outcomeOf` picks (unknown
-//      for a lost COMMIT, abandoned when interrupted, else failed)
+//      for a lost COMMIT, abandoned when interrupted, else failed); an
+//      abandoned one throws InterruptedError naming the migration the target
+//      is still at (`rollback`), for the CLI's closing line
 //   9. release the lock and close both sessions, whatever happened
 //
 // `applyMigrations` is the deploy transaction itself. SQL it sends on the
@@ -44,16 +46,18 @@
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { SuperDeployError } from "../errors.ts";
-import { InterruptedError } from "../interruption.ts";
+import { InterruptedError, type InterruptedRollback } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { type ReplayUnit, runUnit } from "../rehearsal/replay.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
+import { migrationFolderName } from "../store/migrations.ts";
 import { type Attempt, openAttempt, settleAttempts } from "./attempts.ts";
 import {
   type AttemptOutcome,
   ensureHistorySchema,
   type MigrationVariantIdentity,
   quoteIdentifier,
+  readRecordedMigrations,
   recordMigration,
 } from "./history.ts";
 import { interruptibleSession } from "./interruptible-session.ts";
@@ -135,8 +139,14 @@ export async function withLockedTarget<T>(
         await settle();
         const outcome = outcomeOf(error, signal);
         const failure =
-          outcome === "abandoned" && !(error instanceof InterruptedError)
-            ? new InterruptedError({ cause: signal?.reason ?? error })
+          outcome === "abandoned"
+            ? new InterruptedError({
+                cause:
+                  error instanceof InterruptedError
+                    ? error.cause
+                    : (signal?.reason ?? error),
+                rollback: await rolledBack(log, historySchema, target.name),
+              })
             : error;
         await attempt
           .end(
@@ -156,6 +166,31 @@ export async function withLockedTarget<T>(
     }
   } finally {
     await commandSession.close().catch(() => {});
+  }
+}
+
+/**
+ * What an abandoned attempt left the target at: its deploy transaction rolled
+ * back (a COMMIT already sent finishes first, and then the attempt
+ * succeeds), so the target still records what it did before. Undefined if
+ * that can't be read.
+ */
+async function rolledBack(
+  log: Session,
+  historySchema: string,
+  target: string,
+): Promise<InterruptedRollback | undefined> {
+  try {
+    const last = (await readRecordedMigrations(log, historySchema)).at(-1);
+    return {
+      target,
+      lastRecorded:
+        last === undefined
+          ? undefined
+          : migrationFolderName(last.number, last.name),
+    };
+  } catch {
+    return undefined;
   }
 }
 

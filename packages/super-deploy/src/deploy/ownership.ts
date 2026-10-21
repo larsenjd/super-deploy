@@ -3,8 +3,10 @@
 // migrations can alter and drop what earlier ones created. Ownership is never
 // managed or compared (drift ignores it), only checked: the deploy pre-flight
 // (deploy, deploy-draft, status), `mark` before asking YES and `init --adopt`
-// before reading the target refuse a managed schema, or an object in it,
-// whose owner the deploy role doesn't have the privileges of. Without the
+// (in its one refusal, with everything unsupported) refuse a managed schema,
+// or an object in it, whose owner the deploy role doesn't have the
+// privileges of. Refusals list each object with its owner, then the fixes
+// as a script a DBA can paste into psql (`notOwnedDetails`). Without the
 // check such a target fails with "must be owner" partway through a deploy.
 // `rebuild` before asking checks the managed schema alone
 // (`requireManagedSchemaOwned`, QA 172): it drops what is in it, and what it
@@ -36,7 +38,8 @@
 // with its extension and the extension's owner.
 
 import type { Session } from "../adapters/types.ts";
-import { SuperDeployError } from "../errors.ts";
+import { plural, SuperDeployError } from "../errors.ts";
+import type { ObjectAddress } from "../verification/catalog.ts";
 
 /** A managed-schema object (or the managed schema) the deploy role doesn't own. */
 export interface NotOwnedObject {
@@ -135,7 +138,19 @@ export async function objectsNotOwned(
   session: Session,
   managedSchema: string,
 ): Promise<NotOwnedObject[]> {
+  return (await objectsNotOwnedAt(session, managedSchema)).map(
+    ({ notOwned }) => notOwned,
+  );
+}
+
+/** `objectsNotOwned`, each with its catalog address (oids as text). */
+export async function objectsNotOwnedAt(
+  session: Session,
+  managedSchema: string,
+): Promise<{ notOwned: NotOwnedObject; address: ObjectAddress }[]> {
   const { rows } = await session.query<{
+    class: string;
+    oid: string;
     kind: string;
     name: string;
     owner: string;
@@ -147,7 +162,8 @@ export async function objectsNotOwned(
      owned AS (${ownedObjectsQuery}),
      db AS (SELECT pg_catalog.quote_ident(datname) AS name, pg_catalog.pg_get_userbyid(datdba) AS owner
               FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())
-     SELECT kind, owned.name, pg_catalog.pg_get_userbyid(owned.owner) AS owner,
+     SELECT owned.class::oid::text AS class, owned.oid::text AS oid, kind, owned.name,
+            pg_catalog.pg_get_userbyid(owned.owner) AS owner,
             db.name AS database, db.owner AS database_owner,
             pg_catalog.quote_ident(current_user) AS deploy_role
        FROM owned, db
@@ -158,18 +174,30 @@ export async function objectsNotOwned(
     [managedSchema],
   );
   return rows.map(
-    ({ kind, name, owner, database, database_owner, deploy_role }) =>
-      owner === databaseOwnerRole
-        ? {
-            object: `${kind.toLowerCase()} ${name}`,
-            owner: `${owner} (the owner of database ${database}, ${database_owner})`,
-            fix: `ALTER DATABASE ${database} OWNER TO ${deploy_role}`,
-          }
-        : {
-            object: `${kind.toLowerCase()} ${name}`,
-            owner,
-            fix: `ALTER ${kind} ${name} OWNER TO ${deploy_role}`,
-          },
+    ({
+      class: classId,
+      oid,
+      kind,
+      name,
+      owner,
+      database,
+      database_owner,
+      deploy_role,
+    }) => ({
+      notOwned:
+        owner === databaseOwnerRole
+          ? {
+              object: `${kind.toLowerCase()} ${name}`,
+              owner: `${owner} (the owner of database ${database}, ${database_owner})`,
+              fix: `ALTER DATABASE ${database} OWNER TO ${deploy_role}`,
+            }
+          : {
+              object: `${kind.toLowerCase()} ${name}`,
+              owner,
+              fix: `ALTER ${kind} ${name} OWNER TO ${deploy_role}`,
+            },
+      address: { class: classId, obj: oid, sub: 0 },
+    }),
   );
 }
 
@@ -235,6 +263,62 @@ export function notOwnedMessage(notOwned: NotOwnedObject): string {
   return `${notOwned.object} is owned by ${notOwned.owner}, whose privileges the deploy role doesn't have (fix: ${notOwned.fix})`;
 }
 
+/** `The deploy role on target <target> doesn't own <n> objects in the managed schema`. */
+function notOwnedHeadline(
+  target: string,
+  objects: readonly NotOwnedObject[],
+): string {
+  return `The deploy role on target ${target} doesn't own ${plural(objects.length, "object")} in the managed schema`;
+}
+
+/**
+ * The objects as lines for people, the way the CLI prints a refusal: the
+ * headline, then each object with its owner. `notOwnedFixer` says who can
+ * run their fixes (`fixScript`).
+ */
+export function notOwnedListing(
+  target: string,
+  objects: readonly NotOwnedObject[],
+): string[] {
+  return [
+    `${notOwnedHeadline(target, objects)}:`,
+    ...objects.map(({ object, owner }) => `  ${object} (owned by ${owner})`),
+  ];
+}
+
+/** Who may run the fixes of objects the deploy role doesn't own. */
+export const notOwnedFixer = "a superuser or as each object's owner";
+
+/** `notOwnedListing`, then the objects' fixes as a script. */
+export function notOwnedDetails(
+  target: string,
+  objects: readonly NotOwnedObject[],
+): string[] {
+  return [
+    ...notOwnedListing(target, objects),
+    ...fixScript(
+      notOwnedFixer,
+      objects.map(({ fix }) => fix),
+    ),
+  ];
+}
+
+/**
+ * `statements` as a script under a line saying who must run it, the way
+ * the CLI prints fixes: each statement once (several objects `public`'s
+ * owner owns share one fix), one per line, each ending in `;`, so a DBA
+ * can paste it into psql as it is.
+ */
+export function fixScript(
+  who: string,
+  statements: readonly string[],
+): string[] {
+  return [
+    `To fix, run as ${who}:`,
+    ...[...new Set(statements)].map((statement) => `  ${statement};`),
+  ];
+}
+
 /**
  * Throws NotOwnedError if the deploy role doesn't own the managed schema and
  * everything in it.
@@ -268,16 +352,22 @@ export async function requireManagedSchemaOwned(
 }
 
 /**
- * `mark`, `init --adopt` or `rebuild` refused: the managed schema, or an
- * object in it, belongs to a role the deploy role isn't a member of, so a
- * later migration would fail with "must be owner". Nothing was recorded or
- * written.
+ * `mark` or `rebuild` refused: the managed schema, or an object in it,
+ * belongs to a role the deploy role isn't a member of, so a later migration
+ * would fail with "must be owner". Nothing was recorded or changed.
  */
 export class NotOwnedError extends SuperDeployError {
   readonly code = "not-owned";
   readonly target: string;
   /** The managed schema first, then the objects; never empty. */
   readonly objects: readonly NotOwnedObject[];
+  /**
+   * The refusal as lines for people, the way the CLI prints it: each object
+   * with its owner, then the fixes as a script. `summary` follows them.
+   */
+  readonly details: readonly string[];
+  /** The message without the objects `details` lists: their count. */
+  readonly summary: string;
 
   /** `rebuild` refuses over the managed schema alone, saying nothing changed. */
   constructor(
@@ -285,13 +375,16 @@ export class NotOwnedError extends SuperDeployError {
     objects: readonly NotOwnedObject[],
     command?: "rebuild",
   ) {
-    const listed = objects.map(notOwnedMessage).join("; ");
-    super(
+    const after =
       command === "rebuild"
-        ? `rebuild can't run on target ${target}: ${listed}, so deploy would refuse the rebuilt target. Fix it, then run rebuild again (nothing changed)`
-        : `The deploy role on target ${target} doesn't own everything in the managed schema: ${listed}`,
+        ? ", so deploy would refuse the rebuilt target. Fix it, then run rebuild again (nothing changed)"
+        : "";
+    super(
+      `The deploy role on target ${target} doesn't own everything in the managed schema: ${objects.map(notOwnedMessage).join("; ")}${after}`,
     );
     this.target = target;
     this.objects = objects;
+    this.details = notOwnedDetails(target, objects);
+    this.summary = `${notOwnedHeadline(target, objects)}, listed above${after}`;
   }
 }

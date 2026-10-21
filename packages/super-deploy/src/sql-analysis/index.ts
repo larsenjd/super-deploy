@@ -19,6 +19,8 @@ export {
   type AdoptionOptions,
   adoptedDesiredSchema,
   adoptedObject,
+  adoptedObjectReference,
+  type CatalogReference,
   type ExternalSchemaReference,
   externalSchemaReferences,
   isSequenceStatement,
@@ -67,6 +69,12 @@ export {
   overrideObject,
 } from "./overrides.ts";
 export { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
+export {
+  type RecreatedFamily,
+  type RecreatedObject,
+  type RecreatingUnit,
+  recreatedObjects,
+} from "./recreated.ts";
 export {
   externalSchemasBoundAtCreate,
   type UnqualifiedNameWarning,

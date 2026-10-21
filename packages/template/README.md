@@ -73,7 +73,8 @@ program or set another `port`.
 The server runs only while something uses it: the first command that needs
 `dev` starts it, commands run at the same time share it, and it stops when
 the last of them ends. A command that was killed outright (`kill -9`, a
-crash) can leave it running; the next command that uses `dev` takes it over
+crash, or interrupted twice: see
+[Interrupting a command](#interrupting-a-command)) can leave it running; the next command that uses `dev` takes it over
 and stops it when it ends. To keep it running while you connect, run this
 in the project folder and leave it running; Ctrl+C stops it, unless a
 command is still using it:
@@ -113,7 +114,9 @@ first version: these may be supported later, but none is yet.
 - Indexes: unique, partial and expression indexes, with any index method
   and storage parameters.
 - Views (with the options `security_invoker`, `security_barrier` and
-  `check_option`) and materialized views.
+  `check_option`) and materialized views. A view over a table with
+  hand-made policies needs `security_invoker` (see
+  [Permissions](#what-each-target-needs-set-up-outside-super-deploy)).
 - Functions and procedures in `sql` or `plpgsql`, and triggers.
 - Domains and composite types.
 - `COMMENT ON` the objects above.
@@ -259,7 +262,8 @@ settings; super-deploy refuses any other.
   routines in the desired schema may refer to, such as `["auth"]`.
   super-deploy neither creates them, nor reproduces them in rehearsals, nor
   checks that a target has them: setting them up is the DBA's job (see
-  "Permissions"). Default none.
+  "Permissions", which also says why a migration's scripts can't run
+  anything that reads them). Default none.
 - `directory`: the folder holding `desired-schema/`, `draft/` and
   `migrations/`, relative to the config file and inside the project.
   Default `data-model`.
@@ -344,7 +348,8 @@ password in it.
 **TLS.** Set `sslmode` in the connection string. super-deploy reads it as
 `psql` and libpq do:
 
-- no `sslmode`, or `disable`: not encrypted.
+- no `sslmode`, `disable` or `allow`: not encrypted. Unlike `psql`, `allow`
+  never upgrades to an encrypted connection.
 - `require` (or `prefer`): encrypted, but the server's certificate isn't
   checked, so it doesn't stop a server impersonating yours. Unlike `psql`,
   `prefer` never falls back to an unencrypted connection.
@@ -354,6 +359,9 @@ password in it.
 - `verify-full`: as `verify-ca`, and the certificate must also name the host
   in the connection string. Without `sslrootcert` it trusts the public CAs
   that Node.js ships with.
+
+Any other `sslmode` is refused, as libpq refuses it (the values are
+case-sensitive).
 
 For a server with a private CA, such as a managed database's own, download
 the CA certificate and use `verify-full` with `sslrootcert`:
@@ -387,9 +395,22 @@ nothing is written and every such object is listed: that includes a
 `SECURITY DEFINER` routine, objects owned by another role (see
 "Permissions"), and views, foreign keys, `LANGUAGE sql` functions and the
 like that reference an external schema (only PL/pgSQL bodies may). The
-refusal ends with what to do: change the target, declare a schema a
-PL/pgSQL body references in `externalSchemas`, or run adoption in a
-terminal to give override reasons (below). Grants,
+same list says whether the deploy role lacks `CREATE` on the database, and
+ends with the `ALTER ... OWNER TO` and `GRANT` statements that fix the
+ownership and `CREATE`, as a script to run as a superuser (an object that
+must be changed anyway isn't among them). The refusal ends with what to do:
+change the target, run those fixes, declare a schema a PL/pgSQL body
+references in `externalSchemas`, or run adoption in a terminal to give
+override reasons (below). Each object is named as PostgreSQL names it
+(`table app.users`), with the references or settings refused.
+
+Columns, defaults, views and other definitions that use another schema's
+types or functions (typically an extension installed in `public`, such as
+`citext` or `pgcrypto`) are refused, and declaring that schema in
+`externalSchemas` doesn't help: only PL/pgSQL bodies may reference it.
+Change them on the target first, for example to `text` with a `CHECK`
+constraint instead of `citext`, and to the built-in `gen_random_uuid()`
+instead of pgcrypto's functions. Grants,
 policies and row-level security on the target stay
 as they are, left out of the desired schema; adoption says how many grants
 and policies it left.
@@ -403,7 +424,8 @@ reason reviewers will read in `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`,
 which adoption writes on the line before the statement. Until then, its
 refusal names them, so you know which reasons it will ask for. An empty
 answer cancels the adoption, writing nothing. Without a terminal (in CI, for
-example) adoption refuses them, saying to run it in a terminal. `finalize` and `validate` show these
+example) adoption refuses them, listed apart from anything it doesn't
+support, saying to run it in a terminal. `finalize` and `validate` show these
 overrides like any other.
 
 ### Starting an adoption over
@@ -464,13 +486,15 @@ default privileges as they are.
   or be a member of the role that owns them (one granted `WITH INHERIT FALSE`
   doesn't count). `deploy`, `deploy-draft`, `mark` and `init --adopt`
   refuse a target where something in the managed schema is owned by another
-  role, listing each object with the `ALTER ... OWNER TO` that fixes it;
-  `status` lists them under "Deploy would refuse". `rebuild` refuses a
-  target whose managed schema itself is owned by another role, since
-  `deploy` would refuse the result (what is in the schema it drops and
-  creates again, owned by the deploy role). For `public`, which `pg_database_owner` owns, deploy as the
+  role, listing each object with its owner, then the `ALTER ... OWNER TO`
+  statements that fix them as a script to run as a superuser (it can be
+  pasted into `psql` as it is); `status` lists them under "Deploy would
+  refuse". `rebuild` refuses a target whose managed schema itself is owned
+  by another role, since `deploy` would refuse the result (what is in the
+  schema it drops and creates again, owned by the deploy role). For `public`, which `pg_database_owner` owns, deploy as the
   database's owner: the refusal's fix for it is `ALTER DATABASE <database>
-  OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`. The deploy role also needs `CREATE` on the database for
+  OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`.
+  The deploy role also needs `CREATE` on the database for
   the first deployment, which creates the history schema (and the managed
   schema, if the target lacks it).
 - **The application's roles**, their role membership and their database
@@ -488,31 +512,85 @@ default privileges as they are.
     grant select on tables to app_reader;
   alter default privileges for role deploy_role in schema app
     grant select, insert, update, delete on tables to app_writer;
+  alter default privileges for role deploy_role
+    revoke execute on functions from public;
+  alter default privileges for role deploy_role in schema app
+    grant execute on functions to app_writer;
   ```
+
+  Functions and procedures are callable by `PUBLIC`, every role, unless
+  default privileges revoke it. That revoke has to be global, without `in
+  schema`: per-schema default privileges can only add privileges, so `in
+  schema app revoke execute on functions from public` silently does nothing.
 
   Default privileges apply only to objects created afterwards: grant on what
   already exists too, e.g. `grant select on all tables in schema app to
   app_reader`.
 
-  Two things to know about grants and policies made by hand:
+  A role that refreshes materialized views needs `MAINTAIN` on them, since
+  only their owner, the deploy role, can otherwise:
+
+  ```sql
+  alter default privileges for role deploy_role in schema app
+    grant maintain on tables to app_writer;
+  ```
+
+  `MAINTAIN` on tables also allows `VACUUM`, `ANALYZE`, `REINDEX`, `CLUSTER`
+  and `LOCK TABLE`, so grant it only to a role that needs it, or by hand on
+  each materialized view (`grant maintain on app.order_totals to
+  app_writer`).
+
+  Things to know about grants and policies made by hand:
 
   - A migration that drops and recreates a table (or another object) loses
-    the grants and policies made on it by hand, and super-deploy can't
-    notice. Default privileges grant the new object again; anything else has
-    to be made again after the deployment.
+    the grants, revokes and policies made on it by hand. Default privileges
+    grant the new object again; anything else has to be made again after the
+    deployment. A lost revoke widens access: a function whose `EXECUTE` was
+    revoked from `PUBLIC` by hand is callable by every role again, unless
+    default privileges revoke it as above. A function is recreated when its
+    arguments or return type change; a change to its body alone keeps its
+    privileges. `status`, `deploy` and `deploy-draft` warn about each object
+    the pending migrations (or the draft) recreate that has grants, revokes,
+    policies or row-level security its default privileges won't give back,
+    e.g. `warning: view app.order_totals is recreated by 00007-wider-total:
+    its grants of SELECT to app_report will be lost (default privileges
+    don't restore them)`. The deployment still goes ahead.
   - A migration that changes the type of, or drops, a column a hand-made
     policy uses fails at deploy: PostgreSQL refuses while the policy depends
     on the column. Rehearsals can't catch it, because their databases have
     no hand-made policies. The deployment rolls back and PostgreSQL's error
     names the policy: drop the policy, deploy, then create it again.
+  - The deploy role owns every object, and row-level security doesn't apply
+    to a table's owner. A view reads its tables as its owner, so it shows
+    every row of a table whose policies hide them, unless it is created
+    `with (security_invoker = true)`, which makes it read them as the role
+    querying it. Declare views over tables that get policies that way:
+
+    ```sql
+    create view my_orders with (security_invoker = true) as
+      select id, total from orders;
+    ```
+
+    A materialized view is built and refreshed as the deploy role, so it
+    holds every row whatever the policies on its tables: don't build one
+    over rows a policy must hide.
+  - With `FORCE ROW LEVEL SECURITY`, a table's policies apply to its owner
+    too, so they would hide rows from a deployment's own scripts and from
+    the materialized views it builds. Deployments run with `row_security`
+    off, as `pg_dump` does: a statement a policy would filter fails with
+    `query would be affected by row-level security policy for table
+    "orders"` instead of silently skipping rows, and the deployment rolls
+    back.
+    Rehearsals can't catch it. Run `ALTER TABLE orders NO FORCE ROW LEVEL
+    SECURITY` while deploying and `FORCE` it again afterwards, or move the
+    work out of the migration.
 - **External schemas** (`externalSchemas` in `super-deploy.config.ts`, see
   [Project settings](#project-settings)), and grants on them and their
   objects. super-deploy doesn't check them: `deploy` goes ahead on a target
   without them, and a routine that reads a missing one fails only when it
   runs. On `dev`, create them as the superuser (see
   [Connecting to dev](#connecting-to-dev)). Routines run as their caller, so it's the application's
-  roles that need these grants (and the deploy role too, if a migration's
-  scripts fire a trigger that uses them). For example, a
+  roles that need these grants. For example, a
   PL/pgSQL function `app_writer` calls that reads `auth.users` needs:
 
   ```sql
@@ -520,7 +598,12 @@ default privileges as they are.
   grant select on auth.users to app_writer;
   ```
 
-  Rehearsals have no `auth` schema, so only PL/pgSQL bodies may reference it.
+  Rehearsals have no `auth` schema, so only PL/pgSQL bodies may reference
+  it, and a migration's scripts and seed data can't fire a trigger (or call
+  anything else) that reads it: every rehearsal of the migration would fail
+  with `relation "auth.users" does not exist`, whatever the targets have.
+  Such a trigger also blocks every later migration whose scripts write to
+  its table.
 
 ## The files of a draft and a migration
 
@@ -576,7 +659,9 @@ warning and doesn't block, so you can commit a draft with its hand-written
 scripts and push it for review before finalizing it. In CI, run
 `pnpm exec super-deploy validate --strict` without `--allow-draft`: it fails
 until the draft is finalized and the desired schema matches the newest
-migration, so work in progress can't be merged.
+migration, so work in progress can't be merged. (`validate` changes
+nothing, so `pnpm exec` is fine there; for `deploy` in CI, see
+[Interrupting a command](#interrupting-a-command).)
 
 ## Overriding a refusal
 
@@ -753,6 +838,40 @@ The schema change never changes: a Recovery always runs its migration's
 draft's copy: `rehearse` and `finalize` refuse a Recovery draft whose schema
 change is no longer the migration's.
 
+## Interrupting a command
+
+Ctrl+C (SIGINT), SIGTERM, or closing the terminal (SIGHUP) stops the
+running command. It cleans up first, then exits 130, 143 or 129: a
+deployment in progress rolls back and its attempt is recorded as abandoned,
+throwaway databases are dropped, and the embedded servers the command
+started are stopped. It prints one line when the interruption arrives. A
+command that changes a target (`deploy`, `deploy-draft`, `rebuild`,
+`mark`, `disposable`, `init --adopt`) prints one more once it has cleaned
+up, saying what happened to the target:
+
+- `The deployment rolled back: target qa is unchanged, still at migration 00009-add-tier.`
+- `The deployment had already finished: the interruption came too late to stop it on target qa.`
+  when the interruption came after its COMMIT. It still exits 130, 143 or
+  129, and `status --target qa` shows the attempt succeeded.
+
+An interruption after the command has finished, while it stops its
+servers, doesn't change its exit code: a deployment that committed exits 0.
+
+**In CI or under a supervisor** (a CI runner cancelling a step, `docker
+stop`, systemd), run the binary directly, as
+`./node_modules/.bin/super-deploy deploy --target prod`, or make sure the
+stop signal reaches the whole process group. With pnpm installed through
+corepack, SIGTERM to `pnpm exec super-deploy ...` alone stops only pnpm's
+launcher: the job ends with 143 while the deployment carries on unseen and
+commits. After a cancelled job, `status --target prod` shows whether the
+attempt was abandoned or succeeded.
+
+Interrupting again while it cleans up exits at once, leaving whatever
+wasn't cleaned up yet (the next command takes over a server left running).
+The same signal again within a second doesn't count: in a terminal,
+`pnpm exec` passes on a SIGTERM or SIGHUP the command has already had. Nor
+does a second SIGHUP: no one is left at the terminal to insist.
+
 ## Changing your mind
 
 Three commands throw unfinished work away:
@@ -848,6 +967,8 @@ draft-finalize-deploy path:
 
 All four need a person at a terminal. Each shows the target's name, host,
 database and last recorded migration, and goes ahead only when you type
-`YES` exactly. They refuse in CI (when the `CI` environment variable is set
+`YES` exactly. The host is the one in the connection string, followed by the
+address the server reports when that differs, e.g.
+`db.prod.internal:5432 (10.0.4.7:5432)`. They refuse in CI (when the `CI` environment variable is set
 to anything but `false` or `0`) and without a terminal, and no flag skips
 the question.

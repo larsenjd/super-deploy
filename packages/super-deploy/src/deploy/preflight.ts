@@ -2,14 +2,17 @@
 // before any rehearsal, that catch what would otherwise fail mid-transaction
 // or weaken safety (spec "Deployment engine"):
 //   - the deploy role can create the history schema, if the target has none
-//     yet: it needs CREATE on the database. `withLockedTarget` and
-//     `init --adopt` refuse up front with HistorySchemaNotCreatableError
-//     (there is nowhere to log an attempt yet), so deploy never gets this
-//     far without it; `status` lists it with the others
+//     yet: it needs CREATE on the database. `withLockedTarget` refuses up
+//     front with HistorySchemaNotCreatableError (there is nowhere to log an
+//     attempt yet), so deploy never gets this far without it; `status`
+//     lists it with the others, and `init --adopt` in its one refusal
 //   - the deploy role owns the managed schema and everything in it, or is a
 //     member of their owner (deploy/ownership.ts)
 //   - the deploy role is not superuser and holds none of the predefined roles
 //     that reach outside the database (a warning, never a refusal)
+//   - the objects the pending migrations (or draft) drop and create again
+//     carry no grants, revokes or policies made by hand that default
+//     privileges won't give back (deploy/recreated-privileges.ts; a warning)
 //   - what the target's history schema records matches the repo, and the
 //     target holds no draft (deploy-draft's), which is not a migration
 // Each history mismatch's message ends with the way out: a recorded migration
@@ -22,8 +25,9 @@
 // runs (ticket 06).
 
 import type { Session } from "../adapters/types.ts";
-import { SuperDeployError } from "../errors.ts";
+import { plural, SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
+import type { ReplayUnit } from "../rehearsal/replay.ts";
 import {
   type FinalizedMigration,
   indexFileName,
@@ -39,10 +43,12 @@ import {
 } from "./history.ts";
 import {
   type NotOwnedObject,
+  notOwnedDetails,
   notOwnedMessage,
   objectsNotOwned,
 } from "./ownership.ts";
 import { lastRecordedNumber } from "./pending.ts";
+import { recreatedPrivilegeWarnings } from "./recreated-privileges.ts";
 
 /** One way the target's recorded history disagrees with the repo. */
 export interface HistoryMismatch {
@@ -84,7 +90,11 @@ export interface PreflightFindings {
   readonly notOwned: readonly NotOwnedObject[];
   /** Recorded migrations that don't match the repo, by number. Refuses a deployment. */
   readonly historyMismatches: readonly HistoryMismatch[];
-  /** Why the deploy role is more privileged than a deployment needs. Never refuses. */
+  /**
+   * Why the deploy role is more privileged than a deployment needs, then
+   * each object the pending units drop and create again whose hand-made
+   * grants, revokes or policies on the target will be lost. Never refuses.
+   */
   readonly warnings: readonly string[];
 }
 
@@ -112,6 +122,11 @@ export interface PreflightInput {
   readonly migrations: readonly FinalizedMigration[];
   /** What the target records, in number order. */
   readonly recorded: readonly RecordedMigration[];
+  /**
+   * What the deployment would run, in order: each pending migration's
+   * variant, or a draft (and its seed data).
+   */
+  readonly pending: readonly { readonly unit: ReplayUnit }[];
 }
 
 /** Runs every check on `session` (read-only queries, no transaction). */
@@ -137,7 +152,14 @@ export async function preflightChecks(
         ).disposable,
       },
     ),
-    warnings: await deployRoleWarnings(session, input.targetName),
+    warnings: [
+      ...(await deployRoleWarnings(session, input.targetName)),
+      ...(await recreatedPrivilegeWarnings(
+        session,
+        project.config.managedSchema,
+        input.pending.map(({ unit }) => unit),
+      )),
+    ],
   };
 }
 
@@ -429,13 +451,35 @@ export class PreflightFailedError extends SuperDeployError {
   readonly code = "preflight-failed";
   readonly target: string;
   readonly findings: PreflightFindings;
+  /**
+   * The refusals as lines for people, the way the CLI prints them: one per
+   * line, then the objects the deploy role doesn't own with their fixes as
+   * a script. `summary` follows them.
+   */
+  readonly details: readonly string[];
+  /** The message without the refusals `details` lists: their count. */
+  readonly summary: string;
 
   constructor(target: string, findings: PreflightFindings) {
+    const refusals = preflightRefusals(findings);
     super(
-      `Target ${target} failed the deploy pre-flight checks: ${preflightRefusals(findings).join("; ")}`,
+      `Target ${target} failed the deploy pre-flight checks: ${refusals.join("; ")}`,
     );
     this.target = target;
     this.findings = findings;
+    const others = preflightRefusals({ ...findings, notOwned: [] });
+    this.details = [
+      ...(others.length === 0
+        ? []
+        : [
+            `Target ${target} failed the deploy pre-flight checks:`,
+            ...others.map((refusal) => `  ${refusal}`),
+          ]),
+      ...(findings.notOwned.length === 0
+        ? []
+        : notOwnedDetails(target, findings.notOwned)),
+    ];
+    this.summary = `Target ${target} failed the deploy pre-flight checks (${plural(refusals.length, "finding")}, listed above)`;
   }
 }
 

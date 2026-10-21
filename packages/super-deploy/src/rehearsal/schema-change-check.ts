@@ -16,7 +16,12 @@
 // the post-migration script change only data, so they never cause one.
 import type { Session } from "../adapters/types.ts";
 import type { FactDifference } from "../verification/catalog.ts";
-import { type DeployTimeFile, replay, SqlFileFailedError } from "./replay.ts";
+import {
+  type DeployTimeFile,
+  type RehearsalSchemas,
+  replay,
+  SqlFileFailedError,
+} from "./replay.ts";
 import {
   catalogLines,
   differenceLines,
@@ -47,14 +52,15 @@ export async function checkSchemaChange(
   source: Session,
   desired: Session,
   schemaChange: DeployTimeFile,
-  managedSchema: string,
+  schemas: RehearsalSchemas,
   draft: { readonly preMigrationScript: boolean },
 ): Promise<SchemaChangeShortfall[]> {
+  const { managedSchema } = schemas;
   try {
     await replay(
       source,
       [{ label: "the generated schema change", files: [schemaChange] }],
-      managedSchema,
+      schemas,
     );
   } catch (error) {
     if (error instanceof SqlFileFailedError) {

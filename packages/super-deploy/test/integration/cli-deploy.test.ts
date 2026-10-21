@@ -107,7 +107,7 @@ describe("deploy and status", () => {
     });
   });
 
-  test("status lists what a deployment would refuse and exits 1, and deploy then fails with exit code 1", async () => {
+  test("status lists what a deployment would refuse and exits 1, and deploy then fails with exit code 1, listing the fixes as a script", async () => {
     const { config, database } = deployConfig(server, {
       settings: 'managedSchema: "app",',
     });
@@ -142,7 +142,14 @@ describe("deploy and status", () => {
     expect(refused).toMatchObject({
       exitCode: 1,
       stdout: "",
-      stderr: preflightFailed,
+      stderr: [
+        "The deploy role on target dev doesn't own 1 object in the managed schema:",
+        "  schema app (owned by super_deploy)",
+        "To fix, run as a superuser or as each object's owner:",
+        "  ALTER SCHEMA app OWNER TO deployer;",
+        "Error: Target dev failed the deploy pre-flight checks (1 finding, listed above)",
+        "",
+      ].join("\n"),
     });
   });
 

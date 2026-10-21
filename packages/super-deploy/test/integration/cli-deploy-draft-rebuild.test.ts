@@ -284,6 +284,39 @@ unix("deploy-draft", () => {
     ]);
   });
 
+  test("warns before asking that a table the draft drops and creates again loses its hand-made grant", async () => {
+    const { dir, database } = await deployedProject();
+    const reader = roleName("reader");
+    await server.query(`create role ${reader} nologin`);
+    await asDeployRole(
+      server,
+      database,
+      `grant select on customers to ${reader}`,
+    );
+    const withEmail = customers(",\n  email text");
+    await dir.write("data-model/desired-schema/customers.sql", withEmail);
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await draft(project, { name: "add email" });
+    } finally {
+      await project.close();
+    }
+    await dir.write(
+      "data-model/draft/schema-change.sql",
+      `drop table public.customers;\n${withEmail.replace("customers", "public.customers")}`,
+    );
+
+    const terminal = spawnTerminal(["deploy-draft", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    const shown = boxLines(await terminal.waitFor("Type YES")).join(" ");
+    expect(shown).toContain(
+      `Warning: table public.customers is recreated by draft add-email: its grants of SELECT to ${reader} will be lost (default privileges don't restore them)`,
+    );
+    terminal.type(keys.ctrlC);
+    expect(await terminal.exited).toBe(1);
+  });
+
   test("says in the confirmation that the schema change was edited by hand and hasn't been rehearsed, then deploys it on YES", async () => {
     const { dir, database } = await deployedProject();
     await requireCityDraft(dir);
@@ -462,7 +495,7 @@ unix("deploy-draft", () => {
     });
 
     await terminal.waitFor(
-      `table public.customers is owned by super_deploy, whose privileges the deploy role doesn't have (fix: ALTER TABLE public.customers OWNER TO ${deployer})`,
+      `ALTER TABLE public.customers OWNER TO ${deployer};`,
     );
     expect(await terminal.exited).toBe(1);
     expect(terminal.screen).not.toContain("Type YES");
@@ -1277,9 +1310,11 @@ unix("rebuild", () => {
       ["rebuild", "--target", "dev", "--to", "1"],
       { cwd: dir.root },
     );
-    await terminal.waitFor(
-      `Error: rebuild can't run on target dev: schema app is owned by super_deploy, whose privileges the deploy role doesn't have (fix: ALTER SCHEMA app OWNER TO ${embeddedDeployRole}), so deploy would refuse the rebuilt target. Fix it, then run rebuild again (nothing changed)`,
+    const shown = await terminal.waitFor(
+      "Error: The deploy role on target dev doesn't own 1 object in the managed schema, listed above, so deploy would refuse the rebuilt target. Fix it, then run rebuild again (nothing changed)",
     );
+    expect(shown).toContain("schema app (owned by super_deploy)");
+    expect(shown).toContain(`ALTER SCHEMA app OWNER TO ${embeddedDeployRole};`);
     expect(await terminal.exited).toBe(1);
     expect(terminal.screen).not.toContain("Type YES");
     expect(
@@ -1300,8 +1335,9 @@ unix("rebuild", () => {
       { cwd: dir.root },
     );
     await terminal.waitFor(
-      "Error: rebuild can't run on target dev: schema app is owned by super_deploy",
+      "Error: The deploy role on target dev doesn't own 1 object in the managed schema",
     );
+    expect(terminal.screen).toContain("schema app (owned by super_deploy)");
     expect(await terminal.exited).toBe(1);
     expect(terminal.screen).not.toContain("su_owned");
   });

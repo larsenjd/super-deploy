@@ -27,6 +27,7 @@
 import { inTransaction } from "../adapters/transaction.ts";
 import type { Session } from "../adapters/types.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
+import type { CatalogReference } from "../sql-analysis/index.ts";
 
 const describe = (classTable: string, oid: string, sub = "0") =>
   `pg_describe_object('${classTable}'::regclass, ${oid}, ${sub})`;
@@ -186,22 +187,6 @@ const bindingQueries: Readonly<Record<string, string>> = {
     where n.nspname = $1 and k.contype = 'f'`,
 };
 
-/**
- * An object's name in drift, from the `described` query's address, `k` (its
- * pg_constraint row) and `t` (its pg_type row): pg_describe_object's, except
- * where that name hides what the object belongs to. A domain is `domain
- * app.d` and its constraint `constraint c on domain app.d` (PostgreSQL says
- * `type app.d` and `constraint c`), so an extra or missing domain folds its
- * constraints in as a table does (drift.ts); a composite type's pg_type row
- * takes its relation's name, `composite type app.pair`, so the type is one
- * object, not also `type app.pair`.
- */
-const objectName = `case
-  when k.contypid <> 0 then format('constraint %s on domain %s', k.conname, k.contypid::regtype)
-  when t.typtype = 'd' then format('domain %s', t.oid::regtype)
-  when t.typrelid <> 0 then pg_describe_object('pg_class'::regclass, t.typrelid, 0)
-  else pg_describe_object(class, obj, sub) end`;
-
 export interface CatalogFact {
   /** e.g. `relation`, `column`, `depends`. */
   readonly kind: string;
@@ -255,23 +240,11 @@ export async function catalogFacts(
           read.push({ kind, key: addressKey(row), line: row.line });
         }
       }
-      // Described with the managed schema off the search path, so each
-      // object in it is named with its schema: pg_describe_object leaves
-      // out the schema of whatever the search path finds.
-      await session.execute("SET LOCAL search_path TO pg_catalog");
-      const described = await session.query<ObjectAddress & { object: string }>(
-        `select class::text as class, obj::text as obj, sub, ${objectName} as object
-         from unnest($1::oid[], $2::oid[], $3::int4[]) as address(class, obj, sub)
-         left join pg_constraint k on class = 'pg_constraint'::regclass and k.oid = obj
-         left join pg_type t on class = 'pg_type'::regclass and t.oid = obj`,
-        addressColumns([...new Set(read.map(({ key }) => key))]),
-      );
-      for (const row of described.rows) {
-        // A view's query is its _RETURN rule; name the view instead.
-        objects.set(
-          addressKey(row),
-          row.object.replace(/^rule _RETURN on /, ""),
-        );
+      for (const [key, object] of await describeObjects(
+        session,
+        read.map(({ key }) => key),
+      )) {
+        objects.set(key, object);
       }
     },
     [
@@ -288,8 +261,116 @@ export async function catalogFacts(
   return facts.sort((a, b) => compare(factLine(a), factLine(b)));
 }
 
-/** Where an object is in its database, as for pg_describe_object. */
-interface ObjectAddress {
+/**
+ * Each object's name, as the catalog facts name objects: pg_describe_object
+ * with only pg_catalog on the search path, so `table app.orders`,
+ * `function app.answer(integer)`. Read-only, in a transaction of its own.
+ */
+export async function objectNames(
+  session: Session,
+  addresses: readonly ObjectAddress[],
+): Promise<string[]> {
+  const keys = addresses.map(addressKey);
+  const names = await inTransaction(
+    session,
+    () => describeObjects(session, keys),
+    "BEGIN READ ONLY",
+  );
+  return keys.map((key) => names.get(key) ?? key);
+}
+
+/**
+ * The name (as `objectNames` gives it) of each object `references` find by
+ * name, or undefined for one the database doesn't have. Names resolve with
+ * `managedSchema` and pg_catalog on the search path. Read-only, in a
+ * transaction of its own.
+ */
+export async function referencedObjectNames(
+  session: Session,
+  managedSchema: string,
+  references: readonly CatalogReference[],
+): Promise<(string | undefined)[]> {
+  return inTransaction(
+    session,
+    async () => {
+      const { rows } = await session.query<{ ord: number } & ObjectAddress>(
+        `select r.ord::int4 as ord, x.class::oid::text as class, x.obj::oid::text as obj, 0 as sub
+         from unnest($1::text[], $2::text[], $3::text[]) with ordinality as r(kind, name, member, ord)
+         cross join lateral (
+           select 'pg_class'::regclass as class, to_regclass(r.name)::oid as obj where r.kind = 'relation'
+           union all
+           select 'pg_type'::regclass, to_regtype(r.name)::oid where r.kind = 'type'
+           union all
+           select 'pg_proc'::regclass, to_regprocedure(r.name)::oid where r.kind = 'routine'
+           union all
+           select 'pg_trigger'::regclass, t.oid from pg_trigger t
+            where r.kind = 'trigger' and t.tgrelid = to_regclass(r.name) and t.tgname = r.member
+           union all
+           select 'pg_constraint'::regclass, c.oid from pg_constraint c
+            where r.kind = 'constraint' and c.conrelid = to_regclass(r.name) and c.conname = r.member
+         ) as x
+         where x.obj is not null`,
+        [
+          references.map(({ kind }) => kind),
+          references.map(({ name }) => name),
+          references.map(({ member }) => member ?? null),
+        ],
+      );
+      const names = await describeObjects(session, rows.map(addressKey));
+      const byOrdinal = new Map(
+        rows.map((row) => [row.ord, names.get(addressKey(row))]),
+      );
+      return references.map((_, index) => byOrdinal.get(index + 1));
+    },
+    ["BEGIN READ ONLY", ...pinnedSettings(managedSchema)].join(";\n"),
+  );
+}
+
+/**
+ * An object's name in drift, from `describeObjects`' address, `k` (its
+ * pg_constraint row) and `t` (its pg_type row): pg_describe_object's, except
+ * where that name hides what the object belongs to. A domain is `domain
+ * app.d` and its constraint `constraint c on domain app.d` (PostgreSQL says
+ * `type app.d` and `constraint c`), so an extra or missing domain folds its
+ * constraints in as a table does (drift.ts); a composite type's pg_type row
+ * takes its relation's name, `composite type app.pair`, so the type is one
+ * object, not also `type app.pair`.
+ */
+const objectName = `case
+  when k.contypid <> 0 then format('constraint %s on domain %s', k.conname, k.contypid::regtype)
+  when t.typtype = 'd' then format('domain %s', t.oid::regtype)
+  when t.typrelid <> 0 then pg_describe_object('pg_class'::regclass, t.typrelid, 0)
+  else pg_describe_object(class, obj, sub) end`;
+
+/**
+ * Each address key's object description, in the transaction the session is
+ * in. Described with the managed schema off the search path, so each
+ * object in it is named with its schema: pg_describe_object leaves out the
+ * schema of whatever the search path finds.
+ */
+async function describeObjects(
+  session: Session,
+  keys: readonly string[],
+): Promise<Map<string, string>> {
+  await session.execute("SET LOCAL search_path TO pg_catalog");
+  const described = await session.query<ObjectAddress & { object: string }>(
+    `select class::text as class, obj::text as obj, sub, ${objectName} as object
+     from unnest($1::oid[], $2::oid[], $3::int4[]) as address(class, obj, sub)
+     left join pg_constraint k on class = 'pg_constraint'::regclass and k.oid = obj
+     left join pg_type t on class = 'pg_type'::regclass and t.oid = obj`,
+    addressColumns([...new Set(keys)]),
+  );
+  // A view's query is its _RETURN rule; name the view instead.
+  return new Map(
+    described.rows.map((row) => [
+      addressKey(row),
+      row.object.replace(/^rule _RETURN on /, ""),
+    ]),
+  );
+}
+
+/** Where an object is in its database, as for pg_describe_object: oids as text. */
+export interface ObjectAddress {
   readonly class: string;
   readonly obj: string;
   readonly sub: number;
