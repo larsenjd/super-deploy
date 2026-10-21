@@ -380,12 +380,19 @@ describe("deploy", () => {
     ).toEqual([2]);
   });
 
-  test("a lock timeout the target doesn't set is reported as the default", async () => {
-    const { error } = await deployWhileCustomersLocked("");
+  test.each([
+    ["doesn't set is reported as the default", "", "(5s, the default)"],
+    [
+      "sets to the default's value is reported as its own",
+      'lockTimeout: "5s",',
+      "(5s)",
+    ],
+  ])("a lock timeout the target %s", async (_, setting, shown) => {
+    const { error } = await deployWhileCustomersLocked(setting);
 
     expect(error).toBeInstanceOf(SqlFileFailedError);
     expect((error as SqlFileFailedError).message).toContain(
-      "Target dev's lockTimeout (5s, the default) ran out",
+      `Target dev's lockTimeout ${shown} ran out`,
     );
   });
 

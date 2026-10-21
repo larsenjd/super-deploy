@@ -46,6 +46,7 @@ async function rehearseHistory(project: Project): Promise<string> {
       name: targetName,
       adapter: { connect: () => database.connect() },
       lockTimeoutMs: 5000,
+      lockTimeoutSet: false,
       statementTimeoutMs: undefined,
       connectTimeoutMs: 10_000,
     };

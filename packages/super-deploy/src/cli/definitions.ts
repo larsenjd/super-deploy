@@ -479,7 +479,7 @@ const draftCommand: CommandDefinition = {
     for (const shortfall of result.shortfalls) {
       context.warn(`warning: ${shortfall.message}`);
       for (const difference of shortfall.differences) {
-        context.warn(`  ${difference}`);
+        context.warn(`  ${indentContinuation(difference, "    ")}`);
       }
     }
   },

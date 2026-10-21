@@ -144,13 +144,19 @@ export class TargetSessionEndedError extends SuperDeployError {
     const reason = errorReason(options.cause);
     super(
       [
-        ending === "ended"
-          ? `The server ended the session on target ${target} (${reason}).`
-          : `The connection to target ${target} was lost (${reason}).`,
+        {
+          ended: `The server ended the session on target ${target} (${reason}).`,
+          idle: `The server ended the session on target ${target}: its transaction sat idle for over a minute, so super-deploy had stopped responding (${reason}).`,
+          lost: `The connection to target ${target} was lost (${reason}).`,
+        }[ending],
         rollback === undefined
           ? `Nothing changed on target ${target}.`
           : rolledBackSentence(rollback),
-        `Next: retry once target ${target} is reachable${ending === "ended" ? "; if its session was ended on purpose, find out why first" : ""}.`,
+        {
+          ended: `Next: retry once target ${target} is reachable; if its session was ended on purpose, find out why first.`,
+          idle: `Next: retry, keeping the machine running super-deploy awake and its network up until the command finishes.`,
+          lost: `Next: retry once target ${target} is reachable.`,
+        }[ending],
       ].join(" "),
       options,
     );

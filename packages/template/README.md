@@ -1036,12 +1036,15 @@ command that changes a target (`deploy`, `deploy-draft`, `rebuild`,
 up, saying what happened to the target:
 
 - `The deployment rolled back: target qa is unchanged, still at migration 00009-add-tier.`
-- `The deployment had already finished: the interruption came too late to stop it on target qa.`
-  when the interruption came after its COMMIT. It still exits 130, 143 or
-  129, and `status --target qa` shows the attempt succeeded.
+- `The deployment had already finished: the interruption came too late to
+  stop it on target qa.` when the interruption came after its COMMIT but
+  while the command was still running. It still exits 130, 143 or 129,
+  and `status --target qa` shows the attempt succeeded.
 
-An interruption after the command has finished, while it stops its
-servers, doesn't change its exit code: a deployment that committed exits 0.
+Once the command has finished (it has printed its result or its error),
+an interruption while it stops its servers doesn't change its exit code:
+0 after success, 1 after a failure. Its notice says the command had
+finished.
 
 **In CI or under a supervisor** (a CI runner cancelling a step, `docker
 stop`, systemd), run the binary directly, as

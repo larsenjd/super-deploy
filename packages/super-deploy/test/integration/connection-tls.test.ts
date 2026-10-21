@@ -1,11 +1,11 @@
-// API seam for TLS on postgresTarget's connection strings: `sslmode` means
+// API seam for TLS on postgresTarget's (and postgresRehearsal's) connection strings: `sslmode` means
 // what it means to libpq and psql, and node-postgres prints no warning of its
 // own. The server gets TLS from test/fixtures/tls, a self-signed certificate
 // for 127.0.0.1 standing in for a server with a private CA.
 import { chmod, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AdapterError, postgresTarget } from "super-deploy";
+import { AdapterError, postgresRehearsal, postgresTarget } from "super-deploy";
 import { embeddedPostgres } from "super-deploy/embedded-postgres";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
@@ -157,3 +157,34 @@ test.each(["bogus", "DISABLE", "verify_full"])(
 test("sslmode=allow connects without encrypting", async () => {
   await expect(encrypted(`${url}?sslmode=allow`)).resolves.toBe(false);
 });
+
+test.each([
+  [
+    "an unreadable sslrootcert",
+    "sslmode=verify-full&sslrootcert=/nonexistent.pem",
+    "The rehearsal adapter: sslrootcert file /nonexistent.pem can't be read: no such file or directory",
+  ],
+  [
+    "an sslmode libpq doesn't know",
+    "sslmode=bogus",
+    "The rehearsal adapter's connection string has sslmode=bogus, which isn't one of disable, allow, prefer, require, verify-ca, verify-full",
+  ],
+])(
+  "postgresRehearsal refuses %s the same way, before connecting",
+  async (_, parameters, message) => {
+    const rehearsal = postgresRehearsal({
+      connectionString: `${url}?${parameters}`,
+    });
+
+    const error = await rehearsal
+      .createDatabase({
+        encoding: "UTF8",
+        locale: "C",
+        collationProvider: "libc",
+      })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(AdapterError);
+    expect(error).toMatchObject({ code: "connection-string-invalid", message });
+  },
+);

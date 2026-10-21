@@ -54,7 +54,7 @@ import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { localHost } from "./ports.ts";
 import { isAlive } from "./server-lease.ts";
-import { AdapterError } from "./types.ts";
+import { AdapterError, shownPath } from "./types.ts";
 
 const logFileName = "super-deploy-server.log";
 // How long a client waits for a server that reports it is starting up
@@ -111,7 +111,7 @@ export async function initialise(
   }
   if ((await readdir(dataDir).catch(() => [])).length > 0) {
     throw new AdapterError(
-      `${dataDir} is not a complete PostgreSQL data folder (it has no PG_VERSION): ${wayOut}`,
+      `${shownPath(dataDir)} is not a complete PostgreSQL data folder (it has no PG_VERSION): ${wayOut}`,
     );
   }
   const { initdb } = await postgresBinaries();
@@ -131,7 +131,7 @@ export async function initialise(
     ]);
     if (result.code !== 0) {
       throw new AdapterError(
-        `Embedded PostgreSQL failed to initialise ${dataDir}: ${lastLines(result.output)}`,
+        `Embedded PostgreSQL failed to initialise ${shownPath(dataDir)}: ${lastLines(result.output)}`,
       );
     }
     // An empty folder in its place (made by hand) is replaced.
@@ -140,7 +140,7 @@ export async function initialise(
       // Another command initialised it meanwhile.
       if (!existsSync(join(dataDir, "PG_VERSION"))) {
         throw new AdapterError(
-          `Embedded PostgreSQL failed to initialise ${dataDir}`,
+          `Embedded PostgreSQL failed to initialise ${shownPath(dataDir)}`,
           { cause: error },
         );
       }
@@ -181,7 +181,7 @@ export async function startServer(
   if (result.code !== 0) {
     const serverLog = await readFile(log, "utf8").catch(() => "");
     throw new AdapterError(
-      `Embedded PostgreSQL failed to start in ${dataDir}: ${lastLines(serverLog || result.output)}`,
+      `Embedded PostgreSQL failed to start in ${shownPath(dataDir)}: ${lastLines(serverLog || result.output)}`,
     );
   }
 }
@@ -200,7 +200,7 @@ export async function stopServer(dataDir: string): Promise<void> {
     );
     if (result.code !== 0 && (await runningPort(dataDir)) !== undefined) {
       throw new AdapterError(
-        `Embedded PostgreSQL failed to stop in ${dataDir}: ${lastLines(result.output)}`,
+        `Embedded PostgreSQL failed to stop in ${shownPath(dataDir)}: ${lastLines(result.output)}`,
       );
     }
     return;
@@ -215,16 +215,19 @@ export async function stopServer(dataDir: string): Promise<void> {
     if ((error as NodeJS.ErrnoException).code === "ESRCH") {
       return;
     }
-    throw new AdapterError(`Embedded PostgreSQL failed to stop in ${dataDir}`, {
-      cause: error,
-    });
+    throw new AdapterError(
+      `Embedded PostgreSQL failed to stop in ${shownPath(dataDir)}`,
+      {
+        cause: error,
+      },
+    );
   }
   // Gone once it has removed postmaster.pid, as `pg_ctl stop -w` waits.
   const deadline = Date.now() + stopWaitMs;
   while ((await readPidFile(dataDir))?.pid === pid && isAlive(pid)) {
     if (Date.now() > deadline) {
       throw new AdapterError(
-        `Embedded PostgreSQL failed to stop in ${dataDir}: still running after ${stopWaitMs / 1000} s`,
+        `Embedded PostgreSQL failed to stop in ${shownPath(dataDir)}: still running after ${stopWaitMs / 1000} s`,
       );
     }
     await delay(50);
@@ -258,13 +261,13 @@ export async function waitUntilAccepting(
         (recorded.status === "ready" || Date.now() > deadline)
       ) {
         throw new AdapterError(
-          `${recorded.path} names process ${recorded.pid} and port ${recorded.port}, but no server answers there: if no super-deploy command is running, delete that file and try again`,
+          `${shownPath(recorded.path)} names process ${recorded.pid} and port ${recorded.port}, but no server answers there: if no super-deploy command is running, delete that file and try again`,
           { cause: error },
         );
       }
       if (!transient || Date.now() > deadline) {
         throw new AdapterError(
-          `Embedded PostgreSQL in ${dataDir} does not accept connections: ${(error as Error).message}`,
+          `Embedded PostgreSQL in ${shownPath(dataDir)} does not accept connections: ${(error as Error).message}`,
           { cause: error },
         );
       }

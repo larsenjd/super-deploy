@@ -99,8 +99,12 @@ export function sqlStateOf(error: unknown): string | undefined {
     : undefined;
 }
 
-/** How a session ended: by the server, or by losing the connection. */
-export type SessionEnding = "ended" | "lost";
+/**
+ * How a session ended: by the server, by the server because its transaction
+ * sat idle too long (`idle`: the idle-in-transaction timeout every target
+ * session sets, deploy/target.ts), or by losing the connection.
+ */
+export type SessionEnding = "ended" | "idle" | "lost";
 
 /** Node's codes for a socket that failed or closed under a connection. */
 const socketFailures = new Set([
@@ -125,7 +129,7 @@ const pgConnectionGone =
 /**
  * Whether a statement's error says its session is gone, and how: `ended` by
  * the server (SQLSTATE 57P01-57P05, such as `pg_terminate_backend` or a
- * shutdown, and 25P03, the idle-in-transaction timeout), or `lost` (class
+ * shutdown), `idle` (25P03, the idle-in-transaction timeout), or `lost` (class
  * 08, a socket error such as ECONNRESET, or node-postgres's own error for a
  * dropped connection, which has no code). Undefined when the server refused
  * the statement and the session lives on, for any other error without a
@@ -143,9 +147,10 @@ export function sessionEnding(error: unknown): SessionEnding | undefined {
   if (sqlState.startsWith("08")) {
     return "lost";
   }
-  return sqlState.startsWith("57P") || sqlState === "25P03"
-    ? "ended"
-    : undefined;
+  if (sqlState === "25P03") {
+    return "idle";
+  }
+  return sqlState.startsWith("57P") ? "ended" : undefined;
 }
 
 function connectionGone(error: unknown): boolean {

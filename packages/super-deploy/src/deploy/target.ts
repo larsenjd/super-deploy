@@ -29,11 +29,7 @@
 
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
 import { AdapterError } from "../adapters/types.ts";
-import {
-  durationText,
-  type ResolvedTarget,
-  targetDefaults,
-} from "../config/config.ts";
+import { durationText, type ResolvedTarget } from "../config/config.ts";
 import { SuperDeployError } from "../errors.ts";
 import type { GuardedCommand, TargetView } from "../guard/guard.ts";
 import { InterruptedError } from "../interruption.ts";
@@ -64,7 +60,7 @@ export function targetTimeouts(target: ResolvedTarget): string[] {
 /** A target's lock and statement timeouts, as messages about them need them. */
 export type TargetTimeoutSettings = Pick<
   ResolvedTarget,
-  "name" | "lockTimeoutMs" | "statementTimeoutMs"
+  "name" | "lockTimeoutMs" | "lockTimeoutSet" | "statementTimeoutMs"
 >;
 
 /** PostgreSQL's SQLSTATE for a statement cancelled by lock_timeout (55P03) or statement_timeout (57014). */
@@ -101,7 +97,7 @@ export function timeoutRanOut(
   if (sqlState === "55P03") {
     const value = durationText(target.lockTimeoutMs);
     return {
-      what: `Target ${name}'s lockTimeout (${target.lockTimeoutMs === targetDefaults.lockTimeoutMs ? `${value}, the default` : value}) ran out waiting for a lock`,
+      what: `Target ${name}'s lockTimeout (${target.lockTimeoutSet ? value : `${value}, the default`}) ran out waiting for a lock`,
       next: `retry once whatever held the lock has finished, or raise lockTimeout ${where}`,
       blocker: `To see which session holds the lock next time, run status --target ${name} while super-deploy waits, or select * from pg_stat_activity where pid = any(pg_blocking_pids(<its server process>)).`,
     };

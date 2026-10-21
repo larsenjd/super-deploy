@@ -549,7 +549,15 @@ describe("a target session whose client stops responding", () => {
       release();
       await holder.close();
     }
-    expect(await deployment).toBeInstanceOf(TargetSessionEndedError);
+    const error = await deployment;
+    expect(error).toBeInstanceOf(TargetSessionEndedError);
+    expect(error).toMatchObject({ ending: "idle" });
+    expect((error as TargetSessionEndedError).message).toContain(
+      "its transaction sat idle for over a minute, so super-deploy had stopped responding",
+    );
+    expect((error as TargetSessionEndedError).message).not.toContain(
+      "ended on purpose",
+    );
     expect((await status(project, { target: "dev" })).pending).toEqual([
       expect.objectContaining({ number: 2 }),
     ]);
@@ -608,6 +616,45 @@ async function holdingCustomers<T>(
 }
 
 describe("a target session that ends before the command finishes", () => {
+  test("lost while the attempt opens, before anything changed: reported as the target's, nothing changed", async () => {
+    const { project } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      {
+        // Fault injection: the connection drops as the attempt is recorded.
+        adapter: `{
+  async connect() {
+    const session = await real.connect();
+    return {
+      ...session,
+      async query(sql, values) {
+        if (globalThis.loseAttemptOpen === true && sql.startsWith("INSERT INTO") && sql.includes("attempts")) {
+          throw new Error("Connection terminated unexpectedly");
+        }
+        return session.query(sql, values);
+      },
+    };
+  },
+}`,
+      },
+    );
+    await finalizeMigration(project, "add customers");
+    Object.assign(globalThis, { loseAttemptOpen: true });
+    try {
+      const error = await deploy(project, { target: "dev" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(TargetSessionEndedError);
+      expect(error).toMatchObject({ ending: "lost", rollback: undefined });
+      expect((error as TargetSessionEndedError).message).toContain(
+        "Nothing changed on target dev.",
+      );
+    } finally {
+      Object.assign(globalThis, { loseAttemptOpen: undefined });
+    }
+  });
+
   test("ended by the server inside the deploy transaction: the deployment rolled back, and the target is still at its last migration", async () => {
     const { project, database } = await columnPending({
       target: 'lockTimeout: "30s",',

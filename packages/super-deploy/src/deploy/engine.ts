@@ -62,6 +62,7 @@ import { quoteIdentifier } from "../sql-analysis/index.ts";
 import {
   type Attempt,
   type AttemptCommand,
+  type AttemptStart,
   openAttempt,
   settleAttempts,
 } from "./attempts.ts";
@@ -121,17 +122,17 @@ export async function withLockedTarget<T>(
   try {
     const log = tracedSession(await connectTarget(target, signal));
     try {
-      await requireHistorySchemaUsable(log, target.name, historySchema);
-      await ensureHistorySchema(log, historySchema);
-      await settleAttempts(log, historySchema);
-      const { rows } = await commandSession.query<{ pid: number }>(
-        "SELECT pg_backend_pid() AS pid",
-      );
-      const backendPid = rows[0]?.pid;
-      const attempt = await openAttempt(log, historySchema, {
-        ...command,
-        target: target.name,
-        backendPid,
+      // A session that ends or times out before the attempt opens is
+      // reported as the target's too (nothing has changed yet).
+      const { attempt, backendPid } = await openLockedAttempt(
+        log,
+        commandSession,
+        historySchema,
+        { ...command, target: target.name },
+      ).catch(async (error: unknown) => {
+        throw await targetFailure(error, target, () =>
+          rolledBack(log, historySchema, command, target),
+        );
       });
       const { session, settle } = interruptibleSession(
         commandSession,
@@ -187,6 +188,30 @@ export async function withLockedTarget<T>(
   } finally {
     await commandSession.close().catch(() => {});
   }
+}
+
+/**
+ * Before withLockedTarget's body: the history schema checked and created,
+ * earlier attempts settled, and this one opened on `log`, recording the
+ * command session's server process (the lock holder).
+ */
+async function openLockedAttempt(
+  log: Session,
+  commandSession: Session,
+  historySchema: string,
+  start: Omit<AttemptStart, "backendPid">,
+): Promise<{ attempt: Attempt; backendPid: number | undefined }> {
+  await requireHistorySchemaUsable(log, start.target, historySchema);
+  await ensureHistorySchema(log, historySchema);
+  await settleAttempts(log, historySchema);
+  const { rows } = await commandSession.query<{ pid: number }>(
+    "SELECT pg_backend_pid() AS pid",
+  );
+  const backendPid = rows[0]?.pid;
+  return {
+    attempt: await openAttempt(log, historySchema, { ...start, backendPid }),
+    backendPid,
+  };
 }
 
 /**

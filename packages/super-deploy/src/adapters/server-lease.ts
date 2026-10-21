@@ -36,7 +36,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { AdapterError } from "./types.ts";
+import { AdapterError, shownPath } from "./types.ts";
 
 const clientsDirectory = "super-deploy-clients";
 const lockFileName = "super-deploy.lock";
@@ -73,7 +73,7 @@ export async function withLeaseLock<T>(
       await rm(path, { force: true });
     } else if (Date.now() > deadline) {
       throw new AdapterError(
-        `Timed out waiting for another command to start or stop the embedded PostgreSQL server in ${dataDir}. If no other command is running, delete ${path}`,
+        `Timed out waiting for another command to start or stop the embedded PostgreSQL server in ${shownPath(dataDir)}. If no other command is running, delete ${shownPath(path)}`,
       );
     } else {
       await delay(50);

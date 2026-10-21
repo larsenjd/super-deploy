@@ -9,7 +9,8 @@
 // - SIGHUP never forces an exit: the terminal has gone, and no one is there
 //   to insist.
 // A signal prints one notice; closed output (e.g. `| head`) prints none, as
-// other CLIs stay quiet there. Exit codes: 129 SIGHUP, 130 SIGINT, 141 closed
+// other CLIs stay quiet there. Closed output is no signal: after it, the
+// first signal still lets cleanup finish (with the closed output's code). Exit codes: 129 SIGHUP, 130 SIGINT, 141 closed
 // output, 143 SIGTERM, 149 SIGBREAK. The code is also set as
 // `process.exitCode` at once, so the process exits with it even if its event
 // loop drains before the command ends.
@@ -82,15 +83,20 @@ export function watchInterruptions(): ProcessInterruptions {
 
   for (const [name, code] of Object.entries(signalExitCodes)) {
     process.on(name, () => {
-      if (exitCode !== undefined) {
+      if (first !== undefined) {
         const repeat =
-          name === first?.name && Date.now() - first.at < sameInterruptionMs;
+          name === first.name && Date.now() - first.at < sameInterruptionMs;
         if (repeat || name === "SIGHUP") {
           return;
         }
-        process.exit(exitCode);
+        process.exit(exitCode ?? code);
       }
       first = { name, at: Date.now() };
+      if (exitCode !== undefined) {
+        // Closed output came first and cleanup is under way: this is the
+        // first signal, so only a second one exits at once.
+        return;
+      }
       notice(
         settled === undefined
           ? `Interrupted by ${name}: cleaning up before exiting (interrupt again to exit at once)`
