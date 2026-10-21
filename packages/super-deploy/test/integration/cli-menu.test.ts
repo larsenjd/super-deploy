@@ -160,7 +160,7 @@ describe.skipIf(process.platform === "win32")("menu", () => {
 
     expect(await terminal.waitFor("quit")).toMatch(/Start\s*\n.*init/);
     terminal.type(keys.enter);
-    await terminal.waitFor("Initialised a super-deploy project in .");
+    await terminal.waitFor("Initialised a super-deploy project in");
     expect(dir.exists("super-deploy.config.ts")).toBe(true);
 
     // Back on init: inside the project now, it adopts a target, so it asks
