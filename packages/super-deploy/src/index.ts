@@ -151,6 +151,7 @@ export {
 export {
   NotOwnedError,
   type NotOwnedObject,
+  type UndroppableObject,
 } from "./deploy/ownership.ts";
 export type {
   HistoryMismatch,

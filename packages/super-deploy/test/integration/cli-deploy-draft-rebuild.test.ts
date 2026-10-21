@@ -910,10 +910,12 @@ unix("rebuild", () => {
     expect(status.stdout).not.toContain("Deploy would refuse");
   });
 
-  test("rolls back when the managed schema holds something it cannot drop, naming it", async () => {
+  test("refuses, without asking, a managed schema holding a member of an extension that lives elsewhere, naming the extension and its owner", async () => {
     const { dir, database } = await twoMigrations();
     // A function in public that belongs to an extension living elsewhere:
-    // only that extension could drop it.
+    // the wipe drops only extensions in the managed schema, so nothing it
+    // does can drop the function. (As the superuser: only plpgsql's owner
+    // can add to it.)
     await server.query(
       "alter extension plpgsql add function twice(int)",
       [],
@@ -922,11 +924,41 @@ unix("rebuild", () => {
 
     const terminal = spawnTerminal(
       ["rebuild", "--target", "dev", "--to", "1"],
-      {
-        cwd: dir.root,
-      },
+      { cwd: dir.root },
+    );
+    await terminal.waitFor(
+      "Error: rebuild can't wipe schema public on target dev: the deploy role can't drop function public.twice(x integer) (a member of extension plpgsql, owned by super_deploy). Take it out of its extension (ALTER EXTENSION ... DROP) or drop the extension, as its owner, then run rebuild again (nothing changed)",
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    expect(
+      await server.query(
+        "select command from deployment_history.attempts order by id",
+        [],
+        database,
+      ),
+    ).toEqual([{ command: "deploy" }, { command: "deploy" }]);
+    await server.query(
+      "alter extension plpgsql drop function twice(int)",
+      [],
+      database,
+    );
+  });
+
+  test("rolls back when the managed schema still holds something after the drops, naming it", async () => {
+    const { dir, database } = await twoMigrations();
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
     );
     await terminal.waitFor("Type YES");
+    // Made an extension member after rebuild checked what it can drop.
+    await server.query(
+      "alter extension plpgsql add function twice(int)",
+      [],
+      database,
+    );
     terminal.type(`YES${keys.enter}`);
     await terminal.waitFor(
       "Error: Could not wipe schema public on target dev: it still holds function twice(integer); drop them by hand, then run rebuild again (nothing changed)",

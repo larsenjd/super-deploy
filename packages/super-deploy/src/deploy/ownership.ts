@@ -24,7 +24,10 @@
 // `rebuild` judges with the same test what its wipe can drop
 // (`objectsNotDroppable`), which is less than ownership: the schema's owner
 // may drop anything in it but an extension. Extensions aren't in the
-// ownership check, since a deployment never alters or drops one.
+// ownership check, since a deployment never alters or drops one. The wipe
+// drops only the extensions in the managed schema, so a member there of an
+// extension living elsewhere can't be dropped whoever owns it: it is listed
+// with its extension and the extension's owner.
 
 import type { Session } from "../adapters/types.ts";
 import { SuperDeployError } from "../errors.ts";
@@ -37,6 +40,16 @@ export interface NotOwnedObject {
   readonly owner: string;
   /** The statement that gives it to the deploy role, e.g. `ALTER TABLE app.customers OWNER TO deployer`. */
   readonly fix: string;
+}
+
+/** Something in the managed schema `rebuild`'s wipe can't drop. */
+export interface UndroppableObject {
+  /** e.g. `extension citext`, `function app.answer()`. */
+  readonly object: string;
+  /** The role that owns it; for an extension's member, the extension's owner. */
+  readonly owner: string;
+  /** For a member of an extension outside the managed schema: the extension. */
+  readonly extension?: string | undefined;
 }
 
 /**
@@ -137,16 +150,19 @@ export async function objectsNotOwned(
  * can't drop, for `rebuild`'s wipe, each with its owner. PostgreSQL lets the
  * schema's owner drop what is in it, so with the managed schema's owner's
  * privileges only extensions owned by someone else are left; without them,
- * every object `objectsNotOwned` lists. Read-only.
+ * every object `objectsNotOwned` lists. Members of an extension outside the
+ * managed schema are listed too, whoever owns it: the wipe never drops that
+ * extension. Read-only.
  */
 export async function objectsNotDroppable(
   session: Session,
   managedSchema: string,
-): Promise<Omit<NotOwnedObject, "fix">[]> {
+): Promise<UndroppableObject[]> {
   const { rows } = await session.query<{
     kind: string;
     name: string;
     owner: string;
+    extension: string | null;
   }>(
     `WITH s AS (SELECT oid, nspname, nspowner FROM pg_catalog.pg_namespace WHERE nspname = $1),
      owned AS (${ownedObjectsQuery}),
@@ -155,18 +171,28 @@ export async function objectsNotDroppable(
         WHERE kind <> 'SCHEMA' AND NOT pg_catalog.pg_has_role(current_user, (SELECT nspowner FROM s), 'USAGE')
        UNION ALL
        SELECT 'pg_extension'::regclass, e.oid, 'EXTENSION', pg_catalog.quote_ident(e.extname), e.extowner
-         FROM pg_catalog.pg_extension e JOIN s ON s.oid = e.extnamespace)
-     SELECT kind, name, pg_catalog.pg_get_userbyid(owner) AS owner
-       FROM dropped
-      WHERE NOT pg_catalog.pg_has_role(current_user, owner, 'USAGE')
-        AND NOT EXISTS (SELECT FROM pg_catalog.pg_depend d
-                         WHERE d.classid = dropped.class AND d.objid = dropped.oid AND d.deptype IN ('e', 'i'))
+         FROM pg_catalog.pg_extension e JOIN s ON s.oid = e.extnamespace),
+     members_elsewhere AS (
+       SELECT owned.kind, owned.name, e.extowner AS owner, pg_catalog.quote_ident(e.extname) AS extension
+         FROM owned
+         JOIN pg_catalog.pg_depend d ON d.classid = owned.class AND d.objid = owned.oid AND d.deptype = 'e'
+         JOIN pg_catalog.pg_extension e ON d.refclassid = 'pg_extension'::regclass AND e.oid = d.refobjid
+        WHERE owned.kind <> 'SCHEMA' AND e.extnamespace <> (SELECT oid FROM s))
+     SELECT kind, name, pg_catalog.pg_get_userbyid(owner) AS owner, extension FROM (
+       SELECT kind, name, owner, NULL AS extension
+         FROM dropped
+        WHERE NOT pg_catalog.pg_has_role(current_user, owner, 'USAGE')
+          AND NOT EXISTS (SELECT FROM pg_catalog.pg_depend d
+                           WHERE d.classid = dropped.class AND d.objid = dropped.oid AND d.deptype IN ('e', 'i'))
+       UNION ALL
+       SELECT kind, name, owner, extension FROM members_elsewhere) undroppable
       ORDER BY kind COLLATE "C", name COLLATE "C"`,
     [managedSchema],
   );
-  return rows.map(({ kind, name, owner }) => ({
+  return rows.map(({ kind, name, owner, extension }) => ({
     object: `${kind.toLowerCase()} ${name}`,
     owner,
+    ...(extension === null ? {} : { extension }),
   }));
 }
 

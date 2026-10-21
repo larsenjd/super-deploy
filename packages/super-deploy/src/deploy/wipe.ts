@@ -23,7 +23,7 @@ import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { errorReason, SuperDeployError } from "../errors.ts";
 import { quoteIdentifier } from "./history.ts";
-import { type NotOwnedObject, objectsNotDroppable } from "./ownership.ts";
+import { objectsNotDroppable, type UndroppableObject } from "./ownership.ts";
 
 /**
  * Throws CannotWipeError when the managed schema holds something the deploy
@@ -320,24 +320,44 @@ export class WipeDropFailedError extends SuperDeployError {
 
 /**
  * rebuild refused before asking: the managed schema holds objects the deploy
- * role can't drop (e.g. an extension a superuser installed). Nothing changed
- * and no attempt was recorded.
+ * role can't drop (e.g. an extension a superuser installed, or a member of
+ * an extension living elsewhere). Nothing changed and no attempt was
+ * recorded.
  */
 export class CannotWipeError extends SuperDeployError {
   readonly code = "cannot-wipe";
   readonly target: string;
   readonly schema: string;
   /** Each object, e.g. `extension citext`, with its owner; never empty. */
-  readonly objects: readonly Omit<NotOwnedObject, "fix">[];
+  readonly objects: readonly UndroppableObject[];
 
   constructor(
     target: string,
     schema: string,
-    objects: readonly Omit<NotOwnedObject, "fix">[],
+    objects: readonly UndroppableObject[],
   ) {
-    const one = objects.length === 1;
+    const describe = ({ object, owner, extension }: UndroppableObject) =>
+      extension === undefined
+        ? `${object} (owned by ${owner})`
+        : `${object} (a member of extension ${extension}, owned by ${owner})`;
+    const owned = objects.filter(({ extension }) => extension === undefined);
+    const members = objects.length - owned.length;
+    const advice = [
+      owned.length === 0
+        ? ""
+        : owned.length === 1
+          ? "Drop it, change its owner to the deploy role, or ask its owner to"
+          : "Drop them, change their owners to the deploy role, or ask their owners to",
+      members === 0
+        ? ""
+        : members === 1
+          ? "Take it out of its extension (ALTER EXTENSION ... DROP) or drop the extension, as its owner"
+          : "Take them out of their extensions (ALTER EXTENSION ... DROP) or drop the extensions, as their owners",
+    ]
+      .filter((part) => part !== "")
+      .join("; ");
     super(
-      `rebuild can't wipe schema ${schema} on target ${target}: the deploy role can't drop ${objects.map(({ object, owner }) => `${object} (owned by ${owner})`).join(", ")}. ${one ? "Drop it, change its owner to the deploy role, or ask its owner to" : "Drop them, change their owners to the deploy role, or ask their owners to"}, then run rebuild again (nothing changed)`,
+      `rebuild can't wipe schema ${schema} on target ${target}: the deploy role can't drop ${objects.map(describe).join(", ")}. ${advice}, then run rebuild again (nothing changed)`,
     );
     this.target = target;
     this.schema = schema;
