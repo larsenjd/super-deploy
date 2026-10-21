@@ -1,6 +1,11 @@
 // The deploy pre-flight: read-only checks on the target, after the lock and
 // before any rehearsal, that catch what would otherwise fail mid-transaction
 // or weaken safety (spec "Deployment engine"):
+//   - a schema with the history schema's name is super-deploy's, missing,
+//     or empty and the deploy role's (deploy/history.ts creates the tables
+//     in it); any other is refused by name, with what it holds or who owns
+//     it. Like the next check, `withLockedTarget` refuses it up front
+//     (ForeignHistorySchemaError), and `init --adopt` in its one refusal
 //   - the deploy role can create the history schema, if the target has none
 //     yet: it needs CREATE on the database. `withLockedTarget` refuses up
 //     front with HistorySchemaNotCreatableError (there is nowhere to log an
@@ -26,7 +31,7 @@
 
 import type { Session } from "../adapters/types.ts";
 import { plural, SuperDeployError } from "../errors.ts";
-import type { Project } from "../project.ts";
+import { configFileName, type Project } from "../project.ts";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
 import {
   type FinalizedMigration,
@@ -37,6 +42,7 @@ import {
 } from "../store/migrations.ts";
 import {
   type DeployedDraft,
+  historyTablesExist,
   type RecordedMigration,
   readDeployedDraft,
   readTargetSettings,
@@ -78,6 +84,11 @@ export interface HistoryMismatch {
 /** What the pre-flight found on a target. */
 export interface PreflightFindings {
   /**
+   * A schema with the history schema's name that super-deploy didn't make
+   * and can't use. Undefined when there is none. Refuses a deployment.
+   */
+  readonly foreignHistorySchema: ForeignHistorySchema | undefined;
+  /**
    * The target has no history schema and the deploy role can't create it.
    * Undefined when it has one or can create it. Refuses a deployment.
    */
@@ -108,6 +119,25 @@ export interface HistorySchemaNotCreatable {
   readonly fix: string;
 }
 
+/**
+ * The target has a schema with the history schema's name that super-deploy
+ * didn't make: it holds other objects, or it is empty but the deploy role
+ * hasn't the privileges of its owner.
+ */
+export interface ForeignHistorySchema {
+  readonly historySchema: string;
+  /**
+   * What it holds, as PostgreSQL identifies it (`table audit.log`), sorted;
+   * empty when it holds nothing.
+   */
+  readonly objects: readonly string[];
+  readonly owner: string;
+  /** The deploy role (the session's current role). */
+  readonly role: string;
+  /** For an empty schema: the statement that gives it to the deploy role, e.g. `ALTER SCHEMA deployment_history OWNER TO deployer`. */
+  readonly fix: string | undefined;
+}
+
 /** Predefined roles that reach outside the database, and what they allow. */
 const privilegedRoles: Readonly<Record<string, string>> = {
   pg_execute_server_program: "run programs on the database server",
@@ -136,6 +166,10 @@ export async function preflightChecks(
   input: PreflightInput,
 ): Promise<PreflightFindings> {
   return {
+    foreignHistorySchema: await foreignHistorySchema(
+      session,
+      project.config.historySchema,
+    ),
     historySchemaNotCreatable: await historySchemaNotCreatable(
       session,
       project.config.historySchema,
@@ -169,6 +203,9 @@ export async function preflightChecks(
  */
 export function preflightRefusals(findings: PreflightFindings): string[] {
   return [
+    ...(findings.foreignHistorySchema === undefined
+      ? []
+      : [foreignHistorySchemaMessage(findings.foreignHistorySchema)]),
     ...(findings.historySchemaNotCreatable === undefined
       ? []
       : [historySchemaNotCreatableMessage(findings.historySchemaNotCreatable)]),
@@ -213,15 +250,85 @@ export function historySchemaNotCreatableMessage(
   return `the deploy role ${finding.role} needs CREATE on database ${finding.database} to create the history schema "${finding.historySchema}" (fix: ${finding.fix})`;
 }
 
+/** How many of a foreign history schema's objects its message names. */
+const objectsNamed = 5;
+
 /**
- * Throws HistorySchemaNotCreatableError if the target has no history schema
- * and the deploy role can't create it.
+ * The schema named `historySchema`, if super-deploy didn't make it and
+ * can't use it: it doesn't hold the history tables, and it holds something
+ * else (default privileges aside) or its owner isn't a role whose
+ * privileges the deploy role has. Read-only.
  */
-export async function requireHistorySchemaCreatable(
+export async function foreignHistorySchema(
+  session: Session,
+  historySchema: string,
+): Promise<ForeignHistorySchema | undefined> {
+  if (await historyTablesExist(session, historySchema)) {
+    return undefined;
+  }
+  const { rows } = await session.query<{
+    objects: string[];
+    owner: string;
+    role: string;
+    owned: boolean;
+    fix: string;
+  }>(
+    `SELECT ARRAY(SELECT pg_catalog.format('%s %s', o.type, o.identity) COLLATE "C"
+                    FROM pg_catalog.pg_depend d
+                    CROSS JOIN LATERAL pg_catalog.pg_identify_object(d.classid, d.objid, d.objsubid) o
+                   WHERE d.refclassid = 'pg_catalog.pg_namespace'::regclass AND d.refobjid = n.oid
+                     AND d.classid <> 'pg_catalog.pg_default_acl'::regclass
+                   ORDER BY 1) AS objects,
+            pg_catalog.pg_get_userbyid(n.nspowner) AS owner, current_user AS role,
+            pg_catalog.pg_has_role(current_user, n.nspowner, 'USAGE') AS owned,
+            pg_catalog.format('ALTER SCHEMA %I OWNER TO %I', n.nspname, current_user) AS fix
+       FROM pg_catalog.pg_namespace n WHERE n.nspname = $1`,
+    [historySchema],
+  );
+  const [row] = rows;
+  if (row === undefined || (row.objects.length === 0 && row.owned)) {
+    return undefined;
+  }
+  return {
+    historySchema,
+    objects: row.objects,
+    owner: row.owner,
+    role: row.role,
+    fix: row.objects.length === 0 ? row.fix : undefined,
+  };
+}
+
+/** The refusal's line: the schema, what is in it or who owns it, and the ways out. */
+export function foreignHistorySchemaMessage(
+  finding: ForeignHistorySchema,
+): string {
+  const { objects } = finding;
+  const named = objects.slice(0, objectsNamed).join(", ");
+  const what =
+    objects.length === 0
+      ? `it is empty, but owned by ${finding.owner}, whose privileges the deploy role ${finding.role} doesn't have`
+      : objects.length > objectsNamed
+        ? `it holds ${objects.length} objects, among them ${named}`
+        : `it holds ${named}`;
+  const fix = finding.fix === undefined ? "" : `run ${finding.fix}, `;
+  return `the history schema "${finding.historySchema}" exists but super-deploy didn't make it: ${what} (${fix}drop it, or set historySchema in ${configFileName} to a schema the target doesn't have)`;
+}
+
+/**
+ * Throws ForeignHistorySchemaError if the target has a schema with the
+ * history schema's name that super-deploy can't use, or
+ * HistorySchemaNotCreatableError if it has none and the deploy role can't
+ * create it.
+ */
+export async function requireHistorySchemaUsable(
   session: Session,
   target: string,
   historySchema: string,
 ): Promise<void> {
+  const foreign = await foreignHistorySchema(session, historySchema);
+  if (foreign !== undefined) {
+    throw new ForeignHistorySchemaError(target, foreign);
+  }
   const finding = await historySchemaNotCreatable(session, historySchema);
   if (finding !== undefined) {
     throw new HistorySchemaNotCreatableError(target, finding);
@@ -480,6 +587,26 @@ export class PreflightFailedError extends SuperDeployError {
         : notOwnedDetails(target, findings.notOwned)),
     ];
     this.summary = `Target ${target} failed the deploy pre-flight checks (${plural(refusals.length, "finding")}, listed above)`;
+  }
+}
+
+/**
+ * A command that records on the target (deploy, mark, rebuild, ...) refused
+ * before doing anything: the target has a schema with the history schema's
+ * name that super-deploy didn't make and can't use. Nothing was written,
+ * and no attempt was logged (there is nowhere to log it).
+ */
+export class ForeignHistorySchemaError extends SuperDeployError {
+  readonly code = "foreign-history-schema";
+  readonly target: string;
+  readonly finding: ForeignHistorySchema;
+
+  constructor(target: string, finding: ForeignHistorySchema) {
+    super(
+      `Cannot use the history schema on target ${target}: ${foreignHistorySchemaMessage(finding)}`,
+    );
+    this.target = target;
+    this.finding = finding;
   }
 }
 

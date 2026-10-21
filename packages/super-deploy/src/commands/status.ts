@@ -17,12 +17,12 @@ import { settleAttempts } from "../deploy/attempts.ts";
 import {
   type AttemptRecord,
   type DeployedDraft,
+  historyTablesExist,
   type RecordedMigration,
   readDeployedDraft,
   readRecentAttempts,
   readRecordedMigrations,
   readTargetSettings,
-  schemaExists,
 } from "../deploy/history.ts";
 import { type LockHolder, lockHolder } from "../deploy/lock.ts";
 import { pendingMigrations } from "../deploy/pending.ts";
@@ -52,7 +52,11 @@ export interface StatusOptions {
 
 export interface StatusReport {
   readonly target: string;
-  /** False until the target's first deployment (or other recorded command). */
+  /**
+   * False until the target's first deployment (or other recorded command),
+   * and while a schema of that name holds anything but super-deploy's
+   * tables (then `preflight.foreignHistorySchema`).
+   */
   readonly historySchemaExists: boolean;
   /** What the target's history schema records, in number order. */
   readonly recorded: readonly RecordedMigration[];
@@ -106,7 +110,7 @@ export async function status(
   const session = await connectTarget(target, project.signal);
   try {
     const schema = config.historySchema;
-    const exists = await schemaExists(session, schema);
+    const exists = await historyTablesExist(session, schema);
     if (exists) {
       await settleAttempts(session, schema);
     }
