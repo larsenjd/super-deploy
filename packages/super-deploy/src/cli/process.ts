@@ -1,8 +1,15 @@
 // The CLI process's interruptions: signals and closed output. The first one
 // aborts `signal` (the running command then cleans up and the CLI exits with
-// the interruption's code); a second signal exits at once. A signal prints one
-// notice; closed output (e.g. `| head`) prints none, as other CLIs stay quiet
-// there. Exit codes: 129 SIGHUP, 130 SIGINT, 141 closed output, 143 SIGTERM,
+// the interruption's code); a second signal exits at once, with two
+// exceptions that keep cleanup going (ticket 141):
+// - a repeat of the first signal within `sameInterruptionMs` is the same
+//   interruption delivered twice: in a terminal the kernel signals the
+//   foreground group and a wrapper such as `pnpm exec` forwards the same
+//   signal a few milliseconds later;
+// - SIGHUP never forces an exit: the terminal has gone, and no one is there
+//   to insist.
+// A signal prints one notice; closed output (e.g. `| head`) prints none, as
+// other CLIs stay quiet there. Exit codes: 129 SIGHUP, 130 SIGINT, 141 closed output, 143 SIGTERM,
 // 149 SIGBREAK. The code is also set as `process.exitCode` at once, so the
 // process exits with it even if its event loop drains before the command ends.
 
@@ -15,6 +22,9 @@ const signalExitCodes = {
 
 export const closedOutputExitCode = 141;
 
+/** How soon a repeat of the first signal still counts as the same interruption. */
+const sameInterruptionMs = 1000;
+
 export interface ProcessInterruptions {
   /** Aborts at the first interruption. */
   readonly signal: AbortSignal;
@@ -25,6 +35,7 @@ export interface ProcessInterruptions {
 export function watchInterruptions(): ProcessInterruptions {
   const controller = new AbortController();
   let exitCode: number | undefined;
+  let first: { name: string; at: number } | undefined;
 
   const notice = (text: string) => {
     const lead = process.stderr.isTTY ? "\n" : "";
@@ -44,8 +55,14 @@ export function watchInterruptions(): ProcessInterruptions {
   for (const [name, code] of Object.entries(signalExitCodes)) {
     process.on(name, () => {
       if (exitCode !== undefined) {
+        const repeat =
+          name === first?.name && Date.now() - first.at < sameInterruptionMs;
+        if (repeat || name === "SIGHUP") {
+          return;
+        }
         process.exit(exitCode);
       }
+      first = { name, at: Date.now() };
       notice(
         `Interrupted by ${name}: cleaning up before exiting (interrupt again to exit at once)`,
       );

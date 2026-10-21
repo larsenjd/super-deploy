@@ -73,7 +73,8 @@ program or set another `port`.
 The server runs only while something uses it: the first command that needs
 `dev` starts it, commands run at the same time share it, and it stops when
 the last of them ends. A command that was killed outright (`kill -9`, a
-crash) can leave it running; the next command that uses `dev` takes it over
+crash, or interrupted twice: see
+[Interrupting a command](#interrupting-a-command)) can leave it running; the next command that uses `dev` takes it over
 and stops it when it ends. To keep it running while you connect, run this
 in the project folder and leave it running; Ctrl+C stops it, unless a
 command is still using it:
@@ -643,6 +644,20 @@ The schema change never changes: a Recovery always runs its migration's
 `schema-change.sql`, and `draft` refuses to regenerate it. Don't edit the
 draft's copy: `rehearse` and `finalize` refuse a Recovery draft whose schema
 change is no longer the migration's.
+
+## Interrupting a command
+
+Ctrl+C (SIGINT), SIGTERM, or closing the terminal (SIGHUP) stops the
+running command. It cleans up first, then exits 130, 143 or 129: a
+deployment in progress rolls back and its attempt is recorded as abandoned,
+throwaway databases are dropped, and the embedded servers the command
+started are stopped. It prints one line when the interruption arrives.
+
+Interrupting again while it cleans up exits at once, leaving whatever
+wasn't cleaned up yet (the next command takes over a server left running).
+The same signal again within a second doesn't count: in a terminal,
+`pnpm exec` passes on a SIGTERM or SIGHUP the command has already had. Nor
+does a second SIGHUP: no one is left at the terminal to insist.
 
 ## Changing your mind
 
