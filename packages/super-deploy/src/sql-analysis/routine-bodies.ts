@@ -362,7 +362,7 @@ export interface UnqualifiedNameWarning {
   readonly file: string;
   /** The line of its CREATE statement. */
   readonly line: number;
-  /** e.g. `function order_count(bigint)`. */
+  /** As ordering names it, e.g. `function order_count(int8)`. */
   readonly routine: string;
   /** The objects of the desired schema its body names without a schema. */
   readonly names: readonly string[];
