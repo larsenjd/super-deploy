@@ -299,7 +299,8 @@ function hashes(entry: { contentHash: string; chainHash: string }) {
   return { contentHash: entry.contentHash, chainHash: entry.chainHash };
 }
 
-export type ValidationSeverity = "error" | "warning";
+/** A notice never fails `validate`, even under `--strict`. */
+export type ValidationSeverity = "error" | "warning" | "notice";
 
 /** One finding of `validate` (or of the integrity check other commands run first). */
 export interface ValidationProblem {
@@ -311,7 +312,7 @@ export interface ValidationProblem {
    * `content-hash-mismatch`, `chain-hash-mismatch`, `sql-rule-violation`,
    * `recovery-schema-change-edited`, `unknown-migration` (errors);
    * `unfinalized-draft`, `unknown-draft-file`, `undrafted-changes`
-   * (warnings).
+   * (warnings); `hand-edited-schema-change` (notices).
    */
   readonly code: string;
   readonly message: string;

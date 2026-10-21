@@ -44,6 +44,7 @@ import {
 } from "../questions.ts";
 import type { LockWarning, Override } from "../sql-analysis/index.ts";
 import { readDraft, type UnknownDraftFileOptions } from "../store/draft.ts";
+import { handEditReportFileName, handEditWarning } from "../store/hand-edit.ts";
 import type { ValidationProblem } from "../store/integrity.ts";
 import {
   migrationFolderName,
@@ -396,6 +397,7 @@ const rehearseCommand: CommandDefinition = {
   options: [],
   async run(project, _values, context) {
     const result = await rehearse(project, warnUnknownFiles(context));
+    reportWarnings(handEditWarnings(result.handEdited), context);
     reportWarnings(lockWarnings(result.warnings), context);
     for (const statement of result.destructive) {
       context.warn(
@@ -418,6 +420,11 @@ function reportWarnings(
   for (const message of messages) {
     context.warn(`warning: ${message}`);
   }
+}
+
+/** The warning about a draft's schema change edited by hand, if it was. */
+function handEditWarnings(file: string | undefined): string[] {
+  return file === undefined ? [] : [handEditWarning(file)];
 }
 
 /** Each statement that rewrites or scans an existing table, as a warning message. */
@@ -462,6 +469,7 @@ const finalizeCommand: CommandDefinition = {
     if (result === undefined) {
       return;
     }
+    reportWarnings(handEditWarnings(result.handEdited), context);
     reportWarnings(lockWarnings(result.warnings), context);
     context.result(
       result.recovery === undefined
@@ -474,6 +482,11 @@ const finalizeCommand: CommandDefinition = {
     if (result.destructive.length > 0) {
       context.result(
         `Recorded the acknowledgement of ${plural(result.destructive.length, "destructive statement")} in its metadata.json`,
+      );
+    }
+    if (result.handEdited !== undefined) {
+      context.result(
+        `Recorded the hand edit in its metadata.json and ${handEditReportFileName}`,
       );
     }
   },

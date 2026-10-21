@@ -489,6 +489,12 @@ never run by a deployment.
 No other file in a draft or migration is run. `draft.json` holds the draft's
 name, and hashes of the desired schema and the schema change `draft`
 generated, so `rehearse` can tell whether running `draft` again would help.
+`schema-change.generated.sql` is a copy of the schema change as `draft`
+generated it. If you edit `schema-change.sql` anyway, `rehearse` and
+`finalize` warn that it was edited by hand. `finalize` records the edit in the migration's
+`metadata.json` and writes `HAND-EDITED.md` into the migration, with the diff
+from the generated schema change to yours, so reviewers see it; `validate`
+lists such migrations as a notice, which `--strict` doesn't fail on.
 `draft`, `rehearse`, `finalize` and `validate` warn about any other file in
 the draft folder, such as a misnamed `post-migrate.sql`, naming it and the
 files a draft holds; `finalize` still copies it into the migration.

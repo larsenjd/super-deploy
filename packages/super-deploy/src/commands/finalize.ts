@@ -19,8 +19,10 @@ import type {
 } from "../sql-analysis/index.ts";
 import {
   draftMetadataFileName,
+  generatedSchemaChangeFileName,
   type UnknownDraftFileOptions,
 } from "../store/draft.ts";
+import { handEditReport, handEditReportFileName } from "../store/hand-edit.ts";
 import {
   chainHash,
   type HashedFile,
@@ -64,6 +66,11 @@ export interface MigrationMetadata {
   readonly overrides: readonly Override[];
   /** Present only when the migration drops structure or deletes data. */
   readonly destructive?: DestructiveAcknowledgement;
+  /**
+   * Present only when the schema change was edited by hand after `draft`
+   * generated it; HAND-EDITED.md in the migration holds the diff.
+   */
+  readonly schemaChangeEditedByHand?: true;
 }
 
 /** The destructive statements the developer acknowledged at finalize. */
@@ -97,6 +104,12 @@ export interface FinalizeResult {
   readonly destructive: readonly DestructiveStatement[];
   /** Statements that rewrite or scan an existing table while holding its lock (project-relative paths in the new migration folder). */
   readonly warnings: readonly LockWarning[];
+  /**
+   * Project-relative path the draft's schema change had when it was edited
+   * by hand since `draft` generated it; undefined if not. The migration
+   * records it (metadata.json and HAND-EDITED.md).
+   */
+  readonly handEdited: string | undefined;
 }
 
 /**
@@ -122,6 +135,7 @@ export async function finalize(
     },
   });
   const { destructive, warnings } = rehearsed.analysis;
+  const { handEdit } = rehearsed;
   const target = await finalizedPlace(project, rehearsed);
   const { path } = target;
   // Draft files are named by project-relative path; once finalized they are
@@ -150,6 +164,7 @@ export async function finalize(
             statements: destructive.map(inMigration),
           },
         }),
+    ...(handEdit === undefined ? {} : { schemaChangeEditedByHand: true }),
   };
   const files: HashedFile[] = [
     ...(await readHashedFiles(root, paths.draft, target.fromDraft)),
@@ -158,6 +173,9 @@ export async function finalize(
       text: file.text,
     })),
     { path: metadataFileName, text: `${JSON.stringify(metadata, null, 2)}\n` },
+    ...(handEdit === undefined
+      ? []
+      : [{ path: handEditReportFileName, text: handEditReport(handEdit) }]),
   ];
   const contentHash = target.contentHash(files);
   const entry = {
@@ -193,6 +211,7 @@ export async function finalize(
     recovery: migration === undefined ? undefined : target.number,
     destructive: destructive.map(finalized),
     warnings: warnings.map(finalized),
+    handEdited: handEdit?.file,
   };
 }
 
@@ -215,6 +234,12 @@ interface FinalizedPlace {
   ) => IndexEntry[];
 }
 
+/** The draft's own files, never copied into a migration or Recovery. */
+const notFinalized: ReadonlySet<string> = new Set([
+  draftMetadataFileName,
+  generatedSchemaChangeFileName,
+]);
+
 async function finalizedPlace(
   project: Project,
   rehearsed: RehearsedDraft,
@@ -231,8 +256,7 @@ async function finalizedPlace(
       number,
       folder,
       path: join(paths.migrations, folder),
-      fromDraft: (path) =>
-        path !== draftMetadataFileName && !isRecoveryPath(path),
+      fromDraft: (path) => !notFinalized.has(path) && !isRecoveryPath(path),
       contentHash: (files) => migrationContentHash(folder, files),
       previousChainHash: rehearsed.migrations.at(-1)?.chainHash ?? "",
       indexed: (entries, entry) => [...entries, entry],
@@ -249,7 +273,7 @@ async function finalizedPlace(
     folder,
     path: join(recoveries, folder),
     fromDraft: (path) =>
-      path !== draftMetadataFileName && path !== schemaChangeFileName,
+      !notFinalized.has(path) && path !== schemaChangeFileName,
     contentHash: (files) =>
       recoveryContentHash(migration.folder, folder, files),
     previousChainHash:

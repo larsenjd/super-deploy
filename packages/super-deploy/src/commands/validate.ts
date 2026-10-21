@@ -7,6 +7,9 @@
 // whose schema change is no longer its migration's.
 // Warnings: an unfinalized draft, a file in the draft folder that a draft
 // doesn't hold (store/draft.ts), and desired-schema changes not yet drafted.
+// Notices: a migration whose schema change was edited by hand
+// (store/hand-edit.ts). Never a failure, even under `strict`: the migration
+// was rehearsed, and its HAND-EDITED.md is for reviewers.
 // `strict` turns warnings into failures.
 // The first and the last are a draft in progress (the codes in `draftInProgress`):
 // `allowDraft` keeps them warnings even under `strict`, so the template's
@@ -40,6 +43,7 @@ import {
   readDraft,
   unknownDraftFiles,
 } from "../store/draft.ts";
+import { handEditReportFileName } from "../store/hand-edit.ts";
 import { desiredSchemaHash, InvalidEncodingError } from "../store/hashing.ts";
 import {
   checkMigrations,
@@ -49,6 +53,7 @@ import {
 } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
+  exists,
   makeReadOnly,
   schemaChangeFileName,
   snapshotFolderName,
@@ -79,7 +84,7 @@ export interface ValidationReport {
   readonly migrations: number;
   /** How many finalized Recoveries (of all migrations) were checked. */
   readonly recoveries: number;
-  /** Warnings found (a passing report never has errors). */
+  /** Warnings and notices found (a passing report never has errors). */
   readonly problems: readonly ValidationProblem[];
   /** Project-relative paths of finalized files that were writable and were made read-only again. */
   readonly readOnlyRestored: readonly string[];
@@ -101,6 +106,17 @@ export async function validate(
   const integrity = await checkMigrations(root, paths);
   const problems: ValidationProblem[] = [...integrity.problems];
   const display = (absolute: string) => projectRelative(root, absolute);
+  for (const migration of integrity.migrations) {
+    const report = join(migration.path, handEditReportFileName);
+    if (await exists(report)) {
+      problems.push({
+        severity: "notice",
+        code: "hand-edited-schema-change",
+        message: `Migration ${migration.folder}'s schema change was edited by hand after draft generated it: ${display(report)} shows the diff`,
+        path: display(report),
+      });
+    }
+  }
   const warn = (code: string, message: string, path: string) => {
     problems.push({ severity: "warning", code, message, path });
   };
@@ -181,7 +197,9 @@ export async function validate(
 
   const fails = (problem: ValidationProblem) =>
     problem.severity === "error" ||
-    (strict && !(allowDraft && draftInProgress.has(problem.code)));
+    (problem.severity === "warning" &&
+      strict &&
+      !(allowDraft && draftInProgress.has(problem.code)));
   if (problems.some(fails)) {
     throw new ValidationFailedError(problems, problems.filter(fails), strict);
   }

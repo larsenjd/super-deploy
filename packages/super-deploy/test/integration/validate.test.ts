@@ -253,7 +253,7 @@ describe("validate warnings", () => {
       severity: "warning",
       code: "unknown-draft-file",
       message:
-        "data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql and post-migration.sql)",
+        "data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)",
       path: "data-model/draft/post-migrate.sql",
     };
 
@@ -278,7 +278,7 @@ describe("validate warnings", () => {
     });
 
     expect(error.message).toBe(
-      "Validation failed with 1 warning (--strict): data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql and post-migration.sql)",
+      "Validation failed with 1 warning (--strict): data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)",
     );
     expect(error.problems.map((problem) => problem.code)).toEqual([
       "unfinalized-draft",
@@ -297,7 +297,7 @@ describe("validate warnings", () => {
       severity: "warning",
       code: "unknown-draft-file",
       message:
-        "data-model/draft/notes/NOTES.md is not one of a draft's files (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql and post-migration.sql)",
+        "data-model/draft/notes/NOTES.md is not one of a draft's files (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)",
       path: "data-model/draft/notes/NOTES.md",
     });
   });
@@ -354,5 +354,35 @@ export default defineConfig({
     const project = await loadProject({ cwd: dir.root });
 
     await expect(validate(project)).resolves.toMatchObject({ migrations: 0 });
+  });
+});
+
+describe("validate notices", () => {
+  test("list a migration whose schema change was edited by hand, which --strict doesn't fail on", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: { "data-model/desired-schema/customers.sql": customers },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    await draft(project, { name: "Add customers" });
+    const index = "create index customers_name_idx on customers (name);\n";
+    const schemaChange = "data-model/draft/schema-change.sql";
+    await dir.write(schemaChange, `${await dir.read(schemaChange)}${index}`);
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      `${customers}${index}`,
+    );
+    await finalize(project);
+
+    const report = await validate(project, { strict: true });
+
+    expect(report.problems).toEqual([
+      {
+        severity: "notice",
+        code: "hand-edited-schema-change",
+        message: `Migration 00001-add-customers's schema change was edited by hand after draft generated it: ${folder}/HAND-EDITED.md shows the diff`,
+        path: `${folder}/HAND-EDITED.md`,
+      },
+    ]);
   });
 });
