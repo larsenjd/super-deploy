@@ -24,7 +24,7 @@ const reasons = {
   privileges: `privileges and row-level security are ${outside}`,
   roles: `roles, like privileges and row-level security, are ${outside}`,
   ownership: `the deploy role owns everything in the managed schema; privileges and row-level security are ${outside}`,
-  definer: `the routine would run with the deploy role's rights for every role allowed to call it, and privileges, which decide who that is, are ${outside}; leave the default, SECURITY INVOKER`,
+  definer: `the routine would run with the deploy role's rights for every role allowed to call it, and privileges and row-level security are ${outside}, so nothing here limits who that is; leave the default, SECURITY INVOKER`,
 } as const;
 
 /** Statement types refused whatever they say, with the reason. */
@@ -34,6 +34,7 @@ const refusedStatements: Readonly<Record<string, keyof typeof reasons>> = {
   AlterDefaultPrivilegesStmt: "privileges",
   CreateRoleStmt: "roles",
   AlterRoleStmt: "roles",
+  AlterRoleSetStmt: "roles",
   DropRoleStmt: "roles",
   DropOwnedStmt: "roles",
   AlterOwnerStmt: "ownership",
@@ -56,6 +57,16 @@ const refusal = (what: string, reason: keyof typeof reasons): Refusal => ({
   rule: "unsupported-object",
   message: `${what} is not supported: ${reasons[reason]}`,
 });
+
+const definer = refusal("SECURITY DEFINER", "definer");
+
+/** Object types renamed by ALTER ... RENAME that are outside super-deploy. */
+const refusedRenames: Readonly<
+  Record<string, readonly [string, keyof typeof reasons]>
+> = {
+  OBJECT_POLICY: ["ALTER POLICY ... RENAME", "privileges"],
+  OBJECT_ROLE: ["ALTER ROLE ... RENAME", "roles"],
+};
 
 /**
  * Why super-deploy refuses a statement that grants, revokes, manages roles
@@ -83,10 +94,10 @@ export function privilegeRefusal(
       return body.removeType === "OBJECT_POLICY"
         ? refusal("DROP POLICY", "privileges")
         : undefined;
-    case "RenameStmt":
-      return body.renameType === "OBJECT_POLICY"
-        ? refusal("ALTER POLICY ... RENAME", "privileges")
-        : undefined;
+    case "RenameStmt": {
+      const renamed = refusedRenames[String(body.renameType)];
+      return renamed === undefined ? undefined : refusal(...renamed);
+    }
     case "AlterTableStmt":
       return alterTableRefusal(body);
     case "CreateFunctionStmt":
@@ -97,8 +108,6 @@ export function privilegeRefusal(
       return undefined;
   }
 }
-
-const definer = refusal("SECURITY DEFINER", "definer");
 
 function alterTableRefusal(body: Json): Refusal | undefined {
   for (const command of alterTableCommands(body)) {

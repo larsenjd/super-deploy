@@ -565,7 +565,24 @@ describe("privileges, roles, ownership, row-level security and SECURITY DEFINER"
       "create procedure p() language plpgsql external security definer as $$ begin null; end $$",
       /^SECURITY DEFINER is not supported/,
     ],
+    [
+      "ALTER FUNCTION ... SECURITY DEFINER",
+      "alter function f() security definer",
+      /^SECURITY DEFINER is not supported/,
+    ],
     ["role", "create role r", /^CREATE ROLE is not supported/],
+    ["ALTER ROLE", "alter role r nologin", /^ALTER ROLE is not supported/],
+    [
+      "ALTER ROLE ... SET",
+      "alter role r set search_path = app",
+      /^ALTER ROLE \.\.\. SET is not supported/,
+    ],
+    [
+      "ALTER ROLE ... RENAME",
+      "alter role r rename to q",
+      /^ALTER ROLE \.\.\. RENAME is not supported/,
+    ],
+    ["DROP ROLE", "drop role r", /^DROP ROLE is not supported/],
     [
       "role membership",
       "grant reader to writer",

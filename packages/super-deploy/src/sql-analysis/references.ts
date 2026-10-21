@@ -12,9 +12,10 @@
 // Names are keys in namespaces: `rel:` (anything in pg_class: tables, views,
 // indexes, sequences, composite types), `type:` (tables' and views' row
 // types, composite types, domains), `func:` (every overload of a name),
-// `con:table.name`, `domcon:domain.name`, `trigger:table.name`, `ext:name` (extensions, which routines in their
-// language wait for), plus `uniq:table` (every unique key of a table, which
-// a foreign key to it waits for).
+// `con:table.name`, `domcon:domain.name`, `trigger:table.name`, `ext:name`
+// (extensions, which routines in their language wait for), plus
+// `uniq:table` (every unique key of a table, which a foreign key to it waits
+// for).
 import type { Node } from "@pgsql/types";
 import { parseSync } from "libpg-query";
 import { generatedName } from "./generated-names.ts";

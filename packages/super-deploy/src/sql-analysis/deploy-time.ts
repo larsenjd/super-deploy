@@ -291,7 +291,6 @@ const escaping: Record<string, string> = {
   CopyStmt:
     "reads or writes server files, programs or the client stream, and depends on column order; use INSERT ... SELECT with a column list",
   AlterDatabaseSetStmt: "changes settings for future sessions",
-  AlterRoleSetStmt: "changes settings for future sessions",
   AlterDatabaseRefreshCollStmt: "changes the database, not the managed schema",
 };
 

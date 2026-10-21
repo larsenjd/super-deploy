@@ -268,10 +268,9 @@ async function deployRoleWarnings(
 
 /**
  * The deploy pre-flight refused the target: a declared external schema is
- * missing, the deploy role doesn't own the
- * managed schema or something in it, or its recorded history doesn't match
- * the repo. Nothing was rehearsed or changed; the attempt is logged as
- * failed.
+ * missing, the deploy role doesn't own the managed schema or something in
+ * it, or its recorded history doesn't match the repo. Nothing was rehearsed
+ * or changed; the attempt is logged as failed.
  */
 export class PreflightFailedError extends SuperDeployError {
   readonly code = "preflight-failed";

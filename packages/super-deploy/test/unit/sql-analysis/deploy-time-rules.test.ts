@@ -112,6 +112,18 @@ describe("privileges, roles, ownership, row-level security and SECURITY DEFINER"
       /^SECURITY DEFINER is not supported/,
     ],
     ["CREATE ROLE", "create role r", /^CREATE ROLE is not supported/],
+    ["ALTER ROLE", "alter role r nologin", /^ALTER ROLE is not supported/],
+    [
+      "ALTER ROLE ... SET",
+      "alter role r set search_path = app",
+      /^ALTER ROLE \.\.\. SET is not supported/,
+    ],
+    [
+      "ALTER ROLE ... RENAME",
+      "alter role r rename to q",
+      /^ALTER ROLE \.\.\. RENAME is not supported/,
+    ],
+    ["DROP ROLE", "drop role r", /^DROP ROLE is not supported/],
     ["role membership", "grant a to b", /^GRANT role is not supported/],
     [
       "OWNER TO",
@@ -583,7 +595,7 @@ const hazardFixtures: readonly Fixture[] = [
   refused(
     "2.25",
     "alter role reporting set work_mem = '1GB'",
-    "escapes-transaction",
+    "unsupported-object",
   ),
   refused("2.25", "drop role reporting", "unsupported-object"),
   refused("2.25", "grant reporting to app_user", "unsupported-object"),
