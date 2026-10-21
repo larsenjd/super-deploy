@@ -270,6 +270,12 @@ const initCommand: DirectoryCommandDefinition = {
         context.result(
           `Adopted target ${result.target}: migration ${result.migration.folder} in ${context.displayPath(result.migration.path)}, recorded on it as marked (attempt #${result.attemptId})`,
         );
+        const { grants, policies } = result.leftOnTarget;
+        if (grants + policies > 0) {
+          context.result(
+            `Left ${plural(grants, "grant")} and ${plural(policies, "policy", "policies")} on target ${result.target} as they are: privileges and row-level security are set up outside super-deploy`,
+          );
+        }
         for (const override of result.overrides) {
           context.result(
             describeOverride(override, result.migration.path, context),

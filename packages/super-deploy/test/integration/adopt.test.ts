@@ -18,7 +18,11 @@ import {
   validate,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { deployProject, finalizeMigration } from "../support/deploy.ts";
+import {
+  asDeployerPreamble,
+  deployProject,
+  finalizeMigration,
+} from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
 let server: TestServer;
@@ -99,11 +103,8 @@ describe("adopt", () => {
         "data-model/desired-schema/views.sql",
         "data-model/desired-schema/routines.sql",
         "data-model/desired-schema/comments.sql",
-        "data-model/desired-schema/grants.sql",
       ]);
-      expect(await dir.read("data-model/desired-schema/grants.sql")).toContain(
-        'GRANT SELECT ON TABLE "public"."customers" TO "adopt_reader";',
-      );
+      expect(result.leftOnTarget).toEqual({ grants: 1, policies: 0 });
       const written = await readdir(dir.path("data-model/desired-schema"));
       expect(written.filter((file) => file.endsWith(".sql")).sort()).toEqual(
         result.files.map((file) => file.split("/").at(-1)).sort(),
@@ -138,8 +139,6 @@ describe("adopt", () => {
       create statistics t_stats (dependencies) on a, b from t;
       create function same(int, int) returns boolean language sql immutable as 'select $1 = $2';
       create operator === (leftarg = int, rightarg = int, function = same);
-      create role adopt_writer nologin;
-      grant create on schema public to adopt_writer;
       create unlogged table scratch (id bigint primary key);
     `);
     try {
@@ -173,18 +172,12 @@ describe("adopt", () => {
             reason: expect.stringContaining("Standalone sequences"),
           }),
           expect.objectContaining({
-            object: 'GRANT CREATE ON SCHEMA "public" TO "adopt_writer"',
-            reason: expect.stringContaining(
-              "GRANT CREATE ON SCHEMA is not allowed",
-            ),
-          }),
-          expect.objectContaining({
             object: expect.stringContaining("CREATE UNLOGGED TABLE"),
             reason: "Unlogged tables are not supported in V1",
           }),
         ]),
       );
-      expect(objects).toHaveLength(6);
+      expect(objects).toHaveLength(5);
       expect(dir.exists("data-model/desired-schema")).toBe(false);
       expect(dir.exists("data-model/migrations")).toBe(false);
       expect(
@@ -517,7 +510,7 @@ describe("adopt", () => {
     }
   });
 
-  test("writes the managed schema's USAGE grants and revoked PUBLIC defaults, but not the owner's or deploy role's own privileges", async () => {
+  test("leaves the target's grants, revoked PUBLIC defaults, policies and row-level security out of the desired schema, counting what it left", async () => {
     const deployer = "adopt_deployer";
     const prod = await server.createDatabase(`
       create role adopt_admin nologin;
@@ -529,43 +522,72 @@ describe("adopt", () => {
       set role ${deployer};
       create table app.notes (id bigint primary key, body text);
       grant usage on schema app to adopt_app;
-      grant select on app.notes to adopt_app;
-      create function app.note_count() returns bigint language sql stable security definer
-        set search_path = app, pg_catalog as $$ select count(*) from app.notes $$;
+      grant select, insert on app.notes to adopt_app;
+      create function app.note_count() returns bigint language sql stable
+        as $$ select count(*) from app.notes $$;
       revoke execute on function app.note_count() from public;
       grant execute on function app.note_count() to adopt_app;
       create domain app.body_text as text;
       revoke usage on domain app.body_text from public;
+      alter table app.notes enable row level security;
+      create policy notes_read on app.notes for select to adopt_app using (true);
     `);
     const { dir, project } = await deployProject(
       server,
       {},
       {
         settings: 'managedSchema: "app",',
-        preamble: `import { postgresTarget } from "super-deploy";
-const asDeployer = {
-  async connect() {
-    const url = new URL(await postgres.connectionString(${JSON.stringify(prod)}));
-    url.username = ${JSON.stringify(deployer)};
-    url.password = "deployer";
-    return postgresTarget({ connectionString: url.href }).connect();
-  },
-};`,
+        preamble: asDeployerPreamble(prod, deployer),
         otherTargets: "prod: { adapter: asDeployer },",
       },
     );
     try {
-      await adopt(project, { target: "prod" });
+      const result = await adopt(project, { target: "prod" });
 
-      const grants = await dir.read("data-model/desired-schema/grants.sql");
-      expect(grants).toContain('GRANT USAGE ON SCHEMA "app" TO "adopt_app";');
-      expect(grants).toContain(
-        'REVOKE EXECUTE ON FUNCTION "app"."note_count"() FROM PUBLIC;',
-      );
-      expect(grants).toContain(
-        'REVOKE USAGE ON TYPE "app"."body_text" FROM PUBLIC;',
-      );
-      expect(grants).not.toMatch(/adopt_admin|adopt_deployer|REVOKE ALL/);
+      expect(result.files).toEqual([
+        "data-model/desired-schema/tables.sql",
+        "data-model/desired-schema/types.sql",
+        "data-model/desired-schema/routines.sql",
+      ]);
+      for (const file of result.files) {
+        expect(await dir.read(file)).not.toMatch(
+          /GRANT|REVOKE|POLICY|ROW LEVEL SECURITY/,
+        );
+      }
+      expect(result.leftOnTarget).toEqual({ grants: 3, policies: 1 });
+      await expectReproducedOnDev(project);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("adopts a target where the deploy role has default privileges", async () => {
+    const deployer = "adopt_defaults_deployer";
+    const prod = await server.createDatabase(`
+      create role adopt_defaults_reader nologin;
+      create role ${deployer} login password 'deployer';
+      do $$ begin execute format('grant connect, create on database %I to ${deployer}', current_database()); end $$;
+      set role ${deployer};
+      create schema app;
+      alter default privileges in schema app grant select on tables to adopt_defaults_reader;
+      alter default privileges revoke execute on functions from public;
+      grant usage on schema app to adopt_defaults_reader;
+      create table app.notes (id bigint generated always as identity primary key, body text not null);
+      create function app.note_count() returns bigint language sql stable as $$ select count(*) from app.notes $$;
+    `);
+    const { project } = await deployProject(
+      server,
+      {},
+      {
+        settings: 'managedSchema: "app",',
+        preamble: asDeployerPreamble(prod, deployer),
+        otherTargets: "prod: { adapter: asDeployer },",
+      },
+    );
+    try {
+      const result = await adopt(project, { target: "prod" });
+
+      expect(result.migration.folder).toBe("00001-adopt");
       await expectReproducedOnDev(project);
     } finally {
       await project.close();

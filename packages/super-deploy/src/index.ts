@@ -29,6 +29,7 @@ export {
   type AdoptResult,
   AdoptUnsupportedError,
   adopt,
+  type LeftOnTarget,
   type UnsupportedObject,
 } from "./commands/adopt.ts";
 export {
@@ -144,7 +145,7 @@ export {
   TargetNotDisposableError,
   UnknownTargetError,
 } from "./deploy/target.ts";
-export { type UnrevokedGrant, WipeFailedError } from "./deploy/wipe.ts";
+export { WipeFailedError } from "./deploy/wipe.ts";
 export type { PlannedStatement } from "./differ/index.ts";
 export { DifferError } from "./differ/index.ts";
 export { type ErrorCode, SuperDeployError } from "./errors.ts";

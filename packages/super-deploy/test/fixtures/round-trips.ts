@@ -1,7 +1,7 @@
 // One round-trip scenario per supported object type, from the
 // `prototype/pg-delta` (9d619fe) scenarios, adapted to the desired-schema
-// rules: indexes and constraints named, no VIRTUAL columns, REVOKE only
-// of PUBLIC's defaults.
+// rules: indexes and constraints named, no VIRTUAL columns, and no grants,
+// policies or row-level security (never diffed, ADR-0006).
 // Each scenario has three desired schemas: create a -> b, alter b -> c,
 // drop c -> a.
 //
@@ -16,9 +16,6 @@ export interface RoundTrip {
   readonly b: string;
   readonly c: string;
 }
-
-/** Roles the scenarios grant to; the test server creates them. */
-export const roundTripRoles = ["round_trip_reader", "round_trip_writer"];
 
 const t3 = "create table t (id int primary key, a int, b text);";
 
@@ -157,15 +154,6 @@ export const roundTrips: readonly RoundTrip[] = [
     c: "create type address as (street text, city text, zip varchar(10)); create table t (id int primary key, addr address);",
   },
   {
-    name: "row-level security and policies",
-    a: "create table t (id int primary key, owner text);",
-    b: `create table t (id int primary key, owner text); alter table t enable row level security;
-        create policy t_select on t for select using (owner = current_user);`,
-    c: `create table t (id int primary key, owner text); alter table t enable row level security; alter table t force row level security;
-        create policy t_select on t for all to round_trip_reader using (owner = current_user) with check (owner = current_user);
-        create policy t_admin on t as restrictive for delete using (current_user = 'admin');`,
-  },
-  {
     name: "comments",
     a: `${t3} create view v as select id from t; create function f() returns int language sql as $$ select 1 $$;`,
     b: `${t3} create view v as select id from t; create function f() returns int language sql as $$ select 1 $$;
@@ -175,39 +163,13 @@ export const roundTrips: readonly RoundTrip[] = [
         comment on table t is 'tee 2'; comment on column t.b is 'col b'; comment on function f() is 'eff 2';`,
   },
   {
-    name: "grants",
-    a: `${t3} create view v as select id from t; create function f() returns int language sql as $$ select 1 $$;`,
-    b: `${t3} create view v as select id from t; create function f() returns int language sql as $$ select 1 $$;
-        grant select on t to round_trip_reader; grant select on v to round_trip_reader;`,
-    c: `${t3} create view v as select id from t; create function f() returns int language sql as $$ select 1 $$;
-        grant select, insert on t to round_trip_writer; grant select (id, a) on t to round_trip_reader;
-        grant execute on function f() to round_trip_reader;`,
-  },
-  {
-    name: "schema grants and revokes of PUBLIC defaults",
-    a: `${t3} create function f() returns int language sql as $$ select 1 $$;
-        create procedure p() language sql as $$ select 1 $$;
-        create type pair as (x int, y int); create domain positive as int constraint positive_check check (value > 0);`,
-    b: `${t3} create function f() returns int language sql as $$ select 1 $$;
-        create procedure p() language sql as $$ select 1 $$;
-        create type pair as (x int, y int); create domain positive as int constraint positive_check check (value > 0);
-        grant usage on schema public to round_trip_reader;
-        revoke execute on function f() from public; grant execute on function f() to round_trip_reader;
-        revoke usage on type pair from public; revoke usage on domain positive from public;`,
-    c: `${t3} create function f() returns int language sql as $$ select 1 $$;
-        create procedure p() language sql as $$ select 1 $$;
-        create type pair as (x int, y int); create domain positive as int constraint positive_check check (value > 0);
-        grant usage on schema public to round_trip_writer; revoke usage on schema public from public;
-        revoke execute on procedure p() from public; revoke usage on domain positive from public;`,
-  },
-  {
-    name: "column type change under a view, policy and index",
+    name: "column type change under a view and index",
     a: `create table t (id int primary key, a int); create view v as select id, a from t;
-        create index t_a_idx on t (a); alter table t enable row level security; create policy p on t using (a > 0);`,
+        create index t_a_idx on t (a);`,
     b: `create table t (id int primary key, a bigint); create view v as select id, a from t;
-        create index t_a_idx on t (a); alter table t enable row level security; create policy p on t using (a > 0);`,
+        create index t_a_idx on t (a);`,
     c: `create table t (id int primary key, a numeric(12,2)); create view v as select id, a, a * 2 as a2 from t;
-        create index t_a_idx on t (a); alter table t enable row level security; create policy p on t using (a > 0);`,
+        create index t_a_idx on t (a);`,
   },
   {
     name: "circular foreign keys",

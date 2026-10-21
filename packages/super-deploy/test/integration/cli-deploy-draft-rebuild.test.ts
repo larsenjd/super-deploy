@@ -3,12 +3,16 @@
 // aren't disposable before asking, show what they are about to do, and go
 // ahead only once YES is typed. Their API refusal in CI is in
 // deploy-draft-rebuild.test.ts.
-import { randomBytes } from "node:crypto";
 import { userInfo } from "node:os";
 import { deploy, draft, finalize, loadProject, recovery } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
-import { deployConfig, targetDatabaseName } from "../support/deploy.ts";
+import {
+  asDeployerPreamble,
+  deployConfig,
+  roleName,
+  targetDatabaseName,
+} from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject, type TestProject } from "../support/project.ts";
 import { keys, spawnTerminal } from "../support/terminal.ts";
@@ -460,11 +464,9 @@ async function twoMigrations() {
     "create type mood as enum ('happy', 'sad')",
     "create function twice(x int) returns int language sql return x * 2",
     "create sequence counter",
-    // Grants on the schema itself: rebuild leaves only what the migrations
-    // declare, and public's default USAGE for PUBLIC counts as declared.
+    // Privileges are target setup (ADR-0006): rebuild leaves them alone.
     "grant usage on schema public to rebuild_reader",
     "revoke usage on schema public from public",
-    // On functions: the migrations create none, so it causes no drift.
     "alter default privileges in schema public grant execute on functions to rebuild_reader",
     "comment on schema public is 'kept by rebuild'",
   ]) {
@@ -485,7 +487,7 @@ const publicObjects = `select kind, name from (
   ) o order by kind, name`;
 
 unix("rebuild", () => {
-  test("wipes the managed schema and replays migrations up to N without seed data, keeping the schema's owner, comment and default privileges and the attempt log", async () => {
+  test("wipes the managed schema and replays migrations up to N without seed data, keeping the schema's owner, comment, grants and default privileges and the attempt log", async () => {
     const { dir, database } = await twoMigrations();
     const [setup] = await server.query<{ acl: string }>(
       schemaSetup,
@@ -525,12 +527,7 @@ unix("rebuild", () => {
         database,
       ),
     ).toEqual([{ count: 0 }]);
-    expect(await server.query(schemaSetup, [], database)).toEqual([
-      {
-        ...setup,
-        acl: "{pg_database_owner=UC/pg_database_owner,=U/pg_database_owner}",
-      },
-    ]);
+    expect(await server.query(schemaSetup, [], database)).toEqual([setup]);
     expect(
       await server.query(
         "select m.number, m.recorded_how, a.command from deployment_history.migrations m join deployment_history.attempts a on a.id = m.attempt_id",
@@ -702,21 +699,20 @@ unix("rebuild", () => {
     );
   });
 
-  test("rolls back when the schema's owner granted it to other roles, which the deploy role can't revoke, naming each grant and why", async () => {
-    const suffix = randomBytes(4).toString("hex");
+  test("leaves the grants the schema's owner made on it", async () => {
     const [owner, deployer, reader] = ["owner", "deployer", "reader"].map(
-      (role) => `rebuild_${role}_${suffix}`,
-    );
+      (role) => roleName(`rebuild_${role}`),
+    ) as [string, string, string];
     const database = targetDatabaseName();
     await server.query(`create role ${owner} nologin`);
     await server.query(`create role ${deployer} login password 'deployer'`);
     await server.query(`create role ${reader} nologin`);
     await server.query(`create database ${database}`);
     // An administrator's setup: app belongs to its owner, who lets the
-    // deploy role create objects there and grant USAGE.
+    // deploy role create objects there.
     await server.query(
       `create schema app authorization ${owner};
-       grant usage, create on schema app to ${deployer} with grant option;
+       grant usage, create on schema app to ${deployer};
        grant create on database ${database} to ${deployer}`,
       [],
       database,
@@ -724,15 +720,7 @@ unix("rebuild", () => {
     const { config } = deployConfig(server, {
       database,
       settings: 'managedSchema: "app",',
-      preamble: `import { postgresTarget } from "super-deploy";
-const asDeployer = {
-  async connect() {
-    const url = new URL(await postgres.connectionString(${JSON.stringify(database)}));
-    url.username = ${JSON.stringify(deployer)};
-    url.password = "deployer";
-    return postgresTarget({ connectionString: url.href }).connect();
-  },
-};`,
+      preamble: asDeployerPreamble(database, deployer),
       adapter: "asDeployer",
     });
     const dir = await customersDeployed(config);
@@ -752,24 +740,18 @@ const asDeployer = {
     );
     await terminal.waitFor("Type YES");
     terminal.type(`YES${keys.enter}`);
-    await terminal.waitFor("then run rebuild again (nothing changed)");
-    expect(await terminal.exited).toBe(1);
-    expect(terminal.screen.replace(/\s+/g, " ")).toContain(
-      `Error: Could not wipe schema app on target dev: the deploy role can't revoke USAGE to ${reader} (granted by ${owner}, the schema's owner: only the owner or a superuser can revoke it); revoke them as their grantor, then run rebuild again (nothing changed)`,
-    );
+    await terminal.waitFor("Rebuilt dev with 1 migration");
+    expect(await terminal.exited).toBe(0);
     expect(
       await server.query("select id, name from app.customers", [], database),
-    ).toEqual([{ id: "1", name: "Ada" }]);
+    ).toEqual([]);
     expect(
       await server.query(
-        "select command, outcome from deployment_history.attempts order by id",
-        [],
+        "select has_schema_privilege($1, 'app', 'USAGE') as usage",
+        [reader],
         database,
       ),
-    ).toEqual([
-      { command: "deploy", outcome: "succeeded" },
-      { command: "rebuild", outcome: "failed" },
-    ]);
+    ).toEqual([{ usage: true }]);
   });
 
   test("refuses, without asking, a target that isn't disposable or a migration the repo doesn't have", async () => {

@@ -50,6 +50,24 @@ describe("init --adopt", () => {
     );
   });
 
+  test("says how many grants and policies it left on the target as they are", async () => {
+    const dir = await projectAdopting(`
+      create role cli_adopt_reader nologin;
+      create table customers (id bigint primary key, name text not null);
+      grant select on customers to cli_adopt_reader;
+      create policy customers_read on customers for select to cli_adopt_reader using (true);
+    `);
+
+    const result = await runCli(["init", "--adopt", "prod"], {
+      cwd: dir.root,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "Left 1 grant and 1 policy on target prod as they are: privileges and row-level security are set up outside super-deploy\n",
+    );
+  });
+
   test("refuses with the full list on stderr (exit 1)", async () => {
     const dir = await projectAdopting(
       "create type mood as enum ('sad'); create sequence counter;",

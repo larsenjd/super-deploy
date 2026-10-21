@@ -12,7 +12,7 @@
 // onTestFinished, which can't tell concurrent tests apart.
 import { deploy, draft, finalize, loadProject, status } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { type RoundTrip, roundTripRoles } from "../fixtures/round-trips.ts";
+import type { RoundTrip } from "../fixtures/round-trips.ts";
 import { deployConfig, targetDatabaseName } from "./deploy.ts";
 import { startTestServer, type TestServer } from "./postgres.ts";
 import { createTestProject } from "./project.ts";
@@ -21,9 +21,6 @@ export function describeRoundTrips(scenarios: readonly RoundTrip[]): void {
   let server: TestServer;
   beforeAll(async () => {
     server = await startTestServer();
-    for (const role of roundTripRoles) {
-      await server.query(`create role ${role} nologin`);
-    }
   });
   afterAll(async () => {
     await server?.stop();

@@ -12,7 +12,9 @@
 //   1. Read the target (never writing to it): pg-delta generates the
 //      statements that build it from nothing, on a throwaway database with
 //      the target's locale; the managed schema's statements become
-//      desired-schema files (sql-analysis/adoption.ts).
+//      desired-schema files (sql-analysis/adoption.ts). Grants, policies
+//      and row-level security stay on the target as they are and are never
+//      written (ADR-0006); the result counts the grants and policies.
 //   2. Refuse, listing everything at once, if anything there is unsupported:
 //      objects a desired schema can't create at all (the catalog check's
 //      `other` kind, and virtual generated columns, which pg-delta renders
@@ -95,7 +97,6 @@ import {
   isVirtualGeneratedColumn,
 } from "../verification/catalog.ts";
 import { type DriftChange, driftBetween } from "../verification/drift.ts";
-import { schemaSetupRoles } from "../verification/schema-setup.ts";
 import { draft } from "./draft.ts";
 import { finalize } from "./finalize.ts";
 
@@ -130,6 +131,22 @@ export interface AdoptResult {
   readonly files: readonly string[];
   /** Migration 1's overrides, as in its metadata (paths relative to its folder). */
   readonly overrides: readonly Override[];
+  /**
+   * What the managed schema has that adoption left on the target as it is,
+   * outside super-deploy (ADR-0006).
+   */
+  readonly leftOnTarget: LeftOnTarget;
+}
+
+export interface LeftOnTarget {
+  /**
+   * Roles granted privileges on the managed schema or an object in it, one
+   * per object (or column) and role; not the owner's or the deploy role's
+   * own, nor PostgreSQL's defaults.
+   */
+  readonly grants: number;
+  /** Row-level security policies on the managed schema's tables. */
+  readonly policies: number;
 }
 
 /**
@@ -187,6 +204,7 @@ export async function adopt(
       },
       files: written.map((path) => projectRelative(project.root, path)),
       overrides: finalized.metadata.overrides,
+      leftOnTarget: read.leftOnTarget,
     };
   } catch (error) {
     if (!(error instanceof CommitOutcomeUnknownError)) {
@@ -239,7 +257,11 @@ async function readTarget(
   project: Project,
   target: ResolvedTarget,
   { withOverrides }: { withOverrides: boolean },
-): Promise<{ files: AdoptedFile[]; candidates: OverrideCandidate[] }> {
+): Promise<{
+  files: AdoptedFile[];
+  candidates: OverrideCandidate[];
+  leftOnTarget: LeftOnTarget;
+}> {
   const { config } = project;
   const context: RuleContext = {
     managedSchema: config.managedSchema,
@@ -276,7 +298,6 @@ async function readTarget(
       statements.map((statement) => statement.sql),
       {
         managedSchema: config.managedSchema,
-        schemaRoles: await schemaRoles(session, config.managedSchema),
         columnOrder: await columnOrder(session, config.managedSchema),
         header: [
           `Adopted from target ${target.name} by super-deploy init --adopt.`,
@@ -330,7 +351,11 @@ async function readTarget(
         needed,
       );
     }
-    return { files, candidates };
+    return {
+      files,
+      candidates,
+      leftOnTarget: await countLeftOnTarget(session, config.managedSchema),
+    };
   } finally {
     await session.close().catch(() => {});
   }
@@ -354,22 +379,52 @@ function unsupportedFact(fact: CatalogFact): UnsupportedObject[] {
 }
 
 /**
- * The managed schema's owner and the deploy role: their privileges on the
- * schema are target setup, not the desired schema's (schema-setup.ts).
+ * The grants and policies in the managed schema (LeftOnTarget). A grant is
+ * an ACL item that isn't in the object's default ACL (acldefault, plus
+ * PUBLIC's USAGE on schema public) and isn't to its owner or the session's
+ * role, counted once per object, column and grantee.
  */
-async function schemaRoles(
+async function countLeftOnTarget(
   session: Session,
   managedSchema: string,
-): Promise<string[]> {
-  const owner =
-    "(SELECT nspowner FROM pg_catalog.pg_namespace WHERE nspname = $1)";
-  const { rows } = await session.query<{ role: string }>(
-    `SELECT pg_catalog.pg_get_userbyid(oid) AS role
-       FROM (${schemaSetupRoles(owner)}) roles(oid)
-      WHERE oid IS NOT NULL`,
+): Promise<LeftOnTarget> {
+  const { rows } = await session.query<LeftOnTarget>(
+    `WITH n AS (SELECT oid, nspowner, nspacl FROM pg_catalog.pg_namespace WHERE nspname = $1),
+     acls(object, subobject, owner, acl, defaults) AS (
+       -- A new database's public schema also grants PUBLIC USAGE.
+       SELECT 'n'::text || n.oid, 0, n.nspowner, n.nspacl,
+              pg_catalog.acldefault('n', n.nspowner)
+                || CASE WHEN $1 = 'public' THEN ARRAY[pg_catalog.makeaclitem(0, n.nspowner, 'USAGE', false)] ELSE '{}' END
+         FROM n
+       UNION ALL
+       SELECT 'c' || c.oid, 0, c.relowner, c.relacl,
+              pg_catalog.acldefault(CASE WHEN c.relkind = 'S' THEN 's' ELSE 'r' END::"char", c.relowner)
+         FROM pg_catalog.pg_class c JOIN n ON c.relnamespace = n.oid
+       UNION ALL
+       SELECT 'c' || c.oid, a.attnum, c.relowner, a.attacl, NULL
+         FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+         JOIN n ON c.relnamespace = n.oid
+       UNION ALL
+       SELECT 'p' || p.oid, 0, p.proowner, p.proacl, pg_catalog.acldefault('f', p.proowner)
+         FROM pg_catalog.pg_proc p JOIN n ON p.pronamespace = n.oid
+       UNION ALL
+       SELECT 't' || t.oid, 0, t.typowner, t.typacl, pg_catalog.acldefault('T', t.typowner)
+         FROM pg_catalog.pg_type t JOIN n ON t.typnamespace = n.oid
+     ),
+     grants AS (
+       SELECT DISTINCT acls.object, acls.subobject, e.grantee
+         FROM acls, pg_catalog.aclexplode(acls.acl) e
+        WHERE e.grantee <> acls.owner
+          AND e.grantee NOT IN (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+          AND NOT EXISTS (SELECT 1 FROM pg_catalog.aclexplode(acls.defaults) d
+                           WHERE d.grantee = e.grantee AND d.privilege_type = e.privilege_type)
+     )
+     SELECT (SELECT count(*) FROM grants)::int AS grants,
+            (SELECT count(*) FROM pg_catalog.pg_policy p
+               JOIN pg_catalog.pg_class c ON c.oid = p.polrelid JOIN n ON c.relnamespace = n.oid)::int AS policies`,
     [managedSchema],
   );
-  return rows.map((row) => row.role);
+  return rows[0] ?? { grants: 0, policies: 0 };
 }
 
 /** Each table's column names in the managed schema, in the target's order. */

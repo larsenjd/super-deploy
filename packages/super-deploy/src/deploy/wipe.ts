@@ -1,26 +1,17 @@
 // Wiping the managed schema for `rebuild`, inside its deploy transaction.
 // Everything IN the schema is dropped (with CASCADE, so objects elsewhere
 // that depend on it go too, as with DROP SCHEMA ... CASCADE), but the schema
-// itself stays: its owner, comment and default privileges belong to the
-// target's setup, not to the migrations, and dropping the schema would lose
-// them. Its grants go back to what a new schema has, so after the replay
-// they are exactly what the migrations declare (stories 98-99): every grant
-// is revoked except the owner's and the deploy role's own (target setup, as
-// in the catalog comparison), and `public` gets back its default USAGE for
-// PUBLIC, which the migrations declare by not revoking it.
+// itself stays: its owner, comment, grants and default privileges belong to
+// the target's setup, not to the migrations (ADR-0006), and dropping the
+// schema would lose them.
 //
 // The drops cover every kind of object a schema can hold. Afterwards the
-// schema's dependents in pg_depend (what DROP SCHEMA would have dropped) and
-// every other grant must be gone; anything left refuses the rebuild with
-// WipeFailedError. A grant is left when the deploy role can't revoke it:
-// PostgreSQL revokes only what the revoking role (or, for a superuser or a
-// member of the owner, the owner) granted, so a grant the owner made on a
-// schema the deploy role doesn't own stays.
+// schema's dependents in pg_depend (what DROP SCHEMA would have dropped)
+// must be gone; anything left refuses the rebuild with WipeFailedError.
 
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { SuperDeployError } from "../errors.ts";
-import { schemaSetupRoles } from "../verification/schema-setup.ts";
 import { quoteIdentifier } from "./history.ts";
 
 /** Drops every object in `schema` (creating the schema if the target lacks it). */
@@ -44,15 +35,6 @@ export async function wipeManagedSchema(
   for (const { statement } of drops.rows) {
     await session.execute(statement);
   }
-  const revokes = await session.query<{ statement: string }>(revokeStatements, [
-    namespace,
-  ]);
-  for (const { statement } of revokes.rows) {
-    await session.execute(statement);
-  }
-  if (schema === "public") {
-    await session.execute("GRANT USAGE ON SCHEMA public TO PUBLIC");
-  }
   const left = await session.query<{ object: string }>(
     `SELECT pg_catalog.pg_describe_object(classid, objid, objsubid) AS object
        FROM pg_catalog.pg_depend
@@ -61,16 +43,11 @@ export async function wipeManagedSchema(
       ORDER BY 1`,
     [namespace],
   );
-  const grants = await session.query<UnrevokedGrant>(grantsLeft, [
-    namespace,
-    schema === "public",
-  ]);
-  if (left.rows.length > 0 || grants.rows.length > 0) {
+  if (left.rows.length > 0) {
     throw new WipeFailedError(
       target.name,
       schema,
       left.rows.map((row) => row.object),
-      grants.rows,
     );
   }
 }
@@ -171,47 +148,10 @@ SELECT statement FROM (
 ) drops
 ORDER BY step, name COLLATE "C", statement COLLATE "C"`;
 
-// The schema's grants to anyone but its owner and the deploy role, $1 the
-// schema's oid, with the grantee's name as REVOKE writes it. `grantsLeft`
-// also takes $2: whether PUBLIC's USAGE is the default (schema public).
-const otherGrants = `
-  SELECT e.grantee, e.grantor, e.privilege_type, n.nspname, n.nspowner,
-         CASE e.grantee WHEN 0 THEN 'PUBLIC' ELSE quote_ident(pg_catalog.pg_get_userbyid(e.grantee)) END AS grantee_name
-    FROM pg_catalog.pg_namespace n,
-         pg_catalog.aclexplode(COALESCE(n.nspacl, pg_catalog.acldefault('n', n.nspowner))) e
-   WHERE n.oid = $1 AND e.grantee NOT IN (${schemaSetupRoles("n.nspowner")})`;
-
-const revokeStatements = `
-SELECT DISTINCT format('REVOKE ALL ON SCHEMA %I FROM %s CASCADE', nspname, grantee_name) AS statement
-  FROM (${otherGrants}) g
- ORDER BY 1`;
-
-const grantsLeft = `
-SELECT privilege_type AS privilege, grantee_name AS grantee,
-       quote_ident(pg_catalog.pg_get_userbyid(grantor)) AS grantor,
-       grantor = nspowner AS "byOwner"
-  FROM (${otherGrants}) g
- WHERE NOT (grantee = 0 AND privilege_type = 'USAGE' AND $2::boolean)
- ORDER BY grantee_name, privilege_type, grantor`;
-
-/** A grant on the managed schema that rebuild's deploy role couldn't revoke. */
-export interface UnrevokedGrant {
-  /** E.g. `USAGE`. */
-  readonly privilege: string;
-  /** The role it is granted to (quoted if need be), or `PUBLIC`. */
-  readonly grantee: string;
-  /** The role that granted it (quoted if need be). */
-  readonly grantor: string;
-  /** Whether the grantor is the schema's owner. */
-  readonly byOwner: boolean;
-}
-
 /**
  * rebuild dropped everything it knows how to drop in the managed schema, but
- * objects are left (e.g. members of an extension that lives elsewhere), or
- * grants on the schema that only their grantor can revoke (e.g. the owner's,
- * when the deploy role doesn't own the schema). The transaction rolled back:
- * nothing changed.
+ * objects are left (e.g. members of an extension that lives elsewhere). The
+ * transaction rolled back: nothing changed.
  */
 export class WipeFailedError extends SuperDeployError {
   readonly code = "wipe-failed";
@@ -219,38 +159,13 @@ export class WipeFailedError extends SuperDeployError {
   readonly schema: string;
   /** PostgreSQL's descriptions of what is left, e.g. `function public.f(integer)`. */
   readonly objects: readonly string[];
-  /** The grants on the schema left, which the deploy role can't revoke. */
-  readonly grants: readonly UnrevokedGrant[];
 
-  constructor(
-    target: string,
-    schema: string,
-    objects: readonly string[],
-    grants: readonly UnrevokedGrant[] = [],
-  ) {
-    const left = [
-      ...(objects.length > 0
-        ? [`it still holds ${objects.join(", ")}; drop them by hand`]
-        : []),
-      ...(grants.length > 0
-        ? [
-            `the deploy role can't revoke ${grants.map(unrevokedGrant).join(", ")}; revoke them as their grantor`,
-          ]
-        : []),
-    ];
+  constructor(target: string, schema: string, objects: readonly string[]) {
     super(
-      `Could not wipe schema ${schema} on target ${target}: ${left.join("; ")}, then run rebuild again (nothing changed)`,
+      `Could not wipe schema ${schema} on target ${target}: it still holds ${objects.join(", ")}; drop them by hand, then run rebuild again (nothing changed)`,
     );
     this.target = target;
     this.schema = schema;
     this.objects = objects;
-    this.grants = grants;
   }
-}
-
-function unrevokedGrant(grant: UnrevokedGrant): string {
-  const who = grant.byOwner
-    ? `${grant.grantor}, the schema's owner: only the owner`
-    : `${grant.grantor}: only ${grant.grantor}`;
-  return `${grant.privilege} to ${grant.grantee} (granted by ${who} or a superuser can revoke it)`;
 }

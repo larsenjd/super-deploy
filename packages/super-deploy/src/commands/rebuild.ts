@@ -4,7 +4,7 @@
 //
 // One deploy transaction on the target (pinned settings, the target's
 // timeouts): drop everything in the managed schema (deploy/wipe.ts; the
-// schema itself, its privileges and default privileges stay), delete the
+// schema itself, its grants and default privileges stay), delete the
 // recorded migrations and any deployed draft from the history schema, then
 // run migrations 1 to N exactly as a deployment does, recording each as
 // deployed by this attempt (each as its newest variant, like a deployment to

@@ -90,7 +90,7 @@ create index orders_customer_idx on orders (customer_id);
     ]);
   });
 
-  test("counts grants and every other kind of object a schema can hold", async () => {
+  test("counts every other kind of object a schema can hold, but not grants", async () => {
     const { project, database } = await deployedProject();
     const reader = `drift_reader_${database}`;
     await server.query(
@@ -112,11 +112,7 @@ create index orders_customer_idx on orders (customer_id);
         change: "extra",
       },
       { object: "statistics object customers_stats", change: "extra" },
-      { object: "table customers", change: "changed" },
     ]);
-    expect(drift?.at(-1)?.differences).toContainEqual(
-      expect.stringContaining(`${reader}:SELECT/<owner>`),
-    );
   });
 
   test("is not checked when the recorded history doesn't match the project", async () => {

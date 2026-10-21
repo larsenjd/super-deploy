@@ -7,30 +7,23 @@
 //
 // Statements are left out when they are:
 // - about objects outside the managed schema, or not in any schema (roles,
-//   schemas themselves, default privileges, event triggers, casts, foreign
-//   servers...): the managed schema is all super-deploy manages.
+//   schemas themselves, event triggers, casts, foreign servers...): the
+//   managed schema is all super-deploy manages.
 // - ownership changes (`ALTER ... OWNER TO`): ownership isn't modelled;
 //   objects belong to whoever deploys them.
-// - grants on the managed schema to its owner or the deploy role (target
-//   setup, which the catalog comparison counts as the owner's), and REVOKEs
-//   from roles other than PUBLIC: the differ emits them before each GRANT,
-//   and on a new object they change nothing.
 // - for objects a desired schema can never create and the catalog check
 //   reports itself (aggregates, operators, rules, statistics objects,
 //   extensions, publications...; verification/catalog.ts `other`), so each
 //   is listed once with its reason (`unsupportedCatalogObject`).
 //
+// The differ never generates grants, default privileges, policies or
+// row-level security (differ/pg-delta.ts): they stay on the target.
+//
 // ALTER TABLEs the differ splits off a table's CREATE TABLE (columns,
 // storage parameters) are folded back into it (adoption-folding.ts).
-//
-// The managed schema's own grants are kept, and a REVOKE ALL of PUBLIC's
-// default privileges is written with the privilege it takes away, as the
-// rules require (`REVOKE EXECUTE ON FUNCTION`, `REVOKE USAGE ON TYPE`).
 import { foldTableAlters, type KeptStatement } from "./adoption-folding.ts";
-import { grantees, publicDefaults, schemaNames } from "./grants.ts";
 import { parseSqlFile } from "./parse.ts";
 import {
-  defElemString,
   defElems,
   isObject,
   type Json,
@@ -67,10 +60,7 @@ const fileOf: Readonly<Record<string, string>> = {
   CreateFunctionStmt: "routines.sql",
   AlterFunctionStmt: "routines.sql",
   CreateTrigStmt: "triggers.sql",
-  CreatePolicyStmt: "policies.sql",
-  AlterPolicyStmt: "policies.sql",
   CommentStmt: "comments.sql",
-  GrantStmt: "grants.sql",
 };
 const otherFile = "other.sql";
 
@@ -91,7 +81,7 @@ const catalogObjectStatements = new Set([
   "AlterPublicationStmt",
 ]);
 
-/** COMMENT ON / GRANT ON object types the catalog check reports. */
+/** COMMENT ON object types the catalog check reports. */
 const catalogObjectTypes = new Set([
   "OBJECT_AGGREGATE",
   "OBJECT_OPERATOR",
@@ -122,11 +112,6 @@ export interface AdoptionOptions {
   readonly managedSchema: string;
   /** The first lines of every file, e.g. where it came from. */
   readonly header: readonly string[];
-  /**
-   * Roles whose privileges on the managed schema are target setup, not the
-   * desired schema's: its owner and the deploy role.
-   */
-  readonly schemaRoles: readonly string[];
   /** Each managed table's column names in the target's order (attnum). */
   readonly columnOrder: Readonly<Record<string, readonly string[]>>;
 }
@@ -183,7 +168,7 @@ async function parsedStatement(
 /** The file a generated statement goes to, or undefined to leave it out. */
 function fileFor(
   statement: { type: string; node: Json } | undefined,
-  { managedSchema, schemaRoles }: AdoptionOptions,
+  { managedSchema }: AdoptionOptions,
 ): string | undefined {
   if (statement === undefined) {
     // Never expected from the differ; the rules report what's wrong with it.
@@ -194,29 +179,9 @@ function fileFor(
     catalogObjectStatements.has(type) ||
     isOwnershipChange(type, node) ||
     isWindowFunction(type, node) ||
-    ((type === "CommentStmt" || type === "GrantStmt") &&
-      catalogObjectTypes.has(String(node.objtype)))
+    (type === "CommentStmt" && catalogObjectTypes.has(String(node.objtype)))
   ) {
     return undefined;
-  }
-  if (type === "GrantStmt") {
-    const roles = grantees(node);
-    if (
-      node.is_grant === true
-        ? node.objtype === "OBJECT_SCHEMA" &&
-          roles.every((role) => role !== null && schemaRoles.includes(role))
-        : !roles.includes(null)
-    ) {
-      return undefined;
-    }
-    if (
-      node.objtype === "OBJECT_SCHEMA" &&
-      node.targtype === "ACL_TARGET_OBJECT"
-    ) {
-      return schemaNames(node).every((schema) => schema === managedSchema)
-        ? fileOf[type]
-        : undefined;
-    }
   }
   const schema = ownSchema(type, node);
   if (schema === null || (schema !== undefined && schema !== managedSchema)) {
@@ -226,14 +191,7 @@ function fileFor(
 }
 
 function desiredText(sql: string): string {
-  const text = sql
-    .trim()
-    .replace(/^CREATE\s+OR\s+REPLACE\s+/i, "CREATE ")
-    .replace(
-      /^REVOKE\s+ALL\s+ON\s+(FUNCTION|PROCEDURE|ROUTINE|TYPE|DOMAIN|SCHEMA)\s(?=[\s\S]*\sFROM\s+PUBLIC;?$)/i,
-      (_all, kind: string) =>
-        `REVOKE ${publicDefaults[`OBJECT_${kind.toUpperCase()}`]?.toUpperCase()} ON ${kind} `,
-    );
+  const text = sql.trim().replace(/^CREATE\s+OR\s+REPLACE\s+/i, "CREATE ");
   return text.endsWith(";") ? text : `${text};`;
 }
 
@@ -283,9 +241,6 @@ function ownSchema(type: string, node: Json): string | null | undefined {
       return relationSchema(isObject(node.into) ? node.into.rel : null);
     case "CompositeTypeStmt":
       return relationSchema(node.typevar);
-    case "CreatePolicyStmt":
-    case "AlterPolicyStmt":
-      return relationSchema(node.table);
     case "CreateFunctionStmt":
       return schemaQualifier(stringList(node.funcname), 2);
     case "AlterFunctionStmt":
@@ -302,18 +257,6 @@ function ownSchema(type: string, node: Json): string | null | undefined {
         node.object,
         threePartObjects.has(String(node.objtype)) ? 3 : 2,
       );
-    case "GrantStmt": {
-      if (node.targtype !== "ACL_TARGET_OBJECT") {
-        // GRANT ... ON ALL ... IN SCHEMA s
-        const [schema] = list(node.objects).flatMap((object) => {
-          const name = defElemString(object);
-          return name === undefined ? [] : [name];
-        });
-        return schema ?? null;
-      }
-      const [first] = list(node.objects);
-      return objectSchema(first, 2);
-    }
     default:
       return null;
   }
@@ -329,7 +272,7 @@ function relationSchema(value: unknown): string | null | undefined {
     : undefined;
 }
 
-/** The schema of a COMMENT or GRANT object: a name list, RangeVar, TypeName or routine. */
+/** The schema of a COMMENT object: a name list, RangeVar, TypeName or routine. */
 function objectSchema(
   value: unknown,
   parts: number,

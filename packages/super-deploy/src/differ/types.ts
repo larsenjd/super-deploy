@@ -20,7 +20,8 @@ export interface Differ {
   readonly version: string;
   /**
    * The statements that turn `source`'s structure into `desired`'s. Column
-   * order is never a difference; ownership is not diffed; grants are. Every
+   * order is never a difference; ownership, grants, default privileges,
+   * policies and row-level security are not diffed (ADR-0006). Every
    * statement can run inside one transaction (a differ that would emit
    * anything else must throw instead).
    */

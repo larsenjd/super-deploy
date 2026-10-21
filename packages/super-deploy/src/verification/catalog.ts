@@ -11,10 +11,10 @@
 // their values are built by position (ROW(...), '(a,b)'), so an attribute's
 // position among the live ones is part of the type (pg-delta doesn't diff
 // it). So a column's comment names the column, never its attnum (objsubid).
-// ACLs are normalised with acldefault() so implicit and explicit default
-// grants compare equal.
-// Ownership is never compared: ACLs name the owner `<owner>` (so a target
-// owned by its deploy role matches a replica owned by the rehearsal login).
+// Ownership, grants (ACLs on objects, columns and the managed schema),
+// policies and row-level security flags are never read: they are set up on
+// targets outside super-deploy (ADR-0006), so they are never drift and a
+// rehearsal never compares them. A comment on a policy goes with its policy.
 //
 // Binding facts (opt-in) record what each object is bound to: pg_depend
 // edges (the overload a view or default calls, the table a function body
@@ -23,51 +23,15 @@
 import { inTransaction } from "../adapters/transaction.ts";
 import type { Session } from "../adapters/types.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
-import { schemaSetupRoles } from "./schema-setup.ts";
 
 const describe = (classTable: string, oid: string, sub = "0") =>
   `pg_describe_object('${classTable}'::regclass, ${oid}, ${sub})`;
-
-/**
- * An ACL as a sorted list of `grantee:PRIVILEGE[*]/grantor` items, with the
- * object's owner written `<owner>` and PUBLIC `public`. Ownership is never
- * compared (REFINEMENTS "Roles, grants and ownership"): a target's objects
- * belong to its deploy role, a replica's to the rehearsal login.
- */
-const privileges = (acl: string, owner: string) => `array(
-      select case when e.grantee = 0 then 'public' when e.grantee = ${owner} then '<owner>' else quote_ident(pg_get_userbyid(e.grantee)) end
-        || ':' || e.privilege_type || case when e.is_grantable then '*' else '' end
-        || '/' || case when e.grantor = ${owner} then '<owner>' else quote_ident(pg_get_userbyid(e.grantor)) end
-      from aclexplode(${acl}) e order by 1)::text`;
-
-/**
- * The managed schema's own ACL, written like `privileges` but with the
- * session's role (the deploy role on a target) counted as the owner too
- * (schema-setup.ts): a rehearsal's schema belongs to the rehearsal login.
- * Every other grant on the schema is the desired schema's (stories 98-99),
- * so on a target it is drift. A target that doesn't have the schema
- * yet reads as the schema its first deployment creates.
- */
-const schemaAcl = `
-    select 'schema ' || quote_ident($1), 'schema ' || $1 || ' ' || array(
-      select distinct case when e.grantee = 0 then 'public' when e.grantee = any(setup.roles) then '<owner>' else quote_ident(pg_get_userbyid(e.grantee)) end
-        || ':' || e.privilege_type
-        || case when e.is_grantable and e.grantee <> all(setup.roles) then '*' else '' end
-        || '/' || case when e.grantor = any(setup.roles) then '<owner>' else quote_ident(pg_get_userbyid(e.grantor)) end
-      from aclexplode(s.acl) e order by 1)::text
-    from (select oid from pg_roles where rolname = current_user) me,
-      lateral (select coalesce(
-          (select coalesce(n.nspacl, acldefault('n'::"char", n.nspowner)) from pg_namespace n where n.nspname = $1),
-          acldefault('n'::"char", me.oid)) as acl,
-        coalesce((select n.nspowner from pg_namespace n where n.nspname = $1), me.oid) as owner) s,
-      lateral (select array(${schemaSetupRoles("s.owner")}) as roles) setup`;
 
 /** Each query selects `object` and `line`; `$1` is the managed schema. */
 const queries: Readonly<Record<string, string>> = {
   relation: `
     select ${describe("pg_class", "c.oid")},
-      c.relkind::text || ' ' || c.relname || ' rls=' || c.relrowsecurity || ' force=' || c.relforcerowsecurity
-      || ' persistence=' || c.relpersistence::text || ' options=' || coalesce(c.reloptions::text, '-')
+      c.relkind::text || ' ' || c.relname || ' persistence=' || c.relpersistence::text || ' options=' || coalesce(c.reloptions::text, '-')
       || ' am=' || coalesce(am.amname, '-') || ' replident=' || c.relreplident::text
       || ' inherits=' || array(select h.inhparent::regclass::text from pg_inherits h where h.inhrelid = c.oid order by h.inhseqno)::text
       || ' partkey=' || coalesce(case when c.relkind = 'p' then pg_get_partkeydef(c.oid) end, '-')
@@ -123,14 +87,6 @@ const queries: Readonly<Record<string, string>> = {
     from pg_type t join pg_namespace n on n.oid = t.typnamespace
     where n.nspname = $1 and t.typtype in ('d','c','e','r')
       and not exists (select 1 from pg_class c where c.reltype = t.oid and c.relkind <> 'c')`,
-  policy: `
-    select ${describe("pg_policy", "p.oid")},
-      c.relname || ' ' || p.polname || ' cmd=' || p.polcmd::text || ' permissive=' || p.polpermissive
-      || ' roles=' || array(select coalesce(r.rolname, 'public') from unnest(p.polroles) x left join pg_roles r on r.oid = x order by 1)::text
-      || ' using=' || coalesce(pg_get_expr(p.polqual, p.polrelid), '-')
-      || ' check=' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '-')
-    from pg_policy p join pg_class c on c.oid = p.polrelid join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = $1`,
   comment: `
     select pg_describe_object(d.classoid, d.objoid, d.objsubid),
       d.classoid::regclass || ' ' || coalesce(
@@ -139,39 +95,18 @@ const queries: Readonly<Record<string, string>> = {
              (select conname from pg_constraint where oid = d.objoid and d.classoid = 'pg_constraint'::regclass),
              (select typname from pg_type where oid = d.objoid and d.classoid = 'pg_type'::regclass),
              (select tgname from pg_trigger where oid = d.objoid and d.classoid = 'pg_trigger'::regclass),
-             (select polname from pg_policy where oid = d.objoid and d.classoid = 'pg_policy'::regclass),
              d.objoid::text)
            || coalesce((select '.' || attname from pg_attribute
                         where attrelid = d.objoid and attnum = d.objsubid and d.classoid = 'pg_class'::regclass), '')
            || ' ' || d.description
     from pg_description d
     where d.classoid in ('pg_class'::regclass, 'pg_proc'::regclass, 'pg_constraint'::regclass,
-                         'pg_type'::regclass, 'pg_trigger'::regclass, 'pg_policy'::regclass)
+                         'pg_type'::regclass, 'pg_trigger'::regclass)
       and exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.oid = d.objoid and n.nspname = $1
                   union all select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where p.oid = d.objoid and n.nspname = $1
                   union all select 1 from pg_constraint k join pg_namespace n on n.oid = k.connamespace where k.oid = d.objoid and n.nspname = $1
                   union all select 1 from pg_type t join pg_namespace n on n.oid = t.typnamespace where t.oid = d.objoid and n.nspname = $1
-                  union all select 1 from pg_trigger g join pg_class c on c.oid = g.tgrelid join pg_namespace n on n.oid = c.relnamespace where g.oid = d.objoid and n.nspname = $1
-                  union all select 1 from pg_policy o join pg_class c on c.oid = o.polrelid join pg_namespace n on n.oid = c.relnamespace where o.oid = d.objoid and n.nspname = $1)`,
-  acl: `
-    select ${describe("pg_class", "c.oid")},
-      c.relname || ' ' || ${privileges(`coalesce(c.relacl, acldefault((case when c.relkind = 'S' then 's' else 'r' end)::"char", c.relowner))`, "c.relowner")}
-    from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = $1 and c.relkind not in ('i', 'I')
-    union all
-    select ${describe("pg_class", "a.attrelid", "a.attnum")},
-      c.relname || '.' || a.attname || ' ' || ${privileges("a.attacl", "c.relowner")}
-    from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = $1 and a.attacl is not null
-    union all
-    select ${describe("pg_proc", "p.oid")},
-      p.oid::regprocedure::text || ' ' || ${privileges(`coalesce(p.proacl, acldefault('f'::"char", p.proowner))`, "p.proowner")}
-    from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = $1
-    union all
-    select case when r.relkind is null or r.relkind = 'c' then ${describe("pg_type", "t.oid")} else ${describe("pg_class", "r.oid")} end,
-      t.typname || ' ' || ${privileges(`coalesce(t.typacl, acldefault('T'::"char", t.typowner))`, "t.typowner")}
-    from pg_type t join pg_namespace n on n.oid = t.typnamespace left join pg_class r on r.oid = t.typrelid
-    where n.nspname = $1 and t.typtype in ('d','c')
-    union all${schemaAcl}`,
+                  union all select 1 from pg_trigger g join pg_class c on c.oid = g.tgrelid join pg_namespace n on n.oid = c.relnamespace where g.oid = d.objoid and n.nspname = $1)`,
   // Everything else a schema can hold. Desired schemas can't create these,
   // so rehearsals never have any; on a target they are drift.
   other: `

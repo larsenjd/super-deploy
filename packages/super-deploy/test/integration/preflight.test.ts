@@ -2,7 +2,6 @@
 // external schemas exist on the target, the deploy role's privileges, recorded
 // hashes match the repo), which status reports too.
 
-import { randomBytes } from "node:crypto";
 import {
   deploy,
   draft,
@@ -13,8 +12,10 @@ import {
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
+  asDeployerPreamble,
   deployProject,
   finalizeMigration,
+  roleName,
   targetDatabaseName,
 } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
@@ -26,11 +27,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await server?.stop();
 });
-
-/** A role name no other test uses (roles are server-wide). */
-function roleName(prefix = "reader"): string {
-  return `${prefix}_${randomBytes(4).toString("hex")}`;
-}
 
 async function role(name: string) {
   return (
@@ -49,39 +45,14 @@ const orders =
 describe("roles in rehearsals", () => {
   test("a role the desired schema grants to is created as NOLOGIN when the rehearsal server lacks it, and never dropped", async () => {
     const reader = roleName();
-    const { project, dir } = await deployProject(server, {
+    const { project } = await deployProject(server, {
       "reports.sql": `create table reports (id bigint primary key);\ngrant select on reports to ${reader};\n`,
     });
 
     await draft(project, { name: "add reports" });
-    expect(await dir.read("data-model/draft/schema-change.sql")).toContain(
-      `GRANT SELECT ON TABLE "public"."reports" TO "${reader}"`,
-    );
     await server.query(`drop role ${reader}`);
     await finalize(project);
 
-    expect(await role(reader)).toEqual({ rolcanlogin: false });
-  });
-
-  test("a role only finalized migrations grant to is created when they are replayed, and grants (not ownership) are diffed", async () => {
-    const reader = roleName();
-    const { project, dir } = await deployProject(server, {
-      "reports.sql": `create table reports (id bigint primary key);\ngrant select on reports to ${reader};\n`,
-    });
-    await finalizeMigration(project, "add reports");
-    await server.query(`drop role ${reader}`);
-    await dir.write(
-      "data-model/desired-schema/reports.sql",
-      "create table reports (id bigint primary key);\n",
-    );
-
-    await draft(project, { name: "revoke reports" });
-
-    const schemaChange = await dir.read("data-model/draft/schema-change.sql");
-    expect(schemaChange).toContain(
-      `REVOKE ALL ON TABLE "public"."reports" FROM "${reader}"`,
-    );
-    expect(schemaChange).not.toMatch(/owner/i);
     expect(await role(reader)).toEqual({ rolcanlogin: false });
   });
 });
@@ -144,24 +115,6 @@ describe("deploy pre-flight", () => {
     });
     await deploy(project, { target: "dev" });
     expect(await tables(database)).toEqual(["reports"]);
-  });
-
-  test("also refuses when only a pending migration grants to the missing role, which a later one revokes", async () => {
-    const reader = roleName();
-    const { project, dir } = await deployProject(server, {
-      "reports.sql": `create table reports (id bigint primary key);\ngrant select on reports to ${reader};\n`,
-    });
-    await finalizeMigration(project, "add reports");
-    await dir.write(
-      "data-model/desired-schema/reports.sql",
-      "create table reports (id bigint primary key);\n",
-    );
-    await finalizeMigration(project, "revoke reports");
-    await server.query(`drop role ${reader}`);
-
-    expect(
-      await deploy(project, { target: "dev" }).catch((error: unknown) => error),
-    ).toMatchObject({ findings: { missingRoles: [reader] } });
   });
 
   test("refuses when a declared external schema is missing on the target, until it exists", async () => {
@@ -325,15 +278,7 @@ describe("the deploy role's privileges", () => {
       { "customers.sql": customers },
       {
         database,
-        preamble: `import { postgresTarget } from "super-deploy";
-const asDeployer = {
-  async connect() {
-    const url = new URL(await postgres.connectionString(${JSON.stringify(database)}));
-    url.username = ${JSON.stringify(deployer)};
-    url.password = "deployer";
-    return postgresTarget({ connectionString: url.href }).connect();
-  },
-};`,
+        preamble: asDeployerPreamble(database, deployer),
         adapter: "asDeployer",
       },
     );

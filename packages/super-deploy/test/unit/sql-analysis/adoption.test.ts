@@ -6,7 +6,6 @@ import { adoptedDesiredSchema } from "../../../src/sql-analysis/index.ts";
 const options = {
   managedSchema: "app",
   header: ["Adopted."],
-  schemaRoles: [],
   columnOrder: {},
 };
 
@@ -71,70 +70,17 @@ describe("adopted desired schema", () => {
     ).toEqual({});
   });
 
-  test("keeps the managed schema's grants and revokes of PUBLIC's defaults, naming the privilege", async () => {
-    expect(
-      await adoptedDesiredSchema(
-        [
-          'REVOKE ALL ON SCHEMA "app" FROM "super_deploy";',
-          'REVOKE ALL ON SCHEMA "app" FROM "admin";',
-          'GRANT CREATE, USAGE ON SCHEMA "app" TO "admin";',
-          'REVOKE ALL ON SCHEMA "app" FROM "deployer";',
-          'GRANT CREATE, USAGE ON SCHEMA "app" TO "deployer" WITH GRANT OPTION;',
-          'REVOKE ALL ON SCHEMA "app" FROM "r";',
-          'GRANT USAGE ON SCHEMA "app" TO "r";',
-          'GRANT CREATE ON SCHEMA "app" TO "w";',
-          'REVOKE ALL ON FUNCTION "app"."f"() FROM PUBLIC;',
-          'REVOKE ALL ON FUNCTION "app"."f"() FROM "r";',
-          'GRANT EXECUTE ON FUNCTION "app"."f"() TO "r";',
-          'REVOKE ALL ON PROCEDURE "app"."p"() FROM PUBLIC;',
-          'REVOKE ALL ON TYPE "app"."d" FROM PUBLIC;',
-        ],
-        { ...options, schemaRoles: ["admin", "deployer"] },
-      ),
-    ).toEqual([
-      {
-        path: "grants.sql",
-        text: `-- Adopted.
-
-GRANT USAGE ON SCHEMA "app" TO "r";
-
-GRANT CREATE ON SCHEMA "app" TO "w";
-
-REVOKE EXECUTE ON FUNCTION "app"."f"() FROM PUBLIC;
-
-GRANT EXECUTE ON FUNCTION "app"."f"() TO "r";
-
-REVOKE EXECUTE ON PROCEDURE "app"."p"() FROM PUBLIC;
-
-REVOKE USAGE ON TYPE "app"."d" FROM PUBLIC;
-`,
-      },
-    ]);
-  });
-
-  test("keeps a revoke of the public schema's default USAGE for PUBLIC", async () => {
-    const files = await adoptedDesiredSchema(
-      ['REVOKE ALL ON SCHEMA "public" FROM PUBLIC;'],
-      { ...options, managedSchema: "public" },
-    );
-    expect(files.map((file) => file.text)).toEqual([
-      '-- Adopted.\n\nREVOKE USAGE ON SCHEMA "public" FROM PUBLIC;\n',
-    ]);
-  });
-
   test("keeps what the rules must refuse, so they can say why", async () => {
     const files = await kept([
       'CREATE TYPE "app"."mood" AS ENUM (\'sad\');',
       'CREATE SEQUENCE "app"."s" AS bigint;',
       'ALTER SEQUENCE "app"."s" OWNED BY "app"."t"."id";',
-      'REVOKE ALL ON FUNCTION "app"."f"() FROM PUBLIC;',
       'ALTER TABLE "app"."t" REPLICA IDENTITY FULL;',
     ]);
     expect(Object.keys(files)).toEqual([
       "tables.sql",
       "sequences.sql",
       "types.sql",
-      "grants.sql",
     ]);
   });
 

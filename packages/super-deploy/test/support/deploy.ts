@@ -45,6 +45,28 @@ export function testSession(
     .connect();
 }
 
+/** A role name no other test uses (roles are server-wide). */
+export function roleName(prefix = "reader"): string {
+  return `${prefix}_${randomBytes(4).toString("hex")}`;
+}
+
+/**
+ * A `preamble` defining `asDeployer`, an adapter that connects to `database`
+ * on the test server as `role` (password `deployer`): use it as `adapter` or
+ * in `otherTargets`.
+ */
+export function asDeployerPreamble(database: string, role: string): string {
+  return `import { postgresTarget } from "super-deploy";
+const asDeployer = {
+  async connect() {
+    const url = new URL(await postgres.connectionString(${JSON.stringify(database)}));
+    url.username = ${JSON.stringify(role)};
+    url.password = "deployer";
+    return postgresTarget({ connectionString: url.href }).connect();
+  },
+};`;
+}
+
 /** A unique database name for one test's target. */
 export function targetDatabaseName(): string {
   return `target_${randomBytes(6).toString("hex")}`;
