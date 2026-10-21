@@ -36,7 +36,9 @@ export type DriftChange =
 export interface DriftedObject {
   /**
    * The object as PostgreSQL describes it, schema-qualified, e.g.
-   * `table app.audit`, `column note of table app.customers`.
+   * `table app.audit`, `column note of table app.customers`; a domain and
+   * its constraints as `domain app.email`, `constraint email_check on
+   * domain app.email` (verification/catalog.ts).
    */
   readonly object: string;
   readonly change: DriftChange;
@@ -134,8 +136,9 @@ export function driftedObjects(
   }));
 
   // A whole extra or missing table also differs in its columns and
-  // constraints ("column a of table t", "constraint c on table t"): report
-  // the table once.
+  // constraints ("column a of table t", "constraint c on table t"), a
+  // composite type in its attributes, a domain in its constraints
+  // ("constraint c on domain d"): report the whole once.
   const wholes = new Map(
     objects
       .filter((o) => o.change !== "changed")
@@ -196,7 +199,10 @@ export interface DriftContext {
  * With migrations pending, the message points to `mark`: drift is often a
  * change made on the target by hand that the next pending migration catches
  * up with. Whether it is exactly that migration isn't checked here (it would
- * take a second replica); `mark` checks it.
+ * take a second replica); `mark` checks it. With none pending, it gives the
+ * ways back (QA 109): undo the change, or capture it in a new migration and
+ * `mark` that. Either way it points to the README's "Drift" section, which
+ * has the ways back in full.
  */
 export class DriftError extends SuperDeployError {
   readonly code = "target-drifted";
@@ -213,12 +219,12 @@ export class DriftError extends SuperDeployError {
       context.command === "status"
         ? ""
         : ` (status --target ${target} lists the differences)`;
-    const mark =
+    const wayBack =
       context.pending === 0
-        ? ""
-        : `. If its changes are those of the next pending migration applied by hand, mark --target ${target} records that migration as deployed`;
+        ? `Undo the change on the target, or keep it: add it to the desired schema, draft and finalize a migration, then mark --target ${target} records that migration as deployed without running it`
+        : `If its changes are those of the next pending migration applied by hand, mark --target ${target} records that migration as deployed`;
     super(
-      `Target ${target} has drifted from its recorded migrations: ${listedDrift(objects)}. Deployments refuse until it matches them again${differences}${mark}`,
+      `Target ${target} has drifted from its recorded migrations: ${listedDrift(objects)}. Deployments refuse until it matches them again${differences}. ${wayBack} (see the README, "Drift")`,
     );
     this.target = target;
     this.objects = objects;

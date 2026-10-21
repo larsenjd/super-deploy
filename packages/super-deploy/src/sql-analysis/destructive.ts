@@ -1074,6 +1074,8 @@ export type Narrowing = {
     }
   | {
       readonly kind: "scale";
+      /** The new type's precision: how many digits a value may have in all. */
+      readonly precision: number;
       /** Values are rounded to this many decimal places. */
       readonly scale: number;
       /**
@@ -1126,6 +1128,7 @@ export function narrowingOf(
       ? {
           ...types,
           kind: "scale",
+          precision: newLength,
           scale: newScale,
           overflows:
             length === undefined || newLength - newScale < length - scale,

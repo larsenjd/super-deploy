@@ -642,6 +642,54 @@ alter table customers alter column phone set not null;
     ]);
   });
 
+  test("a narrowing of a column with no values in the rehearsal data says so, not that every value fits", async () => {
+    const { dir, project } = await deployProject(server, {
+      "orders.sql": "create table orders (id bigint primary key, note text);\n",
+    });
+    await draft(project, { name: "add orders" });
+    await finalize(project);
+    await dir.write(
+      "data-model/desired-schema/orders.sql",
+      "create table orders (id bigint primary key, note varchar(5));\n",
+    );
+
+    const result = await draft(project, { name: "shorten notes" });
+
+    expect(result.toCover.map(({ message }) => message)).toEqual([
+      "orders.note narrows from text to varchar(5): values longer than 5 characters are cut to 5 on every target, without an error (no non-null values in the rehearsal data): if a target holds values that don't fit, shorten or move them in the pre-migration script if they matter",
+    ]);
+  });
+
+  test("a numeric narrowing counts the values too large for the new type, which fail the rehearsal, apart from those rounded", async () => {
+    const { dir, project } = await deployProject(server, {
+      "orders.sql":
+        "create table orders (id bigint primary key, total numeric(10,2));\n",
+    });
+    await draft(project, { name: "add orders" });
+    await finalize(project);
+    await dir.write(
+      "data-model/desired-schema/orders.sql",
+      "create table orders (id bigint primary key, total numeric(4,1));\n",
+    );
+    await draft(project, { name: "narrow totals" });
+    // 1234.50 needs no rounding but overflows numeric(4,1); 1.25 is rounded.
+    await dir.write(
+      "data-model/draft/seed-data.sql",
+      "insert into orders (id, total) values (1, 1234.50), (2, 1.25), (3, 7.5);\n",
+    );
+
+    const result = await draft(project);
+
+    expect(result.toCover).toEqual([
+      expect.objectContaining({
+        column: "total",
+        rows: 2,
+        message:
+          "orders.total narrows from numeric(10,2) to numeric(4,1): values are rounded to 1 decimal place on every target, without an error, and values too large for numeric(4,1) make the deployment fail (1 value in the rehearsal data is rounded; 1 is too large for numeric(4,1) and makes the rehearsal fail): change or move them in the pre-migration script",
+      }),
+    ]);
+  });
+
   test("draft counts the bit strings cut and the numerics rounded by a narrowing", async () => {
     const { dir, project } = await deployProject(server, {
       "orders.sql": `create table orders (
