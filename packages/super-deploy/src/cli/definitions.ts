@@ -630,6 +630,9 @@ const unfinalizeCommand: CommandDefinition = {
         : `Moved Recovery ${result.recovery} of migration ${result.folder} back into a Recovery draft in ${context.displayPath(result.draftPath)}`,
     );
     reportRestore(project, result, context);
+    if (result.warning !== undefined) {
+      context.warn(`warning: ${result.warning}`);
+    }
   },
 };
 
