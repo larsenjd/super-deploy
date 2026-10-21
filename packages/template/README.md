@@ -818,7 +818,8 @@ draft-finalize-deploy path:
   throwaway replica of the recorded migrations), up to 10 objects. Objects
   in other schemas that depend on the managed schema are dropped too:
   a view on a managed table, a foreign key to one, a column of a managed
-  type (with its data). The confirmation lists each of them under "Also
+  type, a table inheriting from a managed table or typed with a managed
+  composite type (those two with their data). The confirmation lists each of them under "Also
   drops, outside schema ...", and if that list changes while it waits for
   `YES`, rebuild refuses without changing anything. It refuses before
   asking when the managed schema holds something the deploy role can't

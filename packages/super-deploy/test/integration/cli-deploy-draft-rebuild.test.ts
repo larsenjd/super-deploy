@@ -751,6 +751,14 @@ function boxLines(shown: string): string[] {
     .map((line) => line.replace(/^[│├╯╮\s]+|[│├╯╮\s]+$/g, ""));
 }
 
+/** The confirmation's lines listed under `heading`, up to the next blank line. */
+function listedUnder(shown: string, heading: string): string[] {
+  const lines = boxLines(shown);
+  const start = lines.indexOf(heading);
+  expect(start).toBeGreaterThan(0);
+  return lines.slice(start + 1, lines.indexOf("", start));
+}
+
 unix("rebuild", () => {
   test("wipes the managed schema and replays migrations up to N without seed data, keeping the schema's owner, comment, grants and default privileges and the attempt log", async () => {
     const { dir, database } = await twoMigrations();
@@ -1106,10 +1114,12 @@ unix("rebuild", () => {
       ["rebuild", "--target", "dev", "--to", "1"],
       { cwd: dir.root },
     );
-    const lines = boxLines(await terminal.waitFor("Type YES"));
-    const also = lines.indexOf("Also drops, outside schema public:");
-    expect(also).toBeGreaterThan(0);
-    expect(lines.slice(also + 1, lines.indexOf("", also))).toEqual([
+    expect(
+      listedUnder(
+        await terminal.waitFor("Type YES"),
+        "Also drops, outside schema public:",
+      ),
+    ).toEqual([
       "column reporting.snap.c (with its data)",
       "foreign key archive_customer_fk on reporting.orders_archive",
       "view reporting.customer_names",
@@ -1128,6 +1138,36 @@ unix("rebuild", () => {
     expect(
       await server.query("select * from reporting.unrelated", [], database),
     ).toEqual([{ id: 1 }]);
+  });
+
+  test("lists a table in another schema inheriting from a managed table, or typed with a managed composite type, as dropped with its data", async () => {
+    const { dir, database } = await deployedProject();
+    await server.query(
+      `create type public.pair as (a int, b int);
+       create schema reporting;
+       create table reporting.child (extra int) inherits (public.customers);
+       insert into reporting.child (id, name, extra) values (999, 'child row', 1);
+       create table reporting.typed of public.pair;
+       insert into reporting.typed values (1, 2);`,
+      [],
+      database,
+    );
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    expect(
+      listedUnder(
+        await terminal.waitFor("Type YES"),
+        "Also drops, outside schema public:",
+      ),
+    ).toEqual([
+      "table reporting.child (with its data)",
+      "table reporting.typed (with its data)",
+    ]);
+    terminal.type(keys.ctrlC);
+    expect(await terminal.exited).toBe(1);
   });
 
   test("refuses as target-changed, dropping nothing, when a dependent outside the managed schema appears while it waits for YES", async () => {
