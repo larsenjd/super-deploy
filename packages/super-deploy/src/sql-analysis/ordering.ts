@@ -1,12 +1,15 @@
 // Ordering (ADR-0004): given the desired-schema files, the statements in the
 // order to load them, or errors (unknown references, cycles, order-dependent
-// constructs) with file and line, all found before anything loads.
+// constructs) with file and line, all found before anything loads. It also
+// refuses a comment on a view's column (QA 127): only the whole desired
+// schema tells a view's column from a table's.
 //
 // Statements, not files, are ordered: by dependencies first, then object-kind
 // priority, then object identity, then a hash of the statement text. File
 // names and statement positions never decide the order; they only label
 // byte-identical duplicates, whose relative order cannot matter.
 import { createHash } from "node:crypto";
+import { viewColumnCommentFinding } from "./desired-schema-rules.ts";
 import {
   lineAtLocation,
   type ParsedStatement,
@@ -385,6 +388,20 @@ function analyse(
           `${node.facts.identity} selects field ${name}, which may call function ${name}() in column syntax (x.${name} meaning ${name}(x)); write ${name}(x) instead, or rename the column or the function`,
         );
       }
+    }
+  }
+
+  // Comments on a view's columns: pg-delta never generates them (QA 127).
+  for (const node of nodes) {
+    const relation = node.facts.commentedColumnOf;
+    const view = (relation === undefined ? [] : (producers.get(relation) ?? []))
+      .map((id) => nodes[id] as GraphNode)
+      .find(({ facts }) => ["view", "materialized view"].includes(facts.kind));
+    if (view !== undefined) {
+      const finding = viewColumnCommentFinding(
+        `; ${view.facts.identity} is one. Leave the comment out, or describe the column in the comment on the ${view.facts.kind}`,
+      );
+      violation(node.statement, finding.rule, finding.message);
     }
   }
 

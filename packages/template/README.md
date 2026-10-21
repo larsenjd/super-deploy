@@ -119,7 +119,8 @@ first version: these may be supported later, but none is yet.
   [Permissions](#what-each-target-needs-set-up-outside-super-deploy)).
 - Functions and procedures in `sql` or `plpgsql`, and triggers.
 - Domains and composite types.
-- `COMMENT ON` the objects above.
+- `COMMENT ON` the objects above, except on a view's or materialized
+  view's columns (refused below).
 - `CREATE EXTENSION plpgsql`, which is installed in every database anyway.
 
 ### Refused
@@ -169,7 +170,12 @@ Table, view and routine features:
 - routine options other than `LANGUAGE`, volatility, `STRICT`,
   `LEAKPROOF`, `PARALLEL`, `COST`, `ROWS` and `SET` (such as `WINDOW` and
   `SUPPORT`);
-- view options other than the three above.
+- view options other than the three above;
+- comments on view and materialized-view columns (`COMMENT ON COLUMN
+  <view>.<column>`): the differ doesn't generate them, so no migration
+  would add one. Describe the column in the view's own comment instead.
+  Adopting a database that has one is refused until it is removed there
+  (`COMMENT ON COLUMN <view>.<column> IS NULL`).
 
 Physical storage settings:
 
