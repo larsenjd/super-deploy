@@ -3,7 +3,7 @@
 // calls the exported API function and prints its result. To add a command,
 // define it here and append it to `commands`.
 import { join } from "node:path";
-import { adopt } from "../commands/adopt.ts";
+import { adopt, overrideListing } from "../commands/adopt.ts";
 import { type DeployedMigration, deploy } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
@@ -323,7 +323,7 @@ const initCommand: DirectoryCommandDefinition = {
 /**
  * `init --adopt`'s override reasons, asked at the terminal after listing
  * every object that needs one. Undefined without a terminal: adoption then
- * refuses them.
+ * refuses them, listed apart from anything unsupported.
  */
 function overrideReasonCallback(
   context: CommandContext,
@@ -337,11 +337,8 @@ function overrideReasonCallback(
       context.warn(
         `Target ${question.target} has ${plural(question.needed.length, "object")} that need${question.needed.length === 1 ? "s" : ""} an override marker:`,
       );
-      for (const item of question.needed) {
-        context.warn(`  ${item.object}`);
-        for (const finding of item.findings) {
-          context.warn(`    ${finding.rule}: ${finding.message}`);
-        }
+      for (const line of overrideListing(question.needed)) {
+        context.warn(line);
       }
     }
     return ask(`${question.message} (empty cancels the adoption)`);

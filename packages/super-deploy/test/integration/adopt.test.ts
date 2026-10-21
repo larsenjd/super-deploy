@@ -112,6 +112,17 @@ const reasons: Record<string, string> = {
   "function ping()": "wakes the order worker",
 };
 
+/** The reporter's functions (QA 132): dynamic SQL, pg_notify, and both. */
+const functionsNeedingReasons = `
+  create table events (id bigint primary key, kind text not null);
+  create function count_rows(tbl text) returns bigint language plpgsql
+    as $$ declare n bigint; begin execute format('select count(*) from %I', tbl) into n; return n; end $$;
+  create function notify_event() returns void language plpgsql
+    as $$ begin perform pg_notify('events', 'changed'); end $$;
+  create function purge_kind(k text) returns void language plpgsql
+    as $$ begin execute 'delete from events where kind = $1' using k; perform pg_notify('events', k); end $$;
+`;
+
 describe("adopt", () => {
   test("turns the target's managed schema into migration 1 and records it there as marked", async () => {
     const { dir, project, prod } = await adoptableProject(shop);
@@ -349,8 +360,8 @@ describe("adopt", () => {
       );
       expect(refused).toBeInstanceOf(AdoptUnsupportedError);
       expect(
-        (refused as AdoptUnsupportedError).objects.map((o) => o.rule),
-      ).toEqual(["plpgsql-dynamic-sql", "denylisted-call"]);
+        (refused as AdoptUnsupportedError).overridesNeeded.map((o) => o.object),
+      ).toEqual(["function load_staging(text)", "function ping()"]);
 
       const cancelled = await adopt(project, {
         target: "prod",
@@ -376,16 +387,55 @@ describe("adopt", () => {
     }
   });
 
-  test("refusing only functions that need an override marker, advises a terminal, not changing the target", async () => {
-    const { project } = await adoptableProject(loaders);
+  test("without a reason callback, refuses objects that need only an override reason apart, once each with all their rules, not as unsupported", async () => {
+    const { project } = await adoptableProject(functionsNeedingReasons);
     try {
       const error = await adopt(project, { target: "prod" }).catch(
         (e: unknown) => e,
       );
 
       expect(error).toBeInstanceOf(AdoptUnsupportedError);
-      expect((error as AdoptUnsupportedError).message).toMatch(
-        /\. Nothing was written; run adoption in a terminal to give an override reason for each object that breaks only risk rules$/,
+      const refusal = error as AdoptUnsupportedError;
+      expect(refusal.objects).toEqual([]);
+      expect(
+        refusal.overridesNeeded.map(({ object, rules }) => ({ object, rules })),
+      ).toEqual([
+        {
+          object: "function count_rows(text)",
+          rules: ["plpgsql-dynamic-sql"],
+        },
+        { object: "function notify_event()", rules: ["denylisted-call"] },
+        {
+          object: "function purge_kind(text)",
+          rules: ["denylisted-call", "plpgsql-dynamic-sql"],
+        },
+      ]);
+      expect(refusal.message).not.toContain("doesn't support");
+      expect(refusal.advice).toEqual([
+        "run adoption in a terminal to give an override reason for each object that breaks only risk rules",
+      ]);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("without a reason callback, counts only what V1 doesn't support as such, listing the objects that need a reason apart", async () => {
+    const { project } = await adoptableProject(
+      `${functionsNeedingReasons} create type mood as enum ('sad', 'happy');`,
+    );
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const refusal = error as AdoptUnsupportedError;
+      expect(refusal.objects.map(({ object }) => object)).toEqual([
+        "type public.mood",
+      ]);
+      expect(refusal.overridesNeeded).toHaveLength(3);
+      expect(refusal.summary).toContain(
+        "its managed schema has 1 thing V1 doesn't support and 3 objects need an override reason",
       );
     } finally {
       await project.close();

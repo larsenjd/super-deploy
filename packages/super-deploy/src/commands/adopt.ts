@@ -54,8 +54,10 @@
 //      (`overrideReason`): the checks treat them as marked, and once nothing
 //      else is refused, and the target's connection is closed, a reason is
 //      asked for each. It goes into an override marker above the statement
-//      (an empty answer cancels). Without the callback they are refused.
-//      With it, a refusal of anything else names them as `overridesNeeded`.
+//      (an empty answer cancels). Either way a refusal names them as
+//      `overridesNeeded`, once per object with all its rules, never among
+//      what V1 doesn't support; without the callback they are refused once
+//      nothing else is, for want of a terminal.
 //   3. Write the files, then the ordinary `draft` (named `adopt`) and
 //      `finalize`, which rehearse migration 1 against the desired schema.
 //   4. Under the target lock, `markNextPending` (deploy/mark.ts) runs mark's
@@ -115,7 +117,6 @@ import {
   catalogObjectFinding,
   desiredSchemaAnalysis,
   externalSchemaReferences,
-  isOverridable,
   isSequenceStatement,
   type OverrideCandidate,
   type OverrideNeeded,
@@ -166,7 +167,7 @@ export interface AdoptOptions {
   /**
    * Asked for the reason to write into the override marker of each object
    * that breaks only risk rules, once nothing else is refused. Without it
-   * such objects are refused like anything else V1 doesn't support.
+   * such objects are refused, as `overridesNeeded`, for want of a terminal.
    */
   overrideReason?: AskOverrideReason | undefined;
 }
@@ -304,10 +305,11 @@ async function requireEmptyProject(
 /**
  * Steps 1 and 2: the desired-schema files for the target's managed schema,
  * without override markers, or AdoptUnsupportedError. Only reads the
- * target. `withOverrides`: the statements that break only risk rules are
- * checked as if marked and returned as `candidates` (in file order), and an
- * AdoptUnsupportedError lists them as `overridesNeeded`; otherwise they are
- * refused like anything else.
+ * target. The statements that break only risk rules are checked as if
+ * marked and returned as `candidates` (in file order); an
+ * AdoptUnsupportedError lists them as `overridesNeeded`. Without
+ * `withOverrides` (no callback to ask their reasons) they are refused too,
+ * once nothing else is.
  */
 async function readTarget(
   project: Project,
@@ -389,10 +391,14 @@ async function readTarget(
         reason: serial.message,
       })),
     );
-    const candidates = withOverrides
-      ? await overrideCandidates(sqlFiles(project, files), context)
-      : [];
-    const needed = withOverrides ? overridesNeeded(candidates) : undefined;
+    const candidates = await overrideCandidates(
+      sqlFiles(project, files),
+      context,
+    );
+    const overrides: OverridesToAsk = {
+      needed: overridesNeeded(candidates),
+      askable: withOverrides,
+    };
     const analysed = await analyse(
       project,
       withCheckingMarkers(project, files, candidates),
@@ -432,7 +438,7 @@ async function readTarget(
           notOwned: notOwnedSupported,
           historySchemaNotCreatable: historySchema,
         },
-        needed,
+        overrides,
       );
     }
 
@@ -461,7 +467,7 @@ async function readTarget(
             refusedStatement(error, analysed.statements, config.managedSchema),
           ]),
         },
-        needed,
+        overrides,
       );
     });
     if (differences.length > 0) {
@@ -474,8 +480,11 @@ async function readTarget(
             reason: `${notReproduced[drifted.change]}: ${notReproducedLines(drifted)}`,
           })),
         },
-        needed,
+        overrides,
       );
+    }
+    if (!withOverrides && candidates.length > 0) {
+      throw new AdoptUnsupportedError(target.name, { objects: [] }, overrides);
     }
     return {
       files,
@@ -995,19 +1004,27 @@ export interface AdoptRefusal {
   readonly historySchemaNotCreatable?: HistorySchemaNotCreatable | undefined;
 }
 
+/** The objects that break only risk rules, and whether adoption can ask their reasons. */
+export interface OverridesToAsk {
+  readonly needed: readonly OverrideNeeded[];
+  /** Adoption has an override-reason callback (a terminal, in the CLI). */
+  readonly askable: boolean;
+}
+
 /**
  * `init --adopt` refused the target, listing everything it found at once:
  * objects in its managed schema that V1 doesn't support (or can't
- * reproduce), objects the deploy role doesn't own, and the deploy role
- * lacking CREATE on the database for the history schema. Nothing was
- * written anywhere.
+ * reproduce), objects the deploy role doesn't own, the deploy role lacking
+ * CREATE on the database for the history schema, and the objects that need
+ * an override reason (asked once nothing else is refused, and only with an
+ * override-reason callback). Nothing was written anywhere.
  */
 export class AdoptUnsupportedError extends SuperDeployError {
   readonly code = "adopt-unsupported";
   readonly target: string;
   /**
-   * What V1 doesn't support; empty when only the deploy role's ownership
-   * or CREATE on the database is refused.
+   * What V1 doesn't support; empty when only the deploy role's ownership,
+   * its CREATE on the database or override reasons are refused.
    */
   readonly objects: readonly UnsupportedObject[];
   /**
@@ -1019,9 +1036,10 @@ export class AdoptUnsupportedError extends SuperDeployError {
   /** The deploy role can't create the history schema; with the grant that fixes it. */
   readonly historySchemaNotCreatable: HistorySchemaNotCreatable | undefined;
   /**
-   * With an override-reason callback: the objects that break only risk
-   * rules, whose reasons will be asked once nothing else is refused (they
-   * aren't in `objects`). Empty without the callback.
+   * The objects that break only risk rules (never in `objects`), each once
+   * with all its rules. With an override-reason callback their reasons will
+   * be asked once nothing else is refused; without one, they are refused
+   * for want of a terminal.
    */
   readonly overridesNeeded: readonly OverrideNeeded[];
 
@@ -1034,52 +1052,47 @@ export class AdoptUnsupportedError extends SuperDeployError {
   /**
    * The refusal as lines for people, the way the CLI prints it: every object
    * with its rule and reason, the objects the deploy role doesn't own and
-   * what it lacks, the fixes for those as a script, then the override
-   * reasons still to be asked. `summary` follows them.
+   * what it lacks, the fixes for those as a script, then the objects that
+   * need an override reason. `summary` follows them.
    */
   readonly details: readonly string[];
 
   /** The message without what `details` lists: how much, and the advice. */
   readonly summary: string;
 
-  /**
-   * `overridesNeeded`: undefined when adoption had no override-reason
-   * callback, so objects that break only risk rules are among `objects`.
-   */
   constructor(
     target: string,
     refusal: AdoptRefusal,
-    overridesNeeded?: readonly OverrideNeeded[],
+    overrides: OverridesToAsk = { needed: [], askable: true },
   ) {
     const { objects } = refusal;
     const notOwned = refusal.notOwned ?? [];
     const historySchema = refusal.historySchemaNotCreatable;
+    const { needed, askable } = overrides;
     const fixes = [
       ...notOwned.map(({ fix }) => fix),
       ...(historySchema === undefined ? [] : [historySchema.fix]),
     ];
-    const advice = adoptionAdvice(
-      objects,
-      overridesNeeded !== undefined,
-      fixes.length > 0,
-    );
-    const needed = overridesNeeded ?? [];
-    const things = `${plural(objects.length, "thing")} V1 doesn't support`;
-    const unsupported = `its managed schema has ${things}`;
-    const shown = objects
-      .slice(0, 5)
-      .map((o) => o.object)
-      .join("; ");
-    const more = objects.length > 5 ? `; and ${objects.length - 5} more` : "";
+    const advice = adoptionAdvice(objects, {
+      fixes: fixes.length > 0,
+      terminal: !askable && needed.length > 0,
+    });
     const nothingWritten = `Nothing was written; ${advice.join("; ")}`;
+    const things = `${plural(objects.length, "thing")} V1 doesn't support`;
+    const s = needed.length === 1 ? "s" : "";
+    const reasonsNeeded = `${plural(needed.length, "object")} need${s} an override reason`;
+    // Only without a callback are the override reasons themselves refused.
+    const refusedNeeded = askable ? [] : needed;
     const later =
-      needed.length === 0
-        ? []
-        : [
+      askable && needed.length > 0
+        ? [
             `Once nothing else is refused, adoption will ask an override reason for ${plural(needed.length, "object")} that ${needed.length === 1 ? "breaks" : "break"} only risk rules: ${needed.map((item) => item.object).join(", ")}`,
-          ];
+          ]
+        : [];
     const reasons = [
-      ...(objects.length === 0 ? [] : [`${unsupported}: ${shown}${more}`]),
+      ...(objects.length === 0
+        ? []
+        : [`its managed schema has ${things}: ${shown(objects)}`]),
       ...(notOwned.length === 0
         ? []
         : [
@@ -1088,9 +1101,14 @@ export class AdoptUnsupportedError extends SuperDeployError {
       ...(historySchema === undefined
         ? []
         : [historySchemaNotCreatableMessage(historySchema)]),
+      ...(refusedNeeded.length === 0
+        ? []
+        : [
+            `${reasonsNeeded}, asked only in a terminal: ${refusedNeeded.map((item) => item.object).join(", ")}`,
+          ]),
     ];
     const counted = [
-      ...(objects.length === 0 ? [] : [unsupported]),
+      ...(objects.length === 0 ? [] : [`its managed schema has ${things}`]),
       ...(notOwned.length === 0
         ? []
         : [
@@ -1101,13 +1119,17 @@ export class AdoptUnsupportedError extends SuperDeployError {
         : [
             `${notOwned.length === 0 ? "the deploy role " : ""}lacks CREATE on the database`,
           ]),
+      ...(refusedNeeded.length === 0 ? [] : [reasonsNeeded]),
     ];
+    // Refused for nothing but the override reasons: for want of a terminal.
+    const refused =
+      counted.length === 1 && refusedNeeded.length > 0
+        ? `Cannot adopt target ${target} without a terminal`
+        : `Cannot adopt target ${target}`;
     super(
-      [
-        `Cannot adopt target ${target}: ${reasons.join("; ")}`,
-        nothingWritten,
-        ...later,
-      ].join(". "),
+      [`${refused}: ${reasons.join("; ")}`, nothingWritten, ...later].join(
+        ". ",
+      ),
     );
     this.target = target;
     this.objects = objects;
@@ -1141,10 +1163,36 @@ export class AdoptUnsupportedError extends SuperDeployError {
                 : "a superuser",
             fixes,
           )),
+      ...(refusedNeeded.length === 0
+        ? []
+        : [
+            `Target ${target} has ${plural(needed.length, "object")} that need${s} an override reason, asked only in a terminal:`,
+            ...overrideListing(refusedNeeded),
+          ]),
       ...later,
     ];
-    this.summary = `Cannot adopt target ${target}: ${listing(counted)}, listed above. ${nothingWritten}`;
+    this.summary = `${refused}: ${listing(counted)}, listed above. ${nothingWritten}`;
   }
+}
+
+/**
+ * Objects that need an override reason as lines for people, the way the
+ * CLI lists them: each object, then each rule it breaks with its message.
+ */
+export function overrideListing(needed: readonly OverrideNeeded[]): string[] {
+  return needed.flatMap(({ object, findings }) => [
+    `  ${object}`,
+    ...findings.map(({ rule, message }) => `    ${rule}: ${message}`),
+  ]);
+}
+
+/** Up to five objects' names, `; `-separated, then how many more. */
+function shown(objects: readonly UnsupportedObject[]): string {
+  const more = objects.length > 5 ? `; and ${objects.length - 5} more` : "";
+  return `${objects
+    .slice(0, 5)
+    .map((o) => o.object)
+    .join("; ")}${more}`;
 }
 
 /** `a`, `a and b`, `a, b and c`. */
@@ -1155,29 +1203,24 @@ function listing(parts: readonly string[]): string {
 }
 
 /**
- * The advice for a refusal, by the rules its objects break: a PL/pgSQL
- * body's reference to an undeclared schema needs it in externalSchemas; a
- * risk rule, without the override-reason callback (`askingOverrides`),
- * needs a terminal; anything else needs the target changed. `fixes`: the
- * deploy role's ownership or CREATE is refused, which a superuser fixes.
+ * The advice for a refusal: a PL/pgSQL body's reference to an undeclared
+ * schema needs it in externalSchemas; anything else its objects break needs
+ * the target changed; `fixes` (the deploy role's ownership or CREATE is
+ * refused) need running as a superuser; `terminal` (override reasons are
+ * needed without a callback to ask them) needs a terminal.
  */
 function adoptionAdvice(
   objects: readonly UnsupportedObject[],
-  askingOverrides: boolean,
-  fixes: boolean,
+  { fixes, terminal }: { fixes: boolean; terminal: boolean },
 ): string[] {
-  let changeTarget = false;
-  let terminal = false;
-  const schemas = new Set<string>();
-  for (const { rule, schemaToDeclare } of objects) {
-    if (schemaToDeclare !== undefined) {
-      schemas.add(schemaToDeclare);
-    } else if (isOverridable(rule)) {
-      terminal ||= !askingOverrides;
-    } else {
-      changeTarget = true;
-    }
-  }
+  const schemas = new Set(
+    objects.flatMap(({ schemaToDeclare }) =>
+      schemaToDeclare === undefined ? [] : [schemaToDeclare],
+    ),
+  );
+  const changeTarget = objects.some(
+    ({ schemaToDeclare }) => schemaToDeclare === undefined,
+  );
   const changeTheTarget = "change the target first, then adopt again";
   const advice = [
     ...(changeTarget ? [changeTheTarget] : []),

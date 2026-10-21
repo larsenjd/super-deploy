@@ -185,7 +185,7 @@ describe("init --adopt", () => {
     });
   });
 
-  test("without a terminal refuses functions that need an override marker, saying a terminal would ask", async () => {
+  test("without a terminal lists the functions that need an override reason apart from anything unsupported, advising a terminal", async () => {
     const dir = await projectAdopting(loader);
 
     const result = await runCli(["init", "--adopt", "prod"], {
@@ -193,11 +193,12 @@ describe("init --adopt", () => {
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain(
-      "    plpgsql-dynamic-sql: EXECUTE (dynamic SQL) is not allowed",
+    expect(result.stderr).not.toContain("doesn't support");
+    expect(result.stderr).toMatch(
+      /^Target prod has 1 object that needs an override reason, asked only in a terminal:\n {2}function load_staging\(text\)\n {4}plpgsql-dynamic-sql: EXECUTE \(dynamic SQL\) is not allowed/,
     );
     expect(result.stderr).toMatch(
-      /\nError: Cannot adopt target prod: its managed schema has 1 thing V1 doesn't support, listed above\. Nothing was written; run adoption in a terminal to give an override reason for each object that breaks only risk rules\n$/,
+      /\nError: Cannot adopt target prod without a terminal: 1 object needs an override reason, listed above\. Nothing was written; run adoption in a terminal to give an override reason for each object that breaks only risk rules\n$/,
     );
     expect(dir.exists("data-model/desired-schema")).toBe(false);
   });

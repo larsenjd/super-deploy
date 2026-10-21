@@ -390,7 +390,8 @@ reason reviewers will read in `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`,
 which adoption writes on the line before the statement. Until then, its
 refusal names them, so you know which reasons it will ask for. An empty
 answer cancels the adoption, writing nothing. Without a terminal (in CI, for
-example) adoption refuses them, saying to run it in a terminal. `finalize` and `validate` show these
+example) adoption refuses them, listed apart from anything it doesn't
+support, saying to run it in a terminal. `finalize` and `validate` show these
 overrides like any other.
 
 ## Permissions
