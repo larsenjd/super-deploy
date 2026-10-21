@@ -114,7 +114,9 @@ first version: these may be supported later, but none is yet.
 - Indexes: unique, partial and expression indexes, with any index method
   and storage parameters.
 - Views (with the options `security_invoker`, `security_barrier` and
-  `check_option`) and materialized views.
+  `check_option`) and materialized views. A view over a table with
+  hand-made policies needs `security_invoker` (see
+  [Permissions](#what-each-target-needs-set-up-outside-super-deploy)).
 - Functions and procedures in `sql` or `plpgsql`, and triggers.
 - Domains and composite types.
 - `COMMENT ON` the objects above.
@@ -260,7 +262,8 @@ settings; super-deploy refuses any other.
   routines in the desired schema may refer to, such as `["auth"]`.
   super-deploy neither creates them, nor reproduces them in rehearsals, nor
   checks that a target has them: setting them up is the DBA's job (see
-  "Permissions"). Default none.
+  "Permissions", which also says why a migration's scripts can't run
+  anything that reads them). Default none.
 - `directory`: the folder holding `desired-schema/`, `draft/` and
   `migrations/`, relative to the config file and inside the project.
   Default `data-model`.
@@ -522,7 +525,20 @@ default privileges as they are.
   already exists too, e.g. `grant select on all tables in schema app to
   app_reader`.
 
-  Two things to know about grants and policies made by hand:
+  A role that refreshes materialized views needs `MAINTAIN` on them, since
+  only their owner, the deploy role, can otherwise:
+
+  ```sql
+  alter default privileges for role deploy_role in schema app
+    grant maintain on tables to app_writer;
+  ```
+
+  `MAINTAIN` on tables also allows `VACUUM`, `ANALYZE`, `REINDEX`, `CLUSTER`
+  and `LOCK TABLE`, so grant it only to a role that needs it, or by hand on
+  each materialized view (`grant maintain on app.order_totals to
+  app_writer`).
+
+  Things to know about grants and policies made by hand:
 
   - A migration that drops and recreates a table (or another object) loses
     the grants, revokes and policies made on it by hand. Default privileges
@@ -542,14 +558,37 @@ default privileges as they are.
     on the column. Rehearsals can't catch it, because their databases have
     no hand-made policies. The deployment rolls back and PostgreSQL's error
     names the policy: drop the policy, deploy, then create it again.
+  - The deploy role owns every object, and row-level security doesn't apply
+    to a table's owner. A view reads its tables as its owner, so it shows
+    every row of a table whose policies hide them, unless it is created
+    `with (security_invoker = true)`, which makes it read them as the role
+    querying it. Declare views over tables that get policies that way:
+
+    ```sql
+    create view my_orders with (security_invoker = true) as
+      select id, total from orders;
+    ```
+
+    A materialized view is built and refreshed as the deploy role, so it
+    holds every row whatever the policies on its tables: don't build one
+    over rows a policy must hide.
+  - With `FORCE ROW LEVEL SECURITY`, a table's policies apply to its owner
+    too, so they would hide rows from a deployment's own scripts and from
+    the materialized views it builds. Deployments run with `row_security`
+    off, as `pg_dump` does: a statement a policy would filter fails with
+    `query would be affected by row-level security policy for table
+    "orders"` instead of silently skipping rows, and the deployment rolls
+    back.
+    Rehearsals can't catch it. Run `ALTER TABLE orders NO FORCE ROW LEVEL
+    SECURITY` while deploying and `FORCE` it again afterwards, or move the
+    work out of the migration.
 - **External schemas** (`externalSchemas` in `super-deploy.config.ts`, see
   [Project settings](#project-settings)), and grants on them and their
   objects. super-deploy doesn't check them: `deploy` goes ahead on a target
   without them, and a routine that reads a missing one fails only when it
   runs. On `dev`, create them as the superuser (see
   [Connecting to dev](#connecting-to-dev)). Routines run as their caller, so it's the application's
-  roles that need these grants (and the deploy role too, if a migration's
-  scripts fire a trigger that uses them). For example, a
+  roles that need these grants. For example, a
   PL/pgSQL function `app_writer` calls that reads `auth.users` needs:
 
   ```sql
@@ -557,7 +596,12 @@ default privileges as they are.
   grant select on auth.users to app_writer;
   ```
 
-  Rehearsals have no `auth` schema, so only PL/pgSQL bodies may reference it.
+  Rehearsals have no `auth` schema, so only PL/pgSQL bodies may reference
+  it, and a migration's scripts and seed data can't fire a trigger (or call
+  anything else) that reads it: every rehearsal of the migration would fail
+  with `relation "auth.users" does not exist`, whatever the targets have.
+  Such a trigger also blocks every later migration whose scripts write to
+  its table.
 
 ## The files of a draft and a migration
 

@@ -185,7 +185,7 @@ export async function draft(
             await replay(
               source,
               [...migrations, ...beforeSchemaChange],
-              config.managedSchema,
+              config,
             );
             const statements = await differ.diff(source, desired);
             const toCover = await scriptCoverage(
@@ -209,7 +209,7 @@ export async function draft(
                   file: projectRelative(project.root, paths.draftSchemaChange),
                   sql: schemaChange,
                 },
-                config.managedSchema,
+                config,
                 { preMigrationScript },
               ),
             };
