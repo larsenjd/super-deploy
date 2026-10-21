@@ -2,7 +2,11 @@
 // adapter, each configured from a connection string or the name of an
 // environment variable holding one. Environment variables are read only when
 // a command actually connects, so a command that never touches a target
-// never needs its credentials.
+// never needs its credentials. The connection string is checked before any
+// connection is attempted (ConnectionStringError): node-postgres's parser
+// turns undefined, "" or a non-URL into odd errors such as "ENOTFOUND base".
+// The adapter doesn't know its target's name, so connectTarget renames the
+// error's subject (deploy/target.ts).
 import { randomBytes } from "node:crypto";
 import pg from "pg";
 import { parseIntoClientConfig } from "pg-connection-string";
@@ -21,7 +25,9 @@ export type ConnectionSource = { connectionString: string } | { env: string };
 
 /** A deployment adapter connecting with node-postgres. */
 export function postgresTarget(source: ConnectionSource): DeploymentAdapter {
-  return targetOver(async () => resolveConnectionString(source));
+  return targetOver(async () =>
+    resolveConnectionString(source, "The deployment adapter"),
+  );
 }
 
 /**
@@ -30,7 +36,9 @@ export function postgresTarget(source: ConnectionSource): DeploymentAdapter {
  * it never needs `CREATEROLE`.
  */
 export function postgresRehearsal(source: ConnectionSource): RehearsalAdapter {
-  return rehearsalOver(async () => resolveConnectionString(source));
+  return rehearsalOver(async () =>
+    resolveConnectionString(source, "The rehearsal adapter"),
+  );
 }
 
 /** @internal A deployment adapter over a lazily resolved connection string. */
@@ -82,15 +90,100 @@ export function rehearsalOver(
   };
 }
 
-function resolveConnectionString(source: ConnectionSource): string {
-  if ("connectionString" in source) {
-    return source.connectionString;
+/** @internal What is wrong with a ConnectionSource. */
+export type ConnectionStringProblem =
+  | { kind: "missing"; value: "undefined" | "empty" | "not a string" }
+  | { kind: "variable-unset"; variable: string }
+  | { kind: "variable-empty"; variable: string }
+  | { kind: "not-postgres-url" };
+
+/**
+ * @internal A ConnectionSource gives no usable connection string. `subject`
+ * names who it belongs to ("Target qa"); see `about`.
+ */
+export class ConnectionStringError extends AdapterError {
+  readonly problem: ConnectionStringProblem;
+
+  constructor(problem: ConnectionStringProblem, subject: string) {
+    super(connectionStringMessage(problem, subject));
+    this.problem = problem;
   }
-  const value = process.env[source.env];
-  if (value === undefined || value === "") {
-    throw new AdapterError(`Environment variable ${source.env} is not set`);
+
+  /** The same problem, attributed to `subject`. */
+  about(subject: string): ConnectionStringError {
+    return new ConnectionStringError(this.problem, subject);
   }
-  return value;
+}
+
+// Never echoes the connection string: it may hold a password.
+function connectionStringMessage(
+  problem: ConnectionStringProblem,
+  subject: string,
+): string {
+  switch (problem.kind) {
+    case "missing":
+      return `${subject} has no connection string (connectionString is ${problem.value}): set one in super-deploy.config.ts, usually from an environment variable with postgresTarget({ env: "DATABASE_URL" })`;
+    case "variable-unset":
+      return `${subject}: environment variable ${problem.variable} is not set`;
+    case "variable-empty":
+      return `${subject}: environment variable ${problem.variable} is empty`;
+    case "not-postgres-url":
+      return `${subject}'s connection string is not a PostgreSQL URL (postgres://user:password@host:port/database)`;
+  }
+}
+
+function resolveConnectionString(
+  source: ConnectionSource,
+  subject: string,
+): string {
+  const value: unknown =
+    "env" in source ? process.env[source.env] : source.connectionString;
+  const problem = sourceProblem(source, value);
+  if (problem !== undefined) {
+    throw new ConnectionStringError(problem, subject);
+  }
+  return value as string;
+}
+
+/** What is wrong with `value`, read from `source`, if anything. */
+function sourceProblem(
+  source: ConnectionSource,
+  value: unknown,
+): ConnectionStringProblem | undefined {
+  if ("env" in source) {
+    if (value === undefined) {
+      return { kind: "variable-unset", variable: source.env };
+    }
+    if (value === "") {
+      return { kind: "variable-empty", variable: source.env };
+    }
+  } else if (typeof value !== "string" || value === "") {
+    return {
+      kind: "missing",
+      value:
+        value === undefined
+          ? "undefined"
+          : value === ""
+            ? "empty"
+            : "not a string",
+    };
+  }
+  return typeof value === "string" && isPostgresUrl(value)
+    ? undefined
+    : { kind: "not-postgres-url" };
+}
+
+/** A postgres:// or postgresql:// URL that node-postgres can parse. */
+function isPostgresUrl(value: string): boolean {
+  if (!/^postgres(ql)?:\/\//i.test(value)) {
+    return false;
+  }
+  try {
+    parseIntoClientConfig(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function createDatabaseSql(name: string, request: DatabaseRequest): string {
