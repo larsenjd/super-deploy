@@ -7,11 +7,17 @@
 // target's. Tables and columns the migration creates are
 // exempt: they hold no data yet.
 //
+// A type change whose cast keeps every value (a widening of the column's
+// type in the starting point, judged as finalize judges destructiveness)
+// needs nothing covered.
+//
 // Advisory only: `draft` reports these and carries on. Acknowledging data
 // loss at finalize is ticket 11's, from the same statements.
+import type { AlterTableCmd, TypeCast, TypeName } from "@pgsql/types";
 import type { Session } from "../adapters/types.ts";
 import { quoteIdentifier } from "../deploy/history.ts";
 import type { PlannedStatement } from "../differ/index.ts";
+import { keepsEveryValue } from "../sql-analysis/destructive.ts";
 import { parseSqlFile } from "../sql-analysis/parse.ts";
 import {
   isObject,
@@ -26,7 +32,7 @@ export type ScriptCoverageKind =
   | "dropped-table"
   /** DROP COLUMN: its values are lost (a rename is regenerated as drop and add). */
   | "dropped-column"
-  /** ALTER COLUMN TYPE with a plain cast, which may fail or lose data. */
+  /** ALTER COLUMN TYPE with a cast that may fail or lose data (not a widening). */
   | "changed-type"
   /** SET NOT NULL (or a NOT NULL constraint): fails while nulls remain. */
   | "set-not-null"
@@ -57,6 +63,8 @@ interface Candidate {
   readonly table: string;
   readonly column: string | undefined;
   readonly statement: string;
+  /** The ALTER COLUMN ... TYPE subcommand, for `changed-type`. */
+  readonly retype?: AlterTableCmd | undefined;
 }
 
 /** What `planned` (run on `source`) needs scripts to cover, in statement order. */
@@ -70,7 +78,10 @@ export async function scriptCoverage(
     for (const candidate of await candidatesIn(statement.sql)) {
       const schema = candidate.schema ?? managedSchema;
       const rows = await affectedRows(source, schema, candidate);
-      if (rows !== undefined) {
+      if (
+        rows !== undefined &&
+        !(await keepsValuesOn(source, schema, candidate))
+      ) {
         found.push({
           kind: candidate.kind,
           table: candidate.table,
@@ -116,9 +127,20 @@ async function candidatesIn(sql: string): Promise<Candidate[]> {
     const table = String(relation.relname);
     const schema =
       typeof relation.schemaname === "string" ? relation.schemaname : undefined;
-    const push = (kind: ScriptCoverageKind, column: unknown) => {
+    const push = (
+      kind: ScriptCoverageKind,
+      column: unknown,
+      retype?: AlterTableCmd,
+    ) => {
       if (typeof column === "string") {
-        candidates.push({ kind, schema, table, column, statement: sql });
+        candidates.push({
+          kind,
+          schema,
+          table,
+          column,
+          statement: sql,
+          retype,
+        });
       }
     };
     for (const item of list(alter.cmds)) {
@@ -128,7 +150,7 @@ async function candidatesIn(sql: string): Promise<Candidate[]> {
           push("dropped-column", command.name);
           break;
         case "AT_AlterColumnType":
-          push("changed-type", command.name);
+          push("changed-type", command.name, command as AlterTableCmd);
           break;
         case "AT_SetNotNull":
           push("set-not-null", command.name);
@@ -210,6 +232,48 @@ async function affectedRows(
     `SELECT count(*)::integer AS rows FROM ${relation}${where}`,
   );
   return counted.rows[0]?.rows ?? 0;
+}
+
+/**
+ * True when the candidate is a type change that keeps every value of the
+ * column's current type on `source`.
+ */
+async function keepsValuesOn(
+  source: Session,
+  schema: string,
+  candidate: Candidate,
+): Promise<boolean> {
+  if (candidate.retype === undefined || candidate.column === undefined) {
+    return false;
+  }
+  const current = await source.query<{ type: string }>(
+    `SELECT pg_catalog.format_type(atttypid, atttypmod) AS type
+     FROM pg_catalog.pg_attribute
+     WHERE attrelid = to_regclass($1) AND attname = $2 AND NOT attisdropped`,
+    [
+      `${quoteIdentifier(schema)}.${quoteIdentifier(candidate.table)}`,
+      candidate.column,
+    ],
+  );
+  const type = current.rows[0]?.type;
+  const typeName = type === undefined ? undefined : await parseTypeName(type);
+  return (
+    typeName !== undefined &&
+    keepsEveryValue(typeName, candidate.column, candidate.retype)
+  );
+}
+
+/** The syntax tree of a type as `format_type` prints it, e.g. `character varying(10)`. */
+async function parseTypeName(type: string): Promise<TypeName | undefined> {
+  const parsed = await parseSqlFile({
+    path: "column-type.sql",
+    text: `SELECT NULL::${type}`,
+  });
+  const select = parsed.ok
+    ? unwrap(parsed.statements[0]?.node, "SelectStmt")
+    : undefined;
+  const target = unwrap(list(select?.targetList)[0], "ResTarget");
+  return unwrap<TypeCast>(target?.val, "TypeCast")?.typeName;
 }
 
 function messageFor(candidate: Candidate, rows: number): string {
