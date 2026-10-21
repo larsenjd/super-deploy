@@ -234,23 +234,36 @@ async function affectedRows(
   if (existing.rows[0]?.found !== true) {
     return undefined;
   }
-  const column =
-    candidate.column === undefined ? "" : quoteIdentifier(candidate.column);
-  const where =
-    narrowing?.kind === "length"
-      ? ` WHERE length(${column}) > ${narrowing.length}`
-      : narrowing?.kind === "scale"
-        ? ` WHERE ${column} <> round(${column}, ${narrowing.scale})`
-        : candidate.kind === "dropped-column" ||
-            candidate.kind === "changed-type"
-          ? ` WHERE ${column} IS NOT NULL`
-          : candidate.kind === "set-not-null"
-            ? ` WHERE ${column} IS NULL`
-            : "";
+  const condition = affectedCondition(candidate, narrowing);
   const counted = await source.query<{ rows: number }>(
-    `SELECT count(*)::integer AS rows FROM ${relation}${where}`,
+    `SELECT count(*)::integer AS rows FROM ${relation}${condition === undefined ? "" : ` WHERE ${condition}`}`,
   );
   return counted.rows[0]?.rows ?? 0;
+}
+
+/** The condition on the rows a candidate affects; undefined when all are. */
+function affectedCondition(
+  candidate: Candidate,
+  narrowing: Narrowing | undefined,
+): string | undefined {
+  const column =
+    candidate.column === undefined ? "" : quoteIdentifier(candidate.column);
+  if (narrowing?.kind === "length") {
+    return `length(${column}) > ${narrowing.length}`;
+  }
+  if (narrowing?.kind === "scale") {
+    return `${column} <> round(${column}, ${narrowing.scale})`;
+  }
+  switch (candidate.kind) {
+    case "dropped-column":
+    case "changed-type":
+      return `${column} IS NOT NULL`;
+    case "set-not-null":
+      return `${column} IS NULL`;
+    case "dropped-table":
+    case "added-required-column":
+      return undefined;
+  }
 }
 
 /**

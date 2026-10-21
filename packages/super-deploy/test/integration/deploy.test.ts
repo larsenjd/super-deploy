@@ -3,7 +3,6 @@
 import { chmod } from "node:fs/promises";
 import { type AddressInfo, createServer } from "node:net";
 import { userInfo } from "node:os";
-import { setTimeout as delay } from "node:timers/promises";
 import {
   AdapterError,
   deploy,
@@ -710,9 +709,7 @@ describe("the target lock", () => {
               and query ilike 'alter table%'`,
           [database],
         );
-      while ((await waiting()).length === 0) {
-        await delay(20);
-      }
+      await expect.poll(waiting, { timeout: 10_000 }).not.toEqual([]);
       const [{ pid }] = (await waiting()) as [{ pid: number }];
       const before = new Date();
 
