@@ -6,7 +6,11 @@
 //      migrations, deployed draft, disposable flag); the command checks its preconditions
 //      on it and says what it is about to do (or that there is nothing to do)
 //   3. show the action plus the target's name, host, database and last
-//      recorded migration at the terminal
+//      recorded migration at the terminal. The host is the one the adapter
+//      says it connects to (DeploymentAdapter.host), then the address the
+//      server reports in brackets when it differs: behind a load balancer or
+//      pooler the server's address alone is one the user may never have
+//      seen. The fingerprint compares the server's address.
 //   4. require YES, typed exactly (anything else, Escape or Ctrl+C refuses)
 //   5. withLockedTarget: open the manual attempt (command name, OS username),
 //      take the target lock
@@ -18,6 +22,7 @@
 // flag or environment variable that skips it, so a program can call a
 // guarded command but a person still has to type YES.
 
+import { hostAndPort } from "../adapters/ports.ts";
 import type { Session } from "../adapters/types.ts";
 import { isCI } from "../cli/environment.ts";
 import type { ResolvedTarget } from "../config/config.ts";
@@ -32,6 +37,7 @@ import {
 import { connectTarget, resolveTarget } from "../deploy/target.ts";
 import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
+import { adapterCall } from "../rehearsal/throwaway.ts";
 import { migrationFolderName } from "../store/migrations.ts";
 import { askForYes } from "./prompt.ts";
 
@@ -88,9 +94,11 @@ export async function runGuarded<P, T>(
   const session = await connectTarget(target, project.signal);
   let shown: TargetView;
   let decision: Proceed<P> | NothingToDo<T>;
+  let configured: string | undefined;
   try {
     shown = await readTargetView(project, target, session);
     decision = await action.check(shown, session);
+    configured = await configuredHost(target);
   } finally {
     await session.close().catch(() => {});
   }
@@ -103,7 +111,7 @@ export async function runGuarded<P, T>(
     {
       title: `${action.command}: ${proceed.action}`,
       lines: [
-        ...describeTarget(shown),
+        ...describeTarget(shown, configured),
         ...(proceed.details === undefined ? [] : ["", ...proceed.details]),
       ],
       question: `Type YES to ${lowerFirst(proceed.action)}`,
@@ -155,7 +163,7 @@ async function readTargetView(
   const host =
     server?.address == null
       ? "local socket"
-      : `${server.address.includes(":") ? `[${server.address}]` : server.address}:${server.port}`;
+      : hostAndPort(server.address, String(server.port));
   return {
     target,
     host,
@@ -166,11 +174,32 @@ async function readTargetView(
   };
 }
 
-function describeTarget(view: TargetView): string[] {
+/** Where the target's adapter says it connects, if it says (see the header). */
+async function configuredHost(
+  target: ResolvedTarget,
+): Promise<string | undefined> {
+  const host = target.adapter.host?.bind(target.adapter);
+  return host === undefined
+    ? undefined
+    : adapterCall(
+        `The deployment adapter of target ${target.name}`,
+        "say where it connects",
+        host,
+      );
+}
+
+function describeTarget(
+  view: TargetView,
+  configured: string | undefined,
+): string[] {
   const last = view.recorded.at(-1);
+  const host =
+    configured === undefined || configured === view.host
+      ? view.host
+      : `${configured} (${view.host})`;
   return [
     `Target:    ${view.target.name}`,
-    `Host:      ${view.host}`,
+    `Host:      ${host}`,
     `Database:  ${view.database}`,
     `Last recorded migration: ${last === undefined ? "none" : migrationFolderName(last.number, last.name)}`,
     ...(view.draft === undefined
