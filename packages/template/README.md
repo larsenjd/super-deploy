@@ -259,7 +259,8 @@ settings; super-deploy refuses any other.
   routines in the desired schema may refer to, such as `["auth"]`.
   super-deploy neither creates them, nor reproduces them in rehearsals, nor
   checks that a target has them: setting them up is the DBA's job (see
-  "Permissions"). Default none.
+  "Permissions", which also says why a migration's scripts can't run
+  anything that reads them). Default none.
 - `directory`: the folder holding `desired-schema/`, `draft/` and
   `migrations/`, relative to the config file and inside the project.
   Default `data-model`.
@@ -518,8 +519,7 @@ default privileges as they are.
   without them, and a routine that reads a missing one fails only when it
   runs. On `dev`, create them as the superuser (see
   [Connecting to dev](#connecting-to-dev)). Routines run as their caller, so it's the application's
-  roles that need these grants (and the deploy role too, if a migration's
-  scripts fire a trigger that uses them). For example, a
+  roles that need these grants. For example, a
   PL/pgSQL function `app_writer` calls that reads `auth.users` needs:
 
   ```sql
@@ -527,7 +527,12 @@ default privileges as they are.
   grant select on auth.users to app_writer;
   ```
 
-  Rehearsals have no `auth` schema, so only PL/pgSQL bodies may reference it.
+  Rehearsals have no `auth` schema, so only PL/pgSQL bodies may reference
+  it, and a migration's scripts and seed data can't fire a trigger (or call
+  anything else) that reads it: every rehearsal of the migration would fail
+  with `relation "auth.users" does not exist`, whatever the targets have.
+  Such a trigger also blocks every later migration whose scripts write to
+  its table.
 
 ## The files of a draft and a migration
 

@@ -8,7 +8,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
-import { durationText, targetDefaults } from "../config/config.ts";
+import {
+  durationText,
+  type ResolvedConfig,
+  targetDefaults,
+} from "../config/config.ts";
 import { errorReason, SuperDeployError } from "../errors.ts";
 import { parseSqlFile } from "../sql-analysis/parse.ts";
 import { decodeHashedText } from "../store/hashing.ts";
@@ -20,7 +24,13 @@ import {
   type FinalizedRecovery,
   schemaChangeFileName,
 } from "../store/migrations.ts";
-import { inPinnedTransaction } from "./throwaway.ts";
+import { inPinnedTransaction, missingFromRehearsals } from "./throwaway.ts";
+
+/** The schemas a rehearsal replays in: the managed one, and the external ones it lacks. */
+export type RehearsalSchemas = Pick<
+  ResolvedConfig,
+  "managedSchema" | "externalSchemas"
+>;
 
 export interface DeployTimeFile {
   /** Project-relative path with forward slashes, for messages. */
@@ -109,18 +119,25 @@ export async function readMigrationUnits(
 
 /**
  * Runs every unit's files in one transaction, committing only if all succeed.
- * Rehearsals only: deployments use runUnit.
+ * Rehearsals only: deployments use runUnit. A file failing on something in
+ * an external schema says rehearsals don't contain it (ticket 186).
  */
 export async function replay(
   session: Session,
   units: readonly ReplayUnit[],
-  managedSchema: string,
+  schemas: RehearsalSchemas,
 ): Promise<void> {
-  await inPinnedTransaction(session, managedSchema, async () => {
-    for (const unit of units) {
-      await runUnit(session, unit);
-    }
-  });
+  try {
+    await inPinnedTransaction(session, schemas.managedSchema, async () => {
+      for (const unit of units) {
+        await runUnit(session, unit);
+      }
+    });
+  } catch (error) {
+    throw error instanceof SqlFileFailedError
+      ? error.inRehearsal(schemas.externalSchemas)
+      : error;
+  }
 }
 
 /**
@@ -280,7 +297,8 @@ export interface DeploymentRollback {
  * change a generated column blocks (0A000 with its DETAIL), the
  * pre-migration fix, and for a statement a forced row-level security policy
  * would filter (42501, refused under the pinned `row_security = off`),
- * turning FORCE off while deploying.
+ * turning FORCE off while deploying. In a rehearsal, a missing object in a
+ * declared external schema (inRehearsal) says rehearsals don't contain it.
  */
 export class SqlFileFailedError extends SuperDeployError {
   readonly code = "sql-file-failed";
@@ -294,12 +312,18 @@ export class SqlFileFailedError extends SuperDeployError {
   readonly sqlState: string | undefined;
   /** Set when a deployment rolled back. */
   readonly rollback: DeploymentRollback | undefined;
+  /** The declared external schema a rehearsal failed for lack of. */
+  private readonly missingExternalSchema: string | undefined;
 
   constructor(
     failure: SqlFileFailure,
-    options?: ErrorOptions & { rollback?: DeploymentRollback | undefined },
+    options?: ErrorOptions & {
+      rollback?: DeploymentRollback | undefined;
+      missingExternalSchema?: string | undefined;
+    },
   ) {
     const rollback = options?.rollback;
+    const missingExternalSchema = options?.missingExternalSchema;
     super(
       [
         sentence(
@@ -311,6 +335,9 @@ export class SqlFileFailedError extends SuperDeployError {
         failure.hint === undefined
           ? undefined
           : sentence(`Hint: ${failure.hint}`),
+        missingExternalSchema === undefined
+          ? undefined
+          : `This failed in a rehearsal: it reads ${missingFromRehearsals([missingExternalSchema])}, so a migration's scripts and seed data must not run anything that reads it, such as a trigger on a table they write (see the README, "Permissions").`,
         rollback === undefined
           ? undefined
           : `The deployment rolled back: target ${rollback.target} is unchanged, ${rollback.lastRecorded === undefined ? "with no migration recorded" : `still at migration ${rollback.lastRecorded}`}.`,
@@ -327,12 +354,55 @@ export class SqlFileFailedError extends SuperDeployError {
     this.hint = failure.hint;
     this.sqlState = failure.sqlState;
     this.rollback = rollback;
+    this.missingExternalSchema = missingExternalSchema;
   }
 
   /** The same failure, reported by a deployment that rolled back. */
   rolledBack(rollback: DeploymentRollback): SqlFileFailedError {
-    return new SqlFileFailedError(this, { cause: this.cause, rollback });
+    return new SqlFileFailedError(this, {
+      cause: this.cause,
+      rollback,
+      missingExternalSchema: this.missingExternalSchema,
+    });
   }
+
+  /**
+   * The same failure in a rehearsal, saying so when PostgreSQL found
+   * something missing in one of `externalSchemas`, which rehearsals don't
+   * contain.
+   */
+  inRehearsal(externalSchemas: readonly string[]): SqlFileFailedError {
+    const schema = externalSchemaNamed(this, externalSchemas);
+    return schema === undefined
+      ? this
+      : new SqlFileFailedError(this, {
+          cause: this.cause,
+          rollback: this.rollback,
+          missingExternalSchema: schema,
+        });
+  }
+}
+
+/** SQLSTATEs of an undefined table, function, type or schema. */
+const undefinedObject = new Set(["42P01", "42883", "42704", "3F000"]);
+
+/**
+ * The external schema PostgreSQL's message names in refusing a missing
+ * object: `relation "auth.users"`, `function auth.uid()`, `schema "auth"`.
+ * Schema names are plain lowercase identifiers (config.ts).
+ */
+function externalSchemaNamed(
+  failure: SqlFileFailure,
+  externalSchemas: readonly string[],
+): string | undefined {
+  if (!undefinedObject.has(failure.sqlState ?? "")) {
+    return undefined;
+  }
+  return externalSchemas.find((schema) =>
+    new RegExp(`(?:^|[\\s"(])${schema}(?:\\.|"(?:\\s|$))`).test(
+      failure.postgresMessage,
+    ),
+  );
 }
 
 function sentence(text: string): string {

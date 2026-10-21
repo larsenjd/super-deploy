@@ -175,8 +175,13 @@ function externalHint(
  * contain. ...`.
  */
 export function externalSchemaExplanation(schemas: readonly string[]): string {
+  return `${missingFromRehearsals(schemas)}. Only PL/pgSQL bodies may reference external schemas: views, defaults, foreign keys, triggers, LANGUAGE sql and BEGIN ATOMIC bodies, and PL/pgSQL variable declarations bind their references at CREATE`;
+}
+
+/** `external schema "auth", which rehearsals don't contain`. */
+export function missingFromRehearsals(schemas: readonly string[]): string {
   const names = schemas.map((schema) => `"${schema}"`).join(", ");
-  return `external schema ${names}, which rehearsals don't contain. Only PL/pgSQL bodies may reference external schemas: views, defaults, foreign keys, triggers, LANGUAGE sql and BEGIN ATOMIC bodies, and PL/pgSQL variable declarations bind their references at CREATE`;
+  return `external schema ${names}, which rehearsals don't contain`;
 }
 
 /**

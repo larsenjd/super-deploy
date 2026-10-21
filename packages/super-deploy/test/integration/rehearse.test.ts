@@ -39,6 +39,23 @@ async function draftedProject(desiredSchema = customers) {
   return { dir, project };
 }
 
+const notes = `create table notes (
+  id bigint generated always as identity primary key,
+  body text not null
+);
+`;
+
+/** A drafted project declaring the external schema `auth`, which rehearsals don't contain. */
+async function authProject(desiredSchema: string) {
+  const dir = await createTestProject({
+    config: embeddedConfig(server, 'externalSchemas: ["auth"],'),
+    files: { "data-model/desired-schema/notes.sql": desiredSchema },
+  });
+  const project = await loadProject({ cwd: dir.root });
+  await draft(project, { name: "notes" });
+  return { dir, project };
+}
+
 describe("rehearse", () => {
   test("replays the draft on a throwaway database and proves it matches the desired schema", async () => {
     const { project } = await draftedProject();
@@ -331,6 +348,52 @@ comment on column t.b is 'bee';
       'column "nmae" does not exist',
     );
     expect(await server.databases()).toEqual(before);
+  });
+
+  test("a script that fires a trigger reading an external schema fails, naming the schema as one rehearsals don't contain", async () => {
+    const { dir, project } = await authProject(`${notes}
+create function notes_stamp() returns trigger
+language plpgsql as $$
+begin
+  if exists (select 1 from auth.users where name = current_user) then
+    new.body := new.body || ' (by known user)';
+  end if;
+  return new;
+end
+$$;
+
+create trigger notes_stamp_trg before insert on notes for each row execute function notes_stamp();
+`);
+    await dir.write(
+      "data-model/draft/post-migration.sql",
+      "insert into notes (body) values ('migration ran');\n",
+    );
+
+    const error = await rehearse(project).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(SqlFileFailedError);
+    expect(error).toMatchObject({
+      file: "data-model/draft/post-migration.sql",
+      sqlState: "42P01",
+    });
+    expect((error as SqlFileFailedError).message).toContain(
+      'external schema "auth", which rehearsals don\'t contain',
+    );
+  });
+
+  test("a script failing on a missing table outside the external schemas gets no external-schema hint", async () => {
+    const { dir, project } = await authProject(notes);
+    await dir.write(
+      "data-model/draft/post-migration.sql",
+      "insert into authors (name) values ('Ada');\n",
+    );
+
+    const error = await rehearse(project).catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ sqlState: "42P01" });
+    expect((error as SqlFileFailedError).message).not.toContain(
+      "external schema",
+    );
   });
 
   test("needs a draft", async () => {
