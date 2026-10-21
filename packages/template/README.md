@@ -116,9 +116,10 @@ The generated `super-deploy.config.ts` has the `qa` line, commented out.
 command connects to `qa`, so every other command and target works without
 it. A command that uses `qa` while the variable is unset or empty fails
 before connecting, changing nothing:
-`Environment variable QA_DATABASE_URL is not set`. The variable holds a
-connection string such as
-`postgresql://deploy_role:password@db.example.com:5432/app`.
+`Target qa: environment variable QA_DATABASE_URL is not set` (or `is
+empty`). The variable holds a connection string such as
+`postgresql://deploy_role:password@db.example.com:5432/app`; one that isn't a
+`postgres://` or `postgresql://` URL is refused the same way.
 
 `postgresTarget({ connectionString: "postgresql://..." })` takes the
 connection string itself instead. The config is committed to Git, so keep
