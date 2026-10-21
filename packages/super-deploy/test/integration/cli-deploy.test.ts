@@ -33,7 +33,7 @@ async function finalizedProject(settings?: string) {
 }
 
 describe("deploy and status", () => {
-  test("status shows what is pending, deploy applies it, and status then shows the attempt", async () => {
+  test("status shows what is pending, deploy applies it, and status then shows each attempt, a deploy of nothing as such", async () => {
     const dir = await finalizedProject();
 
     const before = await runCli(["status", "--target", "dev"], {
@@ -67,7 +67,7 @@ describe("deploy and status", () => {
     const user = userInfo().username;
     expect(after.stdout).toMatch(
       new RegExp(
-        `^Target dev: 1 migration recorded, 0 pending\nRecent attempts:\n  #2 deploy succeeded by ${user} at \\S+Z\n  #1 deploy succeeded migration 1 by ${user} at \\S+Z\n$`,
+        `^Target dev: 1 migration recorded, 0 pending\nRecent attempts:\n  #2 deploy succeeded, nothing to deploy, by ${user} at \\S+Z\n  #1 deploy succeeded migration 1 by ${user} at \\S+Z\n$`,
       ),
     );
   });
@@ -136,6 +136,16 @@ describe("deploy and status", () => {
       stdout: "",
       stderr: `${superuserWarning}${error}`,
     });
+
+    // The refused deploy had nothing pending; its attempt still reads as failed.
+    const afterRefusal = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(afterRefusal.stdout).toMatch(
+      new RegExp(
+        `\nRecent attempts:\n  #2 deploy failed by ${userInfo().username} at \\S+Z: Target dev has drifted`,
+      ),
+    );
   });
 
   test("an unknown or missing --target is a usage error", async () => {
