@@ -4,7 +4,7 @@
 // define it here and append it to `commands`.
 import { join } from "node:path";
 import { adopt } from "../commands/adopt.ts";
-import { type DeployedMigration, deploy } from "../commands/deploy.ts";
+import { deploy, describeMigration } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
 import { disposable } from "../commands/disposable.ts";
@@ -973,17 +973,10 @@ const rebuildCommand: CommandDefinition = {
       to: Number(values.to),
     });
     context.result(
-      `Rebuilt ${result.target} with ${plural(result.deployed.length, "migration")}: ${result.deployed.map((m) => m.folder).join(", ")}`,
+      `Rebuilt ${result.target} with ${plural(result.deployed.length, "migration")}: ${result.deployed.map(describeMigration).join(", ")}`,
     );
   },
 };
-
-/** `00004-add-country`, or `00004-add-country (Recovery 1)` when it runs, or ran, as Recovery 1. */
-function describeMigration(migration: DeployedMigration): string {
-  return migration.recovery === undefined
-    ? migration.folder
-    : `${migration.folder} (Recovery ${migration.recovery})`;
-}
 
 /**
  * One line of `status`'s "Recent attempts". A deploy that succeeded with no

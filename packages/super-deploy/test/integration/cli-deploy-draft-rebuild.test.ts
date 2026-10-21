@@ -823,7 +823,7 @@ unix("rebuild", () => {
     expect(await terminal.exited).toBe(1);
   });
 
-  test("replays and records each migration's newest variant: Recovery 1 of migration 2, without its seed data", async () => {
+  test("replays and records each migration's newest variant, naming it in the confirmation and result: Recovery 1 of migration 2, without its seed data", async () => {
     const { dir, database } = await recoveryDraftProject({ deployed: true });
     await dir.write(
       "data-model/draft/post-migration.sql",
@@ -840,10 +840,16 @@ unix("rebuild", () => {
       ["rebuild", "--target", "dev", "--to", "2"],
       { cwd: dir.root },
     );
-    await terminal.waitFor("Type YES");
+    const shown = await terminal.waitFor("Type YES");
+    expect(boxLines(shown)).toEqual(
+      expect.arrayContaining([
+        "00001-add-customers",
+        "00002-require-city (Recovery 1)",
+      ]),
+    );
     terminal.type(`YES${keys.enter}`);
     await terminal.waitFor(
-      "Rebuilt dev with 2 migrations: 00001-add-customers, 00002-require-city",
+      "Rebuilt dev with 2 migrations: 00001-add-customers, 00002-require-city (Recovery 1)",
     );
     expect(await terminal.exited).toBe(0);
 

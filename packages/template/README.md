@@ -713,7 +713,8 @@ draft-finalize-deploy path:
   extension installed in another schema, naming each object and its owner. The managed schema itself stays, with its owner, grants and
   default privileges. Then it deletes the target's record of migrations and of any
   deployed draft, and runs migrations 1 to N as a deployment does, each as
-  its newest Recovery if it has one. It never loads seed data, and keeps
+  its newest Recovery if it has one; the confirmation and the result name
+  it, as in `00002-require-city (Recovery 1)`. It never loads seed data, and keeps
   the attempt log and the disposable flag. In the menu, `--to` is a list
   with the newest migration preselected.
 - **`mark --target X`** records the target's next pending migration as

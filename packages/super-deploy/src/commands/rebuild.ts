@@ -8,7 +8,8 @@
 // recorded migrations and any deployed draft from the history schema, then
 // run migrations 1 to N exactly as a deployment does, recording each as
 // deployed by this attempt (each as its newest variant, like a deployment to
-// a new target). Seed data is never loaded. The attempt log and
+// a new target; the confirmation and result name the Recovery each runs as,
+// QA 173). Seed data is never loaded. The attempt log and
 // the disposable flag are kept. Not rehearsed first: the target is
 // disposable and the transaction rolls back on any failure.
 //
@@ -63,7 +64,11 @@ import {
   migrationFolderName,
   UnknownMigrationError,
 } from "../store/migrations.ts";
-import type { DeployedMigration } from "./deploy.ts";
+import {
+  type DeployedMigration,
+  deployedMigration,
+  describeMigration,
+} from "./deploy.ts";
 
 export interface RebuildOptions {
   /** The target's name in config. */
@@ -117,14 +122,17 @@ export async function rebuild(
       if (!migrations.some((migration) => migration.number === options.to)) {
         throw new UnknownMigrationError(options.to, migrations.at(-1)?.number);
       }
-      const replayed = migrations.filter(
-        (migration) => migration.number <= options.to,
-      );
       const withUnits = await readMigrationsWithUnits(root, migrations);
       // Each migration's newest variant, as a deployment to a new target.
-      const variants = withUnits
+      const replayed: MigrationToApply[] = withUnits
         .filter((migration) => migration.number <= options.to)
-        .map(newestVariant);
+        .map((migration) => ({
+          number: migration.number,
+          name: migration.name,
+          contentHash: migration.contentHash,
+          chainHash: migration.chainHash,
+          ...newestVariant(migration),
+        }));
       const range =
         options.to === 1 ? "migration 1" : `migrations 1-${options.to}`;
       const wiped = [
@@ -144,7 +152,10 @@ export async function rebuild(
         action: `Wipe target ${target} and replay ${range}`,
         details: [
           `Drops ${wiped.join(", ")}, then deploys in one transaction:`,
-          ...replayed.map((migration) => `  ${migration.folder}`),
+          ...replayed.map(
+            (migration) =>
+              `  ${describeMigration(replayedMigration(migration))}`,
+          ),
           "Seed data is never loaded",
           ...(await notFromMigrations(project, view, session, withUnits)),
           ...(dependents.length === 0
@@ -155,19 +166,7 @@ export async function rebuild(
                 ...dependents.map((dependent) => `  ${dependent}`),
               ]),
         ],
-        plan: {
-          migrations: replayed.map((migration, index) => ({
-            number: migration.number,
-            name: migration.name,
-            contentHash: migration.contentHash,
-            chainHash: migration.chainHash,
-            ...(variants[index] ?? {
-              recovery: undefined,
-              unit: { label: migration.folder, files: [] },
-            }),
-          })),
-          dependents,
-        },
+        plan: { migrations: replayed, dependents },
       };
     },
     async run({ target, session, attempt }, { migrations, dependents }) {
@@ -202,15 +201,20 @@ export async function rebuild(
       });
       return {
         target: target.name,
-        deployed: migrations.map(({ number, name }) => ({
-          number,
-          name,
-          folder: migrationFolderName(number, name),
-        })),
+        deployed: migrations.map(replayedMigration),
         attemptId: attempt.id,
       };
     },
   });
+}
+
+/** The result's entry for a replayed migration, naming the Recovery it runs as. */
+function replayedMigration(migration: MigrationToApply): DeployedMigration {
+  const { number, name, recovery } = migration;
+  return deployedMigration(
+    { number, name, folder: migrationFolderName(number, name) },
+    recovery,
+  );
 }
 
 const shownExtras = 10;
