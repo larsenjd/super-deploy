@@ -105,6 +105,7 @@ export async function deploy(
         targetName: target.name,
         migrations,
         recorded,
+        pending,
       });
       for (const warning of findings.warnings) {
         options.onWarning?.(warning);

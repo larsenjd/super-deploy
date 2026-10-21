@@ -283,6 +283,39 @@ unix("deploy-draft", () => {
     ]);
   });
 
+  test("warns before asking that a table the draft drops and creates again loses its hand-made grant", async () => {
+    const { dir, database } = await deployedProject();
+    const reader = roleName("reader");
+    await server.query(`create role ${reader} nologin`);
+    await asDeployRole(
+      server,
+      database,
+      `grant select on customers to ${reader}`,
+    );
+    const withEmail = customers(",\n  email text");
+    await dir.write("data-model/desired-schema/customers.sql", withEmail);
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await draft(project, { name: "add email" });
+    } finally {
+      await project.close();
+    }
+    await dir.write(
+      "data-model/draft/schema-change.sql",
+      `drop table public.customers;\n${withEmail.replace("customers", "public.customers")}`,
+    );
+
+    const terminal = spawnTerminal(["deploy-draft", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    const shown = boxLines(await terminal.waitFor("Type YES")).join(" ");
+    expect(shown).toContain(
+      `Warning: table public.customers is recreated by draft add-email: its grants of SELECT to ${reader} will be lost (default privileges don't restore them)`,
+    );
+    terminal.type(keys.ctrlC);
+    expect(await terminal.exited).toBe(1);
+  });
+
   test("refuses a target that isn't disposable without asking: nothing changes", async () => {
     const { dir, database } = await deployedProject({ disposable: false });
     await requireCityDraft(dir);

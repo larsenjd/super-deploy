@@ -87,8 +87,9 @@ interface Plan {
 }
 
 /**
- * Terminal-only: shows the target's details at this process's terminal and
- * goes ahead only when the person there types YES. Refuses with
+ * Terminal-only: shows the target's details at this process's terminal,
+ * with the pre-flight's warnings (e.g. objects the draft recreates that lose
+ * grants made by hand), and goes ahead only when the person there types YES. Refuses with
  * TerminalRequiredError in CI or without a terminal on stdin and stdout
  * (before touching the target), and NotConfirmedError for any other answer.
  * No option skips that.
@@ -136,6 +137,7 @@ export async function deployDraft(
         targetName: target,
         migrations,
         recorded: view.recorded,
+        pending: units.map((unit) => ({ unit })),
       });
       if (refusesDeployment(findings)) {
         throw new PreflightFailedError(target, findings);
@@ -179,6 +181,7 @@ export async function deployDraft(
           ...files.map((file) => `  ${file}`),
           seedDataLine(withSeed, seeded),
           `The target then holds the draft, not a migration: deploy refuses it until rebuild resets it`,
+          ...findings.warnings.map((warning) => `Warning: ${warning}`),
         ],
         plan: {
           name: metadata.name,

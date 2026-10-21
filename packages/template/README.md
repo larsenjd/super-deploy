@@ -494,9 +494,14 @@ default privileges as they are.
   Two things to know about grants and policies made by hand:
 
   - A migration that drops and recreates a table (or another object) loses
-    the grants and policies made on it by hand, and super-deploy can't
-    notice. Default privileges grant the new object again; anything else has
-    to be made again after the deployment.
+    the grants and policies made on it by hand. Default privileges grant the
+    new object again; anything else has to be made again after the
+    deployment. `status`, `deploy` and `deploy-draft` warn about each object
+    the pending migrations (or the draft) recreate that has grants, revokes,
+    policies or row-level security its default privileges won't give back,
+    e.g. `warning: view app.order_totals is recreated by 00007-wider-total:
+    its grants of SELECT to app_report will be lost (default privileges
+    don't restore them)`. The deployment still goes ahead.
   - A migration that changes the type of, or drops, a column a hand-made
     policy uses fails at deploy: PostgreSQL refuses while the policy depends
     on the column. Rehearsals can't catch it, because their databases have
