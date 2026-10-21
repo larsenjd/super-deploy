@@ -2,6 +2,7 @@
 // its own on the file's test server, so tests never share target state.
 import { randomBytes } from "node:crypto";
 import {
+  deploy,
   draft,
   finalize,
   loadProject,
@@ -169,4 +170,78 @@ export async function finalizeMigration(
 ): Promise<Awaited<ReturnType<typeof finalize>>> {
   await draft(project, { name });
   return finalize(project);
+}
+
+/**
+ * Runs `during` while a session of its own holds `mode` on `table` in
+ * `database` (in a transaction it rolls back afterwards, whatever happens).
+ * ACCESS SHARE lets the drift check read the table's definition but makes a
+ * migration altering it wait; ACCESS EXCLUSIVE holds up the catalog reads
+ * too (testing.md, "Holding a lock against a deployment").
+ */
+export async function whileLocked<T>(
+  server: Pick<TestServer, "dataDir">,
+  database: string,
+  table: string,
+  mode: "ACCESS SHARE" | "ACCESS EXCLUSIVE",
+  during: () => Promise<T>,
+): Promise<T> {
+  const holder = await testSession(server, database);
+  try {
+    await holder.execute(`BEGIN; LOCK TABLE ${table} IN ${mode} MODE`);
+    return await during();
+  } finally {
+    await holder.execute("ROLLBACK").catch(() => {});
+    await holder.close();
+  }
+}
+
+const customers = `create table customers (
+  id bigint primary key,
+  name text not null
+);
+`;
+
+/**
+ * A `dev` target (configured with `options`) at migration 1, which creates
+ * customers (id, name), with migration 2, adding the column `note`,
+ * finalized and pending.
+ */
+export async function columnPending(
+  server: Pick<TestServer, "dataDir">,
+  options: DeployConfigOptions = {},
+): Promise<DeployProject> {
+  const deployed = await deployProject(
+    server,
+    { "customers.sql": customers },
+    options,
+  );
+  await finalizeMigration(deployed.project, "add customers");
+  await deploy(deployed.project, { target: "dev" });
+  await deployed.dir.write(
+    "data-model/desired-schema/customers.sql",
+    customers.replace("name text not null", "name text not null,\n  note text"),
+  );
+  await finalizeMigration(deployed.project, "add note");
+  return deployed;
+}
+
+/** One attempt in a target's attempt log, as tests read it. */
+export interface LoggedAttempt {
+  readonly id: number;
+  readonly command: string;
+  readonly outcome: string;
+  readonly error: string | null;
+}
+
+/** The attempt log of the target in `database` (history schema `deployment_history`), oldest first. */
+export function attemptLog(
+  server: TestServer,
+  database: string,
+): Promise<LoggedAttempt[]> {
+  return server.query<LoggedAttempt>(
+    "select id::int as id, command, outcome, error from deployment_history.attempts order by id",
+    [],
+    database,
+  );
 }

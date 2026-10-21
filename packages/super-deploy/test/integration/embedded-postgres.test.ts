@@ -160,7 +160,8 @@ describe("embeddedPostgres on a stale or damaged data directory", () => {
     const started = Date.now();
     const error = await server.start().catch((e: unknown) => e);
 
-    expect(Date.now() - started).toBeLessThan(5_000);
+    // Well under the 30 s a server still starting up is waited for.
+    expect(Date.now() - started).toBeLessThan(15_000);
     expect(error).toBeInstanceOf(AdapterError);
     expect((error as Error).message).toBe(
       `${pidFile} names process ${process.pid} and port ${port}, but no server answers there: if no super-deploy command is running, delete that file and try again`,

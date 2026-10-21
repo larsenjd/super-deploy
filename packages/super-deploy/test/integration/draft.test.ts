@@ -146,7 +146,7 @@ create table orders (
         ],
       },
     ]);
-    expect(await dir.read("data-model/draft/schema-change.sql")).toBeDefined();
+    expect(dir.exists("data-model/draft/schema-change.sql")).toBe(true);
   });
 
   test("refuses statements the desired schema doesn't allow, naming file and line", async () => {

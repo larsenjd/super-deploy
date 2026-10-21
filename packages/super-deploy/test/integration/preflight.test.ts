@@ -276,6 +276,7 @@ describe("deploy pre-flight", () => {
       },
     ]);
   });
+
   test("suggests finalizing the draft unchanged only while it is the recorded migration unfinalize moved back", async () => {
     const { project } = await deployProject(server, {
       "customers.sql": customers,

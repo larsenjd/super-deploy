@@ -3,7 +3,6 @@
 import { chmod } from "node:fs/promises";
 import { type AddressInfo, createServer } from "node:net";
 import { userInfo } from "node:os";
-import { setTimeout as delay } from "node:timers/promises";
 import {
   AdapterError,
   deploy,
@@ -19,9 +18,12 @@ import {
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
+  columnPending,
   deployProject,
+  embeddedDeployRole,
   finalizeMigration,
   testSession,
+  whileLocked,
 } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
@@ -590,40 +592,11 @@ const pausingAdapter = `{
   },
 }`;
 
-/** Makes the next deployment through `pausingAdapter` wait at COMMIT until released. */
-/** How many sessions on `database` are waiting for a lock. */
-async function waitingForLocks(database: string): Promise<number> {
-  const [row] = await server.query<{ count: number }>(
-    "select count(*)::int as count from pg_stat_activity where datname = $1 and wait_event_type = 'Lock'",
-    [database],
-  );
-  return row?.count ?? 0;
-}
-
 /**
  * A `dev` target (its config's target settings spliced from `target`) at
  * migration 1, which creates customers, with migration 2, adding a column
  * to it, pending.
  */
-async function emailPending(target: string) {
-  const deployed = await deployProject(
-    server,
-    { "customers.sql": customers },
-    { target },
-  );
-  const { dir, project } = deployed;
-  await finalizeMigration(project, "add customers");
-  await deploy(project, { target: "dev" });
-  await dir.write(
-    "data-model/desired-schema/customers.sql",
-    customers.replace(
-      "name text not null",
-      "name text not null,\n  email text",
-    ),
-  );
-  await finalizeMigration(project, "add email");
-  return deployed;
-}
 
 /**
  * Deploys migration 1 (customers) to a target configured with `target`, then
@@ -637,18 +610,16 @@ async function deployWhileCustomersLocked(
   target: string,
   before?: (database: string) => Promise<unknown>,
 ) {
-  const { project, database } = await emailPending(target);
+  const { project, database } = await columnPending(server, { target });
   await before?.(database);
-  const holder = await testSession(server, database);
-  try {
-    await holder.execute("BEGIN; LOCK TABLE customers IN ACCESS SHARE MODE");
-    const error = await deploy(project, { target: "dev" }).catch(
-      (e: unknown) => e,
-    );
-    return { project, database, error };
-  } finally {
-    await holder.close();
-  }
+  const error = await whileLocked(
+    server,
+    database,
+    "customers",
+    "ACCESS SHARE",
+    () => deploy(project, { target: "dev" }).catch((e: unknown) => e),
+  );
+  return { project, database, error };
 }
 
 function pauseAtCommit(): { reached: Promise<void>; release: () => void } {
@@ -752,22 +723,16 @@ describe("the target lock", () => {
   });
 
   test("the refusal names the holder's server process, what it is running since when, and how to end it", async () => {
-    const { project, database } = await emailPending('lockTimeout: "20s",');
+    const { project, database } = await columnPending(server, {
+      target: 'lockTimeout: "20s",',
+    });
     // The first deployment's ALTER TABLE waits for this lock, active.
     const blocker = await testSession(server, database);
     let first: Promise<unknown> | undefined;
     try {
       await blocker.execute("BEGIN; LOCK TABLE customers IN ACCESS SHARE MODE");
       first = deploy(project, { target: "dev" });
-      const waiting = async () =>
-        server.query<{ pid: number }>(
-          `select pid from pg_stat_activity
-            where datname = $1 and state = 'active' and wait_event_type = 'Lock'
-              and query ilike 'alter table%'`,
-          [database],
-        );
-      await expect.poll(waiting, { timeout: 10_000 }).not.toEqual([]);
-      const [{ pid }] = (await waiting()) as [{ pid: number }];
+      const [pid] = await server.untilLockWaiter(database, "alter table%");
       const before = new Date();
 
       const second = await deploy(project, { target: "dev" }).catch(
@@ -841,7 +806,9 @@ describe("the target lock", () => {
   });
 
   test("status and the lock refusal name the session a holding deployment waits on for a lock", async () => {
-    const { project, database } = await emailPending('lockTimeout: "20s",');
+    const { project, database } = await columnPending(server, {
+      target: 'lockTimeout: "20s",',
+    });
     const holder = await testSession(server, database);
     let deploying: Promise<unknown> | undefined;
     try {
@@ -853,9 +820,7 @@ describe("the target lock", () => {
       await holder.execute("BEGIN");
       await holder.execute("SELECT * FROM customers");
       deploying = deploy(project, { target: "dev" });
-      while ((await waitingForLocks(database)) === 0) {
-        await delay(50);
-      }
+      await server.untilLockWaiter(database);
 
       const report = await status(project, { target: "dev" });
       const refusal = await deploy(project, { target: "dev" }).catch(
@@ -866,7 +831,7 @@ describe("the target lock", () => {
         {
           pid: holderPid,
           applicationName: "blocking_holder",
-          user: "deployer",
+          user: embeddedDeployRole,
           state: "idle in transaction",
           stateSince: expect.any(Date),
           statement: "SELECT * FROM customers",
@@ -875,7 +840,7 @@ describe("the target lock", () => {
       expect(refusal).toBeInstanceOf(TargetLockedError);
       expect((refusal as TargetLockedError).message).toMatch(
         new RegExp(
-          `waiting for a lock held by server process ${holderPid} \\(blocking_holder, deployer, idle in transaction since \\S+: SELECT \\* FROM customers\\)`,
+          `waiting for a lock held by server process ${holderPid} \\(blocking_holder, ${embeddedDeployRole}, idle in transaction since \\S+: SELECT \\* FROM customers\\)`,
         ),
       );
     } finally {

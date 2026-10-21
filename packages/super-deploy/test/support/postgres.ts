@@ -28,7 +28,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import pg from "pg";
 import { embeddedPostgres } from "super-deploy/embedded-postgres";
-import { onTestFinished } from "vitest";
+import { onTestFinished, vi } from "vitest";
 
 export interface TestServer {
   /** The embedded server's data directory; pass it to `embeddedPostgres({ dataDir })`. */
@@ -43,6 +43,17 @@ export interface TestServer {
   databases(): Promise<string[]>;
   /** Creates an empty database, runs `sql` in it, and returns its name. */
   createDatabase(sql?: string): Promise<string>;
+  /**
+   * The server processes of the sessions in `database` waiting for a lock
+   * now, optionally only those whose statement matches `statement` (an ILIKE
+   * pattern, e.g. `alter table%`).
+   */
+  lockWaiters(database: string, statement?: string): Promise<number[]>;
+  /**
+   * `lockWaiters` once there is one: polls for up to 10 s, then fails the
+   * test. For a test that holds a lock and waits for a command to block on it.
+   */
+  untilLockWaiter(database: string, statement?: string): Promise<number[]>;
   stop(): Promise<void>;
 }
 
@@ -75,6 +86,17 @@ export async function startTestServer(): Promise<TestServer> {
     }
   }
 
+  async function lockWaiters(
+    database: string,
+    statement = "%",
+  ): Promise<number[]> {
+    const rows = await query<{ pid: number }>(
+      "select pid from pg_stat_activity where datname = $1 and wait_event_type = 'Lock' and query ilike $2 order by pid",
+      [database, statement],
+    );
+    return rows.map((row) => row.pid);
+  }
+
   return {
     dataDir,
     query,
@@ -83,6 +105,20 @@ export async function startTestServer(): Promise<TestServer> {
         "select datname from pg_database where not datistemplate order by datname",
       );
       return rows.map((row) => row.datname);
+    },
+    lockWaiters,
+    async untilLockWaiter(database, statement) {
+      let waiters: number[] = [];
+      await vi.waitFor(
+        async () => {
+          waiters = await lockWaiters(database, statement);
+          if (waiters.length === 0) {
+            throw new Error(`No session in ${database} waits for a lock`);
+          }
+        },
+        { timeout: 10_000, interval: 50 },
+      );
+      return waiters;
     },
     async createDatabase(sql) {
       databaseCounter += 1;

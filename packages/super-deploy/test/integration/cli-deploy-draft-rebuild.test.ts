@@ -17,6 +17,7 @@ import { runCli } from "../support/cli.ts";
 import {
   asDeployerPreamble,
   asDeployRole,
+  attemptLog,
   deployConfig,
   embeddedDeployRole,
   roleName,
@@ -230,17 +231,7 @@ unix("deploy-draft", () => {
       });
       await rebuilding.waitFor("Type YES");
       rebuilding.type(`YES${keys.enter}`);
-      await expect
-        .poll(
-          () =>
-            server.query(
-              `select pid from pg_stat_activity
-                where datname = $1 and state = 'active' and wait_event_type = 'Lock'`,
-              [database],
-            ),
-          { timeout: 10_000 },
-        )
-        .not.toEqual([]);
+      await server.untilLockWaiter(database);
 
       const terminal = spawnTerminal(["deploy-draft", "--target", "dev"], {
         cwd: dir.root,
@@ -254,13 +245,7 @@ unix("deploy-draft", () => {
       await blocker.close();
     }
     expect(await rebuilding?.exited).toBe(0);
-    expect(
-      await server.query(
-        "select command, outcome from deployment_history.attempts order by id",
-        [],
-        database,
-      ),
-    ).toEqual([
+    expect(await attemptLog(server, database)).toMatchObject([
       { command: "deploy", outcome: "succeeded" },
       { command: "rebuild", outcome: "succeeded" },
     ]);
@@ -524,13 +509,7 @@ unix("deploy-draft", () => {
       "Error: Target dev has pending migrations (00001-add-customers): deploy them first",
     );
     expect(await pending.exited).toBe(1);
-    expect(
-      await server.query(
-        "select command, outcome from deployment_history.attempts order by id",
-        [],
-        database,
-      ),
-    ).toEqual([
+    expect(await attemptLog(server, database)).toMatchObject([
       { command: "deploy", outcome: "succeeded" },
       { command: "deploy-draft", outcome: "succeeded" },
     ]);
@@ -622,6 +601,7 @@ unix("deploy-draft", () => {
     });
     expect(status.stdout).not.toContain("holds draft");
   });
+
   test("seed data that clashes with the target's rows rolls back too, pointing at the draft's scripts or its seed data", async () => {
     const { dir, database } = await deployedProject();
     await requireCityDraft(dir);
@@ -1795,7 +1775,7 @@ unix("from the menu", () => {
     ).toEqual([{ name: "Ada" }]);
   });
 
-  test("rebuild offers no migrations below migration 1", async () => {
+  test('from the menu, rebuild offers "(none: no migrations)" below migration 1, and rebuilds with none', async () => {
     const { dir, database } = await deployedProject();
     const terminal = spawnTerminal([], { cwd: dir.root });
 

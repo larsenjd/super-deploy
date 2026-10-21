@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   asDeployRole,
   deployProject,
+  embeddedDeployRole,
   finalizeMigration,
   roleName,
 } from "../support/deploy.ts";
@@ -161,6 +162,7 @@ create function order_count(cid bigint) returns ${type}
       `function public.order_count(cid bigint) is recreated by 00002-count-back: its grants of EXECUTE to ${writer} will be lost (default privileges don't restore them); PUBLIC regains EXECUTE, revoked on the target by hand (default privileges grant it again)`,
     ]);
   });
+
   test("a table a migration drops and creates again warns that its policy and row-level security will be lost", async () => {
     const { project, dir, database } = await deployProject(server, {
       "reports.sql": "create table reports (id bigint primary key);\n",
@@ -201,13 +203,13 @@ create function order_count(cid bigint) returns ${type}
       server,
       database,
       `grant usage on schema public to ${reader}, ${writer};
-       alter default privileges for role deployer in schema public
+       alter default privileges for role ${embeddedDeployRole} in schema public
          grant select on tables to ${reader};
-       alter default privileges for role deployer in schema public
+       alter default privileges for role ${embeddedDeployRole} in schema public
          grant select, insert, update, delete on tables to ${writer};
-       alter default privileges for role deployer
+       alter default privileges for role ${embeddedDeployRole}
          revoke execute on functions from public;
-       alter default privileges for role deployer in schema public
+       alter default privileges for role ${embeddedDeployRole} in schema public
          grant execute on functions to ${writer};`,
     );
     const schema = (precision: number, count: string) =>

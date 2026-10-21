@@ -27,6 +27,7 @@ import {
   finalizeMigration,
   roleName,
   testSession,
+  whileLocked,
 } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
@@ -86,16 +87,10 @@ async function adoptingWhileLocked(sql: string) {
       otherTargets: `prod: { adapter: postgres.target(${JSON.stringify(prod)}), lockTimeout: "200ms" },`,
     },
   );
-  const holder = await testSession(server, prod);
-  try {
-    await holder.execute("BEGIN; LOCK TABLE t IN ACCESS EXCLUSIVE MODE");
-    const error = await adopt(deployed.project, { target: "prod" }).catch(
-      (e: unknown) => e,
-    );
-    return { ...deployed, prod, error };
-  } finally {
-    await holder.close();
-  }
+  const error = await whileLocked(server, prod, "t", "ACCESS EXCLUSIVE", () =>
+    adopt(deployed.project, { target: "prod" }).catch((e: unknown) => e),
+  );
+  return { ...deployed, prod, error };
 }
 
 /**

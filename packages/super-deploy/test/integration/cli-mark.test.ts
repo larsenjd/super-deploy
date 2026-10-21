@@ -9,6 +9,7 @@ import { runCli } from "../support/cli.ts";
 import {
   asDeployerPreamble,
   asDeployRole,
+  attemptLog,
   type DeployConfigOptions,
   deployConfig,
   deployProject,
@@ -71,14 +72,6 @@ async function pendingProject(options: DeployConfigOptions = {}) {
 async function recordedMigrations(database: string) {
   return server.query(
     "select number, recorded_how, recovery, attempt_id::int as attempt from deployment_history.migrations order by number",
-    [],
-    database,
-  );
-}
-
-async function attempts(database: string) {
-  return server.query<{ command: string; outcome: string }>(
-    "select command, outcome, error from deployment_history.attempts order by id",
     [],
     database,
   );
@@ -155,6 +148,7 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
     );
     expect(status.stdout).toContain("Pending:\n  00003-add-notes\n");
   });
+
   test("the confirmation names the migration's scripts that will not run, and only when it has some", async () => {
     const { dir, database } = await pendingProject();
     await asDeployRole(server, database, orders);
@@ -217,7 +211,7 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
     expect(await recordedMigrations(database)).toEqual([
       { number: 1, recorded_how: "deployed", recovery: null, attempt: 1 },
     ]);
-    expect(await attempts(database)).toEqual([
+    expect(await attemptLog(server, database)).toMatchObject([
       { command: "deploy", outcome: "succeeded", error: null },
     ]);
   });
@@ -289,7 +283,7 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
     );
     expect(await terminal.exited).toBe(1);
     expect(terminal.screen).not.toContain("Type YES");
-    expect((await attempts(database)).map((a) => a.command)).toEqual([
+    expect((await attemptLog(server, database)).map((a) => a.command)).toEqual([
       "deploy",
       "deploy",
     ]);
@@ -417,7 +411,7 @@ create index orders_customer_idx on orders (customer_id);
         "Lost the connection to target dev during COMMIT, so it is unknown whether attempt",
       );
       expect(await terminal.exited).toBe(1);
-      expect((await attempts(database)).at(-1)).toMatchObject({
+      expect((await attemptLog(server, database)).at(-1)).toMatchObject({
         command: "mark",
         outcome: "unknown",
       });
@@ -432,7 +426,7 @@ create index orders_customer_idx on orders (customer_id);
 
     await markLosingCommit("before");
     await settle(1);
-    expect((await attempts(database)).at(-1)).toMatchObject({
+    expect((await attemptLog(server, database)).at(-1)).toMatchObject({
       command: "mark",
       outcome: "failed",
       error: expect.stringContaining("settled as failed"),
@@ -441,7 +435,7 @@ create index orders_customer_idx on orders (customer_id);
 
     await markLosingCommit("after");
     await settle(0);
-    expect((await attempts(database)).at(-1)).toMatchObject({
+    expect((await attemptLog(server, database)).at(-1)).toMatchObject({
       command: "mark",
       outcome: "succeeded",
       error: expect.stringContaining("settled as succeeded"),
@@ -476,7 +470,7 @@ async function refusedAfterChangeWhileWaiting(
   expect(await recordedMigrations(database)).toEqual([
     { number: 1, recorded_how: "deployed", recovery: null, attempt: 1 },
   ]);
-  expect(await attempts(database)).toEqual([
+  expect(await attemptLog(server, database)).toMatchObject([
     { command: "deploy", outcome: "succeeded", error: null },
     {
       command: "mark",

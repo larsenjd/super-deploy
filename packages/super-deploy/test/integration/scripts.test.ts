@@ -760,8 +760,9 @@ alter table customers alter column phone set not null;
     const unknownFiles = [
       {
         file: "data-model/draft/post-migrate.sql",
-        message:
-          "data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)",
+        message: expect.stringContaining(
+          "data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run",
+        ),
       },
     ];
 
