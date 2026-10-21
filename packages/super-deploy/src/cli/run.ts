@@ -5,6 +5,7 @@
 // and the process watcher (process.ts) decides the exit code.
 import { relative } from "node:path";
 import { AdoptUnsupportedError } from "../commands/adopt.ts";
+import { errorReason } from "../errors.ts";
 import { settleCleanups } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { RehearsalMismatchError } from "../rehearsal/same-structure.ts";
@@ -115,9 +116,7 @@ function commandContext(io: CliIo): CommandContext {
  */
 export function describeError(error: unknown, debug: boolean): string {
   const listing = listedDetails(error);
-  const message =
-    listing?.summary ??
-    (error instanceof Error ? error.message : String(error));
+  const message = listing?.summary ?? errorReason(error);
   const lines = [
     ...(listing?.details ?? []),
     `Error: ${message.replace(/\s*\n\s*/g, " ")}`,
@@ -144,7 +143,7 @@ function listedDetails(
   error: unknown,
 ): { details: readonly string[]; summary: string } | undefined {
   if (error instanceof AdoptUnsupportedError) {
-    return adoptionRefusal(error);
+    return { details: error.details, summary: error.summary };
   }
   if (error instanceof SqlRuleViolationError && error.violations.length > 1) {
     return {
@@ -159,35 +158,4 @@ function listedDetails(
     };
   }
   return undefined;
-}
-
-/**
- * Each object adoption refused with its rule and reason, then the objects
- * whose override reasons it will ask once nothing else is refused; the
- * summary keeps only the count and the advice.
- */
-function adoptionRefusal({
-  target,
-  objects,
-  overridesNeeded,
-  advice,
-}: AdoptUnsupportedError): { details: readonly string[]; summary: string } {
-  const things = `${objects.length} thing${objects.length === 1 ? "" : "s"} V1 doesn't support`;
-  const details = [
-    `Target ${target} has ${things}:`,
-    ...objects.flatMap(({ object, rule, reason }) => [
-      `  ${object}`,
-      `    ${rule}: ${reason}`,
-    ]),
-  ];
-  if (overridesNeeded.length > 0) {
-    const one = overridesNeeded.length === 1;
-    details.push(
-      `Once nothing else is refused, adoption will ask an override reason for ${overridesNeeded.length} object${one ? "" : "s"} that break${one ? "s" : ""} only risk rules: ${overridesNeeded.map((needed) => needed.object).join(", ")}`,
-    );
-  }
-  return {
-    details,
-    summary: `Cannot adopt target ${target}: its managed schema has ${things}, listed above. Nothing was written; ${advice.join("; ")}`,
-  };
 }

@@ -6,7 +6,7 @@
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { differ } from "../differ/index.ts";
-import { SuperDeployError } from "../errors.ts";
+import { plural, SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import {
   acknowledgeDestructive,
@@ -110,7 +110,7 @@ export async function finalize(
       await acknowledgeDestructive(options, {
         kind: "acknowledge-destructive",
         command: "finalize",
-        message: `Draft ${draft.name} drops structure or deletes data in ${count} statement${count === 1 ? "" : "s"}. Finalize it anyway?`,
+        message: `Draft ${draft.name} drops structure or deletes data in ${plural(count, "statement")}. Finalize it anyway?`,
         statements: analysis.destructive,
       });
     },

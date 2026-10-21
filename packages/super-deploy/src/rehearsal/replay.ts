@@ -8,7 +8,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
-import { SuperDeployError } from "../errors.ts";
+import { errorReason, SuperDeployError } from "../errors.ts";
 import { parseSqlFile } from "../sql-analysis/parse.ts";
 import { decodeHashedText } from "../store/hashing.ts";
 import { projectRelative } from "../store/layout.ts";
@@ -214,7 +214,7 @@ function refusalOf(error: unknown): PostgresRefusal {
   const text = (value: unknown) =>
     typeof value === "string" && value !== "" ? value : undefined;
   return {
-    postgresMessage: error instanceof Error ? error.message : String(error),
+    postgresMessage: errorReason(error),
     detail: text(fields.detail),
     hint: text(fields.hint),
     sqlState: text(fields.code),

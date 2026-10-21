@@ -25,6 +25,7 @@ import { describeLockHolder, lockHolderName } from "../deploy/lock.ts";
 import { MarkMismatchError } from "../deploy/mark.ts";
 import { notOwnedMessage } from "../deploy/ownership.ts";
 import { historySchemaNotCreatableMessage } from "../deploy/preflight.ts";
+import { plural } from "../errors.ts";
 import type { Project } from "../project.ts";
 import type {
   AskOverrideReason,
@@ -362,7 +363,7 @@ const draftCommand: CommandDefinition = {
   async run(project, values, context) {
     const name = typeof values.name === "string" ? values.name : undefined;
     const result = await draft(project, name === undefined ? {} : { name });
-    const count = `${result.statements.length} statement${result.statements.length === 1 ? "" : "s"}`;
+    const count = plural(result.statements.length, "statement");
     const where = context.displayPath(result.schemaChangePath);
     const what = result.created
       ? `Created draft ${result.name}`
@@ -990,10 +991,6 @@ function describeOverride(
 ): string {
   const file = context.displayPath(join(base, override.file));
   return `override: ${file}:${override.line}: ${override.object} [${override.rules.join(", ")}]: ${override.reason}`;
-}
-
-function plural(count: number, noun: string, nouns = `${noun}s`): string {
-  return `${count} ${count === 1 ? noun : nouns}`;
 }
 
 export const commands: readonly CommandDefinition[] = [

@@ -16,7 +16,7 @@ import {
   type ResolvedConfig,
   resolveConfig,
 } from "./config/config.ts";
-import { SuperDeployError } from "./errors.ts";
+import { errorReason, SuperDeployError } from "./errors.ts";
 import { interruptibleRehearsal } from "./interruption.ts";
 import { type ProjectPaths, projectPaths } from "./store/layout.ts";
 
@@ -103,7 +103,7 @@ export async function loadProject(
  * `Failed to load super-deploy.config.ts: <reason>`.
  */
 function describeLoadFailure(error: unknown, configPath: string): string {
-  const reason = error instanceof Error ? error.message : String(error);
+  const reason = errorReason(error);
   const line =
     error instanceof SyntaxError ? syntaxErrorLine(error) : undefined;
   if (line !== undefined && line.path === configPath) {

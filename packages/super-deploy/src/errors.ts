@@ -30,6 +30,15 @@ export abstract class SuperDeployError extends Error {
   }
 }
 
+/** `count` and the noun, plural unless the count is 1: "1 migration", "2 migrations". */
+export function plural(
+  count: number,
+  noun: string,
+  nouns = `${noun}s`,
+): string {
+  return `${count} ${count === 1 ? noun : nouns}`;
+}
+
 /** Up to five items, then how many more. */
 export function listed(objects: readonly string[]): string {
   const shown = objects.slice(0, 5).join(", ");

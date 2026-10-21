@@ -72,7 +72,7 @@ import {
   targetTimeouts,
 } from "../deploy/target.ts";
 import { differ } from "../differ/index.ts";
-import { SuperDeployError } from "../errors.ts";
+import { plural, SuperDeployError } from "../errors.ts";
 import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import type { AskOverrideReason } from "../questions.ts";
@@ -300,7 +300,7 @@ async function readTarget(
     );
     if (recorded.length > 0) {
       throw new AdoptConflictError(target.name, [
-        `it already records ${recorded.length} migration${recorded.length === 1 ? "" : "s"} in its history schema "${config.historySchema}"`,
+        `it already records ${plural(recorded.length, "migration")} in its history schema "${config.historySchema}"`,
       ]);
     }
     if (!(await schemaExists(session, config.managedSchema))) {
@@ -842,6 +842,16 @@ export class AdoptUnsupportedError extends SuperDeployError {
   readonly advice: readonly string[];
 
   /**
+   * The refusal as lines for people, the way the CLI prints it: every object
+   * with its rule and reason, then the override reasons still to be asked.
+   * `summary` follows them.
+   */
+  readonly details: readonly string[];
+
+  /** The message without the objects `details` lists: their count and the advice. */
+  readonly summary: string;
+
+  /**
    * `overridesNeeded`: undefined when adoption had no override-reason
    * callback, so objects that break only risk rules are among `objects`.
    */
@@ -857,17 +867,29 @@ export class AdoptUnsupportedError extends SuperDeployError {
     const more = objects.length > 5 ? `; and ${objects.length - 5} more` : "";
     const advice = adoptionAdvice(objects, overridesNeeded !== undefined);
     const needed = overridesNeeded ?? [];
+    const things = `${plural(objects.length, "thing")} V1 doesn't support`;
+    const refused = `Cannot adopt target ${target}: its managed schema has ${things}`;
+    const nothingWritten = `Nothing was written; ${advice.join("; ")}`;
     const later =
       needed.length === 0
-        ? ""
-        : `. Once nothing else is refused, an override reason will be asked for ${needed.map((item) => item.object).join(", ")}`;
-    super(
-      `Cannot adopt target ${target}: its managed schema has ${objects.length} thing${objects.length === 1 ? "" : "s"} V1 doesn't support: ${shown}${more}. Nothing was written; ${advice.join("; ")}${later}`,
-    );
+        ? []
+        : [
+            `Once nothing else is refused, adoption will ask an override reason for ${plural(needed.length, "object")} that ${needed.length === 1 ? "breaks" : "break"} only risk rules: ${needed.map((item) => item.object).join(", ")}`,
+          ];
+    super([`${refused}: ${shown}${more}`, nothingWritten, ...later].join(". "));
     this.target = target;
     this.objects = objects;
     this.overridesNeeded = needed;
     this.advice = advice;
+    this.details = [
+      `Target ${target} has ${things}:`,
+      ...objects.flatMap(({ object, rule, reason }) => [
+        `  ${object}`,
+        `    ${rule}: ${reason}`,
+      ]),
+      ...later,
+    ];
+    this.summary = `${refused}, listed above. ${nothingWritten}`;
   }
 }
 

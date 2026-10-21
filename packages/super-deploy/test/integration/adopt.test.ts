@@ -457,7 +457,7 @@ describe("adopt", () => {
         },
       ]);
       expect((error as AdoptUnsupportedError).message).toMatch(
-        /\. Once nothing else is refused, an override reason will be asked for function load_staging\(text\), function ping\(\)$/,
+        /\. Once nothing else is refused, adoption will ask an override reason for 2 objects that break only risk rules: function load_staging\(text\), function ping\(\)$/,
       );
     } finally {
       await project.close();
