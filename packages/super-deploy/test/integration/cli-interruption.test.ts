@@ -1,5 +1,6 @@
 // Interruption at the CLI process seam: signals and closed output stop the
-// running command, clean up, print one notice and exit 130, 141 or 143.
+// running command, clean up and exit 130, 141 or 143. Signals print one
+// notice; closed output prints none.
 import { join } from "node:path";
 import pg from "pg";
 import { embeddedPostgres } from "super-deploy/embedded-postgres";
@@ -115,7 +116,7 @@ test("a second interrupt exits at once, even while cleanup is still running", as
   }
 });
 
-test("closed output stops the command and exits 141", async () => {
+test("closed output (e.g. `| head`) stops the command and exits 141 without a notice", async () => {
   const dir = await createTestProject();
   const cli = spawnCli(["--help"], { cwd: dir.root });
   cli.child.stdout?.destroy();
@@ -123,6 +124,7 @@ test("closed output stops the command and exits 141", async () => {
   const result = await cli.result;
 
   expect(result.exitCode).toBe(141);
+  expect(result.stderr).toBe("");
 });
 
 async function ownServerProject() {
