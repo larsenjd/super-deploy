@@ -59,6 +59,11 @@ describe("the README lists what the desired schema refuses", () => {
       "create table t (a int check (a > 0))",
       "unnamed-constraint",
     ],
+    [
+      "comments on view and materialized-view columns",
+      "create table t (a int); create view v as select a from t; comment on column v.a is 'x'",
+      "unsupported-object",
+    ],
   ])("%s", async (phrase, sql, rule) => {
     expect(await refusals(sql)).toEqual([rule]);
     expect(await section()).toContain(phrase.toLowerCase());

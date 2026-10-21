@@ -739,6 +739,42 @@ describe("adopt", () => {
     }
   });
 
+  test("refuses comments on view and materialized-view columns, with the statement removing each", async () => {
+    const { dir, project } = await adoptableProject(`
+      create table t (id int primary key, v text);
+      create view v as select id, v from t;
+      create materialized view mv as select id from t;
+      comment on column t.v is 'table col';
+      comment on view v is 'a view';
+      comment on column v.v is 'view col';
+      comment on column mv.id is 'mv col';
+    `);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const reason = (fix: string) =>
+        `Comments on view and materialized-view columns are not supported in V1: pg-delta doesn't generate them, so no migration would add one; remove it on the target: ${fix}`;
+      expect((error as AdoptUnsupportedError).objects).toEqual([
+        {
+          object: "column id of materialized view public.mv",
+          rule: "unsupported-object",
+          reason: reason("COMMENT ON COLUMN public.mv.id IS NULL"),
+        },
+        {
+          object: "column v of view public.v",
+          rule: "unsupported-object",
+          reason: reason("COMMENT ON COLUMN public.v.v IS NULL"),
+        },
+      ]);
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+    } finally {
+      await project.close();
+    }
+  });
+
   test("refuses a SECURITY DEFINER routine, naming it, writing nothing", async () => {
     const { dir, project } = await adoptableProject(`
       create table notes (id bigint primary key);

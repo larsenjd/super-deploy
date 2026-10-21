@@ -59,7 +59,12 @@ import {
 } from "../rehearsal/replay.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
 import { migrationFolderName } from "../store/migrations.ts";
-import { type Attempt, openAttempt, settleAttempts } from "./attempts.ts";
+import {
+  type Attempt,
+  type AttemptCommand,
+  openAttempt,
+  settleAttempts,
+} from "./attempts.ts";
 import {
   type AttemptOutcome,
   ensureHistorySchema,
@@ -101,7 +106,7 @@ export function outcomeOf(
 export async function withLockedTarget<T>(
   project: Project,
   targetName: string,
-  command: string,
+  command: AttemptCommand,
   body: (locked: LockedTarget) => Promise<T>,
 ): Promise<T> {
   const { historySchema } = project.config;
@@ -119,7 +124,7 @@ export async function withLockedTarget<T>(
       );
       const backendPid = rows[0]?.pid;
       const attempt = await openAttempt(log, historySchema, {
-        command,
+        ...command,
         target: target.name,
         backendPid,
       });

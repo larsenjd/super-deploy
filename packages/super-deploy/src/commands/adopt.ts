@@ -47,7 +47,9 @@
 //      objects a desired schema can't create at all (the catalog check's
 //      `other` kind, an extension once for all its members; virtual
 //      generated columns, which pg-delta renders STORED; serial columns,
-//      once each, though the differ renders a sequence and its OWNED BY),
+//      once each, though the differ renders a sequence and its OWNED BY;
+//      comments on view and materialized-view columns, which the differ
+//      doesn't generate, each with the COMMENT ... IS NULL removing it),
 //      every desired-schema rule (or ordering) violation in
 //      the generated files, every statement referencing a declared external
 //      schema where PostgreSQL resolves it at CREATE (rehearsals don't
@@ -77,7 +79,7 @@
 //   3. Write the files, then the ordinary `draft` (named `adopt`) and
 //      `finalize`, which rehearse migration 1 against the desired schema.
 //   4. Under the target lock, `markNextPending` (deploy/mark.ts) runs mark's
-//      replica check and records migration 1 as marked. No guard: like
+//      ownership and replica checks and records migration 1 as marked. No guard: like
 //      deploy, adoption may run in CI.
 // If steps 3-4 fail, every file adoption wrote is removed again, so the
 // project is as it was; except when the target's COMMIT outcome is unknown
@@ -159,6 +161,7 @@ import {
   type SqlFile,
   SqlRuleViolationError,
   serialColumnFinding,
+  viewColumnCommentFinding,
   virtualGeneratedColumnFinding,
   withOverrideMarkers,
 } from "../sql-analysis/index.ts";
@@ -312,7 +315,7 @@ export async function adopt(
     const attemptId = await withLockedTarget(
       project,
       target.name,
-      "init --adopt",
+      { command: "init --adopt" },
       async (locked) => {
         await markNextPending(project, locked, migrations);
         return locked.attempt.id;
@@ -514,6 +517,16 @@ async function readTargetOn(
       rule: serial.rule,
       reason: serial.message,
     })),
+  );
+  found.push(
+    ...(await viewColumnComments(session, config.managedSchema)).map(
+      ({ object, fix }) => {
+        const finding = viewColumnCommentFinding(
+          `; remove it on the target: ${fix}`,
+        );
+        return { object, rule: finding.rule, reason: finding.message };
+      },
+    ),
   );
   const candidates = await overrideCandidates(
     sqlFiles(project, files),
@@ -906,6 +919,35 @@ async function serialColumns(
     [managedSchema],
   );
   return rows;
+}
+
+/**
+ * The comments on view and materialized-view columns in the managed schema,
+ * each named as the catalog check names it, with the statement removing it.
+ * pg-delta doesn't generate them (QA 127), so the desired schema can't
+ * reproduce them.
+ */
+async function viewColumnComments(
+  session: Session,
+  managedSchema: string,
+): Promise<{ object: string; fix: string }[]> {
+  const { rows } = await session.query<ObjectAddress & { fix: string }>(
+    `SELECT d.classoid::pg_catalog.oid::text AS class, d.objoid::text AS obj, d.objsubid AS sub,
+            pg_catalog.format('COMMENT ON COLUMN %I.%I.%I IS NULL', n.nspname, c.relname, a.attname) AS fix
+       FROM pg_catalog.pg_description d
+       JOIN pg_catalog.pg_class c ON c.oid = d.objoid AND c.relkind IN ('v', 'm')
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum = d.objsubid
+      WHERE d.classoid = 'pg_catalog.pg_class'::pg_catalog.regclass
+        AND d.objsubid > 0 AND n.nspname = $1
+      ORDER BY c.relname, a.attnum`,
+    [managedSchema],
+  );
+  const names = await objectNames(session, rows);
+  return rows.map(({ fix }, index) => ({
+    object: names[index] ?? fix,
+    fix,
+  }));
 }
 
 /** One reason per candidate, in order; an empty answer cancels. */

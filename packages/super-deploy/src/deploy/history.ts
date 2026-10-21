@@ -23,6 +23,8 @@
 //     command        text      e.g. 'deploy'
 //     target         text      the target's name in config
 //     from_migration, to_migration   integer, the range it applies (null when nothing is pending)
+//     disposable_set boolean   the value a `disposable` run sets the flag to,
+//                              from its opening on (null for other commands)
 //     os_user        text      the OS username running the command
 //     tool_version   text
 //     backend_pid    integer   server process of the command's own session,
@@ -99,6 +101,8 @@ export interface AttemptRecord {
   /** First and last migration number it applies, when known. */
   readonly fromMigration: number | undefined;
   readonly toMigration: number | undefined;
+  /** For a `disposable` attempt: the value it sets the flag to. */
+  readonly disposableSet: boolean | undefined;
   readonly osUser: string;
   readonly toolVersion: string;
   readonly startedAt: Date;
@@ -185,6 +189,7 @@ export async function ensureHistorySchema(
   target text NOT NULL,
   from_migration integer,
   to_migration integer,
+  disposable_set boolean,
   os_user text NOT NULL,
   tool_version text NOT NULL,
   backend_pid integer,
@@ -295,6 +300,7 @@ interface AttemptRow {
   target: string;
   from_migration: number | null;
   to_migration: number | null;
+  disposable_set: boolean | null;
   os_user: string;
   tool_version: string;
   started_at: Date;
@@ -305,7 +311,7 @@ interface AttemptRow {
 }
 
 const attemptColumns =
-  "id, command, target, from_migration, to_migration, os_user, tool_version, started_at, ended_at, outcome, error, error_file";
+  "id, command, target, from_migration, to_migration, disposable_set, os_user, tool_version, started_at, ended_at, outcome, error, error_file";
 
 function attemptRecord(row: AttemptRow): AttemptRecord {
   return {
@@ -314,6 +320,7 @@ function attemptRecord(row: AttemptRow): AttemptRecord {
     target: row.target,
     fromMigration: row.from_migration ?? undefined,
     toMigration: row.to_migration ?? undefined,
+    disposableSet: row.disposable_set ?? undefined,
     osUser: row.os_user,
     toolVersion: row.tool_version,
     startedAt: row.started_at,

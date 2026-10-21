@@ -1052,7 +1052,7 @@ describe("deploy configuration", () => {
     ).toEqual([{ history: null }]);
   });
 
-  test("refuses to deploy edited migrations without connecting to the target", async () => {
+  test("deploy and status refuse edited migrations without connecting to the target", async () => {
     const { dir, project, database } = await deployProject(server, {
       "customers.sql": customers,
     });
@@ -1062,9 +1062,16 @@ describe("deploy configuration", () => {
     await chmod(dir.path(schemaChange), 0o644);
     await dir.write(schemaChange, `${await dir.read(schemaChange)}-- edited\n`);
 
-    await expect(deploy(project, { target: "dev" })).rejects.toBeInstanceOf(
-      MigrationIntegrityError,
-    );
+    // Both say how to restore the migration.
+    for (const command of [deploy, status]) {
+      const error = await command(project, { target: "dev" }).catch(
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(MigrationIntegrityError);
+      expect((error as Error).message).toContain(
+        "restore it from Git (`git checkout HEAD -- data-model/migrations/00001-add-customers`",
+      );
+    }
     // The embedded target creates its database on first connect.
     expect(await server.databases()).not.toContain(database);
   });

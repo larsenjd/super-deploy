@@ -123,6 +123,12 @@ const refusedObjects = {
       "Virtual generated columns",
       " (a generated column without STORED is virtual in PostgreSQL 18): add STORED",
     ),
+  // pg-delta plans none (QA 127, pg-delta research §8).
+  viewColumnComments: (fix = "") =>
+    v1(
+      "Comments on view and materialized-view columns",
+      `: pg-delta doesn't generate them, so no migration would add one${fix}`,
+    ),
 } satisfies Record<string, () => RuleFinding>;
 
 function routineOption(name: string): RuleFinding {
@@ -247,6 +253,16 @@ export function catalogObjectFinding(fact: {
  */
 export function virtualGeneratedColumnFinding(): RuleFinding {
   return refusedObjects.virtualGeneratedColumns();
+}
+
+/**
+ * Why V1 refuses a comment on a view's or materialized view's column, with
+ * the fix (a `; ...` clause). Ordering refuses the statement, since only the
+ * whole desired schema tells a view's column from a table's; adoption
+ * refuses the comment found on a target.
+ */
+export function viewColumnCommentFinding(fix: string): RuleFinding {
+  return refusedObjects.viewColumnComments(fix);
 }
 
 /**

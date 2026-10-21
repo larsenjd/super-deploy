@@ -15,9 +15,16 @@
 // the safe direction), but its confirmation says what that leaves (QA 167):
 // deploy refuses the target until rebuild resets it, and rebuild then needs
 // it flagged disposable again.
+//
+// The confirmation starts with the flag as it is now. The menu's question
+// names it too (`readDisposableFlag`, read before the guard connects), with
+// no preselected whatever the flag (QA 176).
 import type { Session } from "../adapters/types.ts";
-import { historyTable } from "../deploy/history.ts";
+import { historyTable, readTargetSettings } from "../deploy/history.ts";
+import { connectTarget, resolveTarget } from "../deploy/target.ts";
+import { errorReason } from "../errors.ts";
 import { runGuarded } from "../guard/guard.ts";
+import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
 
 export interface DisposableOptions {
@@ -52,6 +59,7 @@ export async function disposable(
   return runGuarded<undefined, DisposableResult>(project, {
     command: "disposable",
     target: options.target,
+    disposableSet: options.set,
     async check(view, session) {
       if (view.disposable === options.set) {
         return {
@@ -67,19 +75,22 @@ export async function disposable(
         action: options.set
           ? `Mark target ${view.target.name} as disposable`
           : `Mark target ${view.target.name} as not disposable`,
-        details: options.set
-          ? [
-              await describeContents(session, managedSchema),
-              "deploy-draft will then be allowed to deploy a draft and its seed data to it, and rebuild to wipe it",
-            ]
-          : [
-              "deploy-draft and rebuild will then refuse it",
-              ...(view.draft === undefined
-                ? []
-                : [
-                    `It holds deployed draft ${view.draft.name}: deploy refuses it until rebuild resets it, and rebuild will first need it flagged disposable again`,
-                  ]),
-            ],
+        details: [
+          `Now: ${view.disposable ? "disposable" : "not disposable"}`,
+          ...(options.set
+            ? [
+                await describeContents(session, managedSchema),
+                "deploy-draft will then be allowed to deploy a draft and its seed data to it, and rebuild to wipe it",
+              ]
+            : [
+                "deploy-draft and rebuild will then refuse it",
+                ...(view.draft === undefined
+                  ? []
+                  : [
+                      `It holds deployed draft ${view.draft.name}: deploy refuses it until rebuild resets it, and rebuild will first need it flagged disposable again`,
+                    ]),
+              ]),
+        ],
         plan: undefined,
       };
     },
@@ -119,4 +130,36 @@ async function describeContents(
   }
   const estimate = Math.round(rows[0]?.rows ?? 0);
   return `Schema ${schema} holds ${tables} ${tables === 1 ? "table" : "tables"}, about ${estimate.toLocaleString("en-US")} ${estimate === 1 ? "row" : "rows"}`;
+}
+
+/** A target's disposable flag, or why it couldn't be read. */
+export type DisposableFlag =
+  | { readonly read: true; readonly disposable: boolean }
+  | { readonly read: false; readonly reason: string };
+
+/**
+ * Reads target `targetName`'s flag without the guard or the lock, for the
+ * menu's question (QA 176). An unreachable target gives the reason instead;
+ * an interruption still throws.
+ */
+export async function readDisposableFlag(
+  project: Project,
+  targetName: string,
+): Promise<DisposableFlag> {
+  const target = resolveTarget(project, targetName);
+  try {
+    const session = await connectTarget(target, project.signal);
+    try {
+      const settings = await readTargetSettings(
+        session,
+        project.config.historySchema,
+      );
+      return { read: true, disposable: settings.disposable };
+    } finally {
+      await session.close().catch(() => {});
+    }
+  } catch (error) {
+    throwIfInterrupted(project.signal);
+    return { read: false, reason: errorReason(error) };
+  }
 }

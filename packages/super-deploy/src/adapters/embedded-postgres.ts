@@ -142,6 +142,8 @@ export function embeddedPostgres(
   );
   let running: Promise<number> | undefined;
   let registration: Registration | undefined;
+  /** The databases `target()` was asked for. */
+  const targetDatabases = new Set<string>();
 
   function port(): Promise<number> {
     running ??= registerAndStart().catch((error: unknown) => {
@@ -152,23 +154,43 @@ export function embeddedPostgres(
   }
 
   async function registerAndStart(): Promise<number> {
-    await initialise(dataDir, user, password);
+    await initialise(dataDir, user, password, wayOut());
     return withLeaseLock(dataDir, async () => {
       const lease = await register(dataDir);
+      const attached = await runningPort(dataDir);
+      let answered = false;
       try {
-        const serverPort = (await runningPort(dataDir)) ?? (await start());
+        const serverPort = attached ?? (await start());
         const admin = urlAs(user, password, "postgres", serverPort);
         await waitUntilAccepting(admin, dataDir);
+        answered = true;
         if (lease.others === 0) {
           await sweepLeftovers(admin);
         }
         registration = lease;
         return serverPort;
       } catch (error) {
-        await releaseLease(lease).catch(() => {});
+        // A server attached to that never answered may be a stale
+        // postmaster.pid naming an unrelated process: stopping it would
+        // signal that process, so only the registration goes.
+        await (attached === undefined || answered
+          ? releaseLease(lease)
+          : release(dataDir, lease)
+        ).catch(() => {});
         throw error;
       }
     });
+  }
+
+  /**
+   * What to do about a damaged data directory: deleting it loses only
+   * throwaway databases, unless targets are databases on it.
+   */
+  function wayOut(): string {
+    const databases = [...targetDatabases];
+    return databases.length === 0
+      ? "with no super-deploy command running, delete that folder; it holds only rehearsals' throwaway databases, so nothing is lost"
+      : `with no super-deploy command running, delete that folder and deploy again to the targets on it (${databases.length === 1 ? "database" : "databases"} ${databases.join(", ")}), losing whatever was added to them by hand`;
   }
 
   /** Starts the server, which isn't running. Call under the lease lock. */
@@ -257,6 +279,7 @@ export function embeddedPostgres(
       },
     },
     target(database) {
+      targetDatabases.add(database);
       const target = targetOver(async () => {
         const admin = await connectSession(await connectionString());
         try {
