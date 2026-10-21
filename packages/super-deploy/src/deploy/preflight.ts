@@ -1,8 +1,6 @@
 // The deploy pre-flight: read-only checks on the target, after the lock and
 // before any rehearsal, that catch what would otherwise fail mid-transaction
 // or weaken safety (spec "Deployment engine"):
-//   - every role the deployment grants to exists (rehearsals create missing
-//     roles on their own server, but nothing creates roles on targets)
 //   - every declared external schema exists
 //   - the deploy role owns the managed schema and everything in it, or is a
 //     member of their owner (deploy/ownership.ts)
@@ -12,17 +10,12 @@
 //     target holds no draft (deploy-draft's), which is not a migration
 // `status` runs the same checks and reports them.
 
-import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
 import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
-import type { ReplayUnit } from "../rehearsal/replay.ts";
-import { rolesNamedInFiles } from "../sql-analysis/index.ts";
-import { readDesiredSchema } from "../store/desired-schema.ts";
 import {
   type FinalizedMigration,
   migrationFolderName,
-  snapshotFolderName,
 } from "../store/migrations.ts";
 import {
   type DeployedDraft,
@@ -63,11 +56,6 @@ export interface HistoryMismatch {
 
 /** What the pre-flight found on a target. */
 export interface PreflightFindings {
-  /**
-   * Roles the newest migration's desired schema or a pending migration grants
-   * to (or names in a policy) that the target lacks, sorted. Refuses a deployment.
-   */
-  readonly missingRoles: readonly string[];
   /** Declared external schemas the target lacks, in config order. Refuses a deployment. */
   readonly missingExternalSchemas: readonly string[];
   /**
@@ -96,22 +84,15 @@ export interface PreflightInput {
   readonly migrations: readonly FinalizedMigration[];
   /** What the target records, in number order. */
   readonly recorded: readonly RecordedMigration[];
-  /** The pending migrations' deploy-time files, in order. */
-  readonly pending: readonly ReplayUnit[];
 }
 
 /** Runs every check on `session` (read-only queries, no transaction). */
 export async function preflightChecks(
   session: Session,
-  project: Pick<Project, "root" | "config">,
+  project: Pick<Project, "config">,
   input: PreflightInput,
 ): Promise<PreflightFindings> {
   return {
-    missingRoles: await missing(
-      session,
-      "SELECT rolname AS name FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
-      await deploymentRoles(project.root, input.migrations, input.pending),
-    ),
     missingExternalSchemas: await missing(
       session,
       "SELECT nspname AS name FROM pg_catalog.pg_namespace WHERE nspname = ANY($1::text[])",
@@ -130,35 +111,10 @@ export async function preflightChecks(
 /** True when the findings refuse a deployment (warnings never do). */
 export function refusesDeployment(findings: PreflightFindings): boolean {
   return (
-    findings.missingRoles.length > 0 ||
     findings.missingExternalSchemas.length > 0 ||
     findings.notOwned.length > 0 ||
     findings.historyMismatches.length > 0
   );
-}
-
-/**
- * Every role a deployment of `pending` needs on the target: the roles named
- * in the newest migration's desired-schema snapshot and in the pending
- * migrations' deploy-time files (a pending migration may grant to a role a
- * later one revokes again).
- */
-async function deploymentRoles(
-  root: string,
-  migrations: readonly FinalizedMigration[],
-  pending: readonly ReplayUnit[],
-): Promise<string[]> {
-  const newest = migrations.at(-1);
-  const snapshot =
-    newest === undefined
-      ? []
-      : await readDesiredSchema(root, join(newest.path, snapshotFolderName));
-  return rolesNamedInFiles([
-    ...snapshot,
-    ...pending.flatMap((unit) =>
-      unit.files.map(({ file, sql }) => ({ path: file, text: sql })),
-    ),
-  ]);
 }
 
 /**
@@ -311,8 +267,8 @@ async function deployRoleWarnings(
 }
 
 /**
- * The deploy pre-flight refused the target: a role the deployment grants to
- * or a declared external schema is missing, the deploy role doesn't own the
+ * The deploy pre-flight refused the target: a declared external schema is
+ * missing, the deploy role doesn't own the
  * managed schema or something in it, or its recorded history doesn't match
  * the repo. Nothing was rehearsed or changed; the attempt is logged as
  * failed.
@@ -323,10 +279,6 @@ export class PreflightFailedError extends SuperDeployError {
   readonly findings: PreflightFindings;
 
   constructor(target: string, findings: PreflightFindings) {
-    const roles = findings.missingRoles.map(
-      (role) =>
-        `role "${role}" does not exist (the desired schema grants to it; create it on the target)`,
-    );
     const schemas = findings.missingExternalSchemas.map(
       (schema) =>
         `external schema "${schema}" does not exist (it is declared in externalSchemas)`,
@@ -335,7 +287,7 @@ export class PreflightFailedError extends SuperDeployError {
       (mismatch) => mismatch.message,
     );
     super(
-      `Target ${target} failed the deploy pre-flight checks: ${[...roles, ...schemas, ...findings.notOwned.map(notOwnedMessage), ...history].join("; ")}`,
+      `Target ${target} failed the deploy pre-flight checks: ${[...schemas, ...findings.notOwned.map(notOwnedMessage), ...history].join("; ")}`,
     );
     this.target = target;
     this.findings = findings;

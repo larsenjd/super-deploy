@@ -26,7 +26,8 @@ export function postgresTarget(source: ConnectionSource): DeploymentAdapter {
 
 /**
  * A rehearsal adapter creating throwaway databases on an existing server with
- * node-postgres. The login needs `CREATEDB` and `CREATEROLE`.
+ * node-postgres. The login needs `CREATEDB`; rehearsals create no roles, so
+ * it never needs `CREATEROLE`.
  */
 export function postgresRehearsal(source: ConnectionSource): RehearsalAdapter {
   return rehearsalOver(async () => resolveConnectionString(source));

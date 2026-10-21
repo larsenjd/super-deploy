@@ -5,8 +5,8 @@
 // Sources: every fixture of `prototype/schema-ordering` (25d5c18, including
 // the two it borrows from `prototype/pg-delta`) and every case of
 // `prototype/pg-topo-pg18` (7f91fd6) `cases.ts`, adapted to V1's rules
-// (constraints and indexes named, VIRTUAL columns stored, prototype role
-// names replaced), plus cases for every modelled reference shape and every
+// (constraints and indexes named, VIRTUAL columns stored, no roles, grants
+// or policies), plus cases for every modelled reference shape and every
 // static refusal.
 
 export interface OrderingFixture {
@@ -23,7 +23,7 @@ export interface OrderingFixture {
   readonly postgresRefuses?: string;
   /**
    * Rule ids the desired-schema rules refuse this (orderable) fixture with,
-   * e.g. `GRANT ... ON ALL`, which the spec's allowlist leaves out. Ordering still
+   * e.g. `COMMENT ON SCHEMA`, which the spec's allowlist leaves out. Ordering still
    * covers it; the API seam expects draft to refuse it before loading.
    */
   readonly refusedByRules?: readonly string[];
@@ -38,9 +38,6 @@ export interface ExpectedError {
   /** Substrings the message must contain. */
   readonly message?: readonly string[];
 }
-
-/** Roles fixtures grant to; the API seam creates them on its test server. */
-export const fixtureRoles = ["ordering_reader", "ordering_writer"];
 
 /** One file per statement, written in a valid order: `case("x", [s1, s2])` -> x/01.sql, x/02.sql. */
 function statements(...list: string[]): Record<string, string> {
@@ -58,9 +55,8 @@ export const orderingFixtures: readonly OrderingFixture[] = [
   {
     name: "q35-shuffled: file names in reverse dependency order",
     files: {
-      "a_policies.sql": `alter table orders enable row level security;
-create policy orders_visible on orders
-  using (is_admin() or customer_id = 42);
+      "a_visible_orders.sql": `create view visible_orders as
+  select id, amount from orders where is_admin() or customer_id = 42;
 `,
       "b_views.sql": `create view order_totals as
   select c.id as customer_id, c.name, sum(o.amount) as total, count(*) as n
@@ -101,7 +97,6 @@ alter table customers add constraint customers_last_order_fk
   updated_at timestamptz
 );
 create index orders_customer_idx on orders (customer_id);
-grant select on orders to ordering_reader;
 comment on table orders is 'customer orders';
 `,
       "g_customers.sql": `create table customers (
@@ -122,12 +117,11 @@ create type address as (street text, city text);
       ["create table customers", "create table orders"],
       ["create table orders", "alter table customers add constraint"],
       ["create table admins", "create function is_admin"],
-      ["create function is_admin", "create policy orders_visible"],
+      ["create function is_admin", "create view visible_orders"],
       ["create table orders", "create view order_totals"],
       ["create view order_totals", "create view big_customers"],
       ["create function touch_updated_at", "create trigger orders_touch"],
       ["create table orders", "create function customer_total"],
-      ["create policy orders_visible", "alter table orders enable"],
     ],
   },
   {
@@ -412,30 +406,15 @@ alter table accounts add constraint accounts_cap check (accounts_count() < 10000
     ],
   },
   {
-    name: "triggers-policies: trigger WHEN, policies, RLS, grants, revokes and comments",
+    name: "triggers: trigger WHEN and comments",
     files: {
-      "a_policies.sql": `alter table docs enable row level security;
-alter table docs force row level security;
-
-create policy docs_owner on docs
-  using (owner = current_user or is_editor(current_user));
-
-create policy docs_team on docs for select
-  using (exists (select 1 from teams t where t.id = docs.team_id and t.public));
-`,
       "b_triggers.sql": `create trigger docs_audit after insert or update on docs
   for each row when (should_audit(new.title))
   execute function audit_doc();
 `,
-      "c_grants_comments.sql": `grant select, insert on docs to ordering_reader;
-grant execute on function is_editor(text) to ordering_reader;
-grant select (public) on teams to ordering_reader;
-revoke execute on function should_audit(text) from public;
-grant select on docs to ordering_writer;
-comment on column docs.title is 'Title';
+      "c_comments.sql": `comment on column docs.title is 'Title';
 comment on constraint docs_title_len on docs is 'length limit';
 comment on trigger docs_audit on docs is 'audit trail';
-comment on policy docs_owner on docs is 'owners and editors';
 comment on function is_editor(text) is 'is the user an editor';
 comment on index docs_pkey is 'pk of docs';
 `,
@@ -467,12 +446,9 @@ create table editors (name text primary key);
     before: [
       ["create table teams", "create table docs"],
       ["create table editors", "create function is_editor"],
-      ["create function is_editor", "create policy docs_owner"],
-      ["create table teams", "create policy docs_team"],
       ["create function should_audit", "create trigger docs_audit"],
       ["create function audit_doc", "create trigger docs_audit"],
       ["create trigger docs_audit", "comment on trigger docs_audit"],
-      ["create policy docs_team", "alter table docs enable"],
     ],
   },
   {
@@ -744,23 +720,6 @@ create view v2 as
     ],
   },
   {
-    name: "C16 row-level security and policies calling functions and subqueries",
-    files: statements(
-      "create table team (id int primary key, owner text)",
-      "create table member (team_id int constraint member_team_fk references team (id), usr text)",
-      "create function is_member(t int) returns boolean language sql stable as $$ select exists (select 1 from member where team_id = t and usr = current_user) $$",
-      "alter table team enable row level security",
-      "alter table team force row level security",
-      "create policy team_read on team for select to ordering_reader using (is_member(id))",
-      "create policy team_write on team for insert to ordering_writer with check (owner = current_user and exists (select 1 from member m where m.team_id = id))",
-    ),
-    before: [
-      ["create table member", "create function is_member"],
-      ["create function is_member", "create policy team_read"],
-      ["create table member", "create policy team_write"],
-    ],
-  },
-  {
     name: "C17 comments on every supported kind",
     files: statements(
       "create function cm_fn(x int) returns int language sql immutable return x",
@@ -772,7 +731,6 @@ create view v2 as
       "create index cm_a_idx on cm (a)",
       "create function cm_trg() returns trigger language plpgsql as $$ begin return new; end $$",
       "create trigger cm_t before insert on cm for each row execute function cm_trg()",
-      "create policy cm_p on cm using (true)",
       "create procedure cm_proc() language sql begin atomic select 1; end",
       "comment on table cm is 't'",
       "comment on column cm.a is 'c'",
@@ -783,7 +741,6 @@ create view v2 as
       "comment on constraint cm_pk on cm is 'pk'",
       "comment on index cm_a_idx is 'i'",
       "comment on trigger cm_t on cm is 'tr'",
-      "comment on policy cm_p on cm is 'pol'",
       "comment on type cm_type is 'ty'",
       "comment on domain cm_dom is 'd'",
       "comment on column cm_v.id is 'view column'",
@@ -792,28 +749,7 @@ create view v2 as
     before: [
       ["create index cm_a_idx", "comment on index cm_a_idx"],
       ["create trigger cm_t", "comment on trigger cm_t"],
-      ["create policy cm_p", "comment on policy cm_p"],
     ],
-  },
-  {
-    name: "C18 grants on tables, columns, views, routines, types, domains and identity sequences",
-    files: statements(
-      "create table gr (id int generated always as identity primary key, secret text, pub text)",
-      "create view gr_v as select id, pub from gr",
-      "create function gr_fn() returns int language sql immutable return 1",
-      "create procedure gr_proc() language sql begin atomic select 1; end",
-      "create type gr_type as (a int)",
-      "create domain gr_dom as int",
-      "grant select on gr to ordering_reader",
-      "grant select (id, pub), update (pub) on gr to ordering_writer",
-      "grant select on gr_v to ordering_reader",
-      "grant execute on function gr_fn() to ordering_reader",
-      "grant execute on procedure gr_proc() to ordering_writer",
-      "grant usage on type gr_type to ordering_reader",
-      "grant usage on domain gr_dom to ordering_reader",
-      "grant usage on sequence gr_id_seq to ordering_writer",
-    ),
-    before: [["create table gr", "grant usage on sequence gr_id_seq"]],
   },
   {
     name: "C19 CREATE EXTENSION plpgsql and a PL/pgSQL function",
@@ -1077,22 +1013,6 @@ create table items (id int primary key);
     ],
   },
   {
-    name: "a policy reading a view, and a CTE in a policy",
-    files: {
-      "a.sql": `create policy notes_visible on notes
-  using (author in (select name from visible_authors));
-create policy notes_cte on notes for select
-  using (exists (with notes as (select 1 as x) select x from notes));
-`,
-      "b.sql":
-        "create view visible_authors as select name from authors where visible;\ncreate table authors (name text primary key, visible boolean not null);\ncreate table notes (id int primary key, author text);\n",
-    },
-    before: [
-      ["create view visible_authors", "create policy notes_visible"],
-      ["create table notes", "create policy notes_cte"],
-    ],
-  },
-  {
     name: "comments on generated names: the primary key, its index, a NOT NULL and an identity sequence",
     files: {
       "a.sql": `comment on index accounts_pkey is 'pk index';
@@ -1121,13 +1041,11 @@ comment on constraint "a_table_name_that_is_exactl_ünïcödé_column_name_th_no
   {
     name: "an identity sequence with an explicit name",
     files: {
-      "a.sql": "grant usage on sequence ticket_numbers to ordering_writer;\n",
+      "a.sql": "comment on sequence ticket_numbers is 'ticket numbers';\n",
       "b.sql":
         "create table tickets (id bigint generated always as identity (sequence name ticket_numbers) primary key);\n",
     },
-    before: [
-      ["create table tickets", "grant usage on sequence ticket_numbers"],
-    ],
+    before: [["create table tickets", "comment on sequence ticket_numbers"]],
   },
   {
     name: "a foreign key without columns uses the primary key even with another unique key",
@@ -1204,14 +1122,13 @@ comment on constraint "a_table_name_that_is_exactl_ünïcödé_column_name_th_no
     before: [],
   },
   {
-    name: "grant on all tables in schema and a schema comment run last",
+    name: "a schema comment runs last",
     files: {
-      "a.sql":
-        "grant select on all tables in schema public to ordering_reader;\ncomment on schema public is 'managed';\n",
+      "a.sql": "comment on schema public is 'managed';\n",
       "b.sql": "create table things (id int primary key);\n",
     },
-    before: [["create table things", "grant select on all tables"]],
-    refusedByRules: ["desired-schema-statement", "desired-schema-statement"],
+    before: [["create table things", "comment on schema public"]],
+    refusedByRules: ["desired-schema-statement"],
   },
   // ---------------------------------------------------------------------------
   // Static refusals and errors
@@ -1438,13 +1355,12 @@ create table t (
     ],
   },
   {
-    name: "unknown functions, triggers, constraints and policies",
+    name: "unknown functions, triggers and constraints",
     files: {
       "a.sql": `create table t (id int primary key, n int default make_n());
 create trigger t_audit before insert on t for each row execute function audit();
 comment on constraint t_missing on t is 'x';
 comment on trigger t_nope on t is 'x';
-comment on policy t_none on t is 'x';
 create view v as select public.length('x') as l;
 `,
     },
@@ -1476,12 +1392,6 @@ create view v as select public.length('x') as l;
       {
         file: "a.sql",
         line: 5,
-        rule: "unknown-reference",
-        message: ["policy t_none on t"],
-      },
-      {
-        file: "a.sql",
-        line: 6,
         rule: "unknown-reference",
         message: [
           "function public.length, which the desired schema doesn't create",

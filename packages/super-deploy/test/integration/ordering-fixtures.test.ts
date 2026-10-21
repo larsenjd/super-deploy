@@ -11,16 +11,13 @@ import {
   SqlRuleViolationError,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { fixtureRoles, orderingFixtures } from "../fixtures/ordering.ts";
+import { orderingFixtures } from "../fixtures/ordering.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject, embeddedConfig } from "../support/project.ts";
 
 let server: TestServer;
 beforeAll(async () => {
   server = await startTestServer();
-  for (const role of fixtureRoles) {
-    await server.query(`create role ${role} nologin`);
-  }
 });
 afterAll(async () => {
   await server?.stop();

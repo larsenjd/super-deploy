@@ -94,11 +94,7 @@ const priority: Record<StatementKind, number> = {
   constraint: 50,
   index: 60,
   trigger: 70,
-  policy: 80,
-  "row level security": 90,
-  revoke: 91,
-  grant: 92,
-  comment: 93,
+  comment: 80,
 };
 
 interface GraphNode {
@@ -215,7 +211,6 @@ function analyse(
     con: "Constraint",
     domcon: "Domain constraint",
     trigger: "Trigger",
-    policy: "Policy",
   };
   for (const [key, ids] of producers) {
     const namespace = key.slice(0, key.indexOf(":"));

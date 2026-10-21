@@ -699,7 +699,6 @@ const statusCommand: CommandDefinition = {
       `Target ${report.target}${report.disposable ? " (disposable)" : ""}: ${plural(report.recorded.length, "migration")} recorded, ${report.pending.length} pending`,
     );
     const refusals = [
-      ...preflight.missingRoles.map((role) => `role "${role}" does not exist`),
       ...preflight.missingExternalSchemas.map(
         (schema) => `external schema "${schema}" does not exist`,
       ),

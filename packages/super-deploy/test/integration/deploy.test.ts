@@ -750,7 +750,6 @@ describe("status", () => {
       attempts: [],
       disposable: false,
       preflight: {
-        missingRoles: [],
         missingExternalSchemas: [],
         notOwned: [],
         historyMismatches: [],

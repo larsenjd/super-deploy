@@ -1,7 +1,5 @@
--- dep: column type change under view, policy, index / alter
+-- dep: column type change under view, index / alter
 -- ok=true
-DROP POLICY "p" ON "public"."t";
-
 DROP VIEW "public"."v";
 
 ALTER TABLE "public"."t" ALTER COLUMN "a" DROP DEFAULT;
@@ -12,5 +10,3 @@ CREATE VIEW "public"."v" AS  SELECT id,
     a,
     (a * (2)::numeric) AS a2
    FROM public.t;
-
-CREATE POLICY "p" ON "public"."t" FOR ALL TO PUBLIC USING ((a > (0)::numeric));

@@ -10,7 +10,7 @@
 //   temporary tables (no structure or data from before the migration is lost);
 // - dropping an object that holds no data and creating it again later in the
 //   same migration, as pg-delta does to change a view, index, function,
-//   trigger, policy, type or constraint (a table or column dropped and created
+//   trigger, type or constraint (a table or column dropped and created
 //   again has lost its rows, so that stays destructive). CASCADE always is.
 //
 // Warnings: statements that rewrite or fully scan an existing table while
@@ -129,7 +129,6 @@ const recreatableKinds = new Set([
   "index",
   "function",
   "trigger",
-  "policy",
   "type",
   "constraint",
   "domain-constraint",
@@ -167,7 +166,7 @@ export class ChangeTracker {
         continue;
       }
       if (drop.found.kind === "drop" && drop.key.startsWith("table:")) {
-        // Its columns, constraints, triggers and policies go with it.
+        // Its columns, constraints and triggers go with it.
         const table = drop.key.slice("table:".length);
         for (const earlier of this.#found) {
           if (tableOf(earlier.key) === table) {
@@ -618,8 +617,6 @@ function createdKeys(statement: ParsedStatement, body: Json): string[] {
     }
     case "CreateTrigStmt":
       return [`trigger:${relation("relation")}.${String(body.trigname ?? "")}`];
-    case "CreatePolicyStmt":
-      return [`policy:${relation("table")}.${String(body.policy_name ?? "")}`];
     case "CreateDomainStmt":
       return [`type:${stringList(body.domainname).at(-1) ?? ""}`];
     case "CompositeTypeStmt":
@@ -767,9 +764,9 @@ function isVolatile(expression: unknown): boolean {
   return volatile;
 }
 
-/** The table a column, constraint, trigger or policy key belongs to. */
+/** The table a column, constraint or trigger key belongs to. */
 function tableOf(key: string): string | undefined {
-  return /^(?:column|constraint|trigger|policy):([^.]*)\./.exec(key)?.[1];
+  return /^(?:column|constraint|trigger):([^.]*)\./.exec(key)?.[1];
 }
 
 const objectKeys: Record<string, string> = {
@@ -782,7 +779,6 @@ const objectKeys: Record<string, string> = {
   OBJECT_PROCEDURE: "procedure",
   OBJECT_ROUTINE: "function",
   OBJECT_TRIGGER: "trigger",
-  OBJECT_POLICY: "policy",
   OBJECT_TYPE: "type",
   OBJECT_DOMAIN: "type",
 };
@@ -813,8 +809,8 @@ function droppedName(
   const type = unwrap(object, "TypeName") as TypeName | undefined;
   const parts =
     type !== undefined ? stringList(type.names) : stringList(object);
-  // Triggers and policies are named [schema.]table.name.
-  if (objectType === "OBJECT_TRIGGER" || objectType === "OBJECT_POLICY") {
+  // Triggers are named [schema.]table.name.
+  if (objectType === "OBJECT_TRIGGER") {
     const [table, name] = parts.slice(-2);
     return {
       key: `${table ?? ""}.${name ?? ""}`,

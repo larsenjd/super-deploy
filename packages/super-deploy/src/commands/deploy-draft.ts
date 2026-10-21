@@ -127,7 +127,6 @@ export async function deployDraft(
         targetName: target,
         migrations,
         recorded: view.recorded,
-        pending: units,
       });
       if (refusesDeployment(findings)) {
         throw new PreflightFailedError(target, findings);

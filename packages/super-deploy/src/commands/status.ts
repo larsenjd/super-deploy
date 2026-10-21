@@ -30,7 +30,6 @@ import {
 } from "../deploy/target.ts";
 import type { Project } from "../project.ts";
 import {
-  newestVariant,
   readMigrationsWithUnits,
   replicaUnits,
   withReplica,
@@ -96,7 +95,6 @@ export async function status(
       targetName: target.name,
       migrations,
       recorded,
-      pending: pending.map((migration) => newestVariant(migration).unit),
     });
     const drift =
       preflight.historyMismatches.length > 0

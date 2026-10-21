@@ -7,7 +7,6 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
 import { SuperDeployError } from "../errors.ts";
-import { rolesNamedInFiles } from "../sql-analysis/index.ts";
 import { decodeHashedText } from "../store/hashing.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
@@ -17,7 +16,7 @@ import {
   type FinalizedRecovery,
   schemaChangeFileName,
 } from "../store/migrations.ts";
-import { ensureRoles, inPinnedTransaction } from "./throwaway.ts";
+import { inPinnedTransaction } from "./throwaway.ts";
 
 export interface DeployTimeFile {
   /** Project-relative path with forward slashes, for messages. */
@@ -106,23 +105,13 @@ export async function readMigrationUnits(
 
 /**
  * Runs every unit's files in one transaction, committing only if all succeed.
- * Roles they grant to are created first if the rehearsal server lacks them
- * (ensureRoles). Rehearsals only: deployments use runUnit, and never create
- * roles on a target.
+ * Rehearsals only: deployments use runUnit.
  */
 export async function replay(
   session: Session,
   units: readonly ReplayUnit[],
   managedSchema: string,
 ): Promise<void> {
-  await ensureRoles(
-    session,
-    await rolesNamedInFiles(
-      units.flatMap((unit) =>
-        unit.files.map(({ file, sql }) => ({ path: file, text: sql })),
-      ),
-    ),
-  );
   await inPinnedTransaction(session, managedSchema, async () => {
     for (const unit of units) {
       await runUnit(session, unit);

@@ -4,9 +4,11 @@
 // .scratch/super-deploy/research/transactional-hazards.md.
 //
 // Three layers, each an allowlist where it can be:
-// 1. Statements: every statement type is classified (DDL, privileges, data,
+// 1. Statements: every statement type is classified (DDL, comments, data,
 //    temporary tables, maintenance) or refused with the reason; each kind of
-//    file allows only some classes. Unknown statement types are refused.
+//    file allows only some classes. Unknown statement types are refused, and
+//    so are privileges, roles, ownership, row-level security and SECURITY
+//    DEFINER in every kind of file (privileges.ts, ADR-0006).
 // 2. Statement details: ALTER TABLE subcommands, DROP and RENAME object
 //    types, function languages, temporary-table lifetime and unsupported
 //    features.
@@ -26,7 +28,6 @@ import type {
   CreateFunctionStmt,
   CreateStmt,
   DropStmt,
-  GrantStmt,
   InsertStmt,
   MergeStmt,
   MergeWhenClause,
@@ -46,7 +47,6 @@ import {
   type DestructiveStatement,
   type LockWarning,
 } from "./destructive.ts";
-import { schemaGrantBeyondUsage } from "./grants.ts";
 import {
   checkMarkedStatements,
   type Override,
@@ -54,6 +54,7 @@ import {
 } from "./overrides.ts";
 import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 import { pgCatalogFunctions, pgCatalogRelations } from "./pg-catalog-names.ts";
+import { privilegeRefusal } from "./privileges.ts";
 import { plpgsqlFindings, sqlBodyFindings } from "./routine-bodies.ts";
 import type { RuleId } from "./rule-catalogue.ts";
 import type { RuleContext } from "./rule-types.ts";
@@ -207,19 +208,14 @@ function copyIdentity(
 // ---------------------------------------------------------------------------
 // Layer 1: statements
 
-type StatementClass =
-  | "ddl"
-  | "privileges"
-  | "data"
-  | "temporary"
-  | "maintenance";
+type StatementClass = "ddl" | "comment" | "data" | "temporary" | "maintenance";
 
 type Classification =
   | { readonly class: StatementClass }
   | { readonly refused: Finding };
 
 const allowedClasses: Record<DeployTimeKind, readonly StatementClass[]> = {
-  "schema-change": ["ddl", "privileges"],
+  "schema-change": ["ddl", "comment"],
   "pre-migration": ["ddl", "data", "temporary", "maintenance"],
   "post-migration": ["data", "temporary", "maintenance"],
   "seed-data": ["data"],
@@ -301,15 +297,6 @@ const escaping: Record<string, string> = {
 
 /** Statement types for objects or features V1 does not support. */
 const unsupported: Record<string, string> = {
-  CreateRoleStmt: "roles are cluster-wide and never managed by super-deploy",
-  AlterRoleStmt: "roles are cluster-wide and never managed by super-deploy",
-  DropRoleStmt: "roles are cluster-wide and never managed by super-deploy",
-  GrantRoleStmt: "roles are cluster-wide and never managed by super-deploy",
-  ReassignOwnedStmt: "ownership is not managed by super-deploy",
-  DropOwnedStmt: "roles are cluster-wide and never managed by super-deploy",
-  AlterOwnerStmt: "ownership is not managed by super-deploy",
-  AlterDefaultPrivilegesStmt:
-    "default privileges are not managed by super-deploy",
   CreateEnumStmt:
     "enums are not supported; use a lookup table or a CHECK constraint",
   AlterEnumStmt:
@@ -371,8 +358,6 @@ const ddl = new Set([
   "CreateFunctionStmt",
   "AlterFunctionStmt",
   "CreateTrigStmt",
-  "CreatePolicyStmt",
-  "AlterPolicyStmt",
   "AlterSeqStmt",
 ]);
 
@@ -525,6 +510,10 @@ function classify(statement: ParsedStatement): Classification {
           `CREATE EXTENSION ${String(body.extname ?? "")} is not supported: extensions other than plpgsql run install scripts the rules cannot see`,
         );
   }
+  const privileges = privilegeRefusal(statement);
+  if (privileges !== undefined) {
+    return { refused: privileges };
+  }
   const reason = unsupported[type];
   if (reason !== undefined) {
     return refuse("unsupported-object", `${name} is not supported: ${reason}`);
@@ -589,8 +578,8 @@ function classify(statement: ParsedStatement): Classification {
   if (type === "LockStmt") {
     return { class: "maintenance" };
   }
-  if (type === "GrantStmt" || type === "CommentStmt") {
-    return { class: "privileges" };
+  if (type === "CommentStmt") {
+    return { class: "comment" };
   }
   if (ddl.has(type)) {
     return { class: "ddl" };
@@ -615,9 +604,9 @@ function wrongKind(
   if (kind === "seed-data") {
     why = "seed data may contain only INSERT statements with a column list";
   } else if (kind === "schema-change") {
-    why = "a generated schema change contains only DDL, grants and comments";
-  } else if (statementClass === "privileges") {
-    why = "grants and comments belong in the desired schema";
+    why = "a generated schema change contains only DDL and comments";
+  } else if (statementClass === "comment") {
+    why = "comments belong in the desired schema";
   } else {
     why =
       "post-migration scripts may only change data; structure belongs in the desired schema or the pre-migration script";
@@ -660,17 +649,12 @@ const alterTableAllowed = new Set([
   "AT_EnableTrigUser",
   "AT_DisableTrigUser",
   "AT_ReplicaIdentity",
-  "AT_EnableRowSecurity",
-  "AT_DisableRowSecurity",
-  "AT_ForceRowSecurity",
-  "AT_NoForceRowSecurity",
   "AT_AddIdentity",
   "AT_SetIdentity",
   "AT_DropIdentity",
 ]);
 
 const alterTableUnsupported: Record<string, string> = {
-  AT_ChangeOwner: "ownership is not managed by super-deploy",
   AT_SetLogged: "unlogged tables are not supported",
   AT_SetUnLogged: "unlogged tables are not supported",
   AT_SetTableSpace: "tablespaces are not managed by super-deploy",
@@ -707,18 +691,6 @@ const managedObjectTypes = new Set([
   "OBJECT_DOMAIN",
   "OBJECT_ATTRIBUTE",
   "OBJECT_SEQUENCE",
-]);
-
-/** Object types GRANT and REVOKE may name. */
-const grantableObjectTypes = new Set([
-  "OBJECT_TABLE",
-  "OBJECT_SEQUENCE",
-  "OBJECT_FUNCTION",
-  "OBJECT_PROCEDURE",
-  "OBJECT_ROUTINE",
-  "OBJECT_TYPE",
-  "OBJECT_DOMAIN",
-  "OBJECT_SCHEMA",
 ]);
 
 const serialTypes = new Set([
@@ -820,19 +792,6 @@ function detailFindings(
       );
     }
   }
-  if (type === "GrantStmt") {
-    const grant = body as GrantStmt;
-    if (!grantableObjectTypes.has(grant.objtype ?? "")) {
-      unsupportedFeature(
-        `GRANT and REVOKE on a ${objectTypeName(grant.objtype)} are not supported: super-deploy manages only the objects in its schema`,
-      );
-    }
-    if (schemaGrantBeyondUsage(body) !== undefined) {
-      unsupportedFeature(
-        "GRANT on a schema may grant only USAGE: CREATE on the managed schema is set up outside super-deploy",
-      );
-    }
-  }
   if (type === "CreateFunctionStmt") {
     const language = functionLanguage(body as CreateFunctionStmt);
     if (language !== "sql" && language !== "plpgsql") {
@@ -918,7 +877,7 @@ function alterTableCommandName(subtype: string): string {
 type ExpressionMode =
   /** Runs during the deployment (DML, temp-table staging, USING). */
   | "executed"
-  /** Stored in a definition (defaults, checks, views, policies, indexes). */
+  /** Stored in a definition (defaults, checks, views, indexes). */
   | "stored";
 
 /** Fields naming the relation a statement writes to. */
@@ -936,11 +895,8 @@ const writeTargetFields: Record<string, readonly string[]> = {
   CreateTableAsStmt: ["into"],
   RenameStmt: ["relation"],
   CreateTrigStmt: ["relation"],
-  CreatePolicyStmt: ["table"],
-  AlterPolicyStmt: ["table"],
   RefreshMatViewStmt: ["relation"],
   VacuumStmt: ["rels"],
-  GrantStmt: ["objects"],
   CompositeTypeStmt: ["typevar"],
   AlterSeqStmt: ["sequence"],
 };
@@ -1024,14 +980,6 @@ function expressionFindings(
       type === "RenameStmt"
     ) {
       findings.push(...objectNameFindings(type, node, state));
-    }
-    if (type === "GrantStmt") {
-      for (const object of (node as GrantStmt).objects ?? []) {
-        const schema = unwrap<{ sval?: string }>(object, "String");
-        if (schema !== undefined) {
-          findings.push(...schemaFindings(schema.sval ?? "", "write", state));
-        }
-      }
     }
     if (type === "CreateDomainStmt") {
       findings.push(

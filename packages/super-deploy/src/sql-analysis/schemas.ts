@@ -9,7 +9,6 @@ import type { RuleContext, RuleFinding } from "./rule-types.ts";
 import {
   isObject,
   type Json,
-  list,
   schemaQualifier,
   statementBody,
   stringList,
@@ -171,31 +170,23 @@ function targetNames(
     case "CompositeTypeStmt":
       relation(node.typevar);
       break;
-    case "CreatePolicyStmt":
-      relation(node.table);
-      break;
     case "CreateFunctionStmt":
       named(node.funcname);
       break;
     case "CreateDomainStmt":
       named(node.domainname);
       break;
-    case "CommentStmt":
-    case "GrantStmt": {
-      const objects =
-        nodeType === "CommentStmt" ? [node.object] : list(node.objects);
-      for (const object of objects) {
-        nodes.add(object);
-        if (unwrap(object, "List") !== undefined) {
-          // Comment targets like `t.col` or `c on t` carry one more name.
-          const parts = commentNameParts[String(node.objtype)] ?? 2;
-          named(object, nodeType === "CommentStmt" ? parts : 2);
-        } else if (unwrap(object, "ObjectWithArgs") !== undefined) {
-          named(unwrap(object, "ObjectWithArgs")?.objname);
-        } else {
-          for (const schema of referencedSchemas(object)) {
-            schemas.push(schema);
-          }
+    case "CommentStmt": {
+      const object = node.object;
+      nodes.add(object);
+      if (unwrap(object, "List") !== undefined) {
+        // Comment targets like `t.col` or `c on t` carry one more name.
+        named(object, commentNameParts[String(node.objtype)] ?? 2);
+      } else if (unwrap(object, "ObjectWithArgs") !== undefined) {
+        named(unwrap(object, "ObjectWithArgs")?.objname);
+      } else {
+        for (const schema of referencedSchemas(object)) {
+          schemas.push(schema);
         }
       }
       break;
@@ -208,7 +199,6 @@ const commentNameParts: Record<string, number> = {
   OBJECT_COLUMN: 3,
   OBJECT_TABCONSTRAINT: 3,
   OBJECT_TRIGGER: 3,
-  OBJECT_POLICY: 3,
 };
 
 /** References held in plain name lists rather than reference nodes. */

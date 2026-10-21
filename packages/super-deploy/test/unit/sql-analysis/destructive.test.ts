@@ -74,15 +74,13 @@ describe("destructive statements", () => {
     ]);
   });
 
-  test("creating, altering and granting are not destructive", async () => {
+  test("creating and altering are not destructive", async () => {
     expect(
       await destructiveKinds(`create table x (id int primary key);
 alter table t add column extra jsonb;
 alter table t alter column name drop default;
 alter table t alter column name drop not null;
 create index t_name_idx on t (name);
-grant select on t to reader;
-revoke all on t from reader;
 comment on table t is 'tee';`),
     ).toEqual([]);
   });
@@ -94,7 +92,6 @@ comment on table t is 'tee';`),
     ['DROP FUNCTION "public"."f"(integer)', "drop"],
     ["drop procedure p(int)", "drop"],
     ['DROP TRIGGER "t_upper" ON "public"."t"', "drop"],
-    ['DROP POLICY "t_select" ON "public"."t"', "drop"],
     ["drop domain positive_int", "drop"],
     ["drop type address", "drop"],
     ['ALTER TABLE "public"."t" DROP CONSTRAINT "t_qty_check"', "drop"],
@@ -131,10 +128,6 @@ CREATE OR REPLACE FUNCTION public.h(x int) RETURNS bigint LANGUAGE sql IMMUTABLE
       "a trigger",
       `DROP TRIGGER "t_upper" ON "public"."t";
 CREATE TRIGGER t_upper BEFORE INSERT ON public.t FOR EACH ROW EXECUTE FUNCTION public.tf();`,
-    ],
-    [
-      "a policy",
-      `DROP POLICY "p" ON "public"."t";\nCREATE POLICY "p" ON "public"."t" FOR ALL TO PUBLIC USING ((qty > 0));`,
     ],
     [
       "a constraint",
@@ -185,13 +178,12 @@ ALTER TABLE "public"."other" ADD COLUMN "id" integer;`),
       [
         "schema-change",
         `ALTER TABLE "public"."t" DROP CONSTRAINT "t_other_fk";
-DROP POLICY "p" ON "public"."t";
 ALTER TABLE "public"."t" DROP COLUMN "note";
 ALTER TABLE "public"."other" DROP CONSTRAINT "other_t_fk";
 DROP TABLE "public"."t";`,
       ],
     ]);
-    expect(analysis.destructive.map((d) => d.line)).toEqual([4, 5]);
+    expect(analysis.destructive.map((d) => d.line)).toEqual([3, 4]);
   });
 
   test("CASCADE is destructive even when the object is created again", async () => {

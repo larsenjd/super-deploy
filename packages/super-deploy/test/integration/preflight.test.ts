@@ -1,11 +1,10 @@
-// API seam: roles in rehearsals, and the deploy pre-flight (granted roles and
+// API seam: rehearsals create no roles, and the deploy pre-flight (declared
 // external schemas exist on the target, the deploy role owns the managed
 // schema and everything in it, the deploy role's privileges, recorded hashes
 // match the repo), which status reports too.
 
 import {
   deploy,
-  draft,
   finalize,
   PreflightFailedError,
   status,
@@ -29,13 +28,12 @@ afterAll(async () => {
   await server?.stop();
 });
 
-async function role(name: string) {
-  return (
-    await server.query<{ rolcanlogin: boolean }>(
-      "select rolcanlogin from pg_roles where rolname = $1",
-      [name],
-    )
-  )[0];
+/** Every role on the server, sorted. */
+async function roles(): Promise<string[]> {
+  const rows = await server.query<{ rolname: string }>(
+    "select rolname from pg_roles order by 1",
+  );
+  return rows.map((row) => row.rolname);
 }
 
 const customers =
@@ -44,17 +42,29 @@ const orders =
   "create table orders (id bigint primary key, customer_id bigint not null constraint orders_customer_fk references customers (id));\n";
 
 describe("roles in rehearsals", () => {
-  test("a role the desired schema grants to is created as NOLOGIN when the rehearsal server lacks it, and never dropped", async () => {
-    const reader = roleName();
-    const { project } = await deployProject(server, {
-      "reports.sql": `create table reports (id bigint primary key);\ngrant select on reports to ${reader};\n`,
-    });
+  test("a rehearsal creates no roles, so its login needs CREATEDB and not CREATEROLE", async () => {
+    const rehearser = roleName("rehearser");
+    await server.query(
+      `create role ${rehearser} login createdb password 'rehearser'`,
+    );
+    const { project } = await deployProject(
+      server,
+      { "customers.sql": customers, "orders.sql": orders },
+      {
+        preamble: `import { postgresRehearsal } from "super-deploy";
+const rehearsalUrl = new URL(await postgres.connectionString("postgres"));
+rehearsalUrl.username = ${JSON.stringify(rehearser)};
+rehearsalUrl.password = "rehearser";
+const asRehearser = postgresRehearsal({ connectionString: rehearsalUrl.href });`,
+        rehearsal: "asRehearser",
+      },
+    );
+    const before = await roles();
 
-    await draft(project, { name: "add reports" });
-    await server.query(`drop role ${reader}`);
-    await finalize(project);
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
 
-    expect(await role(reader)).toEqual({ rolcanlogin: false });
+    expect(await roles()).toEqual(before);
   });
 });
 
@@ -67,57 +77,7 @@ async function tables(database: string): Promise<string[]> {
   return rows.map((row) => row.table_name);
 }
 
-async function lastAttempt(database: string) {
-  return (
-    await server.query<{ outcome: string; error: string | null }>(
-      "select outcome, error from deployment_history.attempts order by id desc limit 1",
-      [],
-      database,
-    )
-  )[0];
-}
-
 describe("deploy pre-flight", () => {
-  test("refuses when a role the desired schema grants to is missing on the target, touching nothing, until it exists", async () => {
-    const reader = roleName();
-    const { project, database } = await deployProject(server, {
-      "reports.sql": `create table reports (id bigint primary key);\ngrant select on reports to ${reader};\n`,
-    });
-    await finalizeMigration(project, "add reports");
-    // The rehearsals created it on the shared server; the target lacks it.
-    await server.query(`drop role ${reader}`);
-
-    const refusal = await deploy(project, { target: "dev" }).catch(
-      (error: unknown) => error,
-    );
-
-    expect(refusal).toBeInstanceOf(PreflightFailedError);
-    expect(refusal).toMatchObject({
-      code: "preflight-failed",
-      target: "dev",
-      findings: { missingRoles: [reader] },
-    });
-    expect((refusal as Error).message).toContain(
-      `role "${reader}" does not exist`,
-    );
-    expect(await tables(database)).toEqual([]);
-    expect(await lastAttempt(database)).toEqual({
-      outcome: "failed",
-      error: (refusal as Error).message,
-    });
-    expect(await role(reader)).toBeUndefined();
-    expect((await status(project, { target: "dev" })).preflight).toMatchObject({
-      missingRoles: [reader],
-    });
-
-    await server.query(`create role ${reader} nologin`);
-    expect((await status(project, { target: "dev" })).preflight).toMatchObject({
-      missingRoles: [],
-    });
-    await deploy(project, { target: "dev" });
-    expect(await tables(database)).toEqual(["reports"]);
-  });
-
   test("refuses when a declared external schema is missing on the target, until it exists", async () => {
     const loader = roleName("loader");
     const { project, database } = await deployProject(
@@ -133,7 +93,7 @@ describe("deploy pre-flight", () => {
 
     expect(refusal).toBeInstanceOf(PreflightFailedError);
     expect(refusal).toMatchObject({
-      findings: { missingRoles: [], missingExternalSchemas: [loader] },
+      findings: { missingExternalSchemas: [loader] },
     });
     expect((refusal as Error).message).toContain(
       `external schema "${loader}" does not exist`,

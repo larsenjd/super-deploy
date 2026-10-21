@@ -65,7 +65,7 @@ describe("allowed in the desired schema", () => {
     ],
     [
       "plpgsql function with SET",
-      "create function f(x int) returns int language plpgsql stable security definer set search_path = public, pg_catalog as $$ begin return (select count(*) from t) + x; end $$",
+      "create function f(x int) returns int language plpgsql stable set search_path = public, pg_catalog as $$ begin return (select count(*) from t) + x; end $$",
     ],
     [
       "procedure",
@@ -84,12 +84,6 @@ describe("allowed in the desired schema", () => {
       "create type address as (street text, city text, zip varchar(10))",
     ],
     [
-      "policy",
-      "create policy t_select on t for all to reader using (owner = current_user) with check (owner = current_user)",
-    ],
-    ["enable row level security", "alter table t enable row level security"],
-    ["force row level security", "alter table t force row level security"],
-    [
       "add constraint",
       "alter table customers add constraint customers_last_order_fk foreign key (last_order_id) references orders (id) deferrable initially deferred",
     ],
@@ -102,22 +96,11 @@ describe("allowed in the desired schema", () => {
     ["comment on constraint", "comment on constraint t_pkey on t is 'pk'"],
     ["comment on function", "comment on function f(int) is 'eff'"],
     ["comment on index", "comment on index t_a_idx is 'idx'"],
-    [
-      "comment on trigger and policy",
-      "comment on trigger t_upper on t is 'x'; comment on policy t_select on t is 'y'",
-    ],
+    ["comment on trigger", "comment on trigger t_upper on t is 'x'"],
     [
       "comment on type and domain",
       "comment on type address is 'x'; comment on domain positive_int is 'y'",
     ],
-    ["grant on table", "grant select, insert on t to writer"],
-    ["grant on columns", "grant select (id, a) on t to reader"],
-    ["grant on function", "grant execute on function f(int) to reader"],
-    [
-      "grant on identity sequence",
-      "grant usage on sequence t_id_seq to reader",
-    ],
-    ["grant on type", "grant usage on type address to reader"],
     ["CREATE EXTENSION plpgsql", "create extension plpgsql"],
     [
       "CREATE EXTENSION IF NOT EXISTS plpgsql",
@@ -257,12 +240,6 @@ describe("refused object types", () => {
       "schema",
       "create schema s",
       /^CREATE SCHEMA is not allowed in the desired schema/,
-    ],
-    ["role", "create role r", /^Roles are not managed by super-deploy/],
-    [
-      "role grant",
-      "grant reader to writer",
-      /^Roles are not managed by super-deploy/,
     ],
     [
       "procedural language",
@@ -443,38 +420,23 @@ describe("refused statements and clauses", () => {
     [
       "ALTER TABLE ADD COLUMN",
       "alter table t add column b int",
-      /^Only ALTER TABLE \.\.\. ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY or ADD CONSTRAINT/,
-    ],
-    [
-      "ALTER TABLE DISABLE ROW LEVEL SECURITY",
-      "alter table t disable row level security",
-      /^Only ALTER TABLE/,
+      /^Only ALTER TABLE \.\.\. ADD CONSTRAINT is allowed/,
     ],
     [
       "ALTER VIEW",
-      "alter view v owner to r",
-      /^A AlterOwnerStmt statement is not allowed|^Only ALTER TABLE/,
+      "alter view v set (security_barrier = true)",
+      /^Only ALTER TABLE/,
     ],
     ["ALTER INDEX", "alter index i set (fillfactor = 50)", /^Only ALTER TABLE/],
     [
       "two ALTER TABLE changes in one statement",
-      "alter table t enable row level security, force row level security",
+      "alter table t add constraint t_a_check check (a > 0), add constraint t_b_check check (b > 0)",
       /^Write one ALTER TABLE statement per change/,
     ],
     [
       "ALTER TABLE IF EXISTS",
-      "alter table if exists t enable row level security",
+      "alter table if exists t add constraint t_a_check check (a > 0)",
       /^ALTER TABLE IF EXISTS is not allowed.*exactly once/,
-    ],
-    [
-      "GRANT ON ALL TABLES IN SCHEMA",
-      "grant select on all tables in schema public to r",
-      /^GRANT \.\.\. ON ALL \.\.\. IN SCHEMA is not allowed/,
-    ],
-    [
-      "GRANT ON DATABASE",
-      "grant connect on database d to r",
-      /^GRANT ON DATABASE is not allowed/,
     ],
     [
       "COMMENT ON SCHEMA",
@@ -490,11 +452,6 @@ describe("refused statements and clauses", () => {
       "COMMENT ON SERVER, worded as in SQL",
       "comment on server s is 'x'",
       /^COMMENT ON SERVER is not allowed/,
-    ],
-    [
-      "GRANT ON FOREIGN SERVER, worded like COMMENT ON SERVER",
-      "grant usage on foreign server s to r",
-      /^GRANT ON SERVER is not allowed/,
     ],
     [
       "CREATE OR REPLACE VIEW",
@@ -560,146 +517,114 @@ describe("refused statements and clauses", () => {
   });
 });
 
-describe("managed-schema grants and PUBLIC revokes", () => {
+describe("privileges, roles, ownership, row-level security and SECURITY DEFINER", () => {
+  // Set up on targets outside super-deploy (ADR-0006); no marker overrides them.
   test.each([
-    ["USAGE on the managed schema", "grant usage on schema app to reader"],
     [
-      "USAGE on the managed schema to PUBLIC, with grant option",
-      "grant usage on schema app to public, reader with grant option",
+      "GRANT on a table",
+      "grant select on t to reader",
+      /^GRANT is not supported/,
     ],
     [
-      "EXECUTE on a function revoked from PUBLIC",
+      "GRANT on the managed schema",
+      "grant usage on schema public to reader",
+      /^GRANT is not supported/,
+    ],
+    [
+      "GRANT ON ALL TABLES IN SCHEMA",
+      "grant select on all tables in schema public to reader",
+      /^GRANT is not supported/,
+    ],
+    [
+      "REVOKE from PUBLIC",
       "revoke execute on function f(int) from public",
+      /^REVOKE is not supported/,
     ],
     [
-      "EXECUTE on a procedure revoked from PUBLIC",
-      "revoke execute on procedure p() from public",
+      "CREATE POLICY",
+      "create policy t_select on t for select using (owner = current_user)",
+      /^CREATE POLICY is not supported/,
     ],
     [
-      "EXECUTE on a routine revoked from PUBLIC",
-      "revoke execute on routine f(int) from public",
+      "ENABLE ROW LEVEL SECURITY",
+      "alter table t enable row level security",
+      /^ALTER TABLE \.\.\. ENABLE ROW LEVEL SECURITY is not supported/,
     ],
     [
-      "USAGE on a type revoked from PUBLIC",
-      "revoke usage on type address from public",
+      "FORCE ROW LEVEL SECURITY",
+      "alter table t force row level security",
+      /^ALTER TABLE \.\.\. FORCE ROW LEVEL SECURITY is not supported/,
     ],
     [
-      "USAGE on a domain revoked from PUBLIC",
-      "revoke usage on domain positive_int from public",
+      "SECURITY DEFINER function",
+      "create function f() returns int language sql security definer as $$ select 1 $$",
+      /^SECURITY DEFINER is not supported/,
     ],
-  ])("allowed: %s", async (_name, sql) => {
-    expect(await violations(`${sql};`, { managedSchema: "app" })).toEqual([]);
-  });
-
-  test("the public schema's default USAGE for PUBLIC can be revoked when it is the managed schema", async () => {
-    expect(
-      await violations("revoke usage on schema public from public;"),
-    ).toEqual([]);
-    expect(
-      await violations("revoke usage on schema app from public;", {
-        managedSchema: "app",
-      }),
-    ).toMatchObject([
+    [
+      "EXTERNAL SECURITY DEFINER procedure",
+      "create procedure p() language plpgsql external security definer as $$ begin null; end $$",
+      /^SECURITY DEFINER is not supported/,
+    ],
+    ["role", "create role r", /^CREATE ROLE is not supported/],
+    [
+      "role membership",
+      "grant reader to writer",
+      /^GRANT role is not supported/,
+    ],
+    [
+      "OWNER TO",
+      "alter function f(int) owner to r",
+      /^ALTER \.\.\. OWNER TO is not supported/,
+    ],
+    [
+      "ALTER VIEW ... OWNER TO",
+      "alter view v owner to r",
+      /^ALTER VIEW \.\.\. OWNER TO is not supported/,
+    ],
+    [
+      "ALTER TABLE ... OWNER TO",
+      "alter table t owner to r",
+      /^ALTER TABLE \.\.\. OWNER TO is not supported/,
+    ],
+    [
+      "ALTER DEFAULT PRIVILEGES",
+      "alter default privileges grant select on tables to reader",
+      /^ALTER DEFAULT PRIVILEGES is not supported/,
+    ],
+    [
+      "REASSIGN OWNED",
+      "reassign owned by a to b",
+      /^REASSIGN OWNED is not supported/,
+    ],
+    ["DROP OWNED", "drop owned by a", /^DROP OWNED is not supported/],
+  ])("%s", async (_name, sql, message) => {
+    expect(await violations(`${sql};`)).toEqual([
       {
-        rule: "desired-schema-statement",
-        message: expect.stringMatching(
-          /^PUBLIC has no privileges on schema app by default/,
-        ),
+        file: path,
+        line: 1,
+        statement: sql,
+        rule: "unsupported-object",
+        message: expect.stringMatching(message),
       },
     ]);
+    expect((await violations(`${sql};`))[0]?.message).toMatch(
+      /set up on targets outside super-deploy/,
+    );
   });
 
-  test.each([
-    [
-      "CREATE on the managed schema",
-      "grant create on schema app to writer",
-      /^GRANT CREATE ON SCHEMA is not allowed in the desired schema: grant only USAGE on the managed schema/,
-    ],
-    [
-      "ALL on the managed schema",
-      "grant all on schema app to writer",
-      /^GRANT ALL ON SCHEMA is not allowed in the desired schema: grant only USAGE on the managed schema/,
-    ],
-    [
-      "USAGE on another schema",
-      "grant usage on schema reporting to reader",
-      /^GRANT ON SCHEMA reporting is not allowed in the desired schema: grant USAGE only on the managed schema "app"/,
-    ],
-    [
-      "USAGE on the managed schema and another",
-      "grant usage on schema app, reporting to reader",
-      /^GRANT ON SCHEMA reporting is not allowed/,
-    ],
-    [
-      "REVOKE from a role other than PUBLIC",
-      "revoke execute on function f(int) from reader",
-      /^REVOKE FROM reader is not allowed in the desired schema: it declares what is granted, so remove the GRANT instead; only PostgreSQL's default privileges for PUBLIC may be revoked/,
-    ],
-    [
-      "REVOKE from PUBLIC and another role",
-      "revoke execute on function f(int) from public, reader",
-      /^REVOKE FROM reader is not allowed/,
-    ],
-    [
-      "REVOKE of a table privilege PUBLIC doesn't have",
-      "revoke select on t from public",
-      /^PUBLIC has no privileges on tables by default/,
-    ],
-    [
-      "REVOKE of a sequence privilege PUBLIC doesn't have",
-      "revoke usage on sequence t_id_seq from public",
-      /^PUBLIC has no privileges on sequences by default/,
-    ],
-    [
-      "REVOKE of USAGE on a function",
-      "revoke usage on function f(int) from public",
-      /^PUBLIC has no USAGE privilege on functions by default: revoke EXECUTE/,
-    ],
-    [
-      "REVOKE ALL on a function",
-      "revoke all on function f(int) from public",
-      /^REVOKE ALL is not allowed in the desired schema: name the default privilege, REVOKE EXECUTE/,
-    ],
-    [
-      "REVOKE ALL on a type",
-      "revoke all on type address from public",
-      /^REVOKE ALL is not allowed in the desired schema: name the default privilege, REVOKE USAGE/,
-    ],
-    [
-      "REVOKE CREATE on the managed schema",
-      "revoke create on schema app from public",
-      /^PUBLIC has no privileges on schema app by default/,
-    ],
-    [
-      "REVOKE GRANT OPTION FOR",
-      "revoke grant option for execute on function f(int) from public",
-      /^REVOKE GRANT OPTION FOR is not allowed in the desired schema: PUBLIC holds no grant options by default/,
-    ],
-    [
-      "REVOKE ... GRANTED BY",
-      "revoke execute on function f(int) from public granted by owner_role",
-      /^REVOKE \.\.\. GRANTED BY is not allowed in the desired schema/,
-    ],
-    [
-      "REVOKE ... ON ALL ... IN SCHEMA",
-      "revoke execute on all functions in schema app from public",
-      /^REVOKE \.\.\. ON ALL \.\.\. IN SCHEMA is not allowed/,
-    ],
-  ])("refused: %s", async (_name, sql, message) => {
-    const found = await violations(`${sql};`, { managedSchema: "app" });
-    expect(found).toHaveLength(1);
-    expect(found[0]).toMatchObject({
-      line: 1,
-      statement: sql,
-      rule: "desired-schema-statement",
-      message: expect.stringMatching(message),
-    });
+  test("an override marker can't bypass them", async () => {
+    const found = await violations(
+      "-- OVERRIDE SUPER-DEPLOY REFUSAL: the app needs it\ngrant select on t to reader;",
+    );
+    expect(found.map(({ rule }) => rule)).toContain("unsupported-object");
   });
 
-  test("revokes on objects outside the managed schema are refused like grants", async () => {
+  test("SECURITY INVOKER is allowed", async () => {
     expect(
-      await violations("revoke execute on function other.f() from public;"),
-    ).toMatchObject([{ rule: "outside-managed-schema" }]);
+      await violations(
+        "create function f() returns int language sql security invoker as $$ select 1 $$;",
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -724,10 +649,13 @@ describe("schemas", () => {
       "create trigger tr before insert on other.t for each row execute function f()",
       "other",
     ],
-    ["policy", "create policy p on other.t using (true)", "other"],
     ["domain", "create domain other.d as int", "other"],
     ["composite type", "create type other.c as (a int)", "other"],
-    ["ALTER TABLE", "alter table other.t enable row level security", "other"],
+    [
+      "ALTER TABLE",
+      "alter table other.t add constraint t_a_check check (a > 0)",
+      "other",
+    ],
     ["COMMENT ON TABLE", "comment on table other.t is 'x'", "other"],
     ["COMMENT ON COLUMN", "comment on column other.t.a is 'x'", "other"],
     [
@@ -735,9 +663,6 @@ describe("schemas", () => {
       "comment on function pg_catalog.lower(text) is 'x'",
       "pg_catalog",
     ],
-    ["GRANT ON TABLE", "grant select on other.t to r", "other"],
-    ["GRANT ON FUNCTION", "grant execute on function other.f() to r", "other"],
-    ["GRANT ON TYPE", "grant usage on type other.c to r", "other"],
   ])(
     "objects outside the managed schema are refused: %s",
     async (_name, sql, schema) => {
@@ -776,10 +701,6 @@ describe("schemas", () => {
     [
       "LANGUAGE sql body",
       "create function f() returns bigint language sql as $$ select count(*) from other.t $$",
-    ],
-    [
-      "policy expression",
-      "create policy p on t using (exists (select 1 from other.u))",
     ],
     [
       "information_schema",

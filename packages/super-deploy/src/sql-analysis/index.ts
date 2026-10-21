@@ -57,7 +57,6 @@ export {
   overrideObject,
 } from "./overrides.ts";
 export { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
-export { rolesNamedIn, rolesNamedInFiles } from "./roles.ts";
 export { externalSchemasBoundAtCreate } from "./routine-bodies.ts";
 export {
   type RuleCategory,

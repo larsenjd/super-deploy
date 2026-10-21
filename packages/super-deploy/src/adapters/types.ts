@@ -56,7 +56,7 @@ export interface ThrowawayDatabase {
 
 /**
  * Provides empty throwaway PostgreSQL 18 databases for rehearsals. Its login
- * needs `CREATEROLE` (rehearsals create missing roles as NOLOGIN).
+ * needs `CREATEDB`, and never `CREATEROLE`: rehearsals create no roles.
  */
 export interface RehearsalAdapter {
   createDatabase(request: DatabaseRequest): Promise<ThrowawayDatabase>;

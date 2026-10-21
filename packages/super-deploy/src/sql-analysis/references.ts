@@ -3,8 +3,8 @@
 //
 // Only references PostgreSQL binds at CREATE matter for ordering: relations,
 // types and functions named in column types, defaults, checks, generated
-// expressions, view queries, index expressions, trigger WHEN clauses, policy
-// expressions, function signatures and argument defaults, `BEGIN ATOMIC` /
+// expressions, view queries, index expressions, trigger WHEN clauses,
+// function signatures and argument defaults, `BEGIN ATOMIC` /
 // `RETURN` bodies, `LANGUAGE sql` string bodies (validated at CREATE because
 // check_function_bodies is on), `%TYPE`, `'x'::regclass`-style literals and
 // `nextval('seq')`. PL/pgSQL bodies are late-bound and ignored.
@@ -12,8 +12,7 @@
 // Names are keys in namespaces: `rel:` (anything in pg_class: tables, views,
 // indexes, sequences, composite types), `type:` (tables' and views' row
 // types, composite types, domains), `func:` (every overload of a name),
-// `con:table.name`, `domcon:domain.name`, `trigger:table.name`,
-// `policy:table.name`, `ext:name` (extensions, which routines in their
+// `con:table.name`, `domcon:domain.name`, `trigger:table.name`, `ext:name` (extensions, which routines in their
 // language wait for), plus `uniq:table` (every unique key of a table, which
 // a foreign key to it waits for).
 import type { Node } from "@pgsql/types";
@@ -33,27 +32,17 @@ export type StatementKind =
   | "constraint"
   | "index"
   | "trigger"
-  | "policy"
-  | "row level security"
-  | "revoke"
-  | "grant"
   | "comment";
 
 /** Decorations: nothing binds to them, so they always load after every other statement. */
-export const decorationKinds: ReadonlySet<StatementKind> = new Set([
-  "row level security",
-  "revoke",
-  "grant",
-  "comment",
-]);
+export const decorationKinds: ReadonlySet<StatementKind> = new Set(["comment"]);
 
 export type ReferenceKind =
   | "relation"
   | "type"
   | "function"
   | "constraint"
-  | "trigger"
-  | "policy";
+  | "trigger";
 
 export interface Reference {
   readonly kind: ReferenceKind;
@@ -849,42 +838,12 @@ const extractors: Record<string, Extractor> = {
     return true;
   },
 
-  CreatePolicyStmt(body, facts, collector) {
-    const table = relName(body.table);
-    const name = str(body.policy_name) ?? "?";
-    facts.kind = "policy";
-    facts.identity = `policy ${name} on ${table}`;
-    facts.provides.push(`policy:${table}.${name}`);
-    collector.walk(body.table);
-    collector.walk(body.qual);
-    collector.walk(body.with_check);
-    dropCteReferences(collector);
-    return true;
-  },
-
   AlterTableStmt(body, facts, collector) {
     const table = relName(body.relation);
     const commands = (Array.isArray(body.cmds) ? body.cmds : [])
       .map((command) => (isObject(command) ? command.AlterTableCmd : undefined))
       .filter(isObject);
     collector.walk(body.relation);
-    const rowSecurity = new Set([
-      "AT_EnableRowSecurity",
-      "AT_ForceRowSecurity",
-    ]);
-    if (
-      commands.length > 0 &&
-      commands.every((command) => rowSecurity.has(str(command.subtype) ?? ""))
-    ) {
-      facts.kind = "row level security";
-      const what = commands
-        .map((command) =>
-          command.subtype === "AT_EnableRowSecurity" ? "enable" : "force",
-        )
-        .join(", ");
-      facts.identity = `row level security ${what} on ${table}`;
-      return true;
-    }
     const [command] = commands;
     const definition = isObject(command?.def)
       ? command.def.Constraint
@@ -900,57 +859,6 @@ const extractors: Record<string, Extractor> = {
     facts.identity = `constraint ${str(definition.conname) ?? "(unnamed)"} on ${table}`;
     addTableConstraint(table, definition, undefined, facts);
     collector.walk(command.def);
-    return true;
-  },
-
-  GrantStmt(body, facts, collector) {
-    facts.kind = body.is_grant === true ? "grant" : "revoke";
-    const objtype = str(body.objtype) ?? "";
-    const targets: string[] = [];
-    for (const object of Array.isArray(body.objects) ? body.objects : []) {
-      if (!isObject(object)) {
-        continue;
-      }
-      if (isObject(object.RangeVar)) {
-        collector.relation(object.RangeVar);
-        targets.push(relName(object.RangeVar));
-      } else if (isObject(object.ObjectWithArgs)) {
-        const routine = objectWithArgs(object.ObjectWithArgs);
-        collector.function(routine.names);
-        collector.walk(object.ObjectWithArgs.objargs);
-        targets.push(routine.text);
-      } else if (isObject(object.List)) {
-        const names = strings(object.List.items);
-        if (objtype === "OBJECT_TYPE" || objtype === "OBJECT_DOMAIN") {
-          collector.add("type", names, "type");
-        }
-        targets.push(names.join("."));
-      } else {
-        targets.push(strings([object]).join("."));
-      }
-    }
-    const privileges = (Array.isArray(body.privileges) ? body.privileges : [])
-      .map((privilege) =>
-        isObject(privilege) ? privilege.AccessPriv : undefined,
-      )
-      .filter(isObject)
-      .map((privilege) => {
-        const columns = strings(privilege.cols);
-        return `${str(privilege.priv_name) ?? "all"}${columns.length ? ` (${columns.join(", ")})` : ""}`;
-      });
-    const grantees = (Array.isArray(body.grantees) ? body.grantees : [])
-      .map((grantee) => (isObject(grantee) ? grantee.RoleSpec : undefined))
-      .filter(isObject)
-      .map(
-        (role) =>
-          str(role.rolename) ??
-          (role.roletype === "ROLESPEC_PUBLIC"
-            ? "public"
-            : String(role.roletype)),
-      );
-    const all =
-      body.targtype === "ACL_TARGET_ALL_IN_SCHEMA" ? "all in schema " : "";
-    facts.identity = `${facts.kind} ${privileges.length ? privileges.join(", ") : "all"} on ${all}${objtype.replace("OBJECT_", "").toLowerCase()} ${targets.join(", ")} ${body.is_grant === true ? "to" : "from"} ${grantees.join(", ")}`;
     return true;
   },
 
@@ -974,17 +882,12 @@ const extractors: Record<string, Extractor> = {
         collector.add("relation", names.slice(0, -1), "rel");
         break;
       case "OBJECT_TABCONSTRAINT":
-      case "OBJECT_TRIGGER":
-      case "OBJECT_POLICY": {
+      case "OBJECT_TRIGGER": {
         const table = names.slice(0, -1);
         const name = names.at(-1) ?? "?";
         collector.add("relation", table, "rel");
         const kind =
-          objtype === "OBJECT_TABCONSTRAINT"
-            ? "constraint"
-            : objtype === "OBJECT_TRIGGER"
-              ? "trigger"
-              : "policy";
+          objtype === "OBJECT_TABCONSTRAINT" ? "constraint" : "trigger";
         const prefix = kind === "constraint" ? "con" : kind;
         const found = table.at(-1);
         if (found !== undefined) {

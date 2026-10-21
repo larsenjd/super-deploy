@@ -1,7 +1,7 @@
 // One round-trip scenario per supported object type, from the
 // `prototype/pg-delta` (9d619fe) scenarios, adapted to the desired-schema
 // rules: indexes and constraints named, no VIRTUAL columns, and no grants,
-// policies or row-level security (never diffed, ADR-0006).
+// policies, row-level security or SECURITY DEFINER (refused, ADR-0006).
 // Each scenario has three desired schemas: create a -> b, alter b -> c,
 // drop c -> a.
 //
@@ -104,7 +104,7 @@ export const roundTrips: readonly RoundTrip[] = [
     name: "function (plpgsql)",
     a: t3,
     b: `${t3} create function f(x int) returns int language plpgsql as $$ begin return x + 1; end $$;`,
-    c: `${t3} create function f(x int) returns int language plpgsql stable security definer set search_path = public, pg_catalog
+    c: `${t3} create function f(x int) returns int language plpgsql stable set search_path = public, pg_catalog
           as $$ begin return (select count(*) from t) + x; end $$;`,
   },
   {

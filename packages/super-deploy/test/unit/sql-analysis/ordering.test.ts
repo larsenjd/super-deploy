@@ -143,18 +143,6 @@ describe("ordering", () => {
     ]);
   });
 
-  test("runs revokes before grants", async () => {
-    const texts = await order({
-      "a.sql":
-        "create function f() returns int language sql immutable return 1;\ngrant execute on function f() to ordering_reader;\nrevoke execute on function f() from public;\n",
-    });
-
-    expect(texts.slice(1)).toEqual([
-      "revoke execute on function f() from public",
-      "grant execute on function f() to ordering_reader",
-    ]);
-  });
-
   test("resolves names qualified with the managed schema, and only there", async () => {
     const texts = await order(
       {

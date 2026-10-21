@@ -45,7 +45,7 @@ test("draft writes the schema change", async () => {
 - `round-trip.ts`: `describeRoundTrips(scenarios)` drafts, finalizes and deploys a → b → c → a for each scenario in `test/fixtures/round-trips.ts`, split across `round-trips-{1,2,3}.test.ts`.
 - Answer questions through the command's callback option (`confirm`, `overrideReason`) or its flag option (`acknowledgeDestructive`, `acknowledgeOverwrite`).
 - Guarded commands (`disposable`, `deploy-draft`, `rebuild`, `mark`) are terminal-only by design. At this seam test only their refusal (`vi.stubEnv("CI", "true")` gives `TerminalRequiredError`); their behaviour goes through the pseudo-terminal.
-- Roles: a rehearsal creates the roles it lacks on its own server, the same cluster as an embedded target. A test that needs the target to lack a role drops it after `finalize` and before `deploy`.
+- Roles: rehearsals create none, and no file super-deploy deploys may name one. Roles are server-wide, so a test that creates roles on the target (by hand, as an administrator would) names them with `roleName`.
 - Embedded targets log in as the superuser `super_deploy`, so `deploy` and `status` always carry the superuser warning (stderr in the CLI).
 
 ## Seam 2: CLI process (`test/integration/cli-*.test.ts`)

@@ -511,6 +511,32 @@ describe("adopt", () => {
     }
   });
 
+  test("refuses a SECURITY DEFINER routine, naming it, writing nothing", async () => {
+    const { dir, project } = await adoptableProject(`
+      create table notes (id bigint primary key);
+      create function note_total() returns bigint language sql stable security definer
+        as $$ select count(*) from notes $$;
+    `);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      expect((error as AdoptUnsupportedError).objects).toEqual([
+        {
+          object: expect.stringContaining("note_total()"),
+          rule: "unsupported-object",
+          reason: expect.stringMatching(/^SECURITY DEFINER is not supported/),
+        },
+      ]);
+      expect((error as AdoptUnsupportedError).message).toContain("note_total");
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+    } finally {
+      await project.close();
+    }
+  });
+
   test("leaves the target's grants, revoked PUBLIC defaults, policies and row-level security out of the desired schema, counting what it left", async () => {
     const deployer = "adopt_deployer";
     const prod = await server.createDatabase(`

@@ -61,40 +61,112 @@ describe("generated schema changes", () => {
   });
 });
 
-describe("managed-schema grants and PUBLIC revokes", () => {
-  // What pg-delta generates for them (checked against 1.0.0-alpha.59).
-  const generated = [
-    'REVOKE ALL ON SCHEMA "app" FROM "reader";',
-    'GRANT USAGE ON SCHEMA "app" TO "reader";',
-    'REVOKE ALL ON SCHEMA "app" FROM PUBLIC;',
-    'GRANT USAGE ON SCHEMA "app" TO PUBLIC;',
-    'REVOKE ALL ON FUNCTION "app"."f"() FROM PUBLIC;',
-    'GRANT EXECUTE ON FUNCTION "app"."f"() TO PUBLIC;',
-    'REVOKE ALL ON PROCEDURE "app"."p"() FROM PUBLIC;',
-    'REVOKE ALL ON TYPE "app"."d" FROM PUBLIC;',
-    'GRANT USAGE ON TYPE "app"."d" TO PUBLIC;',
-  ].join("\n");
+describe("privileges, roles, ownership, row-level security and SECURITY DEFINER", () => {
+  // Set up on targets outside super-deploy (ADR-0006), in every kind of file.
+  const refused = [
+    ["GRANT", "grant select on t to reader", /^GRANT is not supported/],
+    [
+      "GRANT on the managed schema",
+      "grant usage on schema public to reader",
+      /^GRANT is not supported/,
+    ],
+    [
+      "REVOKE",
+      "revoke execute on function f() from public",
+      /^REVOKE is not supported/,
+    ],
+    [
+      "CREATE POLICY",
+      "create policy p on t using (true)",
+      /^CREATE POLICY is not supported/,
+    ],
+    [
+      "ALTER POLICY",
+      "alter policy p on t using (false)",
+      /^ALTER POLICY is not supported/,
+    ],
+    ["DROP POLICY", "drop policy p on t", /^DROP POLICY is not supported/],
+    [
+      "ENABLE ROW LEVEL SECURITY",
+      "alter table t enable row level security",
+      /^ALTER TABLE \.\.\. ENABLE ROW LEVEL SECURITY is not supported/,
+    ],
+    [
+      "FORCE ROW LEVEL SECURITY",
+      "alter table t force row level security",
+      /^ALTER TABLE \.\.\. FORCE ROW LEVEL SECURITY is not supported/,
+    ],
+    [
+      "DISABLE ROW LEVEL SECURITY",
+      "alter table t disable row level security",
+      /^ALTER TABLE \.\.\. DISABLE ROW LEVEL SECURITY is not supported/,
+    ],
+    [
+      "SECURITY DEFINER function",
+      "create function f() returns int language sql security definer return 1",
+      /^SECURITY DEFINER is not supported/,
+    ],
+    [
+      "ALTER FUNCTION ... SECURITY DEFINER",
+      "alter function f() security definer",
+      /^SECURITY DEFINER is not supported/,
+    ],
+    ["CREATE ROLE", "create role r", /^CREATE ROLE is not supported/],
+    ["role membership", "grant a to b", /^GRANT role is not supported/],
+    [
+      "OWNER TO",
+      "alter function f() owner to r",
+      /^ALTER \.\.\. OWNER TO is not supported/,
+    ],
+    [
+      "ALTER TABLE ... OWNER TO",
+      "alter table t owner to r",
+      /^ALTER TABLE \.\.\. OWNER TO is not supported/,
+    ],
+    [
+      "ALTER DEFAULT PRIVILEGES",
+      "alter default privileges grant select on tables to reader",
+      /^ALTER DEFAULT PRIVILEGES is not supported/,
+    ],
+    [
+      "REASSIGN OWNED",
+      "reassign owned by a to b",
+      /^REASSIGN OWNED is not supported/,
+    ],
+    ["DROP OWNED", "drop owned by a", /^DROP OWNED is not supported/],
+  ] as const;
 
-  test("are allowed in generated schema changes", async () => {
-    expect(await check("schema-change", generated, "app")).toEqual([]);
+  test.each(
+    allKinds.flatMap((kind) =>
+      refused.map(
+        ([name, sql, message]) => [kind, name, sql, message] as const,
+      ),
+    ),
+  )("%s refuses %s", async (kind, _name, sql, message) => {
+    const found = await check(kind, `${sql};`);
+    expect(found).toEqual([
+      expect.objectContaining({
+        rule: "unsupported-object",
+        message: expect.stringMatching(message),
+      }),
+    ]);
+    expect(found[0]?.message).toMatch(/set up on targets outside super-deploy/);
   });
 
-  test.each(["pre-migration", "post-migration", "seed-data"] as const)(
-    "are refused in %s files",
-    async (kind) => {
-      const found = await check(kind, generated, "app");
-      expect(found).toHaveLength(9);
-    },
-  );
+  test("an override marker can't bypass them", async () => {
+    const found = await check(
+      "post-migration",
+      "-- OVERRIDE SUPER-DEPLOY REFUSAL: the app needs it\ngrant select on t to reader;",
+    );
+    expect(found.map(({ rule }) => rule)).toContain("unsupported-object");
+  });
 
-  test.each([
-    ['GRANT CREATE ON SCHEMA "app" TO "writer"', "unsupported-object"],
-    ['GRANT ALL ON SCHEMA "app" TO "writer"', "unsupported-object"],
-    ['GRANT USAGE ON SCHEMA "reporting" TO "reader"', "outside-managed-schema"],
-  ])("a schema change may not: %s", async (sql, rule) => {
-    expect(
-      (await check("schema-change", sql, "app")).map(({ rule }) => rule),
-    ).toEqual([rule]);
+  test("COMMENT keeps its rule: allowed in a schema change only", async () => {
+    const sql = "comment on policy p on t is 'x';";
+    expect(await check("schema-change", sql)).toEqual([]);
+    expect(await rulesBroken("post-migration", sql)).toEqual([
+      "deploy-time-statement",
+    ]);
   });
 });
 
@@ -1006,14 +1078,12 @@ describe("hazard catalogue", () => {
 describe("what each kind of file may contain", () => {
   const ddl = "alter table t add column note text";
   const dml = "update t set note = 'x'";
-  const grant = "grant select on table t to reporting";
   const comment = "comment on table t is 'Things'";
   const staging = "create temp table staging (a int) on commit drop";
   const maintenance = "analyze t";
 
   test.each([
     ["schema-change", ddl, true],
-    ["schema-change", grant, true],
     ["schema-change", comment, true],
     ["schema-change", dml, false],
     ["schema-change", staging, false],
@@ -1022,7 +1092,6 @@ describe("what each kind of file may contain", () => {
     ["pre-migration", dml, true],
     ["pre-migration", staging, true],
     ["pre-migration", maintenance, true],
-    ["pre-migration", grant, false],
     ["pre-migration", comment, false],
     ["post-migration", dml, true],
     ["post-migration", staging, true],
@@ -1030,7 +1099,7 @@ describe("what each kind of file may contain", () => {
     ["post-migration", ddl, false],
     ["post-migration", "create index t_note_idx on t (note)", false],
     ["post-migration", "drop table t", false],
-    ["post-migration", grant, false],
+    ["post-migration", comment, false],
     ["seed-data", "insert into t (a) values (1)", true],
     ["seed-data", dml, false],
     ["seed-data", "delete from t", false],
@@ -1049,14 +1118,14 @@ describe("what each kind of file may contain", () => {
     expect(await messages("post-migration", ddl)).toEqual([
       "ALTER TABLE is not allowed in a post-migration script: post-migration scripts may only change data; structure belongs in the desired schema or the pre-migration script",
     ]);
-    expect(await messages("pre-migration", grant)).toEqual([
-      "GRANT / REVOKE is not allowed in a pre-migration script: grants and comments belong in the desired schema",
+    expect(await messages("pre-migration", comment)).toEqual([
+      "COMMENT is not allowed in a pre-migration script: comments belong in the desired schema",
     ]);
     expect(await messages("seed-data", dml)).toEqual([
       "UPDATE is not allowed in seed data: seed data may contain only INSERT statements with a column list",
     ]);
     expect(await messages("schema-change", dml)).toEqual([
-      "UPDATE is not allowed in a schema change: a generated schema change contains only DDL, grants and comments",
+      "UPDATE is not allowed in a schema change: a generated schema change contains only DDL and comments",
     ]);
   });
 
@@ -1218,7 +1287,6 @@ describe("references", () => {
     ["pre-migration", "drop function pg_catalog.lower(text)"],
     ["pre-migration", "alter table pg_catalog.pg_class add column x int"],
     ["schema-change", "comment on table pg_catalog.pg_class is 'x'"],
-    ["schema-change", "grant select on pg_catalog.pg_authid to reporting"],
   ] as const)("refuse changing pg_catalog in %s: %j", async (kind, sql) => {
     expect(await rulesBroken(kind, sql)).toEqual(["catalog-write"]);
   });
@@ -1247,7 +1315,7 @@ describe("references", () => {
       await app("schema-change", 'COMMENT ON COLUMN "app"."t"."id" IS \'x\''),
     ).toEqual([]);
     expect(
-      await app("schema-change", "grant usage on schema public to reporting"),
+      await app("schema-change", "comment on schema public is 'x'"),
     ).toEqual(["outside-managed-schema"]);
     expect(
       await app("post-migration", "update app.t set a = app.f(a)"),

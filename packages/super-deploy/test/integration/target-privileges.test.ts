@@ -1,8 +1,8 @@
 // API seam: grants, default privileges, policies and row-level security on a
 // target are set up outside super-deploy (ADR-0006). Nothing compares,
 // generates, revokes or resets them: they are never drift, and deployments
-// leave them as they are.
-import { deploy, draft, status } from "super-deploy";
+// leave them as they are. The desired schema can't declare them.
+import { deploy, draft, SqlRuleViolationError, status } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   deployProject,
@@ -83,28 +83,31 @@ describe("privileges on a target", () => {
   });
 });
 
-describe("generated schema changes", () => {
-  // A desired schema may still declare these until
-  // .scratch/privileges-out-of-scope/issues/02 refuses them.
-  test("never grant, revoke, set default privileges, create policies or change row-level security", async () => {
-    const reader = roleName("app_reader");
-    await server.query(`create role ${reader} nologin`);
+describe("the desired schema", () => {
+  test("can't declare grants, revokes, policies, row-level security or SECURITY DEFINER: draft refuses each, writing no draft", async () => {
     const { project, dir } = await deployProject(server, {
       "reports.sql": `create table reports (id bigint primary key, title text);
-grant select on reports to ${reader};
+grant select on reports to app_reader;
 revoke usage on schema public from public;
 alter table reports enable row level security;
-alter table reports force row level security;
-create policy reports_read on reports for select to ${reader} using (true);
+create policy reports_read on reports for select using (true);
+create function report_count() returns bigint language sql security definer
+  as $$ select count(*) from reports $$;
 `,
     });
 
-    await draft(project, { name: "add reports" });
-
-    const schemaChange = await dir.read("data-model/draft/schema-change.sql");
-    expect(schemaChange).toContain("CREATE TABLE");
-    expect(schemaChange).not.toMatch(
-      /GRANT|REVOKE|DEFAULT PRIVILEGES|POLICY|ROW LEVEL SECURITY/,
+    const refusal = await draft(project, { name: "add reports" }).catch(
+      (error: unknown) => error,
     );
+
+    expect(refusal).toBeInstanceOf(SqlRuleViolationError);
+    const { violations } = refusal as SqlRuleViolationError;
+    expect(violations.map(({ line, rule }) => ({ line, rule }))).toEqual(
+      [2, 3, 4, 5, 6].map((line) => ({ line, rule: "unsupported-object" })),
+    );
+    for (const { message } of violations) {
+      expect(message).toContain("set up on targets outside super-deploy");
+    }
+    expect(dir.exists("data-model/draft")).toBe(false);
   });
 });

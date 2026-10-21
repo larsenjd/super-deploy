@@ -5,20 +5,16 @@
 //
 // Rule identifiers:
 // - `desired-schema-statement`: a statement or clause outside the allowlist.
-// - `unsupported-object`: an object type or feature V1 refuses.
+// - `unsupported-object`: an object type or feature V1 refuses, including
+//   privileges, roles, ownership, row-level security and SECURITY DEFINER
+//   (privileges.ts).
 // - `outside-managed-schema`, `undeclared-schema`: schema rules (schemas.ts).
 // - `denylisted-call`: a built-in whose effects escape the transaction.
 // - `plpgsql-dynamic-sql`, `plpgsql-transaction-control`: PL/pgSQL bodies.
 
 import { denylistFindings } from "./denylist.ts";
-import {
-  grantees,
-  privilegeNames,
-  publicDefaults,
-  schemaGrantBeyondUsage,
-  schemaNames,
-} from "./grants.ts";
 import type { ParsedStatement } from "./parse.ts";
+import { privilegeRefusal } from "./privileges.ts";
 import { plpgsqlFindings, sqlBodyFindings } from "./routine-bodies.ts";
 import type { RuleContext, RuleFinding } from "./rule-types.ts";
 import { schemaFindings } from "./schemas.ts";
@@ -68,10 +64,8 @@ const allowed: Record<string, StatementCheck> = {
   CreateTrigStmt: checkTrigger,
   CreateDomainStmt: (node) => constraintFindings(node.constraints),
   CompositeTypeStmt: (node) => list(node.coldeflist).flatMap(columnFindings),
-  CreatePolicyStmt: () => [],
   AlterTableStmt: checkAlterTable,
   CommentStmt: checkComment,
-  GrantStmt: checkGrant,
   CreateExtensionStmt: checkExtension,
 };
 
@@ -144,8 +138,6 @@ const refused: Record<string, (node: Json) => RuleFinding> = {
     unsupported(
       "CREATE SCHEMA is not allowed in the desired schema: super-deploy manages one schema and creates it itself",
     ),
-  CreateRoleStmt: roles,
-  GrantRoleStmt: roles,
   DefineStmt: (node) => {
     switch (node.kind) {
       case "OBJECT_AGGREGATE":
@@ -171,11 +163,6 @@ const refused: Record<string, (node: Json) => RuleFinding> = {
 
 function foreign(): RuleFinding {
   return v1("Foreign tables and foreign data wrappers");
-}
-function roles(): RuleFinding {
-  return unsupported(
-    "Roles are not managed by super-deploy: they are cluster-wide, so create them outside the desired schema",
-  );
 }
 
 /**
@@ -240,6 +227,10 @@ export function desiredSchemaFindings(
   statement: ParsedStatement,
   context: RuleContext,
 ): RuleFinding[] {
+  const privileges = privilegeRefusal(statement);
+  if (privileges !== undefined) {
+    return [privileges];
+  }
   const node = statementBody(statement);
   const refusal = refused[statement.nodeType];
   if (refusal !== undefined) {
@@ -494,17 +485,11 @@ function checkTrigger(node: Json): RuleFinding[] {
   return findings;
 }
 
-// --- ALTER TABLE, COMMENT, GRANT, CREATE EXTENSION ---------------------------
-
-const alterTableCommands = new Set([
-  "AT_EnableRowSecurity",
-  "AT_ForceRowSecurity",
-  "AT_AddConstraint",
-]);
+// --- ALTER TABLE, COMMENT, CREATE EXTENSION ----------------------------------
 
 function checkAlterTable(node: Json): RuleFinding[] {
   const onlyThese = notAllowed(
-    "Only ALTER TABLE ... ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY or ADD CONSTRAINT is allowed in the desired schema; declare everything else in CREATE TABLE",
+    "Only ALTER TABLE ... ADD CONSTRAINT is allowed in the desired schema; declare everything else in CREATE TABLE",
   );
   if (node.objtype !== "OBJECT_TABLE") {
     return [onlyThese];
@@ -512,9 +497,7 @@ function checkAlterTable(node: Json): RuleFinding[] {
   const commands = list(node.cmds).map(
     (command) => unwrap(command, "AlterTableCmd") ?? {},
   );
-  if (
-    commands.some((command) => !alterTableCommands.has(String(command.subtype)))
-  ) {
+  if (commands.some((command) => command.subtype !== "AT_AddConstraint")) {
     return [onlyThese];
   }
   const findings: RuleFinding[] = [];
@@ -547,7 +530,6 @@ const commentTypes = new Set([
   "OBJECT_PROCEDURE",
   "OBJECT_ROUTINE",
   "OBJECT_TRIGGER",
-  "OBJECT_POLICY",
   "OBJECT_TYPE",
   "OBJECT_DOMAIN",
 ]);
@@ -560,135 +542,6 @@ function checkComment(node: Json): RuleFinding[] {
           `COMMENT ON ${objectTypeKeyword(node.objtype)} is not allowed in the desired schema: comment only on the objects it defines`,
         ),
       ];
-}
-
-const grantTypes = new Set([
-  "OBJECT_TABLE",
-  "OBJECT_SEQUENCE",
-  "OBJECT_FUNCTION",
-  "OBJECT_PROCEDURE",
-  "OBJECT_ROUTINE",
-  "OBJECT_TYPE",
-  "OBJECT_DOMAIN",
-]);
-
-const objectTypePlurals: Readonly<Record<string, string>> = {
-  OBJECT_FUNCTION: "functions",
-  OBJECT_PROCEDURE: "procedures",
-  OBJECT_ROUTINE: "routines",
-  OBJECT_TYPE: "types",
-  OBJECT_DOMAIN: "domains",
-  OBJECT_TABLE: "tables",
-  OBJECT_SEQUENCE: "sequences",
-};
-
-function checkGrant(
-  node: Json,
-  _statement: ParsedStatement,
-  context: RuleContext,
-): RuleFinding[] {
-  const verb = node.is_grant === true ? "GRANT" : "REVOKE";
-  if (node.targtype !== "ACL_TARGET_OBJECT") {
-    return [
-      notAllowed(
-        `${verb} ... ON ALL ... IN SCHEMA is not allowed in the desired schema: it depends on which objects exist when it runs, so ${verb.toLowerCase()} on each object`,
-      ),
-    ];
-  }
-  if (node.objtype === "OBJECT_SCHEMA") {
-    const others = schemaNames(node).filter(
-      (schema) => schema !== context.managedSchema,
-    );
-    if (others.length > 0) {
-      return [
-        notAllowed(
-          `${verb} ON SCHEMA ${others.join(", ")} is not allowed in the desired schema: grant USAGE only on the managed schema "${context.managedSchema}"; other schemas are set up outside super-deploy`,
-        ),
-      ];
-    }
-  } else if (!grantTypes.has(String(node.objtype))) {
-    return [
-      notAllowed(
-        `${verb} ON ${objectTypeKeyword(node.objtype)} is not allowed in the desired schema: ${verb.toLowerCase()} only on the objects it defines`,
-      ),
-    ];
-  }
-  if (node.is_grant !== true) {
-    return checkRevoke(node, context);
-  }
-  const beyondUsage = schemaGrantBeyondUsage(node);
-  if (beyondUsage !== undefined) {
-    return [
-      notAllowed(
-        `GRANT ${beyondUsage.toUpperCase()} ON SCHEMA is not allowed in the desired schema: grant only USAGE on the managed schema; objects are created by the deploy role`,
-      ),
-    ];
-  }
-  return [];
-}
-
-/**
- * REVOKE is allowed only to take away PostgreSQL's default privileges for
- * PUBLIC on objects the desired schema defines (ADR-0002): the desired
- * schema declares what is granted, so every other REVOKE would only undo
- * one of its own GRANTs.
- */
-function checkRevoke(node: Json, context: RuleContext): RuleFinding[] {
-  const others = grantees(node).filter((role) => role !== null);
-  if (others.length > 0) {
-    return [
-      notAllowed(
-        `REVOKE FROM ${others.join(", ")} is not allowed in the desired schema: it declares what is granted, so remove the GRANT instead; only PostgreSQL's default privileges for PUBLIC may be revoked`,
-      ),
-    ];
-  }
-  if (node.grant_option === true) {
-    return [
-      notAllowed(
-        "REVOKE GRANT OPTION FOR is not allowed in the desired schema: PUBLIC holds no grant options by default",
-      ),
-    ];
-  }
-  if (node.grantor !== undefined) {
-    return [
-      notAllowed(
-        "REVOKE ... GRANTED BY is not allowed in the desired schema: PUBLIC's default privileges are granted by the owner, so revoke them without GRANTED BY",
-      ),
-    ];
-  }
-  const objtype = String(node.objtype);
-  const privileges = privilegeNames(node);
-  const expected =
-    objtype === "OBJECT_SCHEMA" && context.managedSchema !== "public"
-      ? undefined
-      : publicDefaults[objtype];
-  const what =
-    objtype === "OBJECT_SCHEMA"
-      ? `schema ${context.managedSchema}`
-      : (objectTypePlurals[objtype] ?? objectTypeKeyword(objtype));
-  if (expected === undefined) {
-    return [
-      notAllowed(
-        `PUBLIC has no privileges on ${what} by default, so there is nothing to revoke: the desired schema declares what is granted, so remove the GRANT instead`,
-      ),
-    ];
-  }
-  if (privileges.length === 0) {
-    return [
-      notAllowed(
-        `REVOKE ALL is not allowed in the desired schema: name the default privilege, REVOKE ${expected.toUpperCase()}`,
-      ),
-    ];
-  }
-  const other = privileges.find((privilege) => privilege !== expected);
-  if (other !== undefined) {
-    return [
-      notAllowed(
-        `PUBLIC has no ${other.toUpperCase()} privilege on ${what} by default: revoke ${expected.toUpperCase()}, its only default privilege`,
-      ),
-    ];
-  }
-  return [];
 }
 
 function checkExtension(node: Json): RuleFinding[] {
