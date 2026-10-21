@@ -596,7 +596,10 @@ draft-finalize-deploy path:
 - **`disposable --target X --set yes|no`** flags target `X` as disposable,
   or not. The flag lives in the target itself, in its history schema
   (`deployment_history` by default), not in `super-deploy.config.ts`, so no
-  config change can make production disposable.
+  config change can make production disposable. Before you type `YES` to
+  mark it disposable, it shows how many tables the managed schema holds
+  and about how many rows (PostgreSQL's estimate), so a database full of
+  real data stands out.
 - **`deploy-draft --target X`** tries the current, unfinalized draft on a
   disposable target, so its scripts meet the target's data before you
   finalize. The target must have no pending migrations (a Recovery draft of
@@ -609,7 +612,10 @@ draft-finalize-deploy path:
   `rebuild` resets it.
 - **`rebuild --target X --to N`** resets a disposable target to migration
   N, in one transaction. It drops everything in the managed schema, with
-  `CASCADE`, so objects in other schemas that depend on it are dropped too:
+  `CASCADE`. The confirmation lists what in the managed schema no recorded
+  migration created (what `status` reports as only on the target, from a
+  throwaway replica of the recorded migrations), up to 10 objects. Objects
+  in other schemas that depend on the managed schema are dropped too:
   a view on a managed table, a foreign key to one, a column of a managed
   type (with its data). The confirmation lists each of them under "Also
   drops, outside schema ...", and if that list changes while it waits for
