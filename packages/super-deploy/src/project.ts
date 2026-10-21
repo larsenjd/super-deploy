@@ -1,10 +1,16 @@
 // Loading a project: find super-deploy.config.ts from the working directory
 // or a parent, import it with Node's built-in TypeScript support, and validate
 // it. Every command function takes the resulting Project.
+//
+// A syntax error in the config is reported at its line, which Node gives only
+// as the first line of the SyntaxError's stack (`<path or file URL>:<line>`,
+// then the source line and a caret). Inside Vitest the config goes through
+// Vitest's transform instead, whose errors carry no location, so tests of this
+// load the project in a plain Node process (`config.test.ts`).
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ConfigError,
   type ResolvedConfig,
@@ -64,12 +70,9 @@ export async function loadProject(
   try {
     module = (await import(url.href)) as { default?: unknown };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new ConfigError(
-      `Failed to load ${configFileName}: ${reason}`,
-      undefined,
-      { cause: error },
-    );
+    throw new ConfigError(describeLoadFailure(error, configPath), undefined, {
+      cause: error,
+    });
   }
   const resolved = resolveConfig(module.default);
   const config: ResolvedConfig = {
@@ -92,6 +95,42 @@ export async function loadProject(
     close,
     [Symbol.asyncDispose]: close,
   };
+}
+
+/**
+ * `super-deploy.config.ts:<line>: <reason> in \`<source line>\`` for a syntax
+ * error Node located in the config file itself; otherwise
+ * `Failed to load super-deploy.config.ts: <reason>`.
+ */
+function describeLoadFailure(error: unknown, configPath: string): string {
+  const reason = error instanceof Error ? error.message : String(error);
+  const line =
+    error instanceof SyntaxError ? syntaxErrorLine(error) : undefined;
+  if (line !== undefined && line.path === configPath) {
+    const source = readFileSync(configPath, "utf8").split(/\r?\n/)[
+      line.number - 1
+    ];
+    if (source !== undefined) {
+      return `${configFileName}:${line.number}: ${reason} in \`${source.trim()}\``;
+    }
+  }
+  return `Failed to load ${configFileName}: ${reason}`;
+}
+
+/** The file and line a module's SyntaxError names in its stack's first line. */
+function syntaxErrorLine(
+  error: SyntaxError,
+): { path: string; number: number } | undefined {
+  const match = /^(.+):(\d+)$/.exec(error.stack?.split("\n", 1)[0] ?? "");
+  if (match === null) {
+    return undefined;
+  }
+  const [, location = "", number = ""] = match;
+  const withoutQuery = location.replace(/\?[^/]*$/, "");
+  const path = withoutQuery.startsWith("file:")
+    ? fileURLToPath(withoutQuery)
+    : withoutQuery;
+  return { path, number: Number(number) };
 }
 
 /** The super-deploy.config.ts in `start` or its nearest parent, if any. */
