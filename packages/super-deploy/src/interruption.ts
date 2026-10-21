@@ -142,15 +142,27 @@ async function guarded<T>(
   }
 }
 
+/** What an interrupted command that held a target left it at: unchanged. */
+export interface InterruptedRollback {
+  readonly target: string;
+  /** Folder of the newest migration the target records, e.g. `00003-add-email`; undefined when it records none. */
+  readonly lastRecorded: string | undefined;
+}
+
 /**
  * The project's interruption signal aborted while a command was running. The
  * command has cleaned up (rolled back, dropped throwaway databases) by the
- * time this is thrown; `cause` is the signal's abort reason.
+ * time this is thrown; `cause` is the signal's abort reason. `rollback` is set
+ * when the command held a target (`withLockedTarget`) and rolled back there.
  */
 export class InterruptedError extends SuperDeployError {
   readonly code = "interrupted";
+  readonly rollback: InterruptedRollback | undefined;
 
-  constructor(options?: ErrorOptions) {
+  constructor(
+    options?: ErrorOptions & { rollback?: InterruptedRollback | undefined },
+  ) {
     super("Interrupted", options);
+    this.rollback = options?.rollback;
   }
 }

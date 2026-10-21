@@ -51,6 +51,25 @@ const unsupported = (message: string): RuleFinding => ({
 const v1 = (what: string, tip = ""): RuleFinding =>
   unsupported(`${what} are not supported in V1${tip}`);
 
+/** `: fillfactor=70, toast.autovacuum_enabled=false`, a `v1` tip naming the parameters. */
+function storageParameters(node: Json): string {
+  const parameters = list(node.options).flatMap((option) => {
+    const element = unwrap(option, "DefElem");
+    if (typeof element?.defname !== "string") {
+      return [];
+    }
+    const name =
+      typeof element.defnamespace === "string"
+        ? `${element.defnamespace}.${element.defname}`
+        : element.defname;
+    const value = Object.values(
+      isObject(element.arg) ? (Object.values(element.arg)[0] ?? {}) : {},
+    )[0];
+    return [value === undefined ? name : `${name}=${String(value)}`];
+  });
+  return `: ${parameters.join(", ")}`;
+}
+
 const redefinition = (clause: string): RuleFinding =>
   notAllowed(
     `${clause} is not allowed in the desired schema: define each object exactly once, so no definition can silently replace or skip another depending on load order`,
@@ -289,7 +308,7 @@ function checkTable(node: Json): RuleFinding[] {
     findings.push(v1("Table access methods"));
   }
   if (list(node.options).length > 0) {
-    findings.push(v1("Table storage parameters"));
+    findings.push(v1("Table storage parameters", storageParameters(node)));
   }
   if (node.if_not_exists === true) {
     findings.push(redefinition("CREATE TABLE IF NOT EXISTS"));
@@ -412,7 +431,9 @@ function checkMaterializedView(node: Json): RuleFinding[] {
     findings.push(v1("Table access methods"));
   }
   if (list(into.options).length > 0) {
-    findings.push(v1("Materialized view storage parameters"));
+    findings.push(
+      v1("Materialized view storage parameters", storageParameters(into)),
+    );
   }
   return findings;
 }

@@ -290,6 +290,18 @@ export interface DeploymentRollback {
 }
 
 /**
+ * E.g. `target qa is unchanged, still at migration 00009-add-tier`, or `...,
+ * with no migration recorded`: how a rolled-back deployment's target is
+ * described, here and by the CLI after an interruption.
+ */
+export function unchangedTarget(
+  target: string,
+  lastRecorded: string | undefined,
+): string {
+  return `target ${target} is unchanged, ${lastRecorded === undefined ? "with no migration recorded" : `still at migration ${lastRecorded}`}`;
+}
+
+/**
  * PostgreSQL refused a deploy-time SQL file, in a rehearsal or a deployment.
  * The message adds a next step by SQLSTATE: the target setting behind a lock
  * (55P03) or statement (57014) timeout, for a data error (classes 22,
@@ -340,7 +352,7 @@ export class SqlFileFailedError extends SuperDeployError {
           : `This failed in a rehearsal: it reads ${missingFromRehearsals([missingExternalSchema])}, so a migration's scripts and seed data must not run anything that reads it, such as a trigger on a table they write (see the README, "Permissions").`,
         rollback === undefined
           ? undefined
-          : `The deployment rolled back: target ${rollback.target} is unchanged, ${rollback.lastRecorded === undefined ? "with no migration recorded" : `still at migration ${rollback.lastRecorded}`}.`,
+          : `The deployment rolled back: ${unchangedTarget(rollback.target, rollback.lastRecorded)}.`,
         nextStep(failure, rollback),
       ]
         .filter((part) => part !== undefined)

@@ -94,3 +94,66 @@ test.each(["verify-ca", "verify-full"])(
     ).resolves.toBe(true);
   },
 );
+
+/** The error `postgresTarget` gives for `connectionString`, before any connection. */
+async function refusal(connectionString: string): Promise<AdapterError> {
+  const error = await encrypted(connectionString).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(AdapterError);
+  expect(error).toMatchObject({ code: "connection-string-invalid" });
+  return error as AdapterError;
+}
+
+test.each(["sslrootcert", "sslcert", "sslkey"])(
+  "a %s file that doesn't exist is named with the reason, before connecting",
+  async (parameter) => {
+    const error = await refusal(
+      `${url}?sslmode=verify-full&${parameter}=/nonexistent.pem`,
+    );
+
+    expect(error.message).toBe(
+      `The deployment adapter: ${parameter} file /nonexistent.pem can't be read: no such file or directory`,
+    );
+    expect(error.cause).toMatchObject({ code: "ENOENT" });
+  },
+);
+
+test("a directory as sslrootcert is named as a directory", async () => {
+  const error = await refusal(
+    `${url}?sslmode=verify-ca&sslrootcert=${server.dataDir}`,
+  );
+
+  expect(error.message).toBe(
+    `The deployment adapter: sslrootcert file ${server.dataDir} can't be read: it is a directory`,
+  );
+});
+
+test("a relative sslrootcert's message shows where it was looked for", async () => {
+  const error = await refusal(
+    `${url}?sslmode=verify-full&sslrootcert=missing-ca.pem`,
+  );
+
+  expect(error.message).toBe(
+    `The deployment adapter: sslrootcert file missing-ca.pem (${join(process.cwd(), "missing-ca.pem")}) can't be read: no such file or directory. A relative path is read from the directory the command runs in.`,
+  );
+});
+
+test("sslmode=disable ignores an unreadable sslrootcert, as libpq does", async () => {
+  await expect(
+    encrypted(`${url}?sslmode=disable&sslrootcert=/nonexistent.pem`),
+  ).resolves.toBe(false);
+});
+
+test.each(["bogus", "DISABLE", "verify_full"])(
+  "sslmode=%s is refused before connecting, naming the valid values",
+  async (mode) => {
+    const error = await refusal(`${url}?sslmode=${mode}`);
+
+    expect(error.message).toBe(
+      `The deployment adapter's connection string has sslmode=${mode}, which isn't one of disable, allow, prefer, require, verify-ca, verify-full`,
+    );
+  },
+);
+
+test("sslmode=allow connects without encrypting", async () => {
+  await expect(encrypted(`${url}?sslmode=allow`)).resolves.toBe(false);
+});

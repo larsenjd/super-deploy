@@ -59,7 +59,7 @@ Only what exists at the process boundary: flags and usage errors, exit codes, st
 
 ### Pseudo-terminal (`terminal.ts`)
 
-`spawnTerminal(args, { cwd, env? })` runs `dist/cli.js` in a pseudo-terminal (`@lydell/node-pty`) with `CI` removed: the menu, questions, and guarded commands. `type(keys.enter)` (also `escape`, `down`, `up`, `ctrlC`, `ctrlD`, or any text); `await waitFor(textOrRegex)` consumes the screen up to the match, so wait for each screen before typing into it; `await exited` gives the exit code. `screen` is the output without escape sequences; `output` keeps them, for checks such as `showCursor`. Wrap these tests in `describe.skipIf(process.platform === "win32")`: ConPTY is unverified.
+`spawnTerminal(args, { cwd, env? })` runs `dist/cli.js` in a pseudo-terminal (`@lydell/node-pty`) with `CI` removed: the menu, questions, and guarded commands. `type(keys.enter)` (also `escape`, `down`, `up`, `ctrlC`, `ctrlD`, or any text); `await waitFor(textOrRegex)` consumes the screen up to the match, so wait for each screen before typing into it; `await exited` gives the exit code; `signalGroup(sig)` signals the terminal's foreground group, as closing the terminal (SIGHUP) does. `screen` is the output without escape sequences; `output` keeps them, for checks such as `showCursor`. Wrap these tests in `describe.skipIf(process.platform === "win32")`: ConPTY is unverified.
 
 Select menu items with `await chooseMenuItem(label)`: it presses Down until the screen shows that item selected, then Enter, so adding a command never shifts a test. Count arrow presses only when the cursor position is what the test checks.
 

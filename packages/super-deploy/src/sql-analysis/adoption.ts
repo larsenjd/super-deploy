@@ -36,6 +36,7 @@
 import { foldTableAlters, type KeptStatement } from "./adoption-folding.ts";
 import { overrideObject } from "./overrides.ts";
 import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
+import { statementFacts } from "./references.ts";
 import { externalSchemasBoundAtCreate } from "./routine-bodies.ts";
 import type { RuleContext } from "./rule-types.ts";
 import {
@@ -186,6 +187,8 @@ export async function isSequenceStatement(
 export interface ExternalSchemaReference {
   /** What the statement creates, as `adoptedObject` names it. */
   readonly object: string;
+  /** How to find that object on the target, to name it as its catalogs do. */
+  readonly reference: CatalogReference | undefined;
   /** The declared external schemas it references. */
   readonly schemas: readonly string[];
 }
@@ -211,6 +214,7 @@ export async function externalSchemaReferences(
       if (schemas.length > 0) {
         references.push({
           object: adoptedObject(statement, context.managedSchema),
+          reference: adoptedObjectReference(statement, context.managedSchema),
           schemas,
         });
       }
@@ -240,6 +244,121 @@ export function adoptedObject(
     typeof constraint?.conname === "string"
     ? `constraint ${constraint.conname} on ${object}`
     : object;
+}
+
+/**
+ * How to find the object a generated statement creates in the target's
+ * catalogs, by name: a relation (`to_regclass`), a type (`to_regtype`), a
+ * routine (`to_regprocedure`), or a trigger or constraint (`member`) on a
+ * relation. Names are quoted and qualified, routines' argument types as
+ * the statement writes them, so they resolve with the managed schema and
+ * pg_catalog on the search path.
+ */
+export interface CatalogReference {
+  readonly kind: "relation" | "type" | "routine" | "trigger" | "constraint";
+  readonly name: string;
+  readonly member?: string;
+}
+
+/**
+ * The catalog reference for the object a generated statement creates (or,
+ * for an ALTER TABLE, alters: a constraint it adds, else the table), or
+ * undefined for a statement adoption names by `adoptedObject` alone.
+ */
+export function adoptedObjectReference(
+  statement: ParsedStatement,
+  managedSchema: string,
+): CatalogReference | undefined {
+  const node = statementBody(statement);
+  /** A relation's name, or `name` in the relation's schema. */
+  const relation = (value: unknown, name?: unknown): string | undefined => {
+    const found = rangeVar(value);
+    const own = name ?? found.relname;
+    return typeof own === "string"
+      ? qualified(managedSchema, [
+          ...(typeof found.schemaname === "string" ? [found.schemaname] : []),
+          own,
+        ])
+      : undefined;
+  };
+  const reference = (
+    kind: CatalogReference["kind"],
+    name: string | undefined,
+    member?: unknown,
+  ): CatalogReference | undefined => {
+    if (name === undefined) {
+      return undefined;
+    }
+    if (kind !== "trigger" && kind !== "constraint") {
+      return { kind, name };
+    }
+    return typeof member === "string" ? { kind, name, member } : undefined;
+  };
+  switch (statement.nodeType) {
+    case "CreateStmt":
+      return reference("relation", relation(node.relation));
+    case "CreateSeqStmt":
+    case "AlterSeqStmt":
+      return reference("relation", relation(node.sequence));
+    case "CreateForeignTableStmt":
+      return reference(
+        "relation",
+        relation(isObject(node.base) ? node.base.relation : undefined),
+      );
+    case "ViewStmt":
+      return reference("relation", relation(node.view));
+    case "CreateTableAsStmt":
+      return reference(
+        "relation",
+        relation(isObject(node.into) ? node.into.rel : undefined),
+      );
+    case "IndexStmt":
+      return typeof node.idxname === "string"
+        ? reference("relation", relation(node.relation, node.idxname))
+        : undefined;
+    case "CompositeTypeStmt":
+      return reference("type", relation(node.typevar));
+    case "CreateEnumStmt":
+    case "CreateRangeStmt":
+    case "AlterEnumStmt":
+    case "AlterDomainStmt":
+      return reference(
+        "type",
+        qualified(managedSchema, stringList(node.typeName)),
+      );
+    case "CreateDomainStmt":
+      return reference(
+        "type",
+        qualified(managedSchema, stringList(node.domainname)),
+      );
+    case "CreateFunctionStmt": {
+      const routine = statementFacts(statement.node, managedSchema)?.routine;
+      return routine === undefined
+        ? undefined
+        : reference(
+            "routine",
+            `${qualified(managedSchema, stringList(node.funcname))}(${routine.arguments.join(",")})`,
+          );
+    }
+    case "CreateTrigStmt":
+      return reference("trigger", relation(node.relation), node.trigname);
+    case "AlterTableStmt": {
+      const commands = alterTableCommands(node);
+      const constraint = unwrap(commands[0]?.def, "Constraint");
+      return commands.length === 1 &&
+        commands[0]?.subtype === "AT_AddConstraint"
+        ? reference("constraint", relation(node.relation), constraint?.conname)
+        : reference("relation", relation(node.relation));
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** `names` (schema-qualified or not) as a quoted name in `schema` by default. */
+function qualified(schema: string, names: readonly string[]): string {
+  const parts = names.length === 1 ? [schema, ...names] : names;
+  return parts.map((part) => `"${part.replaceAll('"', '""')}"`).join(".");
 }
 
 /**

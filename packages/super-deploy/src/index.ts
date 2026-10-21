@@ -180,7 +180,10 @@ export {
   TargetChangedError,
   TerminalRequiredError,
 } from "./guard/guard.ts";
-export { InterruptedError } from "./interruption.ts";
+export {
+  InterruptedError,
+  type InterruptedRollback,
+} from "./interruption.ts";
 export {
   type LoadProjectOptions,
   loadProject,

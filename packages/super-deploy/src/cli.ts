@@ -12,6 +12,7 @@ const code = await runCli(process.argv.slice(2), {
   interactive:
     process.stdin.isTTY === true && process.stdout.isTTY === true && !isCI(),
   signal: interruptions.signal,
+  interruptions,
 });
 
 // Exit explicitly once output is flushed, rather than waiting for whatever

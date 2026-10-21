@@ -43,6 +43,11 @@ export interface Terminal {
    * `waitFor("quit")`); later waits start after the menu.
    */
   chooseMenuItem(label: string): Promise<void>;
+  /**
+   * Sends a signal to the terminal's foreground process group, as closing
+   * the terminal (SIGHUP) or `kill -TERM -<pgid>` does.
+   */
+  signalGroup(signal: NodeJS.Signals): void;
   /** Resolves with the exit code when the CLI exits. */
   readonly exited: Promise<number>;
 }
@@ -126,6 +131,8 @@ export function spawnTerminal(
       return raw;
     },
     type: (text) => pty.write(text),
+    // The CLI leads the terminal's session, so its pid is the group's id.
+    signalGroup: (signal) => process.kill(-pty.pid, signal),
     async waitFor(text, timeoutMs) {
       const match = await until(
         String(text),

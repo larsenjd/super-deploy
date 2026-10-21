@@ -73,7 +73,8 @@ program or set another `port`.
 The server runs only while something uses it: the first command that needs
 `dev` starts it, commands run at the same time share it, and it stops when
 the last of them ends. A command that was killed outright (`kill -9`, a
-crash) can leave it running; the next command that uses `dev` takes it over
+crash, or interrupted twice: see
+[Interrupting a command](#interrupting-a-command)) can leave it running; the next command that uses `dev` takes it over
 and stops it when it ends. To keep it running while you connect, run this
 in the project folder and leave it running; Ctrl+C stops it, unless a
 command is still using it:
@@ -347,7 +348,8 @@ password in it.
 **TLS.** Set `sslmode` in the connection string. super-deploy reads it as
 `psql` and libpq do:
 
-- no `sslmode`, or `disable`: not encrypted.
+- no `sslmode`, `disable` or `allow`: not encrypted. Unlike `psql`, `allow`
+  never upgrades to an encrypted connection.
 - `require` (or `prefer`): encrypted, but the server's certificate isn't
   checked, so it doesn't stop a server impersonating yours. Unlike `psql`,
   `prefer` never falls back to an unencrypted connection.
@@ -357,6 +359,9 @@ password in it.
 - `verify-full`: as `verify-ca`, and the certificate must also name the host
   in the connection string. Without `sslrootcert` it trusts the public CAs
   that Node.js ships with.
+
+Any other `sslmode` is refused, as libpq refuses it (the values are
+case-sensitive).
 
 For a server with a private CA, such as a managed database's own, download
 the CA certificate and use `verify-full` with `sslrootcert`:
@@ -390,9 +395,22 @@ nothing is written and every such object is listed: that includes a
 `SECURITY DEFINER` routine, objects owned by another role (see
 "Permissions"), and views, foreign keys, `LANGUAGE sql` functions and the
 like that reference an external schema (only PL/pgSQL bodies may). The
-refusal ends with what to do: change the target, declare a schema a
-PL/pgSQL body references in `externalSchemas`, or run adoption in a
-terminal to give override reasons (below). Grants,
+same list says whether the deploy role lacks `CREATE` on the database, and
+ends with the `ALTER ... OWNER TO` and `GRANT` statements that fix the
+ownership and `CREATE`, as a script to run as a superuser (an object that
+must be changed anyway isn't among them). The refusal ends with what to do:
+change the target, run those fixes, declare a schema a PL/pgSQL body
+references in `externalSchemas`, or run adoption in a terminal to give
+override reasons (below). Each object is named as PostgreSQL names it
+(`table app.users`), with the references or settings refused.
+
+Columns, defaults, views and other definitions that use another schema's
+types or functions (typically an extension installed in `public`, such as
+`citext` or `pgcrypto`) are refused, and declaring that schema in
+`externalSchemas` doesn't help: only PL/pgSQL bodies may reference it.
+Change them on the target first, for example to `text` with a `CHECK`
+constraint instead of `citext`, and to the built-in `gen_random_uuid()`
+instead of pgcrypto's functions. Grants,
 policies and row-level security on the target stay
 as they are, left out of the desired schema; adoption says how many grants
 and policies it left.
@@ -406,7 +424,8 @@ reason reviewers will read in `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`,
 which adoption writes on the line before the statement. Until then, its
 refusal names them, so you know which reasons it will ask for. An empty
 answer cancels the adoption, writing nothing. Without a terminal (in CI, for
-example) adoption refuses them, saying to run it in a terminal. `finalize` and `validate` show these
+example) adoption refuses them, listed apart from anything it doesn't
+support, saying to run it in a terminal. `finalize` and `validate` show these
 overrides like any other.
 
 ### Starting an adoption over
@@ -467,10 +486,13 @@ default privileges as they are.
   or be a member of the role that owns them (one granted `WITH INHERIT FALSE`
   doesn't count). `deploy`, `deploy-draft`, `mark` and `init --adopt`
   refuse a target where something in the managed schema is owned by another
-  role, listing each object with the `ALTER ... OWNER TO` that fixes it;
-  `status` lists them under "Deploy would refuse". For `public`, which `pg_database_owner` owns, deploy as the
+  role, listing each object with its owner, then the `ALTER ... OWNER TO`
+  statements that fix them as a script to run as a superuser (it can be
+  pasted into `psql` as it is); `status` lists them under "Deploy would
+  refuse". For `public`, which `pg_database_owner` owns, deploy as the
   database's owner: the refusal's fix for it is `ALTER DATABASE <database>
-  OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`. The deploy role also needs `CREATE` on the database for
+  OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`.
+  The deploy role also needs `CREATE` on the database for
   the first deployment, which creates the history schema (and the managed
   schema, if the target lacks it).
 - **The application's roles**, their role membership and their database
@@ -617,7 +639,9 @@ warning and doesn't block, so you can commit a draft with its hand-written
 scripts and push it for review before finalizing it. In CI, run
 `pnpm exec super-deploy validate --strict` without `--allow-draft`: it fails
 until the draft is finalized and the desired schema matches the newest
-migration, so work in progress can't be merged.
+migration, so work in progress can't be merged. (`validate` changes
+nothing, so `pnpm exec` is fine there; for `deploy` in CI, see
+[Interrupting a command](#interrupting-a-command).)
 
 ## Overriding a refusal
 
@@ -794,6 +818,40 @@ The schema change never changes: a Recovery always runs its migration's
 draft's copy: `rehearse` and `finalize` refuse a Recovery draft whose schema
 change is no longer the migration's.
 
+## Interrupting a command
+
+Ctrl+C (SIGINT), SIGTERM, or closing the terminal (SIGHUP) stops the
+running command. It cleans up first, then exits 130, 143 or 129: a
+deployment in progress rolls back and its attempt is recorded as abandoned,
+throwaway databases are dropped, and the embedded servers the command
+started are stopped. It prints one line when the interruption arrives. A
+command that changes a target (`deploy`, `deploy-draft`, `rebuild`,
+`mark`, `disposable`, `init --adopt`) prints one more once it has cleaned
+up, saying what happened to the target:
+
+- `The deployment rolled back: target qa is unchanged, still at migration 00009-add-tier.`
+- `The deployment had already finished: the interruption came too late to stop it on target qa.`
+  when the interruption came after its COMMIT. It still exits 130, 143 or
+  129, and `status --target qa` shows the attempt succeeded.
+
+An interruption after the command has finished, while it stops its
+servers, doesn't change its exit code: a deployment that committed exits 0.
+
+**In CI or under a supervisor** (a CI runner cancelling a step, `docker
+stop`, systemd), run the binary directly, as
+`./node_modules/.bin/super-deploy deploy --target prod`, or make sure the
+stop signal reaches the whole process group. With pnpm installed through
+corepack, SIGTERM to `pnpm exec super-deploy ...` alone stops only pnpm's
+launcher: the job ends with 143 while the deployment carries on unseen and
+commits. After a cancelled job, `status --target prod` shows whether the
+attempt was abandoned or succeeded.
+
+Interrupting again while it cleans up exits at once, leaving whatever
+wasn't cleaned up yet (the next command takes over a server left running).
+The same signal again within a second doesn't count: in a terminal,
+`pnpm exec` passes on a SIGTERM or SIGHUP the command has already had. Nor
+does a second SIGHUP: no one is left at the terminal to insist.
+
 ## Changing your mind
 
 Three commands throw unfinished work away:
@@ -886,6 +944,8 @@ draft-finalize-deploy path:
 
 All four need a person at a terminal. Each shows the target's name, host,
 database and last recorded migration, and goes ahead only when you type
-`YES` exactly. They refuse in CI (when the `CI` environment variable is set
+`YES` exactly. The host is the one in the connection string, followed by the
+address the server reports when that differs, e.g.
+`db.prod.internal:5432 (10.0.4.7:5432)`. They refuse in CI (when the `CI` environment variable is set
 to anything but `false` or `0`) and without a terminal, and no flag skips
 the question.

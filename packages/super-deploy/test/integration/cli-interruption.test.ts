@@ -1,15 +1,26 @@
 // Interruption at the CLI process seam: signals and closed output stop the
-// running command, clean up and exit 130, 141 or 143. Signals print one
-// notice; closed output prints none.
+// running command, clean up and exit 129, 130, 141 or 143. Signals print one
+// notice; closed output prints none. The same signal twice within a second
+// is one interruption; a later second one exits at once.
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { embeddedPostgres } from "super-deploy/embedded-postgres";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  onTestFinished,
+  test,
+} from "vitest";
 import { runCli, spawnCli, waitForFile } from "../support/cli.ts";
 import { deployConfig } from "../support/deploy.ts";
 import {
   onStoppedServer,
+  serverRunning,
   startTestServer,
+  stopServerOn,
   type TestServer,
 } from "../support/postgres.ts";
 import {
@@ -18,6 +29,7 @@ import {
   stallingConfig,
 } from "../support/project.ts";
 import { silentHost } from "../support/silent-host.ts";
+import { spawnTerminal } from "../support/terminal.ts";
 
 let server: TestServer;
 beforeAll(async () => {
@@ -98,7 +110,7 @@ test("SIGTERM while connecting to a target that doesn't answer exits 143 at once
   expect(Date.now() - signalled).toBeLessThan(2000);
 });
 
-test("a second interrupt exits at once, even while cleanup is still running", async () => {
+test("a second interrupt a second or more after the first exits at once, even while cleanup is still running", async () => {
   const { dir, marker } = await stallingProject();
   const cli = spawnCli(["draft", "--name", "add customers"], {
     cwd: dir.root,
@@ -111,6 +123,8 @@ test("a second interrupt exits at once, even while cleanup is still running", as
   await new Promise<void>((resolve) => {
     cli.child.stderr?.on("data", () => resolve());
   });
+  // Sooner, a repeat of the same signal counts as the same interruption.
+  await delay(1100);
   cli.signal("SIGINT");
   const result = await cli.result;
 
@@ -217,6 +231,72 @@ test("Ctrl+C to the process group of a command that started its embedded server 
   ]);
   expect(dir.exists(".super-deploy/postgres/postmaster.pid")).toBe(false);
 });
+
+// In a terminal, a wrapper such as `pnpm exec` forwards SIGTERM and SIGHUP
+// to the CLI that the kernel has already signalled as part of the foreground
+// group: one interruption, delivered twice within milliseconds.
+describe.each([
+  ["SIGTERM", 143],
+  ["SIGHUP", 129],
+] as const)("%s delivered twice within 100 ms", (signal, exitCode) => {
+  test(`counts as one interruption: cleans up, stops the embedded server and exits ${exitCode}`, async () => {
+    const { dir, marker, env } = await ownServerProject();
+    const dataDir = dir.path(".super-deploy/postgres");
+    onTestFinished(() => stopServerOn(dataDir));
+    const cli = spawnCli(["draft", "--name", "add customers"], {
+      cwd: dir.root,
+      env,
+      detached: true,
+    });
+    await waitForFile(marker);
+
+    cli.signalGroup(signal);
+    await delay(50);
+    cli.signalGroup(signal);
+    const result = await cli.result;
+
+    expect(result.exitCode).toBe(exitCode);
+    expect(result.stderr.trim().split("\n")).toEqual([
+      expect.stringContaining(`Interrupted by ${signal}`),
+    ]);
+    expect(await serverRunning(dataDir)).toBe(false);
+    expect(await ownServerDatabases(dataDir)).toEqual([]);
+  });
+});
+
+// 162: at a guarded command's YES prompt, closing the terminal under
+// `pnpm exec` delivers SIGHUP twice (or SIGTERM, signalled to the group).
+describe.skipIf(process.platform === "win32").each([
+  ["SIGHUP", 129],
+  ["SIGTERM", 143],
+] as const)(
+  "%s twice to the terminal's group at a YES prompt",
+  (signal, exitCode) => {
+    test(`stops the embedded server the command started and exits ${exitCode}`, async () => {
+      const { dir } = await ownServerProject();
+      const dataDir = dir.path(".super-deploy/postgres");
+      onTestFinished(() => stopServerOn(dataDir));
+      const terminal = spawnTerminal(
+        ["disposable", "--target", "dev", "--set", "yes"],
+        { cwd: dir.root },
+      );
+      await terminal.waitFor("Type YES to mark target dev as disposable");
+      expect(await serverRunning(dataDir)).toBe(true);
+
+      // A few milliseconds apart, as a wrapper forwards it: before cleanup
+      // has stopped the server.
+      terminal.signalGroup(signal);
+      await delay(5);
+      terminal.signalGroup(signal);
+
+      expect(await terminal.exited).toBe(exitCode);
+      expect(await serverRunning(dataDir)).toBe(false);
+      expect(terminal.screen).toContain(
+        "Target dev is unchanged: the interruption came before the flag change started.",
+      );
+    });
+  },
+);
 
 test("throwaway databases left on the project's own stopped embedded server are dropped when a command next starts it", async () => {
   const { dir } = await ownServerProject();

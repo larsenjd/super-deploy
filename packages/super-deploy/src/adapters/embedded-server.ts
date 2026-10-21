@@ -156,19 +156,18 @@ export async function startServer(
   }
 }
 
-/** Stops the data directory's server, if it is running, and waits until it has. */
+/**
+ * Stops the data directory's server, if it is running, and waits until it
+ * has. `pg_ctl` runs in a session of its own, so a signal to the terminal's
+ * group (closing it, a wrapper forwarding SIGTERM) can't cut the stop short.
+ */
 export async function stopServer(dataDir: string): Promise<void> {
   const { pg_ctl } = await postgresBinaries();
-  const result = await run(pg_ctl, [
-    "stop",
-    "-D",
-    dataDir,
-    "-m",
-    "fast",
-    "-w",
-    "-t",
-    "60",
-  ]);
+  const result = await run(
+    pg_ctl,
+    ["stop", "-D", dataDir, "-m", "fast", "-w", "-t", "60"],
+    { detached: true },
+  );
   if (result.code !== 0 && (await runningPort(dataDir)) !== undefined) {
     throw new AdapterError(
       `Embedded PostgreSQL failed to stop in ${dataDir}: ${lastLines(result.output)}`,
