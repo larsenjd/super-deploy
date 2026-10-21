@@ -4,7 +4,7 @@
 // define it here and append it to `commands`.
 import { join } from "node:path";
 import { adopt } from "../commands/adopt.ts";
-import { type DeployedMigration, deploy } from "../commands/deploy.ts";
+import { deploy, describeMigration } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
 import { disposable } from "../commands/disposable.ts";
@@ -100,6 +100,11 @@ export interface MigrationChoice {
 export interface MigrationOption extends OptionBase {
   readonly kind: "migration";
   migrations(project: Project): Promise<readonly MigrationChoice[]>;
+  /**
+   * When set, 0 (no migrations) is a valid value too, and the menu offers it
+   * below migration 1 with this label. Only rebuild's `--to` takes it.
+   */
+  readonly zero?: string;
 }
 
 /** One of `choices`. */
@@ -962,9 +967,10 @@ const rebuildCommand: CommandDefinition = {
     {
       name: "to",
       kind: "migration",
-      description: "The last migration to replay",
+      description: "The last migration to replay, or 0 for none",
       required: true,
       migrations: indexedMigrations,
+      zero: "(none: no migrations)",
     },
   ],
   async run(project, values, context) {
@@ -973,17 +979,12 @@ const rebuildCommand: CommandDefinition = {
       to: Number(values.to),
     });
     context.result(
-      `Rebuilt ${result.target} with ${plural(result.deployed.length, "migration")}: ${result.deployed.map((m) => m.folder).join(", ")}`,
+      result.deployed.length === 0
+        ? `Rebuilt ${result.target} with no migrations`
+        : `Rebuilt ${result.target} with ${plural(result.deployed.length, "migration")}: ${result.deployed.map(describeMigration).join(", ")}`,
     );
   },
 };
-
-/** `00004-add-country`, or `00004-add-country (Recovery 1)` when it runs, or ran, as Recovery 1. */
-function describeMigration(migration: DeployedMigration): string {
-  return migration.recovery === undefined
-    ? migration.folder
-    : `${migration.folder} (Recovery ${migration.recovery})`;
-}
 
 /**
  * One line of `status`'s "Recent attempts". A deploy that succeeded with no

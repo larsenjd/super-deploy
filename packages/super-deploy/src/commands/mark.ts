@@ -62,7 +62,7 @@ export async function mark(
       // After the guard's terminal check, so CI is refused first.
       const migrations = await readMarkableMigrations(project);
       const next = nextToMark(
-        view.target.name,
+        { name: view.target.name, disposable: view.disposable },
         migrations,
         view.recorded,
         view.draft,

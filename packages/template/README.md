@@ -687,7 +687,9 @@ draft-finalize-deploy path:
   config change can make production disposable. Before you type `YES` to
   mark it disposable, it shows how many tables the managed schema holds
   and about how many rows (PostgreSQL's estimate), so a database full of
-  real data stands out.
+  real data stands out. Marking a target that holds a deployed draft not
+  disposable warns that `deploy` refuses it until `rebuild` resets it, which
+  then needs it flagged disposable again; `status` and `deploy` say so too.
 - **`deploy-draft --target X`** tries the current, unfinalized draft on a
   disposable target, so its scripts meet the target's data before you
   finalize. The target must have no pending migrations (a Recovery draft of
@@ -699,7 +701,9 @@ draft-finalize-deploy path:
   `deploy-draft` refuse it, and `status` doesn't check it for drift, until
   `rebuild` resets it.
 - **`rebuild --target X --to N`** resets a disposable target to migration
-  N, in one transaction. It drops everything in the managed schema, with
+  N, in one transaction. N may be 0: it then replays no migrations, which
+  resets a target holding a draft deployed before any migration (a first
+  draft, or a Recovery draft of migration 1) so you can try it again. It drops everything in the managed schema, with
   `CASCADE`. The confirmation lists what in the managed schema no recorded
   migration created (what `status` reports as only on the target, from a
   throwaway replica of the recorded migrations), up to 10 objects. Objects
@@ -713,9 +717,11 @@ draft-finalize-deploy path:
   extension installed in another schema, naming each object and its owner. The managed schema itself stays, with its owner, grants and
   default privileges. Then it deletes the target's record of migrations and of any
   deployed draft, and runs migrations 1 to N as a deployment does, each as
-  its newest Recovery if it has one. It never loads seed data, and keeps
+  its newest Recovery if it has one; the confirmation and the result name
+  it, as in `00002-require-city (Recovery 1)`. It never loads seed data, and keeps
   the attempt log and the disposable flag. In the menu, `--to` is a list
-  with the newest migration preselected.
+  with the newest migration preselected and "no migrations" (0) below
+  migration 1.
 - **`mark --target X`** records the target's next pending migration as
   deployed, without running it. Use it when someone has already made that
   migration's changes on the target by hand. It works on any target, but

@@ -210,6 +210,51 @@ unix("deploy-draft", () => {
     expect(deployed.stderr).toContain("the target holds draft require-city");
   });
 
+  test("flagging a target holding a draft not disposable says what that leaves; status and deploy then advise flagging it disposable before rebuild", async () => {
+    const { dir } = await deployedProject();
+    const withoutDraft = spawnTerminal(
+      ["disposable", "--target", "dev", "--set", "no"],
+      { cwd: dir.root },
+    );
+    const plain = await withoutDraft.waitFor("Type YES");
+    expect(plain).toContain("deploy-draft and rebuild will then refuse it");
+    expect(plain).not.toContain("until rebuild resets it");
+    withoutDraft.type(keys.ctrlC);
+    expect(await withoutDraft.exited).toBe(1);
+
+    await requireCityDraft(dir);
+    const deploying = spawnTerminal(["deploy-draft", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    await deploying.waitFor("Type YES");
+    deploying.type(`YES${keys.enter}`);
+    expect(await deploying.exited).toBe(0);
+
+    const flagging = spawnTerminal(
+      ["disposable", "--target", "dev", "--set", "no"],
+      { cwd: dir.root },
+    );
+    const shown = boxLines(await flagging.waitFor("Type YES")).join(" ");
+    expect(shown).toContain(
+      "It holds deployed draft require-city: deploy refuses it until rebuild resets it, and rebuild will first need it flagged disposable again",
+    );
+    flagging.type(`YES${keys.enter}`);
+    await flagging.waitFor("Target dev is now not disposable");
+    expect(await flagging.exited).toBe(0);
+
+    const advice =
+      "the target holds draft require-city (deployed by attempt #2 on top of 00001-add-customers, without seed data), not a finalized migration: flag it disposable again (disposable --target dev --set yes), then reset it with rebuild --to 1";
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).toContain(advice);
+    const deployed = await runCli(["deploy", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(deployed.exitCode).toBe(1);
+    expect(deployed.stderr).toContain(advice);
+  });
+
   test("--with-seed loads the draft's seed data just before its pre-migration script", async () => {
     const { dir, database } = await deployedProject();
     await requireCityDraft(dir);
@@ -823,7 +868,7 @@ unix("rebuild", () => {
     expect(await terminal.exited).toBe(1);
   });
 
-  test("replays and records each migration's newest variant: Recovery 1 of migration 2, without its seed data", async () => {
+  test("replays and records each migration's newest variant, naming it in the confirmation and result: Recovery 1 of migration 2, without its seed data", async () => {
     const { dir, database } = await recoveryDraftProject({ deployed: true });
     await dir.write(
       "data-model/draft/post-migration.sql",
@@ -840,10 +885,16 @@ unix("rebuild", () => {
       ["rebuild", "--target", "dev", "--to", "2"],
       { cwd: dir.root },
     );
-    await terminal.waitFor("Type YES");
+    const shown = await terminal.waitFor("Type YES");
+    expect(boxLines(shown)).toEqual(
+      expect.arrayContaining([
+        "00001-add-customers",
+        "00002-require-city (Recovery 1)",
+      ]),
+    );
     terminal.type(`YES${keys.enter}`);
     await terminal.waitFor(
-      "Rebuilt dev with 2 migrations: 00001-add-customers, 00002-require-city",
+      "Rebuilt dev with 2 migrations: 00001-add-customers, 00002-require-city (Recovery 1)",
     );
     expect(await terminal.exited).toBe(0);
 
@@ -1223,6 +1274,90 @@ const losingAdapter = `{
   },
 }`;
 
+/** Runs guarded command `args` at a terminal and types YES; returns what it showed first. */
+async function confirmed(args: string[], dir: TestProject): Promise<string> {
+  const terminal = spawnTerminal(args, { cwd: dir.root });
+  const shown = await terminal.waitFor("Type YES");
+  terminal.type(`YES${keys.enter}`);
+  expect(await terminal.exited).toBe(0);
+  return shown;
+}
+
+const recordedState = `select (select count(*)::int from deployment_history.migrations) as migrations,
+    (select count(*)::int from deployment_history.deployed_draft) as drafts,
+    (select count(*)::int from pg_class where relnamespace = 'public'::regnamespace) as relations`;
+
+unix("rebuild --to 0", () => {
+  test("resets a target holding a first draft, deployed before any migration, to no migrations, so deploy-draft runs again", async () => {
+    const { config, database } = deployConfig(server);
+    const dir = await createTestProject({
+      config,
+      files: { "data-model/desired-schema/customers.sql": customers("") },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await draft(project, { name: "add customers" });
+    } finally {
+      await project.close();
+    }
+    await confirmed(["disposable", "--target", "dev", "--set", "yes"], dir);
+    await confirmed(["deploy-draft", "--target", "dev"], dir);
+
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).toContain(
+      "the target holds draft add-customers (deployed by attempt #2 before any migration, without seed data), not a finalized migration: reset it with rebuild --to 0",
+    );
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "0"],
+      { cwd: dir.root },
+    );
+    const shown = await terminal.waitFor(
+      "Type YES to wipe target dev and replay no migrations",
+    );
+    expect(boxLines(shown).join(" ")).toContain(
+      "Drops everything in schema public, the recorded migrations, deployed draft add-customers, in one transaction, and replays no migrations",
+    );
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor("Rebuilt dev with no migrations");
+    expect(await terminal.exited).toBe(0);
+    expect(await server.query(recordedState, [], database)).toEqual([
+      { migrations: 0, drafts: 0, relations: 0 },
+    ]);
+
+    await confirmed(["deploy-draft", "--target", "dev"], dir);
+    expect(await server.query(recordedState, [], database)).toEqual([
+      { migrations: 0, drafts: 1, relations: 2 },
+    ]);
+  });
+
+  test("lets a Recovery draft of migration 1 be tried again on a target at migration 1", async () => {
+    const { dir, database } = await deployedProject();
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await recovery(project, { migration: 1 });
+    } finally {
+      await project.close();
+    }
+
+    const refused = spawnTerminal(["deploy-draft", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    await refused.waitFor(
+      "Error: The Recovery draft of migration 00001-add-customers runs on top of no recorded migration, but target dev is at 00001-add-customers: run rebuild --to 0 first",
+    );
+    expect(await refused.exited).toBe(1);
+
+    await confirmed(["rebuild", "--target", "dev", "--to", "0"], dir);
+    await confirmed(["deploy-draft", "--target", "dev"], dir);
+    expect(await server.query(recordedState, [], database)).toEqual([
+      { migrations: 0, drafts: 1, relations: 2 },
+    ]);
+  });
+});
+
 unix("deploy-draft's lost COMMIT", () => {
   test.each([
     ["after", "succeeded", "settled as succeeded: its draft is recorded", true],
@@ -1291,6 +1426,33 @@ unix("from the menu", () => {
         database,
       ),
     ).toEqual([{ name: "Ada" }]);
+  });
+
+  test("rebuild offers no migrations below migration 1", async () => {
+    const { dir, database } = await deployedProject();
+    const terminal = spawnTerminal([], { cwd: dir.root });
+
+    await terminal.waitFor("quit");
+    await terminal.chooseMenuItem("rebuild");
+    await terminal.waitFor("The target to use");
+    terminal.type(keys.enter);
+    const offered = await terminal.waitFor("(none: no migrations)");
+    // The screen up to the match: migration 1 is listed above it.
+    expect(offered).toContain("00001-add-customers");
+    terminal.type("none");
+    await terminal.waitFor("(none: no migrations)");
+    terminal.type(keys.enter);
+    await terminal.waitFor(
+      "Type YES to wipe target dev and replay no migrations",
+    );
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor("Rebuilt dev with no migrations");
+    await terminal.waitFor("quit");
+    terminal.type(keys.escape);
+    expect(await terminal.exited).toBe(0);
+    expect(await server.query(recordedState, [], database)).toEqual([
+      { migrations: 0, drafts: 0, relations: 0 },
+    ]);
   });
 
   test("rebuild offers the migrations newest first", async () => {

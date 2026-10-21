@@ -81,6 +81,11 @@ describe("usage errors", () => {
       ["draft", "--name", "Add customers!"],
       'Error: Invalid draft name "Add customers!"',
     ],
+    // Only rebuild's --to takes 0 (no migrations).
+    [
+      ["recovery", "--migration", "0"],
+      "Error: Option --migration must be a migration number",
+    ],
   ])("%j exits 2 with a one-line error", async (args, message) => {
     const dir = await createTestProject();
 
