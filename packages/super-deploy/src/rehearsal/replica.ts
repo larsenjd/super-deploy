@@ -160,7 +160,7 @@ export function withReplica<T>(
   return withThrowawayDatabase(rehearsal, request, async (replica) => {
     await ensureManagedSchema(replica, managedSchema);
     if (units.length > 0) {
-      await replay(replica, units, managedSchema);
+      await replay(replica, units, project.config);
     }
     return use(replica);
   });

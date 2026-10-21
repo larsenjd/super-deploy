@@ -18,6 +18,7 @@ import {
   asDeployerPreamble,
   asDeployRole,
   deployConfig,
+  embeddedDeployRole,
   roleName,
   targetDatabaseName,
   testSession,
@@ -761,6 +762,7 @@ async function twoMigrations() {
     "create view ada as select * from customers where id = 1",
     "create domain positive as int check (value > 0)",
     "create type mood as enum ('happy', 'sad')",
+    "create type pair as (a int, b int)",
     "create function twice(x int) returns int language sql return x * 2",
     "create sequence counter",
     // Privileges are target setup (ADR-0006): rebuild leaves them alone.
@@ -811,11 +813,40 @@ const reportingObjects = `select object from (
      where connamespace = 'reporting'::regnamespace and contype <> 'n'
   ) o order by object collate "C"`;
 
+/**
+ * Migration 1 (customers) deployed to a disposable \`dev\` managing schema
+ * app, which a superuser then took over, granting the deploy role USAGE and
+ * CREATE on it.
+ */
+async function appOwnedBySuperuser() {
+  const { config, database } = deployConfig(server, {
+    settings: 'managedSchema: "app",',
+  });
+  const dir = await customersDeployed(config);
+  await server.query(
+    `update deployment_history.settings set disposable = true;
+     insert into app.customers (id, name) values (1, 'Ada');
+     alter schema app owner to current_user;
+     grant usage, create on schema app to ${embeddedDeployRole};`,
+    [],
+    database,
+  );
+  return { dir, database };
+}
+
 /** The confirmation box's lines, without its borders. */
 function boxLines(shown: string): string[] {
   return shown
     .split("\n")
     .map((line) => line.replace(/^[│├╯╮\s]+|[│├╯╮\s]+$/g, ""));
+}
+
+/** The confirmation's lines listed under `heading`, up to the next blank line. */
+function listedUnder(shown: string, heading: string): string[] {
+  const lines = boxLines(shown);
+  const start = lines.indexOf(heading);
+  expect(start).toBeGreaterThan(0);
+  return lines.slice(start + 1, lines.indexOf("", start));
 }
 
 unix("rebuild", () => {
@@ -916,13 +947,13 @@ unix("rebuild", () => {
     );
     expect(extra).toBeGreaterThan(lines.indexOf("Seed data is never loaded"));
     expect(lines.slice(extra + 1, lines.indexOf("", extra))).toEqual([
-      // Domain positive's CHECK: PostgreSQL describes it without its domain.
-      "constraint positive_check",
+      // Domain positive with its CHECK, and composite type pair: one each.
+      "composite type public.pair",
+      "domain public.positive",
       "function public.twice(integer)",
       "sequence public.counter",
       "table public.scratch",
       "type public.mood",
-      "type public.positive",
       "view public.ada",
     ]);
     terminal.type(keys.ctrlC);
@@ -1173,10 +1204,12 @@ unix("rebuild", () => {
       ["rebuild", "--target", "dev", "--to", "1"],
       { cwd: dir.root },
     );
-    const lines = boxLines(await terminal.waitFor("Type YES"));
-    const also = lines.indexOf("Also drops, outside schema public:");
-    expect(also).toBeGreaterThan(0);
-    expect(lines.slice(also + 1, lines.indexOf("", also))).toEqual([
+    expect(
+      listedUnder(
+        await terminal.waitFor("Type YES"),
+        "Also drops, outside schema public:",
+      ),
+    ).toEqual([
       "column reporting.snap.c (with its data)",
       "foreign key archive_customer_fk on reporting.orders_archive",
       "view reporting.customer_names",
@@ -1195,6 +1228,36 @@ unix("rebuild", () => {
     expect(
       await server.query("select * from reporting.unrelated", [], database),
     ).toEqual([{ id: 1 }]);
+  });
+
+  test("lists a table in another schema inheriting from a managed table, or typed with a managed composite type, as dropped with its data", async () => {
+    const { dir, database } = await deployedProject();
+    await server.query(
+      `create type public.pair as (a int, b int);
+       create schema reporting;
+       create table reporting.child (extra int) inherits (public.customers);
+       insert into reporting.child (id, name, extra) values (999, 'child row', 1);
+       create table reporting.typed of public.pair;
+       insert into reporting.typed values (1, 2);`,
+      [],
+      database,
+    );
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    expect(
+      listedUnder(
+        await terminal.waitFor("Type YES"),
+        "Also drops, outside schema public:",
+      ),
+    ).toEqual([
+      "table reporting.child (with its data)",
+      "table reporting.typed (with its data)",
+    ]);
+    terminal.type(keys.ctrlC);
+    expect(await terminal.exited).toBe(1);
   });
 
   test("refuses as target-changed, dropping nothing, when a dependent outside the managed schema appears while it waits for YES", async () => {
@@ -1248,8 +1311,9 @@ unix("rebuild", () => {
       { cwd: dir.root },
     );
     await terminal.waitFor(
-      "Error: rebuild can't wipe schema public on target dev: the deploy role can't drop extension citext (owned by super_deploy). Drop it, change its owner to the deploy role, or ask its owner to, then run rebuild again (nothing changed)",
+      "Error: rebuild can't wipe schema public on target dev: the deploy role can't drop extension citext (owned by super_deploy). Have the extension's owner or a superuser run DROP EXTENSION citext CASCADE, then run rebuild again (nothing changed)",
     );
+    expect(terminal.screen).not.toContain("change its owner");
     expect(await terminal.exited).toBe(1);
     expect(terminal.screen).not.toContain("Type YES");
     expect(
@@ -1266,6 +1330,71 @@ unix("rebuild", () => {
         database,
       ),
     ).toEqual([{ command: "deploy" }]);
+  });
+
+  test("refuses, without asking, an extension and a member of another extension at once, with each its own advice", async () => {
+    const { dir, database } = await twoMigrations();
+    await server.query(
+      `create extension citext;
+       alter extension plpgsql add function twice(int);`,
+      [],
+      database,
+    );
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor(
+      "Error: rebuild can't wipe schema public on target dev: the deploy role can't drop extension citext (owned by super_deploy), function public.twice(x integer) (a member of extension plpgsql, owned by super_deploy). Have the extension's owner or a superuser run DROP EXTENSION citext CASCADE; take it out of its extension (ALTER EXTENSION ... DROP) or drop the extension, as its owner, then run rebuild again (nothing changed)",
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    await server.query(
+      `alter extension plpgsql drop function twice(int);
+       drop extension citext;`,
+      [],
+      database,
+    );
+  });
+
+  test("refuses, without asking or recording an attempt, a managed schema the deploy role doesn't own, though it can create and drop everything in it", async () => {
+    const { dir, database } = await appOwnedBySuperuser();
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    const shown = await terminal.waitFor(
+      "Error: The deploy role on target dev doesn't own 1 object in the managed schema, listed above, so deploy would refuse the rebuilt target. Fix it, then run rebuild again (nothing changed)",
+    );
+    expect(shown).toContain("schema app (owned by super_deploy)");
+    expect(shown).toContain(`ALTER SCHEMA app OWNER TO ${embeddedDeployRole};`);
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    expect(
+      await server.query(
+        "select (select count(*)::int from app.customers) as customers, (select array_agg(command order by id) from deployment_history.attempts) as attempts",
+        [],
+        database,
+      ),
+    ).toEqual([{ customers: 1, attempts: ["deploy"] }]);
+  });
+
+  test("names the managed schema's owner as the cause, not a table a superuser made in it", async () => {
+    const { dir, database } = await appOwnedBySuperuser();
+    await server.query("create table app.su_owned (id int)", [], database);
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor(
+      "Error: The deploy role on target dev doesn't own 1 object in the managed schema",
+    );
+    expect(terminal.screen).toContain("schema app (owned by super_deploy)");
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("su_owned");
   });
 
   test("says it rolled back when PostgreSQL refuses a drop after YES", async () => {

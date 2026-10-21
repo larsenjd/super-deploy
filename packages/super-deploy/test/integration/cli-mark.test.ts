@@ -11,7 +11,9 @@ import {
   asDeployRole,
   type DeployConfigOptions,
   deployConfig,
+  deployProject,
   embeddedDeployRole,
+  finalizeMigration,
   roleName,
   targetDatabaseName,
 } from "../support/deploy.ts";
@@ -291,6 +293,66 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
       "deploy",
       "deploy",
     ]);
+  });
+
+  test("drift with nothing pending is kept the README's way: the desired schema made to match the target, a migration finalized and marked, after which status is clean", async () => {
+    const { dir, project, database } = await deployProject(server, {
+      "customers.sql": customers,
+      "orders.sql": `create table orders (id bigint primary key, customer_id bigint not null, notes text);
+create index orders_customer_idx on orders (customer_id);
+`,
+    });
+    try {
+      await finalizeMigration(project, "add customers and orders");
+      await deploy(project, { target: "dev" });
+      await asDeployRole(
+        server,
+        database,
+        `alter table customers add column nickname text;
+         drop index orders_customer_idx;
+         alter table orders alter column notes set default 'n/a';
+         create table scratch (x int);`,
+      );
+      await expect(deploy(project, { target: "dev" })).rejects.toThrow(
+        "Undo the change on the target, or keep it",
+      );
+
+      await dir.write(
+        "data-model/desired-schema/customers.sql",
+        "create table customers (id bigint primary key, name text not null, nickname text);\n",
+      );
+      await dir.write(
+        "data-model/desired-schema/orders.sql",
+        "create table orders (id bigint primary key, customer_id bigint not null, notes text default 'n/a');\n",
+      );
+      await dir.write(
+        "data-model/desired-schema/scratch.sql",
+        "create table scratch (x int);\n",
+      );
+      await draft(project, { name: "keep hand changes" });
+      // The index dropped by hand is dropped by the migration too.
+      await finalize(project, { acknowledgeDestructive: true });
+    } finally {
+      await project.close();
+    }
+
+    const terminal = spawnTerminal(["mark", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    await terminal.waitFor("Type YES");
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor(
+      "Marked migration 00002-keep-hand-changes as deployed on target dev",
+    );
+    expect(await terminal.exited).toBe(0);
+
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(status.stdout).toMatch(
+      /^Target dev: 2 migrations recorded, 0 pending\nDrift: none\n/,
+    );
   });
 
   test("refuses without asking a target whose recorded history differs from the project's, which status reports as drift not checked", async () => {

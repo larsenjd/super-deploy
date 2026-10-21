@@ -44,7 +44,10 @@ sets the server up and runs the rehearsals.
 Run `pnpm exec super-deploy` with no arguments for an interactive menu, or
 `pnpm exec super-deploy --help` for every command. To deploy to a real
 database (QA, production), add it as a target: see
-[Adding a real target](#adding-a-real-target).
+[Adding a real target](#adding-a-real-target). To try a draft on `dev`
+before finalizing it (`deploy-draft`), or reset `dev` to a migration
+(`rebuild`), flag `dev` disposable first: see
+[Disposable targets and the guarded commands](#disposable-targets-and-the-guarded-commands).
 
 ## Connecting to dev
 
@@ -88,10 +91,11 @@ Commands you run meanwhile use the running server and leave it running.
 A project whose `dev` was deployed by an earlier version of super-deploy,
 as the server's superuser rather than `deployer`, holds objects the deploy
 role doesn't own, so `deploy --target dev` and `status --target dev` refuse
-them. `dev` is local and disposable: with no command running, delete the
-`.super-deploy` folder and run `deploy --target dev` again, which rebuilds
-it from your migrations (as `deployer`). Data you added to `dev` by hand is
-lost with it.
+them. `dev` is local, so it is safe to delete and rebuild: with no command
+running, delete the `.super-deploy` folder and run `deploy --target dev`
+again, which rebuilds it from your migrations (as `deployer`). Data you
+added to `dev` by hand is lost with it, and so is its disposable flag (see
+[Disposable targets and the guarded commands](#disposable-targets-and-the-guarded-commands)).
 
 ## What the desired schema supports
 
@@ -114,7 +118,9 @@ first version: these may be supported later, but none is yet.
 - Indexes: unique, partial and expression indexes, with any index method
   and storage parameters.
 - Views (with the options `security_invoker`, `security_barrier` and
-  `check_option`) and materialized views.
+  `check_option`) and materialized views. A view over a table with
+  hand-made policies needs `security_invoker` (see
+  [Permissions](#what-each-target-needs-set-up-outside-super-deploy)).
 - Functions and procedures in `sql` or `plpgsql`, and triggers.
 - Domains and composite types.
 - `COMMENT ON` the objects above.
@@ -260,7 +266,8 @@ settings; super-deploy refuses any other.
   routines in the desired schema may refer to, such as `["auth"]`.
   super-deploy neither creates them, nor reproduces them in rehearsals, nor
   checks that a target has them: setting them up is the DBA's job (see
-  "Permissions"). Default none.
+  "Permissions", which also says why a migration's scripts can't run
+  anything that reads them). Default none.
 - `directory`: the folder holding `desired-schema/`, `draft/` and
   `migrations/`, relative to the config file and inside the project.
   Default `data-model`.
@@ -486,7 +493,9 @@ default privileges as they are.
   role, listing each object with its owner, then the `ALTER ... OWNER TO`
   statements that fix them as a script to run as a superuser (it can be
   pasted into `psql` as it is); `status` lists them under "Deploy would
-  refuse". For `public`, which `pg_database_owner` owns, deploy as the
+  refuse". `rebuild` refuses a target whose managed schema itself is owned
+  by another role, since `deploy` would refuse the result (what is in the
+  schema it drops and creates again, owned by the deploy role). For `public`, which `pg_database_owner` owns, deploy as the
   database's owner: the refusal's fix for it is `ALTER DATABASE <database>
   OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`.
   The deploy role also needs `CREATE` on the database for
@@ -522,7 +531,20 @@ default privileges as they are.
   already exists too, e.g. `grant select on all tables in schema app to
   app_reader`.
 
-  Two things to know about grants and policies made by hand:
+  A role that refreshes materialized views needs `MAINTAIN` on them, since
+  only their owner, the deploy role, can otherwise:
+
+  ```sql
+  alter default privileges for role deploy_role in schema app
+    grant maintain on tables to app_writer;
+  ```
+
+  `MAINTAIN` on tables also allows `VACUUM`, `ANALYZE`, `REINDEX`, `CLUSTER`
+  and `LOCK TABLE`, so grant it only to a role that needs it, or by hand on
+  each materialized view (`grant maintain on app.order_totals to
+  app_writer`).
+
+  Things to know about grants and policies made by hand:
 
   - A migration that drops and recreates a table (or another object) loses
     the grants, revokes and policies made on it by hand. Default privileges
@@ -542,14 +564,37 @@ default privileges as they are.
     on the column. Rehearsals can't catch it, because their databases have
     no hand-made policies. The deployment rolls back and PostgreSQL's error
     names the policy: drop the policy, deploy, then create it again.
+  - The deploy role owns every object, and row-level security doesn't apply
+    to a table's owner. A view reads its tables as its owner, so it shows
+    every row of a table whose policies hide them, unless it is created
+    `with (security_invoker = true)`, which makes it read them as the role
+    querying it. Declare views over tables that get policies that way:
+
+    ```sql
+    create view my_orders with (security_invoker = true) as
+      select id, total from orders;
+    ```
+
+    A materialized view is built and refreshed as the deploy role, so it
+    holds every row whatever the policies on its tables: don't build one
+    over rows a policy must hide.
+  - With `FORCE ROW LEVEL SECURITY`, a table's policies apply to its owner
+    too, so they would hide rows from a deployment's own scripts and from
+    the materialized views it builds. Deployments run with `row_security`
+    off, as `pg_dump` does: a statement a policy would filter fails with
+    `query would be affected by row-level security policy for table
+    "orders"` instead of silently skipping rows, and the deployment rolls
+    back.
+    Rehearsals can't catch it. Run `ALTER TABLE orders NO FORCE ROW LEVEL
+    SECURITY` while deploying and `FORCE` it again afterwards, or move the
+    work out of the migration.
 - **External schemas** (`externalSchemas` in `super-deploy.config.ts`, see
   [Project settings](#project-settings)), and grants on them and their
   objects. super-deploy doesn't check them: `deploy` goes ahead on a target
   without them, and a routine that reads a missing one fails only when it
   runs. On `dev`, create them as the superuser (see
   [Connecting to dev](#connecting-to-dev)). Routines run as their caller, so it's the application's
-  roles that need these grants (and the deploy role too, if a migration's
-  scripts fire a trigger that uses them). For example, a
+  roles that need these grants. For example, a
   PL/pgSQL function `app_writer` calls that reads `auth.users` needs:
 
   ```sql
@@ -557,7 +602,12 @@ default privileges as they are.
   grant select on auth.users to app_writer;
   ```
 
-  Rehearsals have no `auth` schema, so only PL/pgSQL bodies may reference it.
+  Rehearsals have no `auth` schema, so only PL/pgSQL bodies may reference
+  it, and a migration's scripts and seed data can't fire a trigger (or call
+  anything else) that reads it: every rehearsal of the migration would fail
+  with `relation "auth.users" does not exist`, whatever the targets have.
+  Such a trigger also blocks every later migration whose scripts write to
+  its table.
 
 ## The files of a draft and a migration
 
@@ -740,9 +790,11 @@ target. That applies to a shorter `varchar(n)`, `char(n)`, `bit(n)` or
 decimal places, such as `numeric(6,2)` to `numeric(5,1)`. The deployment
 doesn't fail. A `numeric` that also allows fewer digits before the decimal
 point, such as `numeric(6,2)` to `numeric(4,1)`, rounds the same way, but a
-value too large for it fails the deployment. `draft` says how many values in the rehearsal data don't fit,
-and `finalize` asks for the change to be acknowledged. If those values
-matter, shorten or move them in the pre-migration script.
+value too large for it fails the deployment. `draft` says how many values in
+the rehearsal data don't fit (for such a `numeric`, how many are rounded and
+how many are too large, which makes the rehearsal fail too), and `finalize`
+asks for the change to be acknowledged. If those values matter, shorten or
+move them in the pre-migration script.
 
 `rehearse` lists a draft's destructive statements, and `finalize` needs them
 acknowledged. In a terminal, `finalize` lists them and asks. Without a
@@ -791,6 +843,51 @@ The schema change never changes: a Recovery always runs its migration's
 `schema-change.sql`, and `draft` refuses to regenerate it. Don't edit the
 draft's copy: `rehearse` and `finalize` refuse a Recovery draft whose schema
 change is no longer the migration's.
+
+A deployment can also refuse before it runs anything, because the target
+has drifted: see [Drift](#drift).
+
+## Drift
+
+A target has drifted when its managed schema differs from a replica that
+super-deploy builds, in a throwaway database, from the migrations the target
+records: a table, column, index or other object made, dropped or changed on
+the target by hand. `deploy` checks for drift before it changes anything
+and refuses a drifted target, naming what differs. `status --target X`
+lists each difference, saying which side it is on, and exits 1 on drift.
+Every difference counts, even an object a pending migration would create
+exactly as it is.
+
+Not compared, so never drift:
+
+- grants, default privileges, policies and row-level security, which are set
+  up on each target outside super-deploy (see [Permissions](#permissions));
+- ownership: the deploy pre-flight checks it separately, and `deploy` and
+  `status` name objects the deploy role doesn't own;
+- column order (except a composite type's attributes, whose order is part of
+  the type).
+
+`status` says `Drift: none` when it checked and found none, and
+`Drift: not checked (...)`, exiting 1, when it couldn't check: the target
+holds a deployed draft (`rebuild` resets it), its recorded history doesn't
+match the project's migrations, or another command holds the target's lock.
+
+To get a drifted target deploying again, make it match its recorded
+migrations, in one of these ways:
+
+- **Undo it.** Reverse the change on the target by hand, as the deploy role,
+  until `status --target X` shows `Drift: none`.
+- **Keep it.** Make the desired schema describe the target as it now is
+  (add what was added, remove what was dropped, change what changed), then
+  `draft` and `finalize` a migration, and run `mark --target X`. `mark`
+  records that migration as deployed on the drifted target without running
+  it, once the target matches a replica of the migrations up to it (see
+  [Disposable targets and the guarded commands](#disposable-targets-and-the-guarded-commands)).
+  Other targets deploy the migration normally. If a pending migration
+  already makes the change that was made by hand, `mark` it the same way.
+- **Rebuild it.** On a disposable target, `rebuild --target X --to N` drops
+  everything in the managed schema and replays migrations 1 to N, losing
+  the target's data in it.
 
 ## Interrupting a command
 
@@ -859,9 +956,22 @@ files read-only again.
 
 ## Disposable targets and the guarded commands
 
-A disposable target is one you may wipe and experiment on, such as your own
-`dev` database. Four commands change a target outside the normal
-draft-finalize-deploy path:
+A disposable target is one flagged as safe to wipe and experiment on, with
+`disposable --target X --set yes`. Every target starts not disposable, `dev`
+included, so `deploy-draft` and `rebuild` refuse it until it is flagged.
+Before the first `deploy-draft` or `rebuild` on `dev`, flag it once:
+
+```sh
+pnpm exec super-deploy disposable --target dev --set yes
+```
+
+and type `YES`. The flag lives in the target's database, so a database
+rebuilt outside super-deploy starts unflagged again: deleting
+`.super-deploy` to rebuild `dev` loses it, and `dev` needs flagging again.
+(`rebuild` keeps it.) `status` shows a flagged target as `(disposable)`.
+
+Four commands change a target outside the normal draft-finalize-deploy
+path:
 
 - **`disposable --target X --set yes|no`** flags target `X` as disposable,
   or not. The flag lives in the target itself, in its history schema
@@ -898,12 +1008,15 @@ draft-finalize-deploy path:
   throwaway replica of the recorded migrations), up to 10 objects. Objects
   in other schemas that depend on the managed schema are dropped too:
   a view on a managed table, a foreign key to one, a column of a managed
-  type (with its data). The confirmation lists each of them under "Also
+  type, a table inheriting from a managed table or typed with a managed
+  composite type (those two with their data). The confirmation lists each of them under "Also
   drops, outside schema ...", and if that list changes while it waits for
   `YES`, rebuild refuses without changing anything. It refuses before
   asking when the managed schema holds something the deploy role can't
   drop, such as an extension a superuser installed or a member of an
-  extension installed in another schema, naming each object and its owner. The managed schema itself stays, with its owner, grants and
+  extension installed in another schema, naming each object and its owner.
+  PostgreSQL can't give an extension another owner, so have its owner or a
+  superuser drop it (`DROP EXTENSION ... CASCADE`). The managed schema itself stays, with its owner, grants and
   default privileges. Then it deletes the target's record of migrations and of any
   deployed draft, and runs migrations 1 to N as a deployment does, each as
   its newest Recovery if it has one; the confirmation and the result name
