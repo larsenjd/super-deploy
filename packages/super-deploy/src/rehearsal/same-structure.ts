@@ -5,34 +5,54 @@
 import type { Session } from "../adapters/types.ts";
 import { differ } from "../differ/index.ts";
 import { SuperDeployError } from "../errors.ts";
-import { catalogDifferences } from "../verification/catalog.ts";
+import { catalogDifferences, factLine } from "../verification/catalog.ts";
 
 /** The differ's name without its npm scope, e.g. `pg-delta`, to label its lines. */
 const differLabel = differ.name.replace(/^@[^/]+\//, "");
 
+/** The words a catalog line found in only one of the two databases is shown with. */
+export interface ComparedSides {
+  readonly actual: string;
+  readonly expected: string;
+}
+
+export interface SameStructureOptions {
+  /** Replaces the draft rehearsal's opening of the message. */
+  readonly subject?: string;
+  /**
+   * Replaces `from the migrations` (`actual`, the replay) and `from the
+   * desired schema` (`expected`).
+   */
+  readonly sides?: ComparedSides;
+}
+
 /**
- * Throws RehearsalMismatchError, opening with `subject` (or the draft
- * rehearsal's default), listing the differ's statements that would turn
- * `actual` into `expected` and then the catalog comparison's lines.
+ * Throws RehearsalMismatchError, opening with `options.subject` (or the
+ * draft rehearsal's default), listing the differ's statements that would
+ * turn `actual` into `expected` and then the catalog comparison's lines.
  */
 export async function requireSameStructure(
   actual: Session,
   expected: Session,
   managedSchema: string,
-  subject?: string,
+  options: SameStructureOptions = {},
 ): Promise<void> {
+  const sides = options.sides ?? {
+    actual: "from the migrations",
+    expected: "from the desired schema",
+  };
   const differences = [
     ...(await differ.diff(actual, expected)).map(
       (statement) => `${differLabel}: ${statement.sql}`,
     ),
     ...(await catalogDifferences(actual, expected, managedSchema)).map(
-      (line) => `catalog: ${line}`,
+      ({ side, fact }) => `catalog: ${sides[side]}: ${factLine(fact)}`,
     ),
   ];
   if (differences.length > 0) {
     throw new RehearsalMismatchError(
       differences,
-      subject === undefined ? {} : { subject },
+      options.subject === undefined ? {} : { subject: options.subject },
     );
   }
 }
@@ -42,8 +62,10 @@ export async function requireSameStructure(
  * (or, in a deployment rehearsal, the pending migrations did not produce the
  * newest migration's desired-schema snapshot).
  * Each difference is one line, prefixed with the check that found it:
- * `pg-delta: <statement still needed>` or `catalog: - <line only in the
- * rehearsal>` / `catalog: + <line only in the desired schema>`.
+ * `pg-delta: <statement still needed>`, or `catalog: from the migrations:
+ * <line only in the replay>` / `catalog: from the desired schema: <line
+ * only in the desired schema>` (a Recovery's rehearsal: `from the Recovery`
+ * / `from the original migration`).
  */
 export class RehearsalMismatchError extends SuperDeployError {
   readonly code = "rehearsal-mismatch";

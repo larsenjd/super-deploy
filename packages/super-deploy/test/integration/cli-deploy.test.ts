@@ -147,13 +147,13 @@ describe("deploy and status", () => {
     );
   });
 
-  test("status lists the drifted objects and exits 1; deploy refuses with exit code 1", async () => {
+  test("status lists the drifted objects, saying which side each line is on, and exits 1; deploy refuses with exit code 1", async () => {
     const { config, database } = deployConfig(server);
     const dir = await createTestProject({
       config,
       files: {
         "data-model/desired-schema/customers.sql":
-          "create table customers (id bigint primary key, name text not null);\n",
+          "create table customers (id bigint primary key, name text not null);\ncreate index customers_name_idx on customers (name);\n",
       },
     });
     for (const args of [
@@ -164,7 +164,9 @@ describe("deploy and status", () => {
       expect((await runCli(args, { cwd: dir.root })).exitCode).toBe(0);
     }
     await server.query(
-      "alter table customers add column note text",
+      `drop index customers_name_idx;
+       alter table customers alter column name type varchar(100);
+       alter table customers add column note text;`,
       [],
       database,
     );
@@ -174,10 +176,23 @@ describe("deploy and status", () => {
     });
     expect(report.exitCode).toBe(1);
     expect(report.stdout).toMatch(
-      /^Target dev: 1 migration recorded, 0 pending\nDrift \(the target differs from its recorded migrations\):\n {2}extra: column note of table customers\n {4}- column: customers\.note text notnull=false .*\nRecent attempts:\n/,
+      new RegExp(
+        [
+          "^Target dev: 1 migration recorded, 0 pending",
+          "Drift \\(the target differs from its recorded migrations\\):",
+          " {2}column name of table public\\.customers:",
+          " {4}on the target: column: customers\\.name character varying\\(100\\) notnull=true .*",
+          " {4}expected by migrations: column: customers\\.name text notnull=true .*",
+          " {2}column note of table public\\.customers:",
+          " {4}only on the target: column: customers\\.note text notnull=false .*",
+          " {2}index public\\.customers_name_idx:",
+          " {4}missing from the target: index: CREATE INDEX customers_name_idx ON public\\.customers .*",
+          "Recent attempts:\n",
+        ].join("\n"),
+      ),
     );
     const drifted =
-      "Error: Target dev has drifted from its recorded migrations: column note of table customers (extra). Deployments refuse until it matches them again";
+      "Error: Target dev has drifted from its recorded migrations: column name of table public.customers (changed), column note of table public.customers (only on the target), index public.customers_name_idx (missing from the target). Deployments refuse until it matches them again";
     // status has just listed the differences: it doesn't point to itself.
     expect(report.stderr).toBe(`${superuserWarning}${drifted}\n`);
 

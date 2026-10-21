@@ -165,14 +165,18 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
     });
 
     const shown = await terminal.waitFor(
-      "Error: Target dev does not match a replica of its migrations up to 00002-add-orders: column note of table orders (missing), index notes_pkey (extra), table notes (extra). Nothing was recorded",
+      "Error: Target dev does not match a replica of its migrations up to 00002-add-orders: column note of table public.orders (missing from the target), index public.notes_pkey (only on the target), table public.notes (only on the target). Nothing was recorded",
     );
     expect(await terminal.exited).toBe(1);
     expect(shown).toContain(
       "The target differs from a replica of its migrations up to 00002-add-orders:",
     );
-    expect(shown).toContain("missing: column note of table orders");
-    expect(shown).toContain("extra: table notes");
+    expect(shown).toMatch(
+      /^ {2}column note of table public\.orders:\r?\n {4}missing from the target: column: orders\.note text /m,
+    );
+    expect(shown).toMatch(
+      /^ {2}table public\.notes:\r?\n {4}only on the target: relation: r notes /m,
+    );
     expect(shown).not.toContain("Type YES");
     expect(await recordedMigrations(database)).toEqual([
       { number: 1, recorded_how: "deployed", recovery: null, attempt: 1 },
@@ -288,7 +292,7 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
     await server.query("alter table orders drop column note", [], database);
     terminal.type(`YES${keys.enter}`);
     await terminal.waitFor(
-      "Error: Target dev does not match a replica of its migrations up to 00002-add-orders: column note of table orders (missing)",
+      "Error: Target dev does not match a replica of its migrations up to 00002-add-orders: column note of table public.orders (missing from the target)",
     );
     expect(await terminal.exited).toBe(1);
     expect(await recordedMigrations(database)).toEqual([

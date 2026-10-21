@@ -71,7 +71,9 @@ describe("rehearse", () => {
       'pg-delta: ALTER TABLE "public"."customers" ADD COLUMN "email" text;',
     );
     expect(differences).toContainEqual(
-      expect.stringMatching(/^catalog: \+ column: customers\.email text /),
+      expect.stringMatching(
+        /^catalog: from the desired schema: column: customers\.email text /,
+      ),
     );
     expect(await server.databases()).toEqual(before);
   });
@@ -90,8 +92,8 @@ describe("rehearse", () => {
 
     expect(error).toBeInstanceOf(RehearsalMismatchError);
     expect((error as RehearsalMismatchError).differences).toEqual([
-      "catalog: - constraint: customers customers_name_not_null n NOT NULL name deferrable=false deferred=false validated=true",
-      "catalog: + constraint: customers customers_name_required n NOT NULL name deferrable=false deferred=false validated=true",
+      "catalog: from the migrations: constraint: customers customers_name_not_null n NOT NULL name deferrable=false deferred=false validated=true",
+      "catalog: from the desired schema: constraint: customers customers_name_required n NOT NULL name deferrable=false deferred=false validated=true",
     ]);
   });
 
@@ -117,10 +119,18 @@ describe("rehearse", () => {
 
     expect(error).toBeInstanceOf(RehearsalMismatchError);
     expect((error as RehearsalMismatchError).differences).toEqual([
-      expect.stringMatching(/^catalog: - column: size\.height .* position=2$/),
-      expect.stringMatching(/^catalog: - column: size\.width .* position=1$/),
-      expect.stringMatching(/^catalog: \+ column: size\.height .* position=1$/),
-      expect.stringMatching(/^catalog: \+ column: size\.width .* position=2$/),
+      expect.stringMatching(
+        /^catalog: from the migrations: column: size\.height .* position=2$/,
+      ),
+      expect.stringMatching(
+        /^catalog: from the migrations: column: size\.width .* position=1$/,
+      ),
+      expect.stringMatching(
+        /^catalog: from the desired schema: column: size\.height .* position=1$/,
+      ),
+      expect.stringMatching(
+        /^catalog: from the desired schema: column: size\.width .* position=2$/,
+      ),
     ]);
   });
 
@@ -183,8 +193,8 @@ comment on column t.b is 'bee';
     expect(error).toBeInstanceOf(RehearsalMismatchError);
     expect((error as RehearsalMismatchError).differences).toEqual(
       expect.arrayContaining([
-        "catalog: - comment: pg_class customers.name Full name",
-        "catalog: + comment: pg_class customers.name Display name",
+        "catalog: from the migrations: comment: pg_class customers.name Full name",
+        "catalog: from the desired schema: comment: pg_class customers.name Display name",
       ]),
     );
   });
