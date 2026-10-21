@@ -584,18 +584,6 @@ const pausingAdapter = `{
 }`;
 
 /** Makes the next deployment through `pausingAdapter` wait at COMMIT until released. */
-/**
- * Deploys migration 1 (customers) to a target configured with `target`, then
- * deploys migration 2 (an ALTER TABLE on customers) while another session
- * holds ACCESS SHARE on customers: the drift check can still read the
- * table's definition, but the ALTER TABLE has to wait. Returns what the
- * second deploy threw, once the lock is released.
- */
-/**
- * Deploys a second migration to `dev` (its config's target settings spliced
- * from `target`) while a test session holds a lock on customers; `before`
- * runs first, e.g. to change the target database's settings.
- */
 /** How many sessions on `database` are waiting for a lock. */
 async function waitingForLocks(database: string): Promise<number> {
   const [row] = await server.query<{ count: number }>(
@@ -605,15 +593,18 @@ async function waitingForLocks(database: string): Promise<number> {
   return row?.count ?? 0;
 }
 
-async function deployWhileCustomersLocked(
-  target: string,
-  before?: (database: string) => Promise<unknown>,
-) {
-  const { dir, project, database } = await deployProject(
+/**
+ * A `dev` target (its config's target settings spliced from `target`) at
+ * migration 1, which creates customers, with migration 2, adding a column
+ * to it, pending.
+ */
+async function emailPending(target: string) {
+  const deployed = await deployProject(
     server,
     { "customers.sql": customers },
     { target },
   );
+  const { dir, project } = deployed;
   await finalizeMigration(project, "add customers");
   await deploy(project, { target: "dev" });
   await dir.write(
@@ -624,6 +615,22 @@ async function deployWhileCustomersLocked(
     ),
   );
   await finalizeMigration(project, "add email");
+  return deployed;
+}
+
+/**
+ * Deploys migration 1 (customers) to a target configured with `target`, then
+ * deploys migration 2 (an ALTER TABLE on customers) while another session
+ * holds ACCESS SHARE on customers: the drift check can still read the
+ * table's definition, but the ALTER TABLE has to wait. Returns what the
+ * second deploy threw, once the lock is released. `before` runs before the
+ * lock is taken, e.g. to change the target database's settings.
+ */
+async function deployWhileCustomersLocked(
+  target: string,
+  before?: (database: string) => Promise<unknown>,
+) {
+  const { project, database } = await emailPending(target);
   await before?.(database);
   const holder = await testSession(server, database);
   try {
@@ -738,21 +745,7 @@ describe("the target lock", () => {
   });
 
   test("the refusal names the holder's server process, what it is running since when, and how to end it", async () => {
-    const { dir, project, database } = await deployProject(
-      server,
-      { "customers.sql": customers },
-      { target: 'lockTimeout: "20s",' },
-    );
-    await finalizeMigration(project, "add customers");
-    await deploy(project, { target: "dev" });
-    await dir.write(
-      "data-model/desired-schema/customers.sql",
-      customers.replace(
-        "name text not null",
-        "name text not null,\n  email text",
-      ),
-    );
-    await finalizeMigration(project, "add email");
+    const { project, database } = await emailPending('lockTimeout: "20s",');
     // The first deployment's ALTER TABLE waits for this lock, active.
     const blocker = await testSession(server, database);
     let first: Promise<unknown> | undefined;
@@ -841,21 +834,7 @@ describe("the target lock", () => {
   });
 
   test("status and the lock refusal name the session a holding deployment waits on for a lock", async () => {
-    const { dir, project, database } = await deployProject(
-      server,
-      { "customers.sql": customers },
-      { target: 'lockTimeout: "20s",' },
-    );
-    await finalizeMigration(project, "add customers");
-    await deploy(project, { target: "dev" });
-    await dir.write(
-      "data-model/desired-schema/customers.sql",
-      customers.replace(
-        "name text not null",
-        "name text not null,\n  email text",
-      ),
-    );
-    await finalizeMigration(project, "add email");
+    const { project, database } = await emailPending('lockTimeout: "20s",');
     const holder = await testSession(server, database);
     let deploying: Promise<unknown> | undefined;
     try {
