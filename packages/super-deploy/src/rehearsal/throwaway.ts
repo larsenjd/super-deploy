@@ -9,7 +9,7 @@ import type {
 } from "../adapters/types.ts";
 import { AdapterError } from "../adapters/types.ts";
 import { quoteIdentifier } from "../deploy/history.ts";
-import { SuperDeployError } from "../errors.ts";
+import { errorReason, SuperDeployError } from "../errors.ts";
 import type { ParsedStatement } from "../sql-analysis/index.ts";
 import {
   externalSchemasBoundAtCreate,
@@ -219,10 +219,12 @@ export async function adapterCall<T>(
     if (error instanceof SuperDeployError) {
       throw error;
     }
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new AdapterError(`${adapter} failed to ${action}: ${reason}`, {
-      cause: error,
-    });
+    throw new AdapterError(
+      `${adapter} failed to ${action}: ${errorReason(error)}`,
+      {
+        cause: error,
+      },
+    );
   }
 }
 

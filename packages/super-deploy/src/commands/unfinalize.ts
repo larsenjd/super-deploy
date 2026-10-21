@@ -13,12 +13,15 @@
 // is newer than it, so that is what goes back (into a Recovery draft; the
 // desired schema is left alone). `recoveryOf: N` picks migration N's newest
 // Recovery instead, for a Recovery of an older migration.
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Project } from "../project.ts";
 import { acknowledgeOverwrite, type OverwriteOptions } from "../questions.ts";
 import { restoreFromSnapshot } from "../store/desired-schema.ts";
-import { writeDraftMetadata } from "../store/draft.ts";
+import {
+  writeDraftMetadata,
+  writeRecoverySchemaChange,
+} from "../store/draft.ts";
 import { desiredSchemaHash } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
@@ -33,7 +36,6 @@ import {
   readHashedFiles,
   readIndex,
   recoveriesFolderName,
-  schemaChangeFileName,
   snapshotFolderName,
   UnknownMigrationError,
   writeFiles,
@@ -177,10 +179,7 @@ async function unfinalizeRecovery(
   await rm(paths.draft, { recursive: true, force: true });
   await mkdir(paths.draft, { recursive: true });
   await writeFiles(paths.draft, files);
-  await writeFile(
-    paths.draftSchemaChange,
-    await readFile(join(migration.path, schemaChangeFileName)),
-  );
+  await writeRecoverySchemaChange(paths, migration);
   await writeDraftMetadata(paths, {
     name: migration.name,
     recoveryOf: migration.number,
