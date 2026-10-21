@@ -122,7 +122,7 @@ export function historyTable(
 }
 
 /** The tables a history schema holds, by which super-deploy knows it as its own. */
-export const historyTables = [
+const historyTables = [
   "migrations",
   "attempts",
   "settings",
