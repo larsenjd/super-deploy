@@ -3,8 +3,10 @@
 // migrations can alter and drop what earlier ones created. Ownership is never
 // managed or compared (drift ignores it), only checked: the deploy pre-flight
 // (deploy, deploy-draft, status), `mark` before asking YES and `init --adopt`
-// before reading the target refuse a managed schema, or an object in it,
-// whose owner the deploy role doesn't have the privileges of. Without the
+// (in its one refusal, with everything unsupported) refuse a managed schema,
+// or an object in it, whose owner the deploy role doesn't have the
+// privileges of. Refusals list each object with its owner, then the fixes
+// as a script a DBA can paste into psql (`notOwnedDetails`). Without the
 // check such a target fails with "must be owner" partway through a deploy.
 //
 // "Has the privileges of" is `pg_has_role(current_user, owner, 'USAGE')`,
@@ -31,6 +33,7 @@
 
 import type { Session } from "../adapters/types.ts";
 import { plural, SuperDeployError } from "../errors.ts";
+import type { ObjectAddress } from "../verification/catalog.ts";
 
 /** A managed-schema object (or the managed schema) the deploy role doesn't own. */
 export interface NotOwnedObject {
@@ -121,7 +124,19 @@ export async function objectsNotOwned(
   session: Session,
   managedSchema: string,
 ): Promise<NotOwnedObject[]> {
+  return (await objectsNotOwnedAt(session, managedSchema)).map(
+    ({ notOwned }) => notOwned,
+  );
+}
+
+/** `objectsNotOwned`, each with its catalog address (oids as text). */
+export async function objectsNotOwnedAt(
+  session: Session,
+  managedSchema: string,
+): Promise<{ notOwned: NotOwnedObject; address: ObjectAddress }[]> {
   const { rows } = await session.query<{
+    class: string;
+    oid: string;
     kind: string;
     name: string;
     owner: string;
@@ -129,7 +144,8 @@ export async function objectsNotOwned(
   }>(
     `WITH s AS (SELECT oid, nspname, nspowner FROM pg_catalog.pg_namespace WHERE nspname = $1),
      owned AS (${ownedObjectsQuery})
-     SELECT kind, name, pg_catalog.pg_get_userbyid(owner) AS owner,
+     SELECT class::oid::text AS class, oid::text AS oid, kind, name,
+            pg_catalog.pg_get_userbyid(owner) AS owner,
             pg_catalog.quote_ident(current_user) AS deploy_role
        FROM owned
       WHERE NOT pg_catalog.pg_has_role(current_user, owner, 'USAGE')
@@ -138,11 +154,16 @@ export async function objectsNotOwned(
       ORDER BY kind <> 'SCHEMA', kind COLLATE "C", name COLLATE "C"`,
     [managedSchema],
   );
-  return rows.map(({ kind, name, owner, deploy_role }) => ({
-    object: `${kind.toLowerCase()} ${name}`,
-    owner,
-    fix: `ALTER ${kind} ${name} OWNER TO ${deploy_role}`,
-  }));
+  return rows.map(
+    ({ class: classId, oid, kind, name, owner, deploy_role }) => ({
+      notOwned: {
+        object: `${kind.toLowerCase()} ${name}`,
+        owner,
+        fix: `ALTER ${kind} ${name} OWNER TO ${deploy_role}`,
+      },
+      address: { class: classId, obj: oid, sub: 0 },
+    }),
+  );
 }
 
 /**
@@ -202,7 +223,7 @@ export function notOwnedMessage(notOwned: NotOwnedObject): string {
 }
 
 /** `The deploy role on target <target> doesn't own <n> objects in the managed schema`. */
-export function notOwnedHeadline(
+function notOwnedHeadline(
   target: string,
   objects: readonly NotOwnedObject[],
 ): string {
@@ -210,9 +231,9 @@ export function notOwnedHeadline(
 }
 
 /**
- * The objects as lines for people, the way the CLI prints a refusal: each
- * object with its owner, then every fix as a script a DBA can paste into
- * psql as it is (one statement per line, each ending in `;`).
+ * The objects as lines for people, the way the CLI prints a refusal: the
+ * headline, then each object with its owner. `notOwnedFixer` says who can
+ * run their fixes (`fixScript`).
  */
 export function notOwnedListing(
   target: string,
@@ -221,14 +242,31 @@ export function notOwnedListing(
   return [
     `${notOwnedHeadline(target, objects)}:`,
     ...objects.map(({ object, owner }) => `  ${object} (owned by ${owner})`),
+  ];
+}
+
+/** Who may run the fixes of objects the deploy role doesn't own. */
+export const notOwnedFixer = "a superuser or as each object's owner";
+
+/** `notOwnedListing`, then the objects' fixes as a script. */
+export function notOwnedDetails(
+  target: string,
+  objects: readonly NotOwnedObject[],
+): string[] {
+  return [
+    ...notOwnedListing(target, objects),
     ...fixScript(
-      "a superuser or as each object's owner",
+      notOwnedFixer,
       objects.map(({ fix }) => fix),
     ),
   ];
 }
 
-/** `statements` as a script under a line saying who must run it. */
+/**
+ * `statements` as a script under a line saying who must run it, the way
+ * the CLI prints fixes: one statement per line, each ending in `;`, so a
+ * DBA can paste it into psql as it is.
+ */
 export function fixScript(
   who: string,
   statements: readonly string[],
@@ -255,9 +293,9 @@ export async function requireOwnership(
 }
 
 /**
- * `mark` or `init --adopt` refused: the managed schema, or an object in it,
- * belongs to a role the deploy role isn't a member of, so a later migration
- * would fail with "must be owner". Nothing was recorded or written.
+ * `mark` refused: the managed schema, or an object in it, belongs to a role
+ * the deploy role isn't a member of, so a later migration would fail with
+ * "must be owner". Nothing was recorded.
  */
 export class NotOwnedError extends SuperDeployError {
   readonly code = "not-owned";
@@ -278,7 +316,7 @@ export class NotOwnedError extends SuperDeployError {
     );
     this.target = target;
     this.objects = objects;
-    this.details = notOwnedListing(target, objects);
+    this.details = notOwnedDetails(target, objects);
     this.summary = `${notOwnedHeadline(target, objects)}, listed above`;
   }
 }

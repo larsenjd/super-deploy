@@ -361,9 +361,13 @@ nothing is written and every such object is listed: that includes a
 `SECURITY DEFINER` routine, objects owned by another role (see
 "Permissions"), and views, foreign keys, `LANGUAGE sql` functions and the
 like that reference an external schema (only PL/pgSQL bodies may). The
-refusal ends with what to do: change the target, declare a schema a
-PL/pgSQL body references in `externalSchemas`, or run adoption in a
-terminal to give override reasons (below). Grants,
+same list says whether the deploy role lacks `CREATE` on the database, and
+ends with the `ALTER ... OWNER TO` and `GRANT` statements that fix the
+ownership and `CREATE`, as a script to run as a superuser (an object that
+must be changed anyway isn't among them). The refusal ends with what to do:
+change the target, run those fixes, declare a schema a PL/pgSQL body
+references in `externalSchemas`, or run adoption in a terminal to give
+override reasons (below). Grants,
 policies and row-level security on the target stay
 as they are, left out of the desired schema; adoption says how many grants
 and policies it left.

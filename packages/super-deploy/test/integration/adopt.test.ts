@@ -10,9 +10,7 @@ import {
   adopt,
   deploy,
   draft,
-  HistorySchemaNotCreatableError,
   MarkMismatchError,
-  NotOwnedError,
   type Override,
   type OverrideReasonQuestion,
   type Project,
@@ -701,7 +699,7 @@ describe("adopt", () => {
     }
   });
 
-  test("refuses a target whose table, view and function belong to another role, naming each, before rehearsing or writing anything, until the deploy role owns them", async () => {
+  test("refuses a target whose table, view and function belong to another role, naming each with its fix, writing nothing, until the deploy role owns them", async () => {
     const deployer = "adopt_owned_deployer";
     const admin = "adopt_owned_admin";
     const prod = await server.createDatabase(`
@@ -723,11 +721,13 @@ describe("adopt", () => {
         (e: unknown) => e,
       );
 
-      expect(error).toBeInstanceOf(NotOwnedError);
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
       expect(error).toMatchObject({
-        code: "not-owned",
+        code: "adopt-unsupported",
         target: "prod",
-        objects: [
+        objects: [],
+        historySchemaNotCreatable: undefined,
+        notOwned: [
           {
             object: "function app.widget_count()",
             owner: admin,
@@ -745,12 +745,17 @@ describe("adopt", () => {
           },
         ],
       });
+      expect((error as Error).message).toContain(
+        `table app.widgets is owned by ${admin}, whose privileges the deploy role doesn't have (fix: ALTER TABLE app.widgets OWNER TO ${deployer})`,
+      );
       expect(await server.databases()).toEqual(databases);
       expect(dir.exists("data-model/desired-schema")).toBe(false);
       expect(dir.exists("data-model/migrations")).toBe(false);
 
       await server.query(
-        (error as NotOwnedError).objects.map(({ fix }) => fix).join(";\n"),
+        (error as AdoptUnsupportedError).notOwned
+          .map(({ fix }) => fix)
+          .join(";\n"),
         [],
         prod,
       );
@@ -762,7 +767,7 @@ describe("adopt", () => {
     }
   });
 
-  test("refuses a target whose deploy role can't create the history schema, naming the grant, before rehearsing or writing anything, until it can", async () => {
+  test("refuses a target whose deploy role can't create the history schema, naming the grant, writing nothing, until it can", async () => {
     const deployer = roleName("adopt_deployer");
     const prod = await server.createDatabase(`
       create role ${deployer} login password 'deployer';
@@ -772,17 +777,17 @@ describe("adopt", () => {
     `);
     const { dir, project } = await asDeployerProject(prod, deployer);
     try {
-      const databases = await server.databases();
-
       const error = await adopt(project, { target: "prod" }).catch(
         (e: unknown) => e,
       );
 
-      expect(error).toBeInstanceOf(HistorySchemaNotCreatableError);
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
       expect(error).toMatchObject({
-        code: "history-schema-not-creatable",
+        code: "adopt-unsupported",
         target: "prod",
-        finding: {
+        objects: [],
+        notOwned: [],
+        historySchemaNotCreatable: {
           role: deployer,
           database: prod,
           historySchema: "deployment_history",
@@ -792,11 +797,107 @@ describe("adopt", () => {
       expect((error as Error).message).toContain(
         `the deploy role ${deployer} needs CREATE on database ${prod} to create the history schema "deployment_history"`,
       );
-      expect(await server.databases()).toEqual(databases);
       expect(dir.exists("data-model/desired-schema")).toBe(false);
       expect(dir.exists("data-model/migrations")).toBe(false);
 
-      await server.query((error as HistorySchemaNotCreatableError).finding.fix);
+      await server.query(
+        (error as AdoptUnsupportedError).historySchemaNotCreatable?.fix ?? "",
+      );
+      await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
+        migration: { folder: "00001-adopt" },
+      });
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses once for everything: objects owned by another role, CREATE on the database and what V1 doesn't support, listing an object that is both only as unsupported", async () => {
+    const deployer = roleName("adopt_deployer");
+    const other = roleName("adopt_other");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create role ${other} nologin;
+      create schema app authorization ${deployer};
+      grant usage, create on schema app to ${other};
+      set role ${deployer};
+      create unlogged table app.scratch (id bigint primary key, a int, b int);
+      set role ${other};
+      create table app.owned_by_other (id bigint primary key);
+      reset role;
+      create statistics app.scratch_stats (dependencies) on a, b from app.scratch;
+    `);
+    const { dir, project } = await asDeployerProject(prod, deployer);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const refusal = error as AdoptUnsupportedError;
+      expect(refusal.notOwned.map(({ object }) => object)).toEqual([
+        "table app.owned_by_other",
+      ]);
+      expect(refusal.historySchemaNotCreatable?.fix).toBe(
+        `GRANT CREATE ON DATABASE ${prod} TO ${deployer}`,
+      );
+      expect(refusal.objects.map(({ object }) => object)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("UNLOGGED"),
+          "statistics object app.scratch_stats",
+        ]),
+      );
+      expect(refusal.objects).toHaveLength(2);
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("reads a target whose schema and everything in it belong to a superuser, refusing once with every fix, and adopts once they are run", async () => {
+    const deployer = roleName("adopt_deployer");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create schema shop;
+      create domain shop.email as text constraint email_has_at check (value like '%@%');
+      create table shop.customers (id bigint generated always as identity primary key, email shop.email not null);
+      create view shop.customer_emails as select email from shop.customers;
+      create function shop.customer_count(since bigint) returns bigint language sql stable
+        as $$ select count(*) from shop.customers where id > since $$;
+    `);
+    const { project } = await deployProject(
+      server,
+      {},
+      {
+        settings: 'managedSchema: "shop",',
+        preamble: asDeployerPreamble(prod, deployer),
+        otherTargets: "prod: { adapter: asDeployer },",
+      },
+    );
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const refusal = error as AdoptUnsupportedError;
+      expect(refusal.objects).toEqual([]);
+      expect(refusal.notOwned.map(({ object }) => object)).toEqual([
+        "schema shop",
+        "domain shop.email",
+        "function shop.customer_count(since bigint)",
+        "table shop.customers",
+        "view shop.customer_emails",
+      ]);
+      expect(refusal.historySchemaNotCreatable).toBeDefined();
+
+      await server.query(
+        [
+          ...refusal.notOwned.map(({ fix }) => fix),
+          refusal.historySchemaNotCreatable?.fix,
+        ].join(";\n"),
+        [],
+        prod,
+      );
       await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
         migration: { folder: "00001-adopt" },
       });

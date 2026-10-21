@@ -8,10 +8,11 @@
 // super-deploy.config.ts) and still empty: no finalized migrations, no draft
 // and no desired-schema SQL files. The target must record no migrations and
 // have the managed schema (a missing one is almost always a mistyped
-// managedSchema; an existing empty one is adopted), and its deploy role must
+// managedSchema; an existing empty one is adopted). Its deploy role must
 // own that schema and everything in it (deploy/ownership.ts) and be able to
-// create the history schema if the target has none (deploy/preflight.ts),
-// all checked before anything is rehearsed.
+// create the history schema if the target has none (deploy/preflight.ts):
+// both are refused in step 2's one refusal, with everything unsupported, so
+// a DBA fixes everything in one round.
 //
 // Steps, and what each one guarantees:
 //   1. Read the target (never writing to it): pg-delta generates the
@@ -20,7 +21,13 @@
 //      desired-schema files (sql-analysis/adoption.ts). Grants, policies
 //      and row-level security stay on the target as they are and are never
 //      written (ADR-0006); the result counts the grants and policies.
-//   2. Refuse, listing everything at once, if anything there is unsupported:
+//      Reading needs no privilege on the managed schema (pg-delta and the
+//      catalog check read only the catalogs), so a target whose objects
+//      all belong to a superuser is read, and refused once, like any other.
+//   2. Refuse, listing everything at once, if the deploy role doesn't own
+//      something there (except what is refused as unsupported anyway: no
+//      one should re-own an object only to drop it) or can't create the
+//      history schema, or if anything there is unsupported:
 //      objects a desired schema can't create at all (the catalog check's
 //      `other` kind, an extension once for all its members; virtual
 //      generated columns, which pg-delta renders STORED; serial columns,
@@ -35,8 +42,9 @@
 //      object, never by a file that was never written). Nothing is written
 //      before this passes. The refusal's advice follows the rules broken:
 //      an undeclared schema in a PL/pgSQL body goes into externalSchemas,
-//      risk rules without the callback need a terminal, anything else needs
-//      the target changed.
+//      risk rules without the callback need a terminal, ownership and
+//      CREATE need the fixes it lists run as a superuser, anything else
+//      needs the target changed.
 //      Statements that break only risk rules (dynamic SQL, denylisted
 //      calls) are the exception when the caller answers override reasons
 //      (`overrideReason`): the checks treat them as marked, and once nothing
@@ -63,8 +71,19 @@ import {
 } from "../deploy/engine.ts";
 import { readRecordedMigrations, schemaExists } from "../deploy/history.ts";
 import { markNextPending, readMarkableMigrations } from "../deploy/mark.ts";
-import { requireOwnership } from "../deploy/ownership.ts";
-import { requireHistorySchemaCreatable } from "../deploy/preflight.ts";
+import {
+  fixScript,
+  type NotOwnedObject,
+  notOwnedFixer,
+  notOwnedListing,
+  notOwnedMessage,
+  objectsNotOwnedAt,
+} from "../deploy/ownership.ts";
+import {
+  type HistorySchemaNotCreatable,
+  historySchemaNotCreatable,
+  historySchemaNotCreatableMessage,
+} from "../deploy/preflight.ts";
 import {
   connectTarget,
   resolveTarget,
@@ -118,6 +137,8 @@ import {
   type CatalogFact,
   catalogFacts,
   isVirtualGeneratedColumn,
+  type ObjectAddress,
+  objectNames,
 } from "../verification/catalog.ts";
 import {
   type DriftChange,
@@ -178,11 +199,10 @@ export interface LeftOnTarget {
 
 /**
  * Refuses with UnknownTargetError, AdoptConflictError (the project or the
- * target isn't empty, or the target has no managed schema), NotOwnedError
- * (the deploy role doesn't own the managed schema or something in it),
- * HistorySchemaNotCreatableError (the target has no history schema and the
- * deploy role lacks CREATE on the database) or AdoptUnsupportedError
- * (listing everything V1 doesn't support) before writing anything.
+ * target isn't empty, or the target has no managed schema) or
+ * AdoptUnsupportedError (listing everything V1 doesn't support, what the
+ * deploy role doesn't own, and its lacking CREATE on the database for the
+ * history schema) before writing anything.
  */
 export async function adopt(
   project: Project,
@@ -311,11 +331,11 @@ async function readTarget(
       ]);
     }
     // Later migrations alter what is adopted: the deploy role must own it.
-    await requireOwnership(session, target.name, config.managedSchema);
-    // Marking creates the history schema, after everything is written.
-    await requireHistorySchemaCreatable(
+    // Marking creates the history schema, after everything is written. Both
+    // are refused together with everything unsupported, in one refusal.
+    const notOwned = await objectsNotOwnedAt(session, config.managedSchema);
+    const historySchema = await historySchemaNotCreatable(
       session,
-      target.name,
       config.historySchema,
     );
     // The differ reads definitions that wait for table locks: never longer
@@ -380,8 +400,25 @@ async function readTarget(
         reason: `It references ${externalSchemaExplanation(schemas)}`,
       })),
     );
-    if (unsupported.length > 0) {
-      throw new AdoptUnsupportedError(target.name, unsupported, needed);
+    const notOwnedSupported = await ownedIfSupported(
+      session,
+      notOwned,
+      unsupported,
+    );
+    if (
+      unsupported.length > 0 ||
+      notOwnedSupported.length > 0 ||
+      historySchema !== undefined
+    ) {
+      throw new AdoptUnsupportedError(
+        target.name,
+        {
+          objects: unsupported,
+          notOwned: notOwnedSupported,
+          historySchemaNotCreatable: historySchema,
+        },
+        needed,
+      );
     }
 
     const differences = await withThrowawayDatabase(
@@ -404,18 +441,24 @@ async function readTarget(
       }
       throw new AdoptUnsupportedError(
         target.name,
-        [refusedStatement(error, analysed.statements, config.managedSchema)],
+        {
+          objects: [
+            refusedStatement(error, analysed.statements, config.managedSchema),
+          ],
+        },
         needed,
       );
     });
     if (differences.length > 0) {
       throw new AdoptUnsupportedError(
         target.name,
-        differences.map((drifted) => ({
-          object: drifted.object,
-          rule: "not-reproduced",
-          reason: `${notReproduced[drifted.change]}: ${notReproducedLines(drifted)}`,
-        })),
+        {
+          objects: differences.map((drifted) => ({
+            object: drifted.object,
+            rule: "not-reproduced",
+            reason: `${notReproduced[drifted.change]}: ${notReproducedLines(drifted)}`,
+          })),
+        },
         needed,
       );
     }
@@ -427,6 +470,29 @@ async function readTarget(
   } finally {
     await session.close().catch(() => {});
   }
+}
+
+/**
+ * The objects the deploy role doesn't own, except those also refused as
+ * unsupported (named alike, as the catalog check names objects): nobody
+ * should give the deploy role an object only to drop it.
+ */
+async function ownedIfSupported(
+  session: Session,
+  notOwned: readonly { notOwned: NotOwnedObject; address: ObjectAddress }[],
+  unsupported: readonly UnsupportedObject[],
+): Promise<NotOwnedObject[]> {
+  if (notOwned.length === 0) {
+    return [];
+  }
+  const refused = new Set(unsupported.map(({ object }) => object));
+  const names = await objectNames(
+    session,
+    notOwned.map(({ address }) => address),
+  );
+  return notOwned
+    .filter((_, index) => !refused.has(names[index] ?? ""))
+    .map((item) => item.notOwned);
 }
 
 /**
@@ -847,15 +913,43 @@ export interface UnsupportedObject {
   readonly schemaToDeclare?: string;
 }
 
+/** Everything `init --adopt` refuses a target for, found without writing. */
+export interface AdoptRefusal {
+  /** What V1 doesn't support (or can't reproduce). */
+  readonly objects: readonly UnsupportedObject[];
+  /**
+   * The managed schema and the objects in it that the deploy role doesn't
+   * own, schema first; not those `objects` lists, which can't be adopted
+   * whoever owns them.
+   */
+  readonly notOwned?: readonly NotOwnedObject[];
+  /** The deploy role can't create the history schema marking needs. */
+  readonly historySchemaNotCreatable?: HistorySchemaNotCreatable | undefined;
+}
+
 /**
- * `init --adopt` found objects in the target's managed schema that V1
- * doesn't support (or can't reproduce); nothing was written anywhere.
+ * `init --adopt` refused the target, listing everything it found at once:
+ * objects in its managed schema that V1 doesn't support (or can't
+ * reproduce), objects the deploy role doesn't own, and the deploy role
+ * lacking CREATE on the database for the history schema. Nothing was
+ * written anywhere.
  */
 export class AdoptUnsupportedError extends SuperDeployError {
   readonly code = "adopt-unsupported";
   readonly target: string;
-  /** Every one found; never empty. */
+  /**
+   * What V1 doesn't support; empty when only the deploy role's ownership
+   * or CREATE on the database is refused.
+   */
   readonly objects: readonly UnsupportedObject[];
+  /**
+   * The managed schema and the objects in it whose owner the deploy role
+   * doesn't have the privileges of, each with its fix; never one `objects`
+   * lists.
+   */
+  readonly notOwned: readonly NotOwnedObject[];
+  /** The deploy role can't create the history schema; with the grant that fixes it. */
+  readonly historySchemaNotCreatable: HistorySchemaNotCreatable | undefined;
   /**
    * With an override-reason callback: the objects that break only risk
    * rules, whose reasons will be asked once nothing else is refused (they
@@ -871,12 +965,13 @@ export class AdoptUnsupportedError extends SuperDeployError {
 
   /**
    * The refusal as lines for people, the way the CLI prints it: every object
-   * with its rule and reason, then the override reasons still to be asked.
-   * `summary` follows them.
+   * with its rule and reason, the objects the deploy role doesn't own and
+   * what it lacks, the fixes for those as a script, then the override
+   * reasons still to be asked. `summary` follows them.
    */
   readonly details: readonly string[];
 
-  /** The message without the objects `details` lists: their count and the advice. */
+  /** The message without what `details` lists: how much, and the advice. */
   readonly summary: string;
 
   /**
@@ -885,18 +980,29 @@ export class AdoptUnsupportedError extends SuperDeployError {
    */
   constructor(
     target: string,
-    objects: readonly UnsupportedObject[],
+    refusal: AdoptRefusal,
     overridesNeeded?: readonly OverrideNeeded[],
   ) {
+    const { objects } = refusal;
+    const notOwned = refusal.notOwned ?? [];
+    const historySchema = refusal.historySchemaNotCreatable;
+    const fixes = [
+      ...notOwned.map(({ fix }) => fix),
+      ...(historySchema === undefined ? [] : [historySchema.fix]),
+    ];
+    const advice = adoptionAdvice(
+      objects,
+      overridesNeeded !== undefined,
+      fixes.length > 0,
+    );
+    const needed = overridesNeeded ?? [];
+    const things = `${plural(objects.length, "thing")} V1 doesn't support`;
+    const unsupported = `its managed schema has ${things}`;
     const shown = objects
       .slice(0, 5)
       .map((o) => o.object)
       .join("; ");
     const more = objects.length > 5 ? `; and ${objects.length - 5} more` : "";
-    const advice = adoptionAdvice(objects, overridesNeeded !== undefined);
-    const needed = overridesNeeded ?? [];
-    const things = `${plural(objects.length, "thing")} V1 doesn't support`;
-    const refused = `Cannot adopt target ${target}: its managed schema has ${things}`;
     const nothingWritten = `Nothing was written; ${advice.join("; ")}`;
     const later =
       needed.length === 0
@@ -904,32 +1010,93 @@ export class AdoptUnsupportedError extends SuperDeployError {
         : [
             `Once nothing else is refused, adoption will ask an override reason for ${plural(needed.length, "object")} that ${needed.length === 1 ? "breaks" : "break"} only risk rules: ${needed.map((item) => item.object).join(", ")}`,
           ];
-    super([`${refused}: ${shown}${more}`, nothingWritten, ...later].join(". "));
+    const reasons = [
+      ...(objects.length === 0 ? [] : [`${unsupported}: ${shown}${more}`]),
+      ...(notOwned.length === 0
+        ? []
+        : [
+            `the deploy role doesn't own everything in the managed schema: ${notOwned.map(notOwnedMessage).join("; ")}`,
+          ]),
+      ...(historySchema === undefined
+        ? []
+        : [historySchemaNotCreatableMessage(historySchema)]),
+    ];
+    const counted = [
+      ...(objects.length === 0 ? [] : [unsupported]),
+      ...(notOwned.length === 0
+        ? []
+        : [
+            `the deploy role doesn't own ${plural(notOwned.length, "object")} in the managed schema`,
+          ]),
+      ...(historySchema === undefined
+        ? []
+        : [
+            `${notOwned.length === 0 ? "the deploy role " : ""}lacks CREATE on the database`,
+          ]),
+    ];
+    super(
+      [
+        `Cannot adopt target ${target}: ${reasons.join("; ")}`,
+        nothingWritten,
+        ...later,
+      ].join(". "),
+    );
     this.target = target;
     this.objects = objects;
+    this.notOwned = notOwned;
+    this.historySchemaNotCreatable = historySchema;
     this.overridesNeeded = needed;
     this.advice = advice;
     this.details = [
-      `Target ${target} has ${things}:`,
-      ...objects.flatMap(({ object, rule, reason }) => [
-        `  ${object}`,
-        `    ${rule}: ${reason}`,
-      ]),
+      ...(objects.length === 0
+        ? []
+        : [
+            `Target ${target} has ${things}:`,
+            ...objects.flatMap(({ object, rule, reason }) => [
+              `  ${object}`,
+              `    ${rule}: ${reason}`,
+            ]),
+          ]),
+      ...(notOwned.length === 0 ? [] : notOwnedListing(target, notOwned)),
+      ...(historySchema === undefined
+        ? []
+        : [
+            `The deploy role ${historySchema.role} needs CREATE on database ${historySchema.database} to create the history schema "${historySchema.historySchema}"`,
+          ]),
+      ...(fixes.length === 0
+        ? []
+        : fixScript(
+            historySchema === undefined
+              ? notOwnedFixer
+              : notOwned.length === 0
+                ? "a superuser or as the database's owner"
+                : "a superuser",
+            fixes,
+          )),
       ...later,
     ];
-    this.summary = `${refused}, listed above. ${nothingWritten}`;
+    this.summary = `Cannot adopt target ${target}: ${listing(counted)}, listed above. ${nothingWritten}`;
   }
+}
+
+/** `a`, `a and b`, `a, b and c`. */
+function listing(parts: readonly string[]): string {
+  return parts.length <= 1
+    ? (parts[0] ?? "")
+    : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
 /**
  * The advice for a refusal, by the rules its objects break: a PL/pgSQL
  * body's reference to an undeclared schema needs it in externalSchemas; a
  * risk rule, without the override-reason callback (`askingOverrides`),
- * needs a terminal; anything else needs the target changed.
+ * needs a terminal; anything else needs the target changed. `fixes`: the
+ * deploy role's ownership or CREATE is refused, which a superuser fixes.
  */
 function adoptionAdvice(
   objects: readonly UnsupportedObject[],
   askingOverrides: boolean,
+  fixes: boolean,
 ): string[] {
   let changeTarget = false;
   let terminal = false;
@@ -946,6 +1113,7 @@ function adoptionAdvice(
   const changeTheTarget = "change the target first, then adopt again";
   const advice = [
     ...(changeTarget ? [changeTheTarget] : []),
+    ...(fixes ? ["run the fixes as a superuser"] : []),
     ...(schemas.size > 0
       ? [
           `declare ${[...schemas]
@@ -960,6 +1128,9 @@ function adoptionAdvice(
         ]
       : []),
   ];
+  if (advice.length === 1 && fixes) {
+    return ["run the fixes as a superuser, then adopt again"];
+  }
   return advice.length > 0 ? advice : [changeTheTarget];
 }
 

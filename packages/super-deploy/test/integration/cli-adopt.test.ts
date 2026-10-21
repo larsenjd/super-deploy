@@ -155,7 +155,7 @@ describe("init --adopt", () => {
         `  ALTER FUNCTION app.widget_named(wanted text, since bigint) OWNER TO ${deployer};`,
         `  ALTER TABLE app.widgets OWNER TO ${deployer};`,
         `  ALTER VIEW app.widget_names OWNER TO ${deployer};`,
-        "Error: The deploy role on target prod doesn't own 3 objects in the managed schema, listed above",
+        "Error: Cannot adopt target prod: the deploy role doesn't own 3 objects in the managed schema, listed above. Nothing was written; run the fixes as a superuser, then adopt again",
         "",
       ].join("\n"),
     );

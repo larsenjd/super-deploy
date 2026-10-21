@@ -238,21 +238,11 @@ export async function catalogFacts(
           read.push({ kind, key: addressKey(row), line: row.line });
         }
       }
-      // Described with the managed schema off the search path, so each
-      // object in it is named with its schema: pg_describe_object leaves
-      // out the schema of whatever the search path finds.
-      await session.execute("SET LOCAL search_path TO pg_catalog");
-      const described = await session.query<ObjectAddress & { object: string }>(
-        `select class::text as class, obj::text as obj, sub, pg_describe_object(class, obj, sub) as object
-         from unnest($1::oid[], $2::oid[], $3::int4[]) as address(class, obj, sub)`,
-        addressColumns([...new Set(read.map(({ key }) => key))]),
-      );
-      for (const row of described.rows) {
-        // A view's query is its _RETURN rule; name the view instead.
-        objects.set(
-          addressKey(row),
-          row.object.replace(/^rule _RETURN on /, ""),
-        );
+      for (const [key, object] of await describeObjects(
+        session,
+        read.map(({ key }) => key),
+      )) {
+        objects.set(key, object);
       }
     },
     [
@@ -269,8 +259,51 @@ export async function catalogFacts(
   return facts.sort((a, b) => compare(factLine(a), factLine(b)));
 }
 
-/** Where an object is in its database, as for pg_describe_object. */
-interface ObjectAddress {
+/**
+ * Each object's name, as the catalog facts name objects: pg_describe_object
+ * with only pg_catalog on the search path, so `table app.orders`,
+ * `function app.answer(integer)`. Read-only, in a transaction of its own.
+ */
+export async function objectNames(
+  session: Session,
+  addresses: readonly ObjectAddress[],
+): Promise<string[]> {
+  const keys = addresses.map(addressKey);
+  const names = await inTransaction(
+    session,
+    () => describeObjects(session, keys),
+    "BEGIN READ ONLY",
+  );
+  return keys.map((key) => names.get(key) ?? key);
+}
+
+/**
+ * Each address key's object description, in the transaction the session is
+ * in. Described with the managed schema off the search path, so each
+ * object in it is named with its schema: pg_describe_object leaves out the
+ * schema of whatever the search path finds.
+ */
+async function describeObjects(
+  session: Session,
+  keys: readonly string[],
+): Promise<Map<string, string>> {
+  await session.execute("SET LOCAL search_path TO pg_catalog");
+  const described = await session.query<ObjectAddress & { object: string }>(
+    `select class::text as class, obj::text as obj, sub, pg_describe_object(class, obj, sub) as object
+     from unnest($1::oid[], $2::oid[], $3::int4[]) as address(class, obj, sub)`,
+    addressColumns([...new Set(keys)]),
+  );
+  // A view's query is its _RETURN rule; name the view instead.
+  return new Map(
+    described.rows.map((row) => [
+      addressKey(row),
+      row.object.replace(/^rule _RETURN on /, ""),
+    ]),
+  );
+}
+
+/** Where an object is in its database, as for pg_describe_object: oids as text. */
+export interface ObjectAddress {
   readonly class: string;
   readonly obj: string;
   readonly sub: number;

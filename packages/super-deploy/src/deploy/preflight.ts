@@ -2,10 +2,10 @@
 // before any rehearsal, that catch what would otherwise fail mid-transaction
 // or weaken safety (spec "Deployment engine"):
 //   - the deploy role can create the history schema, if the target has none
-//     yet: it needs CREATE on the database. `withLockedTarget` and
-//     `init --adopt` refuse up front with HistorySchemaNotCreatableError
-//     (there is nowhere to log an attempt yet), so deploy never gets this
-//     far without it; `status` lists it with the others
+//     yet: it needs CREATE on the database. `withLockedTarget` refuses up
+//     front with HistorySchemaNotCreatableError (there is nowhere to log an
+//     attempt yet), so deploy never gets this far without it; `status`
+//     lists it with the others, and `init --adopt` in its one refusal
 //   - the deploy role owns the managed schema and everything in it, or is a
 //     member of their owner (deploy/ownership.ts)
 //   - the deploy role is not superuser and holds none of the predefined roles
@@ -38,7 +38,7 @@ import {
 } from "./history.ts";
 import {
   type NotOwnedObject,
-  notOwnedListing,
+  notOwnedDetails,
   notOwnedMessage,
   objectsNotOwned,
 } from "./ownership.ts";
@@ -435,7 +435,7 @@ export class PreflightFailedError extends SuperDeployError {
           ]),
       ...(findings.notOwned.length === 0
         ? []
-        : notOwnedListing(target, findings.notOwned)),
+        : notOwnedDetails(target, findings.notOwned)),
     ];
     this.summary = `Target ${target} failed the deploy pre-flight checks (${plural(refusals.length, "finding")}, listed above)`;
   }
