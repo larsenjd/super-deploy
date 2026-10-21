@@ -34,6 +34,12 @@
 //      Reading needs no privilege on the managed schema (pg-delta and the
 //      catalog check read only the catalogs), so a target whose objects
 //      all belong to a superuser is read, and refused once, like any other.
+//      The read runs under the target's lockTimeout and statementTimeout:
+//      one that runs out, anywhere in it, is TargetTimeoutError (saying
+//      nothing was written), never the differ's own error (which would name
+//      pg-delta). Interrupted, it
+//      ends at once: its server process is terminated (`terminatedOnAbort`),
+//      even while it waits for a lock.
 //   2. Refuse, listing everything at once, if the deploy role doesn't own
 //      something there (except what is refused as unsupported anyway: no
 //      one should re-own an object only to drop it) or can't create the
@@ -94,6 +100,7 @@ import {
   withLockedTarget,
 } from "../deploy/engine.ts";
 import { readRecordedMigrations } from "../deploy/history.ts";
+import { terminatedOnAbort } from "../deploy/interruptible-session.ts";
 import { markNextPending, readMarkableMigrations } from "../deploy/mark.ts";
 import {
   fixScript,
@@ -111,9 +118,12 @@ import {
   historySchemaNotCreatable,
   historySchemaNotCreatableMessage,
 } from "../deploy/preflight.ts";
+import { TargetTimeoutError } from "../deploy/session-ended.ts";
 import {
   connectTarget,
+  isTimeoutState,
   resolveTarget,
+  type TimeoutState,
   targetDatabaseRequest,
   targetTimeouts,
 } from "../deploy/target.ts";
@@ -367,6 +377,15 @@ async function requireEmptyProject(
   }
 }
 
+interface ReadTarget {
+  files: AdoptedFile[];
+  candidates: OverrideCandidate[];
+  leftOnTarget: LeftOnTarget;
+  dependentsOutside: string[];
+  objects: number;
+  warning: string | undefined;
+}
+
 /**
  * Steps 1 and 2: the desired-schema files for the target's managed schema,
  * without override markers, or AdoptUnsupportedError. Only reads the
@@ -380,225 +399,252 @@ async function readTarget(
   project: Project,
   target: ResolvedTarget,
   { withOverrides }: { withOverrides: boolean },
-): Promise<{
-  files: AdoptedFile[];
-  candidates: OverrideCandidate[];
-  leftOnTarget: LeftOnTarget;
-  dependentsOutside: string[];
-  objects: number;
-  warning: string | undefined;
-}> {
+): Promise<ReadTarget> {
   const { config } = project;
   const context: RuleContext = {
     managedSchema: config.managedSchema,
     externalSchemas: config.externalSchemas,
   };
   const session = await connectTarget(target, project.signal);
+  const close = await terminatedOnAbort(target, session, project.signal);
   try {
-    const recorded = await readRecordedMigrations(
-      session,
-      config.historySchema,
-    );
-    if (recorded.length > 0) {
-      const [first] = recorded;
-      const onlyAdoption =
-        recorded.length === 1 &&
-        first?.recordedHow === "marked" &&
-        first.number === 1 &&
-        first.name === migrationName;
-      throw new AdoptConflictError(target.name, [
-        `it already records ${plural(recorded.length, "migration")} in its history schema "${config.historySchema}"${onlyAdoption ? `, only its adoption (${startOver})` : ""}`,
-      ]);
-    }
-    const schemas = await userSchemas(session, config.historySchema);
-    const managed = schemas.find(
-      (schema) => schema.name === config.managedSchema,
-    );
-    if (managed === undefined) {
-      throw new AdoptConflictError(target.name, [
-        missingManagedSchema(config.managedSchema, schemas),
-      ]);
-    }
-    // Later migrations alter what is adopted: the deploy role must own it.
-    // Marking creates the history schema, after everything is written. Both
-    // are refused together with everything unsupported, in one refusal.
-    const notOwned = await objectsNotOwnedAt(session, config.managedSchema);
-    const foreign = await foreignHistorySchema(session, config.historySchema);
-    const historySchema = await historySchemaNotCreatable(
-      session,
-      config.historySchema,
-    );
-    // The differ reads definitions that wait for table locks: never longer
-    // than the target allows.
-    await session.execute(
-      targetTimeouts(target)
-        .map((statement) => statement.replace(/^SET LOCAL /, "SET "))
-        .join(";\n"),
-    );
-    const request = await targetDatabaseRequest(session);
-    const serials = await serialColumns(session, config.managedSchema);
-    const statements = await withThrowawayDatabase(
-      config.rehearsal,
-      request,
-      async (empty) => {
-        await ensureManagedSchema(empty, config.managedSchema);
-        return differ.diff(empty, session);
-      },
-    );
-    const files = await adoptedDesiredSchema(
-      statements.map((statement) => statement.sql),
-      {
-        managedSchema: config.managedSchema,
-        columnOrder: await columnOrder(session, config.managedSchema),
-        header: [
-          `Adopted from target ${target.name} by super-deploy init --adopt.`,
-          "This is the desired schema now: change it, then run draft.",
-        ],
-      },
-    );
+    return await readTargetOn(session, project, target, {
+      withOverrides,
+      context,
+    });
+  } catch (error) {
+    throwIfInterrupted(project.signal);
+    const timeout = timedOut(error);
+    throw timeout === undefined
+      ? error
+      : new TargetTimeoutError(target, timeout.sqlState, {
+          cause: timeout.error,
+          outsideLock: "init --adopt read the target's managed schema",
+        });
+  } finally {
+    await close();
+  }
+}
 
-    const found: Found[] = (
-      await catalogFacts(session, config.managedSchema, {
-        settings: targetTimeouts(target),
-      })
-    ).flatMap(unsupportedFact);
-    const serial = serialColumnFinding();
-    found.push(
-      ...serials.map(({ column }) => ({
-        object: `serial column ${column}`,
-        rule: serial.rule,
-        reason: serial.message,
-      })),
-    );
-    found.push(
-      ...(await viewColumnComments(session, config.managedSchema)).map(
-        ({ object, fix }) => {
-          const finding = viewColumnCommentFinding(
-            `; remove it on the target: ${fix}`,
-          );
-          return { object, rule: finding.rule, reason: finding.message };
-        },
-      ),
-    );
-    const candidates = await overrideCandidates(
-      sqlFiles(project, files),
-      context,
-    );
-    const overrides: OverridesToAsk = {
-      needed: overridesNeeded(candidates),
-      askable: withOverrides,
-    };
-    const analysed = await analyse(
-      project,
-      withCheckingMarkers(project, files, candidates),
-      context,
-      serials.map((serial) => serial.sequence),
-    );
-    found.push(...analysed.unsupported);
-    found.push(
-      ...(
-        await externalSchemaReferences(sqlFiles(project, files), context)
-      ).map(({ object, reference, schemas }) => ({
+/**
+ * PostgreSQL's error cancelling a statement for a lock (55P03) or statement
+ * (57014) timeout: `error` itself or one of its causes (the differ wraps
+ * what it gets in DifferError, whose message names pg-delta).
+ */
+function timedOut(
+  error: unknown,
+): { readonly error: Error; readonly sqlState: TimeoutState } | undefined {
+  for (let at = error; at instanceof Error; at = at.cause) {
+    const { code } = at as { code?: unknown };
+    if (isTimeoutState(code)) {
+      return { error: at, sqlState: code };
+    }
+  }
+  return undefined;
+}
+
+/** readTarget's work on its session to the target. */
+async function readTargetOn(
+  session: Session,
+  project: Project,
+  target: ResolvedTarget,
+  { withOverrides, context }: { withOverrides: boolean; context: RuleContext },
+): Promise<ReadTarget> {
+  const { config } = project;
+  const recorded = await readRecordedMigrations(session, config.historySchema);
+  if (recorded.length > 0) {
+    const [first] = recorded;
+    const onlyAdoption =
+      recorded.length === 1 &&
+      first?.recordedHow === "marked" &&
+      first.number === 1 &&
+      first.name === migrationName;
+    throw new AdoptConflictError(target.name, [
+      `it already records ${plural(recorded.length, "migration")} in its history schema "${config.historySchema}"${onlyAdoption ? `, only its adoption (${startOver})` : ""}`,
+    ]);
+  }
+  const schemas = await userSchemas(session, config.historySchema);
+  const managed = schemas.find(
+    (schema) => schema.name === config.managedSchema,
+  );
+  if (managed === undefined) {
+    throw new AdoptConflictError(target.name, [
+      missingManagedSchema(config.managedSchema, schemas),
+    ]);
+  }
+  // Later migrations alter what is adopted: the deploy role must own it.
+  // Marking creates the history schema, after everything is written. Both
+  // are refused together with everything unsupported, in one refusal.
+  const notOwned = await objectsNotOwnedAt(session, config.managedSchema);
+  const foreign = await foreignHistorySchema(session, config.historySchema);
+  const historySchema = await historySchemaNotCreatable(
+    session,
+    config.historySchema,
+  );
+  // The differ reads definitions that wait for table locks: never longer
+  // than the target allows.
+  await session.execute(
+    targetTimeouts(target)
+      .map((statement) => statement.replace(/^SET LOCAL /, "SET "))
+      .join(";\n"),
+  );
+  const request = await targetDatabaseRequest(session);
+  const serials = await serialColumns(session, config.managedSchema);
+  const statements = await withThrowawayDatabase(
+    config.rehearsal,
+    request,
+    async (empty) => {
+      await ensureManagedSchema(empty, config.managedSchema);
+      return differ.diff(empty, session);
+    },
+  );
+  const files = await adoptedDesiredSchema(
+    statements.map((statement) => statement.sql),
+    {
+      managedSchema: config.managedSchema,
+      columnOrder: await columnOrder(session, config.managedSchema),
+      header: [
+        `Adopted from target ${target.name} by super-deploy init --adopt.`,
+        "This is the desired schema now: change it, then run draft.",
+      ],
+    },
+  );
+
+  const found: Found[] = (
+    await catalogFacts(session, config.managedSchema, {
+      settings: targetTimeouts(target),
+    })
+  ).flatMap(unsupportedFact);
+  const serial = serialColumnFinding();
+  found.push(
+    ...serials.map(({ column }) => ({
+      object: `serial column ${column}`,
+      rule: serial.rule,
+      reason: serial.message,
+    })),
+  );
+  found.push(
+    ...(await viewColumnComments(session, config.managedSchema)).map(
+      ({ object, fix }) => {
+        const finding = viewColumnCommentFinding(
+          `; remove it on the target: ${fix}`,
+        );
+        return { object, rule: finding.rule, reason: finding.message };
+      },
+    ),
+  );
+  const candidates = await overrideCandidates(
+    sqlFiles(project, files),
+    context,
+  );
+  const overrides: OverridesToAsk = {
+    needed: overridesNeeded(candidates),
+    askable: withOverrides,
+  };
+  const analysed = await analyse(
+    project,
+    withCheckingMarkers(project, files, candidates),
+    context,
+    serials.map((serial) => serial.sequence),
+  );
+  found.push(...analysed.unsupported);
+  found.push(
+    ...(await externalSchemaReferences(sqlFiles(project, files), context)).map(
+      ({ object, reference, schemas }) => ({
         object,
         reference,
         rule: "outside-managed-schema",
         reason: `It references ${externalSchemaExplanation(schemas)}`,
-      })),
+      }),
+    ),
+  );
+  const unsupported = await namedOnTarget(session, config.managedSchema, found);
+  const notOwnedSupported = await ownedIfSupported(
+    session,
+    notOwned,
+    unsupported,
+  );
+  if (
+    unsupported.length > 0 ||
+    notOwnedSupported.length > 0 ||
+    foreign !== undefined ||
+    historySchema !== undefined
+  ) {
+    throw new AdoptUnsupportedError(
+      target.name,
+      {
+        objects: unsupported,
+        notOwned: notOwnedSupported,
+        foreignHistorySchema: foreign,
+        historySchemaNotCreatable: historySchema,
+      },
+      overrides,
     );
-    const unsupported = await namedOnTarget(
+  }
+
+  const differences = await withThrowawayDatabase(
+    config.rehearsal,
+    request,
+    async (desired) => {
+      await loadDesiredSchema(
+        desired,
+        analysed.statements,
+        config.managedSchema,
+        config.externalSchemas,
+      );
+      return driftBetween(session, desired, config.managedSchema, {
+        target,
+      });
+    },
+  ).catch(async (error: unknown) => {
+    if (!(error instanceof DesiredSchemaLoadError)) {
+      throw error;
+    }
+    throw new AdoptUnsupportedError(
+      target.name,
+      {
+        objects: await namedOnTarget(session, config.managedSchema, [
+          refusedStatement(error, analysed.statements, config.managedSchema),
+        ]),
+      },
+      overrides,
+    );
+  });
+  if (differences.length > 0) {
+    throw new AdoptUnsupportedError(
+      target.name,
+      {
+        objects: differences.map((drifted) => ({
+          object: drifted.object,
+          rule: "not-reproduced",
+          reason: `${notReproduced[drifted.change]}: ${notReproducedLines(drifted)}`,
+        })),
+      },
+      overrides,
+    );
+  }
+  if (!withOverrides && candidates.length > 0) {
+    throw new AdoptUnsupportedError(target.name, { objects: [] }, overrides);
+  }
+  const objects = objectCount(managed);
+  return {
+    files,
+    candidates,
+    leftOnTarget: await countLeftOnTarget(session, config.managedSchema),
+    dependentsOutside: await dependentsOutside(
       session,
       config.managedSchema,
-      found,
-    );
-    const notOwnedSupported = await ownedIfSupported(
-      session,
-      notOwned,
-      unsupported,
-    );
-    if (
-      unsupported.length > 0 ||
-      notOwnedSupported.length > 0 ||
-      foreign !== undefined ||
-      historySchema !== undefined
-    ) {
-      throw new AdoptUnsupportedError(
-        target.name,
-        {
-          objects: unsupported,
-          notOwned: notOwnedSupported,
-          foreignHistorySchema: foreign,
-          historySchemaNotCreatable: historySchema,
-        },
-        overrides,
-      );
-    }
-
-    const differences = await withThrowawayDatabase(
-      config.rehearsal,
-      request,
-      async (desired) => {
-        await loadDesiredSchema(
-          desired,
-          analysed.statements,
-          config.managedSchema,
-          config.externalSchemas,
-        );
-        return driftBetween(session, desired, config.managedSchema, {
-          target,
-        });
-      },
-    ).catch(async (error: unknown) => {
-      if (!(error instanceof DesiredSchemaLoadError)) {
-        throw error;
-      }
-      throw new AdoptUnsupportedError(
-        target.name,
-        {
-          objects: await namedOnTarget(session, config.managedSchema, [
-            refusedStatement(error, analysed.statements, config.managedSchema),
-          ]),
-        },
-        overrides,
-      );
-    });
-    if (differences.length > 0) {
-      throw new AdoptUnsupportedError(
-        target.name,
-        {
-          objects: differences.map((drifted) => ({
-            object: drifted.object,
-            rule: "not-reproduced",
-            reason: `${notReproduced[drifted.change]}: ${notReproducedLines(drifted)}`,
-          })),
-        },
-        overrides,
-      );
-    }
-    if (!withOverrides && candidates.length > 0) {
-      throw new AdoptUnsupportedError(target.name, { objects: [] }, overrides);
-    }
-    const objects = objectCount(managed);
-    return {
-      files,
-      candidates,
-      leftOnTarget: await countLeftOnTarget(session, config.managedSchema),
-      dependentsOutside: await dependentsOutside(
-        session,
-        config.managedSchema,
-        config.historySchema,
-      ),
-      objects,
-      warning:
-        objects === 0
-          ? emptyManagedSchemaWarning(
-              config.managedSchema,
-              schemas.filter((schema) => schema !== managed),
-            )
-          : undefined,
-    };
-  } finally {
-    await session.close().catch(() => {});
-  }
+      config.historySchema,
+    ),
+    objects,
+    warning:
+      objects === 0
+        ? emptyManagedSchemaWarning(
+            config.managedSchema,
+            schemas.filter((schema) => schema !== managed),
+          )
+        : undefined,
+  };
 }
 
 /**

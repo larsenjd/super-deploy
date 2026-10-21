@@ -12,13 +12,15 @@
 //   deploy-time SQL runner (rehearsal/replay.ts) passes these on unwrapped,
 //   since they are no refusal of the file, and a lost COMMIT is told apart
 //   by them (deploy/engine.ts, CommitOutcomeUnknownError).
+// - Lock (55P03) and statement (57014) timeouts outside a deploy-time file
+//   (the drift check, adoption's read before it takes the lock) become
+//   TargetTimeoutError, naming the target's setting and its value. Inside a
+//   file they stay SqlFileFailedError, told the target here so its next step
+//   quotes the same (deploy/target.ts, `timeoutRanOut`).
 //
 // A command that changes a target in autocommit (`disposable`'s one UPDATE)
 // is reported as having changed nothing if its session ends during that
 // statement, though the server may have run it.
-// - Lock (55P03) and statement (57014) timeouts outside a deploy-time file
-//   (the drift check, adoption's reads) become TargetTimeoutError, naming the
-//   target's setting. Inside a file they stay SqlFileFailedError.
 //
 // Only errors a target's own sessions threw are reported as the target's:
 // withLockedTarget traces both its sessions (`tracedSession`), so a
@@ -27,7 +29,7 @@
 // (`markRolledBack`), so the report says that transaction rolled back.
 
 import type { QueryResult, Session } from "../adapters/types.ts";
-import { durationText, type ResolvedTarget } from "../config/config.ts";
+import type { ResolvedTarget } from "../config/config.ts";
 import {
   errorReason,
   type SessionEnding,
@@ -36,7 +38,13 @@ import {
   sqlStateOf,
 } from "../errors.ts";
 import type { InterruptedRollback } from "../interruption.ts";
-import { unchangedTarget } from "../rehearsal/replay.ts";
+import { SqlFileFailedError, unchangedTarget } from "../rehearsal/replay.ts";
+import {
+  isTimeoutState,
+  type TargetTimeoutSettings,
+  type TimeoutState,
+  timeoutRanOut,
+} from "./target.ts";
 
 const fromTarget = new WeakSet<object>();
 const rolledBack = new WeakSet<object>();
@@ -90,14 +98,19 @@ export interface SessionRollback {
 /**
  * The error a command under the target lock reports for `error`: a traced
  * session ending as TargetSessionEndedError, a traced timeout as
- * TargetTimeoutError, anything else as it is. `rollback` is asked for only
- * when the session ended inside a deploy transaction.
+ * TargetTimeoutError, a failed deploy-time file told the target (so a
+ * timeout's next step quotes its settings, QA 145), anything else as it is.
+ * `rollback` is asked for only when the session ended inside a deploy
+ * transaction.
  */
 export async function targetFailure(
   error: unknown,
   target: ResolvedTarget,
   rollback: () => Promise<SessionRollback>,
 ): Promise<unknown> {
+  if (error instanceof SqlFileFailedError) {
+    return error.onTarget(target);
+  }
   if (typeof error !== "object" || error === null || !fromTarget.has(error)) {
     return error;
   }
@@ -109,14 +122,9 @@ export async function targetFailure(
     });
   }
   const sqlState = sqlStateOf(error);
-  if (sqlState === "55P03" || sqlState === "57014") {
-    return new TargetTimeoutError(
-      target,
-      sqlState === "55P03" ? "lockTimeout" : "statementTimeout",
-      { cause: error },
-    );
-  }
-  return error;
+  return isTimeoutState(sqlState)
+    ? new TargetTimeoutError(target, sqlState, { cause: error })
+    : error;
 }
 
 /**
@@ -164,9 +172,11 @@ export class TargetSessionEndedError extends SuperDeployError {
 }
 
 /**
- * Outside a deploy-time file (the drift check, adoption's reads of the
- * target), a statement on the target ran into a lock or statement timeout.
- * Nothing changed on the target.
+ * Outside a deploy-time file, a statement on the target ran into its lock or
+ * statement timeout: under the target lock (the drift check, the
+ * pre-flight), or in a read before it (`outsideLock`, init --adopt's read of
+ * the managed schema). Nothing changed on the target. The message words the
+ * timeout as every timeout message does (deploy/target.ts, `timeoutRanOut`).
  */
 export class TargetTimeoutError extends SuperDeployError {
   readonly code = "target-timeout";
@@ -175,31 +185,35 @@ export class TargetTimeoutError extends SuperDeployError {
   readonly setting: "lockTimeout" | "statementTimeout";
 
   constructor(
-    target: ResolvedTarget,
-    setting: "lockTimeout" | "statementTimeout",
-    options: ErrorOptions,
+    target: TargetTimeoutSettings,
+    sqlState: TimeoutState,
+    options: ErrorOptions & {
+      /**
+       * What the statement was part of when it ran outside the target lock,
+       * e.g. `init --adopt read the target's managed schema`: the message
+       * names it and says nothing was written, without pointing to
+       * `status`, which shows only the target lock's holder.
+       */
+      outsideLock?: string | undefined;
+    },
   ) {
-    const reason = errorReason(options.cause);
-    const name = target.name;
-    const where = `for target ${name} in super-deploy.config.ts`;
-    const statementTimeout = target.statementTimeoutMs;
+    const { name } = target;
+    const { what, next, blocker } = timeoutRanOut(target, sqlState);
+    const { outsideLock } = options;
     super(
       [
-        setting === "lockTimeout"
-          ? `Target ${name}'s lockTimeout (${durationText(target.lockTimeoutMs)}) ran out waiting for a lock (${reason}).`
-          : statementTimeout === undefined
-            ? `The server's statement_timeout for target ${name}'s deploy role cancelled a statement (${reason}).`
-            : `Target ${name}'s statementTimeout (${durationText(statementTimeout)}) cancelled a statement (${reason}).`,
-        `Nothing changed on target ${name}.`,
-        setting === "lockTimeout"
-          ? `Next: retry once whatever held the lock has finished, or raise lockTimeout ${where}.`
-          : statementTimeout === undefined
-            ? `Next: retry once whatever held it up has finished, or set statementTimeout ${where}, which overrides it.`
-            : `Next: retry once whatever held it up has finished, or raise statementTimeout ${where}.`,
-      ].join(" "),
+        `${what}${outsideLock === undefined ? "" : ` while ${outsideLock}`} (${errorReason(options.cause)}).`,
+        outsideLock === undefined
+          ? `Nothing changed on target ${name}.`
+          : `Nothing was written, to the project or to target ${name}.`,
+        `Next: ${next}.`,
+        outsideLock === undefined ? blocker : undefined,
+      ]
+        .filter((part) => part !== undefined)
+        .join(" "),
       options,
     );
     this.target = name;
-    this.setting = setting;
+    this.setting = sqlState === "55P03" ? "lockTimeout" : "statementTimeout";
   }
 }

@@ -339,6 +339,14 @@ attempt, its server process, and the statement it is running and since when. If 
 the deployment back and releases the lock. Cancelling only its statement
 (`pg_cancel_backend`) isn't enough: the lock belongs to the session.
 
+A deployment that waits for a lock another session holds on a table (a
+long transaction, a `VACUUM FULL`) shows in `status` as `waiting for a lock
+held by server process N`, with that session's application name, user, state
+and statement. If the wait outlasts `lockTimeout`, the deployment rolls back
+and says so, quoting the target's `lockTimeout`; run `status` during the next
+wait to see the session, or query `pg_stat_activity` for
+`pg_blocking_pids(<server process>)`.
+
 ### Adding a real target
 
 A real target connects to an existing PostgreSQL 18 server with
@@ -899,8 +907,9 @@ migrations in the same deployment are rolled back too.
 If the target's session ends instead (an administrator's
 `pg_terminate_backend`, a server shutdown, a lost connection), or a lock or
 statement timeout runs out while super-deploy reads the target before
-deploying, the error says so, names the target, and says it is unchanged:
-nothing had changed yet, or the deployment rolled back. Retry once the
+deploying, the error says so, names the target (and, for a timeout, the
+setting and its value), and says it is unchanged: nothing had changed yet,
+or the deployment rolled back. Retry once the
 target is reachable; if the session was ended on purpose, find out why
 first. Only a connection lost during the final COMMIT leaves the outcome
 unknown: the next `status` or `deploy` settles it.

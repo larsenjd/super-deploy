@@ -680,8 +680,9 @@ describe("a target session that ends before the command finishes", () => {
 
     expect(error).toBeInstanceOf(TargetTimeoutError);
     const { message } = error as TargetTimeoutError;
-    expect(message).toContain("lockTimeout (200ms)");
-    expect(message).toContain("target dev");
+    expect(message).toContain(
+      "Target dev's lockTimeout (200ms) ran out waiting for a lock",
+    );
     expect(message).toContain("Nothing changed on target dev.");
   });
 

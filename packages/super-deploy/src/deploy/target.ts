@@ -29,7 +29,11 @@
 
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
 import { AdapterError } from "../adapters/types.ts";
-import type { ResolvedTarget } from "../config/config.ts";
+import {
+  durationText,
+  type ResolvedTarget,
+  targetDefaults,
+} from "../config/config.ts";
 import { SuperDeployError } from "../errors.ts";
 import type { GuardedCommand, TargetView } from "../guard/guard.ts";
 import { InterruptedError } from "../interruption.ts";
@@ -55,6 +59,65 @@ export function targetTimeouts(target: ResolvedTarget): string[] {
       ? []
       : [`SET LOCAL statement_timeout TO '${target.statementTimeoutMs}ms'`]),
   ];
+}
+
+/** A target's lock and statement timeouts, as messages about them need them. */
+export type TargetTimeoutSettings = Pick<
+  ResolvedTarget,
+  "name" | "lockTimeoutMs" | "statementTimeoutMs"
+>;
+
+/** PostgreSQL's SQLSTATE for a statement cancelled by lock_timeout (55P03) or statement_timeout (57014). */
+export type TimeoutState = "55P03" | "57014";
+
+/** Whether `sqlState` is a lock or statement timeout's. */
+export function isTimeoutState(sqlState: unknown): sqlState is TimeoutState {
+  return sqlState === "55P03" || sqlState === "57014";
+}
+
+/**
+ * What a lock (55P03) or statement (57014) timeout on `target` says: the one
+ * wording of every timeout message (SqlFileFailedError's next step for a
+ * deploy-time file, TargetTimeoutError for any other statement). `what`
+ * names the setting, the target and the value that ran out ("Target qa's
+ * lockTimeout (2s) ran out waiting for a lock", "... (5s, the default) ...",
+ * "Target qa's statementTimeout (2s) cancelled the statement", or, when the
+ * target sets no statementTimeout, "The server's statement_timeout for
+ * target qa's deploy role cancelled the statement"); `next` says what to do,
+ * as a clause, down to the setting to change in the config; `blocker`, for a
+ * lock timeout, how to see the session holding the lock next time (`status`
+ * names it while a command holding the target lock waits, deploy/lock.ts).
+ */
+export function timeoutRanOut(
+  target: TargetTimeoutSettings,
+  sqlState: TimeoutState,
+): {
+  readonly what: string;
+  readonly next: string;
+  readonly blocker: string | undefined;
+} {
+  const { name } = target;
+  const where = `for target ${name} in super-deploy.config.ts`;
+  if (sqlState === "55P03") {
+    const value = durationText(target.lockTimeoutMs);
+    return {
+      what: `Target ${name}'s lockTimeout (${target.lockTimeoutMs === targetDefaults.lockTimeoutMs ? `${value}, the default` : value}) ran out waiting for a lock`,
+      next: `retry once whatever held the lock has finished, or raise lockTimeout ${where}`,
+      blocker: `To see which session holds the lock next time, run status --target ${name} while super-deploy waits, or select * from pg_stat_activity where pid = any(pg_blocking_pids(<its server process>)).`,
+    };
+  }
+  const retry = "retry once whatever held it up has finished";
+  return target.statementTimeoutMs === undefined
+    ? {
+        what: `The server's statement_timeout for target ${name}'s deploy role cancelled the statement`,
+        next: `${retry}, or set statementTimeout ${where}, which overrides it`,
+        blocker: undefined,
+      }
+    : {
+        what: `Target ${name}'s statementTimeout (${durationText(target.statementTimeoutMs)}) cancelled the statement`,
+        next: `${retry}, or raise statementTimeout ${where}`,
+        blocker: undefined,
+      };
 }
 
 /**

@@ -139,6 +139,7 @@ export type {
   RecordedMigration,
 } from "./deploy/history.ts";
 export {
+  type BlockingSession,
   type LockHolder,
   type LockHolderActivity,
   TargetLockedError,

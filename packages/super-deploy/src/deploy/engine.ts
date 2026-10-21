@@ -27,7 +27,9 @@
 // Both sessions are traced (session-ended.ts): when one of them ends, or a
 // read before the deploy transaction times out, the command fails with
 // TargetSessionEndedError or TargetTimeoutError naming the target and saying
-// nothing changed, or that the deploy transaction rolled back.
+// nothing changed, or that the deploy transaction rolled back. A failed SQL
+// file (SqlFileFailedError) is told the target there too, so a timeout's
+// message quotes the target's own lockTimeout or statementTimeout.
 //
 // `applyMigrations` is the deploy transaction itself. SQL it sends on the
 // command session, in order (fault-injection wrappers match on these):
