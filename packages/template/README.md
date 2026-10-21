@@ -260,6 +260,25 @@ connection string itself instead. The config is committed to Git, so keep
 credentials out of it: use `{ env }` for any connection string with a
 password in it.
 
+**TLS.** Set `sslmode` in the connection string. super-deploy reads it as
+`psql` and libpq do:
+
+- no `sslmode`, or `disable`: not encrypted.
+- `require` (or `prefer`): encrypted, but the server's certificate isn't
+  checked, so it doesn't stop a server impersonating yours. Unlike `psql`,
+  `prefer` never falls back to an unencrypted connection.
+- `verify-ca`: encrypted, and the server's certificate must be signed by the
+  CA certificate in the file `sslrootcert` names. Without `sslrootcert` the
+  connection string is refused.
+- `verify-full`: as `verify-ca`, and the certificate must also name the host
+  in the connection string. Without `sslrootcert` it trusts the public CAs
+  that Node.js ships with.
+
+For a server with a private CA, such as a managed database's own, download
+the CA certificate and use `verify-full` with `sslrootcert`:
+`postgresql://deploy_role:password@db.example.com:5432/app?sslmode=verify-full&sslrootcert=/etc/ssl/db-ca.pem`.
+A relative `sslrootcert` is read from the directory the command runs in.
+
 **The deploy role is the user in the connection string**: `deploy_role` in
 the example above. super-deploy runs everything on the target as that user,
 and "Permissions" says what it needs.
