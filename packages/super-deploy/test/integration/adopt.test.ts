@@ -129,6 +129,9 @@ describe("adopt", () => {
         "data-model/desired-schema/comments.sql",
       ]);
       expect(result.leftOnTarget).toEqual({ grants: 1, policies: 0 });
+      // Two tables, a view and a function: indexes and identity sequences go with their table.
+      expect(result.objects).toBe(4);
+      expect(result.warning).toBeUndefined();
       const written = await readdir(dir.path("data-model/desired-schema"));
       expect(written.filter((file) => file.endsWith(".sql")).sort()).toEqual(
         result.files.map((file) => file.split("/").at(-1)).sort(),
@@ -762,6 +765,49 @@ describe("adopt", () => {
     }
   });
 
+  test("refuses public owned by pg_database_owner with the database's owner and ALTER DATABASE as its fix, until the deploy role owns the database", async () => {
+    const deployer = roleName("adopt_public_deployer");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      do $$ begin execute format('grant connect, create on database %I to ${deployer}', current_database()); end $$;
+      create table public.t (id bigint generated always as identity primary key);
+      alter table public.t owner to ${deployer};
+    `);
+    const { project } = await deployProject(
+      server,
+      {},
+      {
+        preamble: asDeployerPreamble(prod, deployer),
+        otherTargets: "prod: { adapter: asDeployer },",
+      },
+    );
+    try {
+      const fix = `ALTER DATABASE ${prod} OWNER TO ${deployer}`;
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(NotOwnedError);
+      expect((error as NotOwnedError).objects).toEqual([
+        {
+          object: "schema public",
+          owner: `pg_database_owner (the owner of database ${prod}, super_deploy)`,
+          fix,
+        },
+      ]);
+      expect(
+        (await status(project, { target: "prod" })).preflight.notOwned,
+      ).toEqual([expect.objectContaining({ fix })]);
+
+      await server.query(fix, [], prod);
+      await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
+        migration: { folder: "00001-adopt" },
+      });
+    } finally {
+      await project.close();
+    }
+  });
+
   test("refuses a target whose deploy role can't create the history schema, naming the grant, before rehearsing or writing anything, until it can", async () => {
     const deployer = roleName("adopt_deployer");
     const prod = await server.createDatabase(`
@@ -1109,7 +1155,7 @@ describe("adopt", () => {
       );
       expect(error).toBeInstanceOf(AdoptConflictError);
       expect((error as AdoptConflictError).reasons).toEqual([
-        'its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts)',
+        'its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts); the target has schemas app, public',
       ]);
       expect(mistyped.dir.exists("data-model/migrations")).toBe(false);
       expect(mistyped.dir.exists("data-model/desired-schema")).toBe(false);
@@ -1133,6 +1179,91 @@ describe("adopt", () => {
       const result = await adopt(project, { target: "prod" });
       expect(result.migration.folder).toBe("00001-adopt");
       expect(result.files).toEqual([]);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refusing a missing managed schema, lists the target's schemas, and says to rename one that differs only in case", async () => {
+    const prod = await server.createDatabase(`
+      create schema shop; create table shop.t (id bigint primary key);
+      create schema "MyApp";
+    `);
+    const otherTargets = `prod: { adapter: ${asSuperuser(prod)} },`;
+    const refusal = async (managedSchema: string) => {
+      const { dir, project } = await deployProject(
+        server,
+        {},
+        { otherTargets, settings: `managedSchema: "${managedSchema}",` },
+      );
+      try {
+        const error = await adopt(project, { target: "prod" }).catch(
+          (e: unknown) => e,
+        );
+        expect(error).toBeInstanceOf(AdoptConflictError);
+        expect(dir.exists("data-model/migrations")).toBe(false);
+        expect(dir.exists("data-model/desired-schema")).toBe(false);
+        return (error as AdoptConflictError).reasons.join("; ");
+      } finally {
+        await project.close();
+      }
+    };
+
+    expect(await refusal("shpo")).toBe(
+      'its managed schema "shpo" does not exist (check managedSchema in super-deploy.config.ts); the target has schemas "MyApp", public, shop',
+    );
+    expect(await refusal("myapp")).toBe(
+      'its managed schema "myapp" does not exist (check managedSchema in super-deploy.config.ts); the target has schemas "MyApp", public, shop; managedSchema must be lowercase: rename schema "MyApp" first (ALTER SCHEMA "MyApp" RENAME TO myapp), and the application\'s references to it',
+    );
+    expect(
+      await server.query(
+        "select 1 from pg_namespace where nspname = 'deployment_history'",
+        [],
+        prod,
+      ),
+    ).toEqual([]);
+  });
+
+  test("adopting an empty managed schema warns it adopted nothing, naming the other schemas that hold objects", async () => {
+    const prod = await server.createDatabase(`
+      create schema app;
+      create table app.customers (id bigint primary key);
+      create table app.orders (id bigint primary key);
+      create view app.order_ids as select id from app.orders;
+      create schema reports;
+      create function reports.answer() returns int language sql as $$ select 42 $$;
+      create schema empty;
+    `);
+    const { project } = await deployProject(
+      server,
+      {},
+      { otherTargets: `prod: { adapter: ${asSuperuser(prod)} },` },
+    );
+    try {
+      const result = await adopt(project, { target: "prod" });
+
+      expect(result.migration.folder).toBe("00001-adopt");
+      expect(result.objects).toBe(0);
+      expect(result.warning).toBe(
+        "Adopted 0 objects from schema public; schema app holds 2 tables, 1 view; schema reports holds 1 function: is managedSchema right?",
+      );
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("adopting an empty managed schema in an otherwise empty database warns only that it adopted nothing", async () => {
+    const prod = await server.createDatabase();
+    const { project } = await deployProject(
+      server,
+      {},
+      { otherTargets: `prod: { adapter: ${asSuperuser(prod)} },` },
+    );
+    try {
+      const result = await adopt(project, { target: "prod" });
+
+      expect(result.objects).toBe(0);
+      expect(result.warning).toBe("Adopted 0 objects from schema public");
     } finally {
       await project.close();
     }
