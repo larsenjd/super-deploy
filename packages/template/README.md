@@ -687,7 +687,9 @@ draft-finalize-deploy path:
   config change can make production disposable. Before you type `YES` to
   mark it disposable, it shows how many tables the managed schema holds
   and about how many rows (PostgreSQL's estimate), so a database full of
-  real data stands out.
+  real data stands out. Marking a target that holds a deployed draft not
+  disposable warns that `deploy` refuses it until `rebuild` resets it, which
+  then needs it flagged disposable again; `status` and `deploy` say so too.
 - **`deploy-draft --target X`** tries the current, unfinalized draft on a
   disposable target, so its scripts meet the target's data before you
   finalize. The target must have no pending migrations (a Recovery draft of

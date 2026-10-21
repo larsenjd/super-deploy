@@ -210,6 +210,51 @@ unix("deploy-draft", () => {
     expect(deployed.stderr).toContain("the target holds draft require-city");
   });
 
+  test("flagging a target holding a draft not disposable says what that leaves; status and deploy then advise flagging it disposable before rebuild", async () => {
+    const { dir } = await deployedProject();
+    const withoutDraft = spawnTerminal(
+      ["disposable", "--target", "dev", "--set", "no"],
+      { cwd: dir.root },
+    );
+    const plain = await withoutDraft.waitFor("Type YES");
+    expect(plain).toContain("deploy-draft and rebuild will then refuse it");
+    expect(plain).not.toContain("until rebuild resets it");
+    withoutDraft.type(keys.ctrlC);
+    expect(await withoutDraft.exited).toBe(1);
+
+    await requireCityDraft(dir);
+    const deploying = spawnTerminal(["deploy-draft", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    await deploying.waitFor("Type YES");
+    deploying.type(`YES${keys.enter}`);
+    expect(await deploying.exited).toBe(0);
+
+    const flagging = spawnTerminal(
+      ["disposable", "--target", "dev", "--set", "no"],
+      { cwd: dir.root },
+    );
+    const shown = boxLines(await flagging.waitFor("Type YES")).join(" ");
+    expect(shown).toContain(
+      "It holds deployed draft require-city: deploy refuses it until rebuild resets it, and rebuild will first need it flagged disposable again",
+    );
+    flagging.type(`YES${keys.enter}`);
+    await flagging.waitFor("Target dev is now not disposable");
+    expect(await flagging.exited).toBe(0);
+
+    const advice =
+      "the target holds draft require-city (deployed by attempt #2 on top of 00001-add-customers, without seed data), not a finalized migration: flag it disposable again (disposable --target dev --set yes), then reset it with rebuild --to 1";
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).toContain(advice);
+    const deployed = await runCli(["deploy", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(deployed.exitCode).toBe(1);
+    expect(deployed.stderr).toContain(advice);
+  });
+
   test("--with-seed loads the draft's seed data just before its pre-migration script", async () => {
     const { dir, database } = await deployedProject();
     await requireCityDraft(dir);

@@ -10,6 +10,11 @@
 // (reltuples -1) the statistics' live-row count, so a freshly loaded table
 // doesn't look empty. A partitioned table counts as one table, holding its
 // partitions' rows: the partitions are counted for their rows only.
+//
+// Marking a target holding a deployed draft not disposable goes ahead (it is
+// the safe direction), but its confirmation says what that leaves (QA 167):
+// deploy refuses the target until rebuild resets it, and rebuild then needs
+// it flagged disposable again.
 import type { Session } from "../adapters/types.ts";
 import { historyTable } from "../deploy/history.ts";
 import { runGuarded } from "../guard/guard.ts";
@@ -67,7 +72,14 @@ export async function disposable(
               await describeContents(session, managedSchema),
               "deploy-draft will then be allowed to deploy a draft and its seed data to it, and rebuild to wipe it",
             ]
-          : ["deploy-draft and rebuild will then refuse it"],
+          : [
+              "deploy-draft and rebuild will then refuse it",
+              ...(view.draft === undefined
+                ? []
+                : [
+                    `It holds deployed draft ${view.draft.name}: deploy refuses it until rebuild resets it, and rebuild will first need it flagged disposable again`,
+                  ]),
+            ],
         plan: undefined,
       };
     },
