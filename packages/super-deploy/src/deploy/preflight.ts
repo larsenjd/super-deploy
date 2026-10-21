@@ -18,6 +18,7 @@ import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import {
   type FinalizedMigration,
+  indexFileName,
   migrationFolderName,
   recoveriesFolderName,
   recoveryFolderName,
@@ -205,7 +206,7 @@ const keepRecorded =
 
 /** The way out of a mismatch: restore `folder` (in the migrations directory) as the target recorded it. */
 function restore(folder: string, where = ""): string {
-  return `restore ${folder} from version control${where} (${keepRecorded})`;
+  return `restore ${folder} (and ${indexFileName}) from version control${where} (${keepRecorded})`;
 }
 
 /**
@@ -225,8 +226,8 @@ function earlierChange(
       repo.get(entry.number)?.chainHash !== entry.chainHash,
   );
   return first === undefined
-    ? `a migration up to it changed: restore those from version control (${keepRecorded})`
-    : `an earlier migration changed, first ${migrationFolderName(first.number, first.name)}: restore it from version control (${keepRecorded})`;
+    ? `a migration up to it changed: restore those (and ${indexFileName}) from version control (${keepRecorded})`
+    : `an earlier migration changed, first ${migrationFolderName(first.number, first.name)}: restore it (and ${indexFileName}) from version control (${keepRecorded})`;
 }
 
 function draftMismatch(

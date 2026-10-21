@@ -130,7 +130,7 @@ describe("deploy pre-flight", () => {
     );
 
     expect(refusal).toBeInstanceOf(PreflightFailedError);
-    const advice = `restore 00001-add-customers from version control (${keepRecorded})`;
+    const advice = `restore 00001-add-customers (and index.json) from version control (${keepRecorded})`;
     expect((refusal as Error).message).toContain(advice);
     const [mismatch] = (refusal as PreflightFailedError).findings
       .historyMismatches;
@@ -162,7 +162,7 @@ describe("deploy pre-flight", () => {
       {
         number: 2,
         reason: "chain-hash",
-        message: `the target records migration 00002-add-orders with chain hash edited, but the repo's is ${second.chainHash}, so an earlier migration changed, first 00001-add-customers: restore it from version control (${keepRecorded})`,
+        message: `the target records migration 00002-add-orders with chain hash edited, but the repo's is ${second.chainHash}, so an earlier migration changed, first 00001-add-customers: restore it (and index.json) from version control (${keepRecorded})`,
       },
     ]);
   });
@@ -187,7 +187,7 @@ describe("deploy pre-flight", () => {
           {
             number: 1,
             reason: "content-hash",
-            message: `the target records migration 00001-add-customers with content hash edited, but the repo's is ${first.contentHash}: restore 00001-add-customers from version control (${keepRecorded})`,
+            message: `the target records migration 00001-add-customers with content hash edited, but the repo's is ${first.contentHash}: restore 00001-add-customers (and index.json) from version control (${keepRecorded})`,
           },
         ],
       },
@@ -202,7 +202,7 @@ describe("deploy pre-flight", () => {
       {
         number: 1,
         reason: "name",
-        message: `the target records migration 1 as 00001-add-clients, but the repo's is 00001-add-customers: restore 00001-add-clients from version control in place of 00001-add-customers (${keepRecorded})`,
+        message: `the target records migration 1 as 00001-add-clients, but the repo's is 00001-add-customers: restore 00001-add-clients (and index.json) from version control in place of 00001-add-customers (${keepRecorded})`,
       },
     ]);
 
@@ -215,7 +215,7 @@ describe("deploy pre-flight", () => {
           {
             number: 1,
             reason: "chain-hash",
-            message: `the target records migration 00001-add-customers with chain hash edited, but the repo's is ${first.chainHash}, so a migration up to it changed: restore those from version control (${keepRecorded})`,
+            message: `the target records migration 00001-add-customers with chain hash edited, but the repo's is ${first.chainHash}, so a migration up to it changed: restore those (and index.json) from version control (${keepRecorded})`,
           },
         ],
       },
@@ -246,7 +246,7 @@ describe("deploy pre-flight", () => {
           {
             number: 2,
             reason: "not-in-repo",
-            message: `the target records migration 00002-add-orders, which the repo doesn't have: restore 00002-add-orders from version control (${keepRecorded})`,
+            message: `the target records migration 00002-add-orders, which the repo doesn't have: restore 00002-add-orders (and index.json) from version control (${keepRecorded})`,
           },
         ],
       },
