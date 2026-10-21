@@ -698,6 +698,20 @@ const statusCommand: CommandDefinition = {
     context.result(
       `Target ${report.target}${report.disposable ? " (disposable)" : ""}: ${plural(report.recorded.length, "migration")} recorded, ${report.pending.length} pending`,
     );
+    // Who holds the target lock: attempt #N, or another session when the
+    // holder recorded no running attempt.
+    const attempt = report.lockedBy?.attempt;
+    const holder =
+      attempt === undefined ? "another session" : `attempt #${attempt.id}`;
+    if (report.lockedBy !== undefined) {
+      const details =
+        attempt === undefined
+          ? ""
+          : `${attempt.command} by ${attempt.osUser}, started ${attempt.startedAt.toISOString()}, `;
+      context.result(
+        `Locked by ${holder} (${details}server process ${report.lockedBy.pid})`,
+      );
+    }
     const refusals = [
       ...preflight.missingExternalSchemas.map(
         (schema) => `external schema "${schema}" does not exist`,
@@ -711,11 +725,13 @@ const statusCommand: CommandDefinition = {
         context.result(`  ${refusal}`);
       }
     }
-    if (report.drift === undefined) {
+    if (report.driftNotChecked === "history-mismatch") {
       context.result(
         "Drift: not checked (the recorded history doesn't match the project's migrations)",
       );
-    } else if (report.drift.length > 0) {
+    } else if (report.driftNotChecked === "target-locked") {
+      context.result(`Drift: not checked (the target is locked by ${holder})`);
+    } else if (report.drift !== undefined && report.drift.length > 0) {
       // `-` lines are on the target only, `+` lines what its recorded migrations produce.
       context.result(
         "Drift (the target differs from its recorded migrations):",

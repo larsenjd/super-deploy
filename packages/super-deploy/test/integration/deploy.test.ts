@@ -585,6 +585,55 @@ describe("the target lock", () => {
     ]);
   });
 
+  test("status reports the holder promptly and leaves drift unchecked while a deployment holds the target", async () => {
+    const { dir, project } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { adapter: pausingAdapter, target: 'lockTimeout: "10s",' },
+    );
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      customers.replace(
+        "name text not null",
+        "name text not null,\n  email text",
+      ),
+    );
+    await finalizeMigration(project, "add email");
+    // Paused at COMMIT, the deploy transaction holds ACCESS EXCLUSIVE on
+    // customers, which blocks the drift check's catalog read.
+    const paused = pauseAtCommit();
+    const deploying = deploy(project, { target: "dev" });
+    try {
+      await paused.reached;
+      const started = Date.now();
+
+      const report = await status(project, { target: "dev" });
+
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(report.lockedBy).toMatchObject({
+        pid: expect.any(Number),
+        attempt: { id: 2, command: "deploy", osUser: userInfo().username },
+      });
+      expect(report.drift).toBeUndefined();
+      expect(report.driftNotChecked).toBe("target-locked");
+      expect(report.recorded.map((m) => m.number)).toEqual([1]);
+      expect(report.pending.map((m) => m.number)).toEqual([2]);
+      expect(report.attempts.map((a) => [a.id, a.outcome])).toEqual([
+        [2, "running"],
+        [1, "succeeded"],
+      ]);
+    } finally {
+      paused.release();
+      await deploying;
+    }
+    const after = await status(project, { target: "dev" });
+    expect(after.lockedBy).toBeUndefined();
+    expect(after.drift).toEqual([]);
+    expect(after.driftNotChecked).toBeUndefined();
+  });
+
   test("is keyed from the history schema name: a project with another history schema on the same database is not blocked", async () => {
     const { project, database } = await deployProject(
       server,
