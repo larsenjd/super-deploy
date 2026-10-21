@@ -7,10 +7,20 @@
 // turns undefined, "" or a non-URL into odd errors such as "ENOTFOUND base".
 // The adapter doesn't know its target's name, so connectTarget renames the
 // error's subject (deploy/target.ts).
+//
+// A target connect honours ConnectOptions with its own deadline and the
+// interruption signal, racing client.connect(), rather than node-postgres's
+// connectionTimeoutMillis: that fails with a bare "timeout expired", and
+// client.end() during a connect never settles connect(), so racing is the one
+// way to abandon it on an interruption anyway. Without the deadline an
+// unreachable host waits for the operating system's TCP timeout (minutes).
+// node-postgres ignores connect_timeout in the URL.
 import { randomBytes } from "node:crypto";
 import pg from "pg";
 import { parseIntoClientConfig } from "pg-connection-string";
+import { durationText } from "../config/config.ts";
 import type {
+  ConnectOptions,
   DatabaseRequest,
   DeploymentAdapter,
   QueryResult,
@@ -46,8 +56,8 @@ export function targetOver(
   connectionString: () => Promise<string>,
 ): DeploymentAdapter {
   return {
-    async connect() {
-      return connectSession(await connectionString());
+    async connect(options) {
+      return connectSession(await connectionString(), undefined, options);
     },
   };
 }
@@ -197,10 +207,14 @@ function createDatabaseSql(name: string, request: DatabaseRequest): string {
   return `CREATE DATABASE ${pg.escapeIdentifier(name)} TEMPLATE template0 ENCODING ${pg.escapeLiteral(request.encoding)} ${provider}`;
 }
 
-/** @internal Opens a node-postgres session, optionally to another database on the same server. */
+/**
+ * @internal Opens a node-postgres session, optionally to another database on
+ * the same server, within `options` if given (see the header).
+ */
 export async function connectSession(
   connectionString: string,
   database?: string,
+  options?: ConnectOptions,
 ): Promise<Session> {
   const config = parseIntoClientConfig(connectionString);
   const client = new pg.Client(
@@ -209,8 +223,55 @@ export async function connectSession(
   // Idle clients are killed server-side by DROP DATABASE ... WITH (FORCE) or a
   // server stop; without a listener that would crash the process.
   client.on("error", () => {});
-  await client.connect();
+  if (options === undefined) {
+    await client.connect();
+  } else {
+    const host = `${config.host ?? "localhost"}:${config.port ?? 5432}`;
+    await connectWithin(client, host, options);
+  }
   return sessionOver(client);
+}
+
+/**
+ * Connects `client`, giving up after `options.timeoutMs` or as soon as
+ * `options.signal` aborts (rejecting with its reason), and then dropping the
+ * half-open connection.
+ */
+async function connectWithin(
+  client: pg.Client,
+  host: string,
+  options: ConnectOptions,
+): Promise<void> {
+  const deadline = AbortSignal.timeout(options.timeoutMs);
+  const stop =
+    options.signal === undefined
+      ? deadline
+      : AbortSignal.any([options.signal, deadline]);
+  let abandon = () => {};
+  const abandoned = new Promise<never>((_, reject) => {
+    abandon = () =>
+      reject(
+        deadline.aborted
+          ? new Error(
+              `no answer from ${host} within ${durationText(options.timeoutMs)} (connectTimeout in super-deploy.config.ts)`,
+            )
+          : stop.reason,
+      );
+  });
+  if (stop.aborted) {
+    abandon();
+  }
+  stop.addEventListener("abort", abandon, { once: true });
+  try {
+    await Promise.race([client.connect(), abandoned]);
+  } catch (error) {
+    // Not awaited: it destroys the socket, and its promise never settles if
+    // the connect was abandoned before the server answered.
+    client.end().catch(() => {});
+    throw error;
+  } finally {
+    stop.removeEventListener("abort", abandon);
+  }
 }
 
 async function withSession<T>(

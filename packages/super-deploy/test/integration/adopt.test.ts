@@ -34,14 +34,18 @@ afterAll(async () => {
   await server?.stop();
 });
 
-/** A project whose `prod` target is a database already holding `sql`. */
-async function adoptableProject(sql: string) {
+/**
+ * A project whose `prod` target is a database already holding `sql`;
+ * `settings` are spliced into its config.
+ */
+async function adoptableProject(sql: string, settings = "") {
   const prod = await server.createDatabase(sql);
   const deployed = await deployProject(
     server,
     {},
     {
       otherTargets: `prod: { adapter: postgres.target(${JSON.stringify(prod)}) },`,
+      settings,
     },
   );
   return { ...deployed, prod };
@@ -735,6 +739,103 @@ describe("adopt", () => {
       await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
         migration: { folder: "00001-adopt" },
       });
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses every reference to an external schema bound at CREATE at once, naming each object, and adopts once only PL/pgSQL bodies have them", async () => {
+    const { dir, project, prod } = await adoptableProject(
+      `
+      create schema auth;
+      create table auth.users (id bigint primary key, name text);
+      create table profiles (
+        user_id bigint primary key references auth.users (id),
+        bio text
+      );
+      create view profile_names as
+        select p.user_id, u.name from profiles p join auth.users u on u.id = p.user_id;
+      create function user_name(uid bigint) returns text language sql stable
+        as $$ select name from auth.users where id = uid $$;
+      create function user_count() returns bigint language plpgsql stable
+        as $$ begin return (select count(*) from auth.users); end $$;
+    `,
+      'externalSchemas: ["auth"],',
+    );
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const { objects, message } = error as AdoptUnsupportedError;
+      const reason = expect.stringContaining(
+        'external schema "auth", which rehearsals don\'t contain. Only PL/pgSQL bodies may reference external schemas',
+      );
+      expect(objects).toEqual(
+        expect.arrayContaining([
+          {
+            object: "constraint profiles_user_id_fkey on table profiles",
+            rule: "outside-managed-schema",
+            reason,
+          },
+          {
+            object: "view profile_names",
+            rule: "outside-managed-schema",
+            reason,
+          },
+          {
+            object: "function user_name(int8)",
+            rule: "outside-managed-schema",
+            reason,
+          },
+        ]),
+      );
+      expect(objects).toHaveLength(3);
+      expect(message).not.toContain("data-model/desired-schema");
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+
+      await server.query(
+        "drop view profile_names; drop function user_name(bigint); alter table profiles drop constraint profiles_user_id_fkey",
+        [],
+        prod,
+      );
+      const result = await adopt(project, { target: "prod" });
+      expect(result.migration.folder).toBe("00001-adopt");
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses a statement the throwaway database refuses by its object, not by a file it never wrote", async () => {
+    // The declaration names auth.users unqualified, through the creator's
+    // search_path: no static check can see the external schema.
+    const { dir, project } = await adoptableProject(
+      `
+      create schema auth;
+      create table auth.users (id bigint primary key, name text);
+      set search_path = public, auth;
+      create function no_name() returns text language plpgsql stable
+        as $$ declare n users.name%type; begin return n; end $$;
+    `,
+      'externalSchemas: ["auth"],',
+    );
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const { objects, message } = error as AdoptUnsupportedError;
+      expect(objects).toEqual([
+        {
+          object: "function no_name()",
+          rule: "not-reproduced",
+          reason: expect.stringContaining('relation "users" does not exist'),
+        },
+      ]);
+      expect(message).not.toContain("data-model/desired-schema");
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
     } finally {
       await project.close();
     }
