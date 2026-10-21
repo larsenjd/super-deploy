@@ -1,3 +1,3 @@
 node_modules/
-# The embedded PostgreSQL server's data directory.
+# The embedded PostgreSQL servers' data directories (dev's and the rehearsals').
 .super-deploy/

@@ -84,6 +84,14 @@ node --input-type=module -e 'const { devServer } = await import("./super-deploy.
 
 Commands you run meanwhile use the running server and leave it running.
 
+A project whose `dev` was deployed by an earlier version of super-deploy,
+as the server's superuser rather than `deployer`, holds objects the deploy
+role doesn't own, so `deploy --target dev` and `status --target dev` refuse
+them. `dev` is local and disposable: with no command running, delete the
+`.super-deploy` folder and run `deploy --target dev` again, which rebuilds
+it from your migrations (as `deployer`). Data you added to `dev` by hand is
+lost with it.
+
 ## What the desired schema supports
 
 The desired schema may hold only the statements below; super-deploy refuses
@@ -701,8 +709,8 @@ draft-finalize-deploy path:
   drops, outside schema ...", and if that list changes while it waits for
   `YES`, rebuild refuses without changing anything. It refuses before
   asking when the managed schema holds something the deploy role can't
-  drop, such as an extension a superuser installed, naming each object and
-  its owner. The managed schema itself stays, with its owner, grants and
+  drop, such as an extension a superuser installed or a member of an
+  extension installed in another schema, naming each object and its owner. The managed schema itself stays, with its owner, grants and
   default privileges. Then it deletes the target's record of migrations and of any
   deployed draft, and runs migrations 1 to N as a deployment does, each as
   its newest Recovery if it has one. It never loads seed data, and keeps
