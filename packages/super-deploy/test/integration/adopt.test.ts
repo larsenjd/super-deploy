@@ -193,6 +193,58 @@ describe("adopt", () => {
     }
   });
 
+  test("refuses an extension once, not each of its functions, types and operators", async () => {
+    const { project } = await adoptableProject(`
+      create extension citext;
+      create table t (id bigint primary key);
+    `);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      expect((error as AdoptUnsupportedError).objects).toEqual([
+        {
+          object: "extension citext",
+          rule: "unsupported-object",
+          reason: "Extensions other than plpgsql are not supported in V1",
+        },
+      ]);
+      expect((error as AdoptUnsupportedError).message).toContain(
+        "has 1 thing V1 doesn't support: extension citext.",
+      );
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses a serial column once, naming the column, not its sequence", async () => {
+    const { project } = await adoptableProject(`
+      create table items (id serial primary key, name text not null);
+    `);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      expect((error as AdoptUnsupportedError).objects).toEqual([
+        {
+          object: "serial column public.items.id",
+          rule: "unsupported-object",
+          reason:
+            "serial columns are not supported: use an identity column, e.g. `bigint generated always as identity`",
+        },
+      ]);
+      expect((error as AdoptUnsupportedError).message).toContain(
+        "has 1 thing V1 doesn't support: serial column public.items.id.",
+      );
+    } finally {
+      await project.close();
+    }
+  });
+
   test("asks a reason for each function that needs an override marker and writes the marker with it", async () => {
     const { dir, project } = await adoptableProject(loaders);
     try {
