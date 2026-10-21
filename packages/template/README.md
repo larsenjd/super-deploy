@@ -491,7 +491,7 @@ default privileges as they are.
   already exists too, e.g. `grant select on all tables in schema app to
   app_reader`.
 
-  Two things to know about grants and policies made by hand:
+  Things to know about grants and policies made by hand:
 
   - A migration that drops and recreates a table (or another object) loses
     the grants and policies made on it by hand, and super-deploy can't
@@ -502,6 +502,16 @@ default privileges as they are.
     on the column. Rehearsals can't catch it, because their databases have
     no hand-made policies. The deployment rolls back and PostgreSQL's error
     names the policy: drop the policy, deploy, then create it again.
+  - Row-level security doesn't apply to a table's owner, the deploy role,
+    unless the table has `FORCE ROW LEVEL SECURITY`. Then its policies would
+    hide rows from a deployment's own scripts and from the materialized
+    views it builds, so deployments run with `row_security` off, as
+    `pg_dump` does: a statement a policy would filter fails with `query
+    would be affected by row-level security policy for table "orders"`
+    instead of silently skipping rows, and the deployment rolls back.
+    Rehearsals can't catch it. Run `ALTER TABLE orders NO FORCE ROW LEVEL
+    SECURITY` while deploying and `FORCE` it again afterwards, or move the
+    work out of the migration.
 - **External schemas** (`externalSchemas` in `super-deploy.config.ts`, see
   [Project settings](#project-settings)), and grants on them and their
   objects. super-deploy doesn't check them: `deploy` goes ahead on a target

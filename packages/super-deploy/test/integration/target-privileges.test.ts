@@ -1,11 +1,14 @@
 // API seam: grants, default privileges, policies and row-level security on a
 // target are set up outside super-deploy (ADR-0006). Nothing compares,
 // generates, revokes or resets them: they are never drift, and deployments
-// leave them as they are. The desired schema can't declare them.
+// leave them as they are. The desired schema can't declare them. A forced
+// policy that would filter a deployment's statements fails it instead.
 import {
   deploy,
   draft,
+  finalize,
   postgresTarget,
+  SqlFileFailedError,
   SqlRuleViolationError,
   status,
 } from "super-deploy";
@@ -92,6 +95,139 @@ describe("privileges on a target", () => {
       ),
     ).toEqual([{ relrowsecurity: true }]);
     expect((await status(project, { target: "dev" })).drift).toEqual([]);
+  });
+});
+
+const orders = `create table orders (
+  id bigint primary key,
+  owner_name text not null,
+  total numeric(10,2) not null
+);
+`;
+
+/**
+ * Deploys `orders` with two rows owned by other roles, then, by hand as the
+ * deploy role, a policy hiding both from it and row-level security turned
+ * on (and forced, when `force`).
+ */
+async function ordersUnderPolicy(force: boolean) {
+  const deployed = await deployProject(server, { "orders.sql": orders });
+  await finalizeMigration(deployed.project, "add orders");
+  await deploy(deployed.project, { target: "dev" });
+  await asDeployRole(
+    server,
+    deployed.database,
+    `insert into orders (id, owner_name, total) values (1, 'someone', 10), (3, 'nobody', 99);
+     create policy orders_owner on orders using (owner_name = current_user);
+     alter table orders enable row level security;
+     ${force ? "alter table orders force row level security;" : ""}`,
+  );
+  return deployed;
+}
+
+/** What the target records and holds of `orders` after a deployment. */
+async function ordersOnTarget(database: string) {
+  return {
+    recorded: (
+      await server.query<{ name: string }>(
+        "select name from deployment_history.migrations order by number",
+        [],
+        database,
+      )
+    ).map(({ name }) => name),
+    columns: (
+      await server.query<{ attname: string }>(
+        "select attname from pg_attribute where attrelid = 'orders'::regclass and attnum > 0 order by attnum",
+        [],
+        database,
+      )
+    ).map(({ attname }) => attname),
+  };
+}
+
+describe("row-level security forced on a target", () => {
+  test("a backfill a forced policy would filter fails the deployment, which rolls back and suggests NO FORCE ROW LEVEL SECURITY", async () => {
+    const { project, dir, database } = await ordersUnderPolicy(true);
+    await dir.write(
+      "data-model/desired-schema/orders.sql",
+      orders.replace("total numeric", "priority integer,\n  total numeric"),
+    );
+    await draft(project, { name: "priority" });
+    await dir.write(
+      "data-model/draft/post-migration.sql",
+      "update orders set priority = 1 where priority is null;\n",
+    );
+    await finalize(project);
+
+    const error = await deploy(project, { target: "dev" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(SqlFileFailedError);
+    expect(error).toMatchObject({
+      file: "data-model/migrations/00002-priority/post-migration.sql",
+      rollback: { target: "dev", lastRecorded: "00001-add-orders" },
+    });
+    const { message } = error as SqlFileFailedError;
+    expect(message).toContain('"orders"');
+    expect(message).toContain("NO FORCE ROW LEVEL SECURITY");
+    expect(await ordersOnTarget(database)).toEqual({
+      recorded: ["add-orders"],
+      columns: ["id", "owner_name", "total"],
+    });
+  });
+
+  test("a materialized view over a table under a forced policy fails the deployment instead of being built from the rows the policy shows", async () => {
+    const { project, dir, database } = await ordersUnderPolicy(true);
+    await dir.write(
+      "data-model/desired-schema/order-totals.sql",
+      "create materialized view order_totals as select owner_name, sum(total) as total from orders group by owner_name;\n",
+    );
+    await finalizeMigration(project, "order totals");
+
+    const error = await deploy(project, { target: "dev" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(SqlFileFailedError);
+    expect((error as SqlFileFailedError).message).toContain(
+      "NO FORCE ROW LEVEL SECURITY",
+    );
+    expect(
+      await server.query(
+        "select to_regclass('order_totals') as view",
+        [],
+        database,
+      ),
+    ).toEqual([{ view: null }]);
+    expect((await ordersOnTarget(database)).recorded).toEqual(["add-orders"]);
+  });
+
+  test("with row-level security enabled but not forced, the deploy role bypasses the policy and a backfill updates every row", async () => {
+    const { project, dir, database } = await ordersUnderPolicy(false);
+    await dir.write(
+      "data-model/desired-schema/orders.sql",
+      orders.replace("total numeric", "priority integer,\n  total numeric"),
+    );
+    await draft(project, { name: "priority" });
+    await dir.write(
+      "data-model/draft/post-migration.sql",
+      "update orders set priority = 1 where priority is null;\n",
+    );
+    await finalize(project);
+
+    await deploy(project, { target: "dev" });
+
+    expect(
+      await server.query(
+        "select id, priority from orders order by id",
+        [],
+        database,
+      ),
+    ).toEqual([
+      { id: "1", priority: 1 },
+      { id: "3", priority: 1 },
+    ]);
   });
 });
 

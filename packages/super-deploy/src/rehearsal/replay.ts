@@ -278,7 +278,9 @@ export interface DeploymentRollback {
  * (55P03) or statement (57014) timeout, for a data error (classes 22,
  * 23) in a deployment, a Recovery of the failing migration, and for a type
  * change a generated column blocks (0A000 with its DETAIL), the
- * pre-migration fix.
+ * pre-migration fix, and for a statement a forced row-level security policy
+ * would filter (42501, refused under the pinned `row_security = off`),
+ * turning FORCE off while deploying.
  */
 export class SqlFileFailedError extends SuperDeployError {
   readonly code = "sql-file-failed";
@@ -346,6 +348,10 @@ function nextStep(
   if (generated !== undefined) {
     return `Next: drop generated column "${generated.generated}" in the pre-migration script and run draft again: the schema change then changes the type of "${generated.column}" and adds "${generated.generated}" back (see the README, "Changing the type of a column a generated column uses").`;
   }
+  const forced = forcedRowSecurityTable(failure);
+  if (forced !== undefined) {
+    return `Next: table "${forced}" has FORCE ROW LEVEL SECURITY on the target, so its policies apply to the deploy role and would hide rows from this migration: turn it off while deploying (ALTER TABLE ... NO FORCE ROW LEVEL SECURITY, then FORCE again afterwards), or move the work out of the migration.`;
+  }
   if (sqlState === "55P03") {
     return `The target's lockTimeout (default ${durationText(targetDefaults.lockTimeoutMs)}) ran out waiting for a lock: retry once whatever held the lock has finished.`;
   }
@@ -383,4 +389,17 @@ function generatedColumnBlocking(
   return match?.[1] === undefined || match[2] === undefined
     ? undefined
     : { column: match[1], generated: match[2] };
+}
+
+/**
+ * The table in PostgreSQL's refusal of a statement that row-level security
+ * would filter while `row_security` is off.
+ */
+function forcedRowSecurityTable(failure: SqlFileFailure): string | undefined {
+  if (failure.sqlState !== "42501") {
+    return undefined;
+  }
+  return /^query would be affected by row-level security policy for table "(.+)"$/.exec(
+    failure.postgresMessage,
+  )?.[1];
 }
