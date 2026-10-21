@@ -67,11 +67,13 @@ export {
 } from "./commands/draft.ts";
 export {
   type DestructiveAcknowledgement,
+  DraftChangedError,
   type FinalizeOptions,
   type FinalizeResult,
   finalize,
   MigrationLimitError,
   type MigrationMetadata,
+  MigrationNotWrittenError,
 } from "./commands/finalize.ts";
 export {
   InitConflictError,
@@ -139,6 +141,7 @@ export type {
   RecordedMigration,
 } from "./deploy/history.ts";
 export {
+  type BlockingSession,
   type LockHolder,
   type LockHolderActivity,
   TargetLockedError,
@@ -165,6 +168,11 @@ export {
   PreflightFailedError,
 } from "./deploy/preflight.ts";
 export {
+  type SessionRollback,
+  TargetSessionEndedError,
+  TargetTimeoutError,
+} from "./deploy/session-ended.ts";
+export {
   TargetNotDisposableError,
   UnknownTargetError,
 } from "./deploy/target.ts";
@@ -175,7 +183,11 @@ export {
 } from "./deploy/wipe.ts";
 export type { PlannedStatement } from "./differ/index.ts";
 export { DifferError } from "./differ/index.ts";
-export { type ErrorCode, SuperDeployError } from "./errors.ts";
+export {
+  type ErrorCode,
+  type SessionEnding,
+  SuperDeployError,
+} from "./errors.ts";
 export {
   type GuardedCommand,
   NotConfirmedError,
@@ -210,8 +222,11 @@ export {
 export { OrderDependenceError } from "./rehearsal/order-independence.ts";
 export type {
   DeploymentRollback,
+  DraftDeploymentRollback,
   PostgresRefusal,
+  RebuildRollback,
   SqlFileFailure,
+  TargetRollback,
 } from "./rehearsal/replay.ts";
 export { SqlFileFailedError } from "./rehearsal/replay.ts";
 export { UnknownRecordedMigrationError } from "./rehearsal/replica.ts";

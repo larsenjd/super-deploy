@@ -21,10 +21,11 @@ import {
   embeddedDeployRole,
   roleName,
   targetDatabaseName,
+  testSession,
 } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject, type TestProject } from "../support/project.ts";
-import { keys, spawnTerminal } from "../support/terminal.ts";
+import { keys, spawnTerminal, type Terminal } from "../support/terminal.ts";
 
 let server: TestServer;
 beforeAll(async () => {
@@ -65,14 +66,17 @@ async function customersDeployed(config: string): Promise<TestProject> {
 async function deployedProject({
   disposable = true,
   adapter,
+  target,
 }: {
   disposable?: boolean;
   adapter?: string;
+  /** Settings spliced into target dev, e.g. `lockTimeout: "20s",`. */
+  target?: string;
 } = {}) {
-  const { config, database } = deployConfig(
-    server,
-    adapter === undefined ? {} : { adapter },
-  );
+  const { config, database } = deployConfig(server, {
+    ...(adapter === undefined ? {} : { adapter }),
+    ...(target === undefined ? {} : { target }),
+  });
   const dir = await customersDeployed(config);
   await server.query(
     "insert into customers (id, name) values (1, 'Ada')",
@@ -209,6 +213,57 @@ unix("deploy-draft", () => {
     });
     expect(deployed.exitCode).toBe(1);
     expect(deployed.stderr).toContain("the target holds draft require-city");
+  });
+
+  test("refuses before asking while another attempt holds the target, naming it: nothing is recorded", async () => {
+    const { dir, database } = await deployedProject({
+      target: 'lockTimeout: "20s",',
+    });
+    await requireCityDraft(dir);
+    // A rebuild, YES typed, waits for this lock to drop customers.
+    const blocker = await testSession(server, database);
+    let rebuilding: Terminal | undefined;
+    try {
+      await blocker.execute("BEGIN; LOCK TABLE customers IN ACCESS SHARE MODE");
+      rebuilding = spawnTerminal(["rebuild", "--target", "dev", "--to", "1"], {
+        cwd: dir.root,
+      });
+      await rebuilding.waitFor("Type YES");
+      rebuilding.type(`YES${keys.enter}`);
+      await expect
+        .poll(
+          () =>
+            server.query(
+              `select pid from pg_stat_activity
+                where datname = $1 and state = 'active' and wait_event_type = 'Lock'`,
+              [database],
+            ),
+          { timeout: 10_000 },
+        )
+        .not.toEqual([]);
+
+      const terminal = spawnTerminal(["deploy-draft", "--target", "dev"], {
+        cwd: dir.root,
+      });
+      await terminal.waitFor(
+        /Error: Target dev is locked by attempt #2 \(rebuild by \S+, started [^,]+, server process \d+, active, statement started \S+: DROP /,
+      );
+      expect(await terminal.exited).toBe(1);
+      expect(terminal.screen).not.toContain("Type YES");
+    } finally {
+      await blocker.close();
+    }
+    expect(await rebuilding?.exited).toBe(0);
+    expect(
+      await server.query(
+        "select command, outcome from deployment_history.attempts order by id",
+        [],
+        database,
+      ),
+    ).toEqual([
+      { command: "deploy", outcome: "succeeded" },
+      { command: "rebuild", outcome: "succeeded" },
+    ]);
   });
 
   test("flagging a target holding a draft not disposable says what that leaves; status and deploy then advise flagging it disposable before rebuild", async () => {
@@ -536,7 +591,11 @@ unix("deploy-draft", () => {
     await terminal.waitFor("Type YES");
     terminal.type(`YES${keys.enter}`);
     await terminal.waitFor(/Error: .*data-model\/draft\/schema-change\.sql/);
+    await terminal.waitFor(
+      "The draft's deployment rolled back: target dev is unchanged, still at migration 00001-add-customers (no draft deployed). Next: fix the draft's scripts, then run deploy-draft again.",
+    );
     expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("recovery");
     expect(
       await server.query(
         "select id, name, city from customers order by id",
@@ -562,6 +621,32 @@ unix("deploy-draft", () => {
       cwd: dir.root,
     });
     expect(status.stdout).not.toContain("holds draft");
+  });
+  test("seed data that clashes with the target's rows rolls back too, pointing at the draft's scripts or its seed data", async () => {
+    const { dir, database } = await deployedProject();
+    await requireCityDraft(dir);
+    await dir.write(
+      "data-model/draft/seed-data.sql",
+      "insert into customers (id, name) values (1, 'Ada again');\n",
+    );
+
+    const terminal = spawnTerminal(
+      ["deploy-draft", "--target", "dev", "--with-seed"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor("Type YES");
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor(
+      /Error: data-model\/draft\/seed-data\.sql:1: PostgreSQL refused it: duplicate key value/,
+    );
+    await terminal.waitFor(
+      "The draft's deployment rolled back: target dev is unchanged, still at migration 00001-add-customers (no draft deployed). Next: fix the draft's scripts or its seed data, then run deploy-draft again.",
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("recovery");
+    expect(
+      await server.query("select id, name from customers", [], database),
+    ).toEqual([{ id: "1", name: "Ada" }]);
   });
 });
 
@@ -1275,6 +1360,44 @@ unix("rebuild", () => {
         database,
       ),
     ).toEqual([{ command: "deploy" }]);
+  });
+
+  test("says it rolled back when a migration's file fails during the replay, without suggesting a Recovery", async () => {
+    // Fault injection: once rebuild's deploy transaction has begun, the
+    // target refuses CREATE TABLE as a data error would be refused.
+    const { dir, database } = await deployedProject({
+      adapter: `{
+  async connect() {
+    const session = await real.connect();
+    let deploying = false;
+    return {
+      ...session,
+      async execute(sql) {
+        deploying ||= sql.includes("lock_timeout") && !sql.includes("READ ONLY");
+        if (deploying && process.env.TEST_REFUSE === "1" && /^CREATE TABLE/i.test(sql)) {
+          throw Object.assign(new Error("refused for the test"), { code: "23514" });
+        }
+        return session.execute(sql);
+      },
+    };
+  },
+}`,
+    });
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root, env: { TEST_REFUSE: "1" } },
+    );
+    await terminal.waitFor("Type YES");
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor(
+      /Error: data-model\/migrations\/00001-add-customers\/schema-change\.sql:\d+: PostgreSQL refused it: refused for the test\. The rebuild rolled back: target dev is unchanged\./,
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("recovery");
+    expect(
+      await server.query("select id, name from customers", [], database),
+    ).toEqual([{ id: "1", name: "Ada" }]);
   });
 
   test("refuses, without asking, an extension and a member of another extension at once, with each its own advice", async () => {

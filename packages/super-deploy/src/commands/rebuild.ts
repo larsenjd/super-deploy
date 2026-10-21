@@ -13,7 +13,9 @@
 // a new target; the confirmation and result name the Recovery each runs as,
 // QA 173). Seed data is never loaded. The attempt log and
 // the disposable flag are kept. Not rehearsed first: the target is
-// disposable and the transaction rolls back on any failure.
+// disposable and the transaction rolls back on any failure; a migration's
+// file failing says so ("The rebuild rolled back"), with no Recovery
+// suggested.
 //
 // The wipe's CASCADE also drops objects in other schemas that depend on
 // managed ones. The confirmation lists them ("Also drops, outside schema
@@ -57,6 +59,7 @@ import {
   type TargetView,
 } from "../guard/guard.ts";
 import type { Project } from "../project.ts";
+import { SqlFileFailedError } from "../rehearsal/replay.ts";
 import {
   driftFromReplica,
   type MigrationWithUnit,
@@ -218,6 +221,10 @@ export async function rebuild(
           `DELETE FROM ${historyTable(config.historySchema, "deployed_draft")}`,
         );
         await runMigrations(session, migrations, applyOptions);
+      }).catch((error: unknown) => {
+        throw error instanceof SqlFileFailedError
+          ? error.rolledBack({ command: "rebuild", target: target.name })
+          : error;
       });
       return {
         target: target.name,

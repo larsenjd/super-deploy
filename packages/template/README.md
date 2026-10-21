@@ -17,6 +17,9 @@ If you install before `git init`, run `pnpm install` again afterwards. The
 hook lets you commit a draft in progress; CI should refuse it until it is
 finalized (see
 [The files of a draft and a migration](#the-files-of-a-draft-and-a-migration)).
+This works when the project is the root of its Git repository; inside a
+larger one, see
+[A project inside another Git repository](#a-project-inside-another-git-repository).
 
 Nothing else is needed: `super-deploy.config.ts` runs two private
 PostgreSQL 18 servers in `.super-deploy` (gitignored), each started whenever
@@ -48,6 +51,29 @@ database (QA, production), add it as a target: see
 before finalizing it (`deploy-draft`), or reset `dev` to a migration
 (`rebuild`), flag `dev` disposable first: see
 [Disposable targets and the guarded commands](#disposable-targets-and-the-guarded-commands).
+
+### A project inside another Git repository
+
+`init` makes a project in a folder of its own, often a new subfolder of an
+application's repository (`init` tells you when it is one). Husky installs
+the hook only when the project's folder is the repository's root, so here
+`pnpm install` installs none, and the hook has to run the project's
+`precommit` from the repository's root. Say the project is in `db/`:
+
+- With Husky, from the project: change `prepare` in `package.json` to
+  `"cd .. && husky db/.husky"` (one `..` per folder level), and start
+  `.husky/pre-commit` with `cd db`:
+
+  ```sh
+  cd db
+  pnpm precommit
+  ```
+
+  `pnpm install` then sets the repository's hooks to `db/.husky`.
+- If the repository already has a hook setup of its own (Husky, lefthook, a
+  `core.hooksPath`), don't install a second one: Git runs only one. Add the
+  line `pnpm --dir db precommit` to its pre-commit hook instead, and delete
+  the project's `prepare` script and `.husky` folder.
 
 ## Connecting to dev
 
@@ -97,6 +123,16 @@ again, which rebuilds it from your migrations (as `deployer`). Data you
 added to `dev` by hand is lost with it, and so is its disposable flag (see
 [Disposable targets and the guarded commands](#disposable-targets-and-the-guarded-commands)).
 
+`.super-deploy/rehearsal` holds only the throwaway databases rehearsals
+use: whenever no command is running, you can delete it, and nothing is
+lost. If a crash or reboot leaves a server folder stale or damaged, commands
+that need it fail naming what looks wrong. For a `postmaster.pid` that
+names a process which isn't its server, delete that file with no command
+running. For a folder that isn't a complete PostgreSQL data folder, delete
+the folder with no command running: for `.super-deploy/rehearsal` nothing
+is lost; for `.super-deploy/dev`, run `deploy --target dev` again, which
+loses what you added to `dev` by hand.
+
 ## What the desired schema supports
 
 The desired schema may hold only the statements below; super-deploy refuses
@@ -123,7 +159,8 @@ first version: these may be supported later, but none is yet.
   [Permissions](#what-each-target-needs-set-up-outside-super-deploy)).
 - Functions and procedures in `sql` or `plpgsql`, and triggers.
 - Domains and composite types.
-- `COMMENT ON` the objects above.
+- `COMMENT ON` the objects above, except on a view's or materialized
+  view's columns (refused below).
 - `CREATE EXTENSION plpgsql`, which is installed in every database anyway.
 
 ### Refused
@@ -173,7 +210,12 @@ Table, view and routine features:
 - routine options other than `LANGUAGE`, volatility, `STRICT`,
   `LEAKPROOF`, `PARALLEL`, `COST`, `ROWS` and `SET` (such as `WINDOW` and
   `SUPPORT`);
-- view options other than the three above.
+- view options other than the three above;
+- comments on view and materialized-view columns (`COMMENT ON COLUMN
+  <view>.<column>`): the differ doesn't generate them, so no migration
+  would add one. Describe the column in the view's own comment instead.
+  Adopting a database that has one is refused until it is removed there
+  (`COMMENT ON COLUMN <view>.<column> IS NULL`).
 
 Physical storage settings:
 
@@ -303,16 +345,33 @@ super-deploy's reads of the target's schema (its drift check, and
 number of milliseconds (`500`) or a string with the unit `ms`, `s`, `min` or
 `h`: `"500ms"`, `"5s"`, `"2min"`, `"1h"`.
 
-If the CLI dies during a deployment (killed, or its machine lost), the
-server rolls the deployment back once it notices the connection is gone.
-super-deploy has the server check every 5 seconds while a statement runs
-(PostgreSQL's `client_connection_check_interval`; a server on Windows can't,
-and runs the statement to its end). Until then the target stays locked:
-`deploy` and `status` name the holding attempt, its server process, and the
-statement it is running and since when. If you know that command is dead,
+If the CLI dies or hangs during a deployment (killed, frozen, or its machine
+or network lost), the server rolls the deployment back once it ends the
+session, and super-deploy sets each target session up so that comes soon:
+
+- a statement whose client is gone is ended within seconds: the server
+  checks every 5 seconds while a statement runs (PostgreSQL's
+  `client_connection_check_interval`; a server on Windows can't, and runs
+  the statement to its end);
+- a session left idle in its transaction is ended after a minute
+  (`idle_in_transaction_session_timeout`);
+- a vanished machine is detected within about a minute, even between
+  statements (`tcp_keepalives_idle` and friends; not over a Unix socket).
+
+A server that refuses one of these settings runs without it. Until the
+session ends the target stays locked: `deploy` and `status` name the holding
+attempt, its server process, and the statement it is running and since when. If you know that command is dead,
 `select pg_terminate_backend(<server process>)` ends its session, which rolls
 the deployment back and releases the lock. Cancelling only its statement
 (`pg_cancel_backend`) isn't enough: the lock belongs to the session.
+
+A deployment that waits for a lock another session holds on a table (a
+long transaction, a `VACUUM FULL`) shows in `status` as `waiting for a lock
+held by server process N`, with that session's application name, user, state
+and statement. If the wait outlasts `lockTimeout`, the deployment rolls back
+and says so, quoting the target's `lockTimeout`; run `status` during the next
+wait to see the session, or query `pg_stat_activity` for
+`pg_blocking_pids(<server process>)`.
 
 ### Adding a real target
 
@@ -730,6 +789,31 @@ NOT NULL, rename its constraint too: PostgreSQL 18 names NOT NULL constraints
 would refuse the draft. For example,
 `alter table t rename constraint t_old_not_null to t_new_not_null`.
 
+## Column order
+
+A table's columns may not be in the order the desired schema declares
+them, and their order may differ between targets:
+
+- A column added to an existing table goes at the end of it.
+- A new table gets its columns in the declared order, except a column whose
+  type (a domain or a composite type) or default (a function) is created in
+  the same migration as the table: the differ creates the table first and
+  adds that column afterwards, after the table's other columns. Declaring
+  the type or function first in the desired schema doesn't change this.
+- A column whose collation or generation expression changes is dropped and
+  added again, at the end (see [Destructive changes](#destructive-changes)).
+
+For an adopted database, this means the adopted target keeps its own
+column order, while `dev`, rehearsals and every target built from
+`00001-adopt` can have such columns at the end of their tables.
+
+A table's column order is never compared: rehearsals, drift and `mark`
+ignore it, so nothing refuses or warns about it. What depends on it is SQL that uses
+columns by position. A draft's scripts and seed data refuse it: `INSERT`
+without a column list, `SELECT *`, `ORDER BY` or `GROUP BY` by position,
+`NATURAL JOIN` and whole-row references. Write your application's SQL the
+same way, naming its columns.
+
 ## Reordering a composite type's attributes
 
 `draft` can't reorder a composite type's attributes, or add one anywhere
@@ -812,6 +896,21 @@ how many are too large, which makes the rehearsal fail too), and `finalize`
 asks for the change to be acknowledged. If those values matter, shorten or
 move them in the pre-migration script.
 
+Changing a column's collation, or a stored generated column's expression,
+makes `draft` drop the column and add it again (the differ can't change
+either in place), at the end of the table. `draft` warns, and `finalize`
+asks, naming the column as dropped and re-added and giving the statement
+that makes the change in place instead. Put that statement in the
+pre-migration script and run `draft` again; the schema change then has
+nothing left to do for the column:
+
+- a collation: the drop loses every value in the column, on every target.
+  Change it in place with
+  `ALTER TABLE customers ALTER COLUMN nickname TYPE text COLLATE "C"`;
+- a generation expression: the values are computed again, so none is lost,
+  but the drop still needs acknowledging. Change it in place with
+  `ALTER TABLE a ALTER COLUMN total SET EXPRESSION AS (price * qty * 1.2)`.
+
 `rehearse` lists a draft's destructive statements, and `finalize` needs them
 acknowledged. In a terminal, `finalize` lists them and asks. Without a
 terminal (in CI, for example) it refuses, listing them:
@@ -830,6 +929,16 @@ PostgreSQL refuses a statement, for example because the target holds data a
 new constraint rejects, the whole transaction is rolled back: the target is
 as it was before the deployment, and records none of its migrations. Other
 migrations in the same deployment are rolled back too.
+
+If the target's session ends instead (an administrator's
+`pg_terminate_backend`, a server shutdown, a lost connection), or a lock or
+statement timeout runs out while super-deploy reads the target before
+deploying, the error says so, names the target (and, for a timeout, the
+setting and its value), and says it is unchanged: nothing had changed yet,
+or the deployment rolled back. Retry once the
+target is reachable; if the session was ended on purpose, find out why
+first. Only a connection lost during the final COMMIT leaves the outcome
+unknown: the next `status` or `deploy` settles it.
 
 The migration that failed is finalized, so it can't be edited, and targets
 that already ran it keep it. Instead, give it a **Recovery**: replacement
@@ -964,11 +1073,23 @@ recorded**, even only `dev`. That target records the migration's name and
 hashes, so once the migration is gone or finalized differently, `deploy`
 refuses the target (for example
 `the target records migration 00008-tweaks with content hash ..., but the repo's is ...`).
-To change something a target has run, finalize a new migration, or a
-Recovery for the targets that haven't run it. If you already unfinalized
-one, restore its original folder and `data-model/migrations/index.json`
-from Git, then run `pnpm exec super-deploy validate` to make the restored
-files read-only again.
+`unfinalize` can't see targets, so it warns about this before it moves a
+migration, in its question when it asks one. To change something a target
+has run, finalize a new migration, or a Recovery for the targets that
+haven't run it. If you already unfinalized one, `finalize` the draft
+unchanged: it reproduces the migration byte for byte (`status` suggests
+this while the draft is that migration). Or restore its original folder and
+`data-model/migrations/index.json` from Git, then run
+`pnpm exec super-deploy validate` to make the restored files read-only
+again.
+
+If a finalized migration (or Recovery) was edited, had a file added, or had
+its `desired-schema/` snapshot changed, `validate`, `status` and `deploy`
+refuse it as `changed after it was finalized`. Restore its folder from Git
+(`git checkout HEAD -- data-model/migrations/00002-add-orders`, and delete
+any file you added to it), then run `pnpm exec super-deploy validate`, which
+makes it read-only again. To change what the migration does, finalize a new
+migration, or a Recovery for the targets where it failed.
 
 ## Disposable targets and the guarded commands
 
@@ -998,6 +1119,10 @@ path:
   real data stands out. Marking a target that holds a deployed draft not
   disposable warns that `deploy` refuses it until `rebuild` resets it, which
   then needs it flagged disposable again; `status` and `deploy` say so too.
+  Each run's attempt records which way it set the flag, so `status`'s recent
+  attempts show who made the target disposable and when
+  (`#5 disposable set yes succeeded by ana at ...`). In the menu, the
+  question says whether the target is disposable now, with no preselected.
 - **`deploy-draft --target X`** tries the current, unfinalized draft on a
   disposable target, so its scripts meet the target's data before you
   finalize. The target must have no pending migrations (a Recovery draft of
@@ -1007,7 +1132,10 @@ path:
   an older desired schema (run `draft` again), and its confirmation says so
   when `schema-change.sql` was edited by hand since `draft` generated it.
   `--with-seed` loads the draft's seed data first, which
-  may clash with data already on the target. The target then records that
+  may clash with data already on the target. If a file fails, the whole
+  transaction rolls back and the error says the target is unchanged; for a
+  data error it says to fix the draft's scripts (or its seed data) and run
+  `deploy-draft` again. Otherwise the target records that
   it holds the draft, not a migration: `deploy`, `mark` and another
   `deploy-draft` refuse it, and `status` doesn't check it for drift, until
   `rebuild` resets it.
@@ -1043,7 +1171,10 @@ path:
   migrations up to that one. The comparison ignores column order and
   ownership, and separately the deploy role must own the managed schema and
   everything in it (see [Permissions](#permissions)). Each run marks one
-  migration.
+  migration. None of the migration's files run, its pre-migration and
+  post-migration scripts included: make their changes by hand too, such as
+  a backfill of the column you added, since the comparison sees structure,
+  not data. The confirmation names each script that won't run.
 
 All four need a person at a terminal. Each shows the target's name, host,
 database and last recorded migration, and goes ahead only when you type
@@ -1051,4 +1182,5 @@ database and last recorded migration, and goes ahead only when you type
 address the server reports when that differs, e.g.
 `db.prod.internal:5432 (10.0.4.7:5432)`. They refuse in CI (when the `CI` environment variable is set
 to anything but `false` or `0`) and without a terminal, and no flag skips
-the question.
+the question. While another command holds the target, they refuse before
+asking, naming it as `deploy` does.

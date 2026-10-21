@@ -134,7 +134,7 @@ export class InitConflictError extends SuperDeployError {
 
   constructor(directory: string, paths: readonly string[]) {
     super(
-      `Cannot initialise a project in ${directory}: it already has ${paths.join(", ")}`,
+      `Cannot initialise a project in ${directory}: it already has ${paths.join(", ")}. init needs an empty folder, such as a new subfolder`,
     );
     this.directory = directory;
     this.paths = paths;

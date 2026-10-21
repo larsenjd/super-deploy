@@ -286,11 +286,22 @@ export async function readFolder(
   folder: string,
   recursive = false,
 ): Promise<Dirent[]> {
+  return orIfMissing(
+    () => readdir(folder, { recursive, withFileTypes: true }),
+    [],
+  );
+}
+
+/** What `read` resolves to, or `missing` if it fails because a file or folder doesn't exist. */
+export async function orIfMissing<T, M>(
+  read: () => Promise<T>,
+  missing: M,
+): Promise<T | M> {
   try {
-    return await readdir(folder, { recursive, withFileTypes: true });
+    return await read();
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
+      return missing;
     }
     throw error;
   }
@@ -369,14 +380,7 @@ export async function writableFiles(folder: string): Promise<string[]> {
 
 /** `path`'s text (UTF-8), or undefined if it doesn't exist. */
 export async function readIfPresent(path: string): Promise<string | undefined> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return undefined;
-    }
-    throw error;
-  }
+  return orIfMissing(() => readFile(path, "utf8"), undefined);
 }
 
 /** readIfPresent, with line endings normalised (LF). */

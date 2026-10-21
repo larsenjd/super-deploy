@@ -2,7 +2,7 @@
 // flags, parse.ts) and the interactive menu (menu.ts). Each command's `run`
 // calls the exported API function and prints its result. To add a command,
 // define it here and append it to `commands`.
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   adopt,
   type LeftOnTarget,
@@ -11,7 +11,7 @@ import {
 import { deploy, describeMigration } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
-import { disposable } from "../commands/disposable.ts";
+import { disposable, readDisposableFlag } from "../commands/disposable.ts";
 import { draft } from "../commands/draft.ts";
 import { finalize } from "../commands/finalize.ts";
 import { init } from "../commands/init.ts";
@@ -60,7 +60,7 @@ import {
   type DriftedObject,
   driftLabel,
 } from "../verification/drift.ts";
-import { ReportedError } from "./run.ts";
+import { indentContinuation, ReportedError } from "./run.ts";
 
 export type CommandGroup =
   | "Start"
@@ -117,6 +117,18 @@ export interface MigrationOption extends OptionBase {
 export interface ChoiceOption extends OptionBase {
   readonly kind: "choice";
   readonly choices: readonly string[];
+  /**
+   * The menu's question and preselected choice, worked out from the project
+   * and the answers so far (e.g. the target chosen). Without it the menu asks
+   * `question` (or `description`) with the first choice preselected.
+   */
+  menu?(project: Project, answers: OptionValues): Promise<ChoiceQuestion>;
+}
+
+export interface ChoiceQuestion {
+  readonly question: string;
+  /** One of the option's `choices`. */
+  readonly initial: string;
 }
 
 /** Free text normalised like a draft name; the menu previews the normalised result. */
@@ -237,9 +249,14 @@ export function needsProject(
   );
 }
 
-/** True if `directory` or a folder above it has a `.git` (a folder, or a file in linked worktrees). */
-function insideGitWorkTree(directory: string): boolean {
-  return findUpward(directory, ".git") !== undefined;
+/**
+ * The root of the Git work tree holding `directory`: the nearest folder,
+ * `directory` or above, with a `.git` (a folder, or a file in linked
+ * worktrees and submodules). Undefined outside one.
+ */
+function gitWorkTreeRoot(directory: string): string | undefined {
+  const git = findUpward(directory, ".git");
+  return git === undefined ? undefined : dirname(git);
 }
 
 /** A command refused to go ahead (exit 1). */
@@ -292,13 +309,20 @@ const initCommand: DirectoryCommandDefinition = {
     // displayPath would show as ".".
     context.result(`Initialised a super-deploy project in ${result.root}`);
     // Git before pnpm install, as the template README says: Husky installs
-    // the pre-commit hook only into an existing repo.
-    const install = insideGitWorkTree(result.root)
-      ? "pnpm install"
-      : "git init, then pnpm install";
+    // the pre-commit hook only into an existing repo, and only when the
+    // project is its root (`.git` in the project's folder). In a subfolder
+    // of a repo the hook is the repo's to set up: the README says how.
+    const repository = gitWorkTreeRoot(result.root);
+    const install =
+      repository === undefined ? "git init, then pnpm install" : "pnpm install";
     context.result(
       `Next: ${install}, add CREATE statements under data-model/desired-schema/, then run draft`,
     );
+    if (repository !== undefined && repository !== result.root) {
+      context.result(
+        `The project is inside the Git repository at ${repository}, so pnpm install won't install the pre-commit hook: see "A project inside another Git repository" in README.md`,
+      );
+    }
   },
   projectMode: {
     option: "adopt",
@@ -712,6 +736,7 @@ const unfinalizeCommand: CommandDefinition = {
     const result = await unlessDeclined(context, () =>
       unfinalize(project, {
         ...overwriteOptions(values, context),
+        onWarning: (warning) => context.warn(`warning: ${warning}`),
         ...(typeof recoveryOf === "string"
           ? { recoveryOf: Number(recoveryOf) }
           : {}),
@@ -726,9 +751,6 @@ const unfinalizeCommand: CommandDefinition = {
         : `Moved Recovery ${result.recovery} of migration ${result.folder} back into a Recovery draft in ${context.displayPath(result.draftPath)}`,
     );
     reportRestore(project, result, context);
-    if (result.warning !== undefined) {
-      context.warn(`warning: ${result.warning}`);
-    }
   },
 };
 
@@ -957,6 +979,19 @@ const disposableCommand: CommandDefinition = {
       description:
         "yes to make the target disposable, no to make it not disposable",
       required: true,
+      // The menu says how the target is flagged now, and never steers
+      // towards a change: no is preselected whatever the flag (QA 176).
+      async menu(project, answers) {
+        const target = String(answers.target);
+        const now = await readDisposableFlag(project, target);
+        const question =
+          now.read === false
+            ? `Couldn't read whether target ${target} is disposable now (${now.reason}). Make it disposable?`
+            : now.disposable
+              ? `Target ${target} is disposable now. Keep it disposable?`
+              : `Target ${target} is not disposable now. Make it disposable?`;
+        return { question, initial: "no" };
+      },
     },
   ],
   async run(project, values, context) {
@@ -988,13 +1023,15 @@ function reportMarkMismatch(
 
 /**
  * Each drifted object, then its catalog lines, each saying which side it is
- * on (`driftLabel`), as `status` and `mark` list them.
+ * on (`driftLabel`), as `status` and `mark` list them. A line spanning
+ * several (a routine's or rule's definition) is indented under its label.
  */
 function driftListing(objects: readonly DriftedObject[]): string[] {
   return objects.flatMap((drifted) => [
     `  ${drifted.object}:`,
     ...drifted.differences.map(
-      ({ side, line }) => `    ${driftLabel(drifted.change, side)}: ${line}`,
+      ({ side, line }) =>
+        `    ${driftLabel(drifted.change, side)}: ${indentContinuation(line, "      ")}`,
     ),
   ]);
 }
@@ -1109,7 +1146,11 @@ function describeAttempt(
         ? ` migration ${attempt.fromMigration}${variants}`
         : ` migrations ${attempt.fromMigration}-${attempt.toMigration}${variants}`;
   const error = attempt.error === undefined ? "" : `: ${attempt.error}`;
-  return `#${attempt.id} ${attempt.command} ${attempt.outcome}${range} by ${attempt.osUser} at ${attempt.startedAt.toISOString()}${error}`;
+  const command =
+    attempt.disposableSet === undefined
+      ? attempt.command
+      : `${attempt.command} set ${attempt.disposableSet ? "yes" : "no"}`;
+  return `#${attempt.id} ${command} ${attempt.outcome}${range} by ${attempt.osUser} at ${attempt.startedAt.toISOString()}${error}`;
 }
 
 /** `override: <file>:<line>: <object> [<rules>]: <reason>`; `file` is relative to `base`. */

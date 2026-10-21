@@ -15,15 +15,18 @@ import {
   type OverrideReasonQuestion,
   type Project,
   status,
+  TargetTimeoutError,
   validate,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   asDeployerPreamble,
+  asDeployRole,
   asSuperuser,
   deployProject,
   finalizeMigration,
   roleName,
+  testSession,
 } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
@@ -66,6 +69,33 @@ function asDeployerProject(prod: string, deployer: string) {
       otherTargets: "prod: { adapter: asDeployer },",
     },
   );
+}
+
+/**
+ * Adopts `prod`, a database holding `sql` (as the deploy role, which the
+ * target logs in as, with lockTimeout 200ms), while a test session holds
+ * ACCESS EXCLUSIVE on its table t; the lock is released before returning.
+ */
+async function adoptingWhileLocked(sql: string) {
+  const prod = await server.createDatabase();
+  await asDeployRole(server, prod, sql);
+  const deployed = await deployProject(
+    server,
+    {},
+    {
+      otherTargets: `prod: { adapter: postgres.target(${JSON.stringify(prod)}), lockTimeout: "200ms" },`,
+    },
+  );
+  const holder = await testSession(server, prod);
+  try {
+    await holder.execute("BEGIN; LOCK TABLE t IN ACCESS EXCLUSIVE MODE");
+    const error = await adopt(deployed.project, { target: "prod" }).catch(
+      (e: unknown) => e,
+    );
+    return { ...deployed, prod, error };
+  } finally {
+    await holder.close();
+  }
 }
 
 /**
@@ -701,6 +731,42 @@ describe("adopt", () => {
           rule: "unsupported-object",
           reason:
             "Virtual generated columns are not supported in V1 (a generated column without STORED is virtual in PostgreSQL 18): add STORED",
+        },
+      ]);
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses comments on view and materialized-view columns, with the statement removing each", async () => {
+    const { dir, project } = await adoptableProject(`
+      create table t (id int primary key, v text);
+      create view v as select id, v from t;
+      create materialized view mv as select id from t;
+      comment on column t.v is 'table col';
+      comment on view v is 'a view';
+      comment on column v.v is 'view col';
+      comment on column mv.id is 'mv col';
+    `);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const reason = (fix: string) =>
+        `Comments on view and materialized-view columns are not supported in V1: pg-delta doesn't generate them, so no migration would add one; remove it on the target: ${fix}`;
+      expect((error as AdoptUnsupportedError).objects).toEqual([
+        {
+          object: "column id of materialized view public.mv",
+          rule: "unsupported-object",
+          reason: reason("COMMENT ON COLUMN public.mv.id IS NULL"),
+        },
+        {
+          object: "column v of view public.v",
+          rule: "unsupported-object",
+          reason: reason("COMMENT ON COLUMN public.v.v IS NULL"),
         },
       ]);
       expect(dir.exists("data-model/desired-schema")).toBe(false);
@@ -1618,6 +1684,49 @@ describe("adopt", () => {
 
       expect(result.objects).toBe(0);
       expect(result.warning).toBe("Adopted 0 objects from schema public");
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses once its read of the target waits longer than the target's lockTimeout for a lock another session holds, writing nothing, and adopts once it is released", async () => {
+    // A plain table: the lock holds up the catalog check's read.
+    const { dir, project, prod, error } = await adoptingWhileLocked(
+      "create table t (id bigint primary key)",
+    );
+    try {
+      expect(error).toBeInstanceOf(TargetTimeoutError);
+      const { message } = error as TargetTimeoutError;
+      expect(message).toContain(
+        "Target prod's lockTimeout (200ms) ran out waiting for a lock while init --adopt read the target's managed schema",
+      );
+      expect(message).toContain("Nothing was written");
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+      expect(dir.exists("data-model/migrations")).toBe(false);
+      expect(
+        await server.query(
+          "select 1 from pg_namespace where nspname = 'deployment_history'",
+          [],
+          prod,
+        ),
+      ).toEqual([]);
+
+      expect((await adopt(project, { target: "prod" })).objects).toBe(1);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refusing a read the differ's own catalog query waited on, names no internal library", async () => {
+    // A column default: the lock holds up the differ's read.
+    const { project, error } = await adoptingWhileLocked(
+      "create table t (id bigint primary key, b text default 'x')",
+    );
+    try {
+      expect(error).toBeInstanceOf(TargetTimeoutError);
+      const { message } = error as TargetTimeoutError;
+      expect(message).toContain("lockTimeout (200ms)");
+      expect(message).not.toMatch(/pg-delta/);
     } finally {
       await project.close();
     }

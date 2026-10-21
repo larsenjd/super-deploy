@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import {
   asDeployerPreamble,
+  asDeployRole,
   asSuperuser,
   deployConfig,
   roleName,
@@ -202,6 +203,52 @@ describe("deploy and status", () => {
     expect(report.stdout).toContain(
       `Deploy would refuse:\n  the deploy role ${deployer} needs CREATE on database ${database} to create the history schema "deployment_history" (fix: GRANT CREATE ON DATABASE ${database} TO ${deployer})\n`,
     );
+  });
+
+  test("status indents a multi-line definition's continuation lines under its difference", async () => {
+    const { config, database } = deployConfig(server);
+    const dir = await createTestProject({
+      config,
+      files: {
+        "data-model/desired-schema/customers.sql":
+          "create table customers (id bigint primary key, name text not null);\n",
+      },
+    });
+    for (const args of [
+      ["draft", "--name", "add customers"],
+      ["finalize"],
+      ["deploy", "--target", "dev"],
+    ]) {
+      expect((await runCli(args, { cwd: dir.root })).exitCode).toBe(0);
+    }
+    await asDeployRole(
+      server,
+      database,
+      `create rule r1 as on insert to customers do also notify x;
+       create function f() returns int language sql as 'select 1';`,
+    );
+
+    const report = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+
+    expect(report.exitCode).toBe(1);
+    const listing = report.stdout
+      .split("Drift (the target differs from its recorded migrations):\n")[1]
+      ?.split("Recent attempts:")[0]
+      ?.trimEnd()
+      .split("\n");
+    expect(listing).toEqual([
+      "  function public.f():",
+      "    only on the target: routine: CREATE OR REPLACE FUNCTION public.f()",
+      "       RETURNS integer",
+      "       LANGUAGE sql",
+      "      AS $function$select 1$function$",
+      "  rule r1 on table public.customers:",
+      "    only on the target: other: CREATE RULE r1 AS",
+      "          ON INSERT TO public.customers DO",
+      "       NOTIFY x;",
+    ]);
   });
 
   test("status lists the drifted objects, saying which side each line is on, and exits 1; deploy refuses with exit code 1", async () => {

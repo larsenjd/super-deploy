@@ -8,12 +8,13 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
+import type { ResolvedConfig } from "../config/config.ts";
 import {
-  durationText,
-  type ResolvedConfig,
-  targetDefaults,
-} from "../config/config.ts";
-import { errorReason, SuperDeployError } from "../errors.ts";
+  isTimeoutState,
+  type TargetTimeoutSettings,
+  timeoutRanOut,
+} from "../deploy/target.ts";
+import { errorReason, SuperDeployError, sessionEnding } from "../errors.ts";
 import { parseSqlFile } from "../sql-analysis/parse.ts";
 import { decodeHashedText } from "../store/hashing.ts";
 import { projectRelative } from "../store/layout.ts";
@@ -151,6 +152,10 @@ export async function replay(
  * unit's last file), and the migration's `ON COMMIT DROP` staging tables are
  * dropped (`DISCARD TEMP`), so the next migration may reuse their names.
  * Deferrable constraints then stay immediate for the rest of the transaction.
+ *
+ * An error saying the session is gone (`sessionEnding`: terminated, shut
+ * down, connection lost) is no refusal of the file: it is thrown as it is,
+ * for the command to report (deploy/session-ended.ts).
  */
 export async function runUnit(
   session: Session,
@@ -164,6 +169,9 @@ export async function runUnit(
     try {
       await session.execute("SET CONSTRAINTS ALL IMMEDIATE");
     } catch (error) {
+      if (sessionEnding(error) !== undefined) {
+        throw error;
+      }
       const refusal = refusalOf(error);
       throw new SqlFileFailedError(
         {
@@ -188,6 +196,9 @@ async function runFile(
     try {
       await session.execute(statement.text);
     } catch (error) {
+      if (sessionEnding(error) !== undefined) {
+        throw error;
+      }
       const within = lineAt(
         statement.text,
         (error as { position?: string }).position,
@@ -280,13 +291,39 @@ export interface SqlFileFailure extends PostgresRefusal {
   readonly line: number | undefined;
 }
 
-/** A deployment's transaction rolled back because a file failed. */
+/**
+ * A command's transaction on a target rolled back because a file failed: what
+ * the error then says about the target, and the next step it suggests.
+ */
+export type TargetRollback =
+  | DeploymentRollback
+  | DraftDeploymentRollback
+  | RebuildRollback;
+
+/** A deployment's transaction rolled back. */
 export interface DeploymentRollback {
+  readonly command: "deploy";
   readonly target: string;
   /** Folder of the newest migration the target records, e.g. `00003-add-email`; undefined when it records none. */
   readonly lastRecorded: string | undefined;
   /** Number of the finalized migration whose file failed. */
   readonly migration: number;
+}
+
+/** deploy-draft's transaction rolled back: the target holds no draft. */
+export interface DraftDeploymentRollback {
+  readonly command: "deploy-draft";
+  readonly target: string;
+  /** Folder of the newest migration the target records; undefined when it records none. */
+  readonly lastRecorded: string | undefined;
+  /** Whether the draft's seed data ran first (`--with-seed`). */
+  readonly seedData: boolean;
+}
+
+/** rebuild's transaction rolled back: nothing was wiped. */
+export interface RebuildRollback {
+  readonly command: "rebuild";
+  readonly target: string;
 }
 
 /**
@@ -303,14 +340,18 @@ export function unchangedTarget(
 
 /**
  * PostgreSQL refused a deploy-time SQL file, in a rehearsal or a deployment.
- * The message adds a next step by SQLSTATE: the target setting behind a lock
- * (55P03) or statement (57014) timeout, for a data error (classes 22,
- * 23) in a deployment, a Recovery of the failing migration, and for a type
- * change a generated column blocks (0A000 with its DETAIL), the
- * pre-migration fix, and for a statement a forced row-level security policy
- * would filter (42501, refused under the pinned `row_security = off`),
- * turning FORCE off while deploying. In a rehearsal, a missing object in a
- * declared external schema (inRehearsal) says rehearsals don't contain it.
+ * Reported by a command whose transaction on a target rolled back
+ * (`rolledBack`), it says so and what the target is still at. The message
+ * adds a next step by SQLSTATE: on a target (`onTarget`), the target setting
+ * behind a lock (55P03) or statement (57014) timeout, with the value that ran
+ * out (deploy/target.ts, `timeoutRanOut`); for a data error (classes 22, 23), a Recovery of
+ * the failing migration in a deployment, or fixing the draft in deploy-draft
+ * (QA 174); for a type change a generated column blocks (0A000 with its
+ * DETAIL), the pre-migration fix; and for a statement a forced row-level
+ * security policy would filter (42501, refused under the pinned
+ * `row_security = off`), turning FORCE off while deploying. In a rehearsal, a
+ * missing object in a declared external schema (inRehearsal) says rehearsals
+ * don't contain it.
  */
 export class SqlFileFailedError extends SuperDeployError {
   readonly code = "sql-file-failed";
@@ -322,20 +363,24 @@ export class SqlFileFailedError extends SuperDeployError {
   readonly detail: string | undefined;
   readonly hint: string | undefined;
   readonly sqlState: string | undefined;
-  /** Set when a deployment rolled back. */
-  readonly rollback: DeploymentRollback | undefined;
+  /** Set when a command's transaction on a target rolled back. */
+  readonly rollback: TargetRollback | undefined;
   /** The declared external schema a rehearsal failed for lack of. */
   private readonly missingExternalSchema: string | undefined;
+  /** The target the file failed on, for its timeouts. */
+  private readonly target: TargetTimeoutSettings | undefined;
 
   constructor(
     failure: SqlFileFailure,
     options?: ErrorOptions & {
-      rollback?: DeploymentRollback | undefined;
+      rollback?: TargetRollback | undefined;
       missingExternalSchema?: string | undefined;
+      target?: TargetTimeoutSettings | undefined;
     },
   ) {
     const rollback = options?.rollback;
     const missingExternalSchema = options?.missingExternalSchema;
+    const target = options?.target;
     super(
       [
         sentence(
@@ -350,10 +395,8 @@ export class SqlFileFailedError extends SuperDeployError {
         missingExternalSchema === undefined
           ? undefined
           : `This failed in a rehearsal: it reads ${missingFromRehearsals([missingExternalSchema])}, so a migration's scripts and seed data must not run anything that reads it, such as a trigger on a table they write (see the README, "Permissions").`,
-        rollback === undefined
-          ? undefined
-          : `The deployment rolled back: ${unchangedTarget(rollback.target, rollback.lastRecorded)}.`,
-        nextStep(failure, rollback),
+        rollback === undefined ? undefined : rolledBackSentence(rollback),
+        nextStep(failure, rollback, target),
       ]
         .filter((part) => part !== undefined)
         .join(" "),
@@ -367,14 +410,26 @@ export class SqlFileFailedError extends SuperDeployError {
     this.sqlState = failure.sqlState;
     this.rollback = rollback;
     this.missingExternalSchema = missingExternalSchema;
+    this.target = target;
   }
 
-  /** The same failure, reported by a deployment that rolled back. */
-  rolledBack(rollback: DeploymentRollback): SqlFileFailedError {
+  /** The same failure, reported by the command whose transaction rolled back. */
+  rolledBack(rollback: TargetRollback): SqlFileFailedError {
     return new SqlFileFailedError(this, {
       cause: this.cause,
       rollback,
       missingExternalSchema: this.missingExternalSchema,
+      target: this.target,
+    });
+  }
+
+  /** The same failure on `target`, whose timeouts a timeout's next step quotes. */
+  onTarget(target: TargetTimeoutSettings): SqlFileFailedError {
+    return new SqlFileFailedError(this, {
+      cause: this.cause,
+      rollback: this.rollback,
+      missingExternalSchema: this.missingExternalSchema,
+      target,
     });
   }
 
@@ -391,6 +446,7 @@ export class SqlFileFailedError extends SuperDeployError {
           cause: this.cause,
           rollback: this.rollback,
           missingExternalSchema: schema,
+          target: this.target,
         });
   }
 }
@@ -417,13 +473,26 @@ function externalSchemaNamed(
   );
 }
 
+/** E.g. `The deployment rolled back: target qa is unchanged, still at migration 00003-add-email.` */
+function rolledBackSentence(rollback: TargetRollback): string {
+  switch (rollback.command) {
+    case "deploy":
+      return `The deployment rolled back: ${unchangedTarget(rollback.target, rollback.lastRecorded)}.`;
+    case "deploy-draft":
+      return `The draft's deployment rolled back: ${unchangedTarget(rollback.target, rollback.lastRecorded)} (no draft deployed).`;
+    case "rebuild":
+      return `The rebuild rolled back: target ${rollback.target} is unchanged.`;
+  }
+}
+
 function sentence(text: string): string {
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
 function nextStep(
   failure: SqlFileFailure,
-  rollback: DeploymentRollback | undefined,
+  rollback: TargetRollback | undefined,
+  target: TargetTimeoutSettings | undefined,
 ): string | undefined {
   const { sqlState } = failure;
   const generated = generatedColumnBlocking(failure);
@@ -434,24 +503,37 @@ function nextStep(
   if (forced !== undefined) {
     return `Next: table "${forced}" has FORCE ROW LEVEL SECURITY on the target, so its policies apply to the deploy role and would hide rows from this migration: turn it off while deploying (ALTER TABLE ... NO FORCE ROW LEVEL SECURITY, then FORCE again afterwards), or move the work out of the migration.`;
   }
-  if (sqlState === "55P03") {
-    return `The target's lockTimeout (default ${durationText(targetDefaults.lockTimeoutMs)}) ran out waiting for a lock: retry once whatever held the lock has finished.`;
-  }
-  if (sqlState === "57014") {
-    const { statementTimeoutMs } = targetDefaults;
-    const statementDefault =
-      statementTimeoutMs === undefined
-        ? "none"
-        : durationText(statementTimeoutMs);
-    return `The target's statementTimeout (default ${statementDefault}) cancelled the statement: retry once whatever held it up has finished, or raise the setting.`;
+  if (target !== undefined && isTimeoutState(sqlState)) {
+    const { what, next, blocker } = timeoutRanOut(target, sqlState);
+    return [`${what}: ${next}.`, blocker]
+      .filter((part) => part !== undefined)
+      .join(" ");
   }
   if (
-    rollback !== undefined &&
-    (sqlState?.startsWith("22") === true || sqlState?.startsWith("23") === true)
+    sqlState?.startsWith("22") === true ||
+    sqlState?.startsWith("23") === true
   ) {
-    return `Next: super-deploy recovery --migration ${rollback.migration}, with seed data that reproduces the problem rows in the rehearsal.`;
+    return dataErrorStep(rollback);
   }
   return undefined;
+}
+
+/**
+ * What to do about a data error: a Recovery for a deployment's finalized
+ * migration; the draft itself for deploy-draft (it isn't finalized). None
+ * for rebuild (it replays what other targets ran) or a rehearsal.
+ */
+function dataErrorStep(
+  rollback: TargetRollback | undefined,
+): string | undefined {
+  switch (rollback?.command) {
+    case "deploy":
+      return `Next: super-deploy recovery --migration ${rollback.migration}, with seed data that reproduces the problem rows in the rehearsal.`;
+    case "deploy-draft":
+      return `Next: fix the draft's scripts${rollback.seedData ? " or its seed data" : ""}, then run deploy-draft again.`;
+    default:
+      return undefined;
+  }
 }
 
 /**

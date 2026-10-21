@@ -23,14 +23,23 @@
 //
 // A new data directory is initialised in a sibling folder and renamed into
 // place, so two commands initialising at once both end with the same
-// complete directory. The server's output goes to `super-deploy-server.log`
-// in the data directory, emptied at each start; a failed start reports its
-// last lines.
+// complete directory. A folder that has files but no PG_VERSION (damaged, or
+// half deleted) is refused instead, before initdb runs, and left as it is.
+//
+// A server is taken to be running while its `postmaster.pid` names a live
+// process. After a reboot or crash that pid may belong to an unrelated
+// process: when the file says the server is `ready` and nothing answers on
+// its port, the wait for connections fails at once naming the file, and the
+// caller must not `stopServer` (it would signal that process).
+//
+// The server's output goes to `super-deploy-server.log` in the data
+// directory, emptied at each start; a failed start reports its last lines.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   mkdir,
+  readdir,
   readFile,
   rename,
   rm,
@@ -86,14 +95,24 @@ function postgresBinaries(): Promise<Binaries> {
   return binaries;
 }
 
-/** Initialises `dataDir` with superuser `user` unless it is initialised already. */
+/**
+ * Initialises `dataDir` with superuser `user` unless it is initialised
+ * already. A folder with files but no PG_VERSION is refused with `wayOut`,
+ * what to do about it.
+ */
 export async function initialise(
   dataDir: string,
   user: string,
   password: string,
+  wayOut: string,
 ): Promise<void> {
   if (existsSync(join(dataDir, "PG_VERSION"))) {
     return;
+  }
+  if ((await readdir(dataDir).catch(() => [])).length > 0) {
+    throw new AdapterError(
+      `${dataDir} is not a complete PostgreSQL data folder (it has no PG_VERSION): ${wayOut}`,
+    );
   }
   const { initdb } = await postgresBinaries();
   await mkdir(dirname(dataDir), { recursive: true });
@@ -186,8 +205,8 @@ export async function stopServer(dataDir: string): Promise<void> {
     }
     return;
   }
-  const pid = (await runningServer(dataDir))?.pid;
-  if (pid === undefined) {
+  const pid = (await readPidFile(dataDir))?.pid;
+  if (pid === undefined || !isAlive(pid)) {
     return;
   }
   try {
@@ -202,7 +221,7 @@ export async function stopServer(dataDir: string): Promise<void> {
   }
   // Gone once it has removed postmaster.pid, as `pg_ctl stop -w` waits.
   const deadline = Date.now() + stopWaitMs;
-  while ((await runningServer(dataDir))?.pid === pid) {
+  while ((await readPidFile(dataDir))?.pid === pid && isAlive(pid)) {
     if (Date.now() > deadline) {
       throw new AdapterError(
         `Embedded PostgreSQL failed to stop in ${dataDir}: still running after ${stopWaitMs / 1000} s`,
@@ -215,7 +234,8 @@ export async function stopServer(dataDir: string): Promise<void> {
 /**
  * Waits until the server at `connectionString` accepts connections: while it
  * reports that it is starting up (57P03), or refuses the connection before it
- * listens, for at most 30 s.
+ * listens, for at most 30 s. A refusal while `postmaster.pid` says `ready`
+ * means the file is stale: that fails at once.
  */
 export async function waitUntilAccepting(
   connectionString: string,
@@ -231,6 +251,17 @@ export async function waitUntilAccepting(
     } catch (error) {
       const code = (error as { code?: unknown }).code;
       const transient = code === "57P03" || code === "ECONNREFUSED";
+      const recorded =
+        code === "ECONNREFUSED" ? await readPidFile(dataDir) : undefined;
+      if (
+        recorded !== undefined &&
+        (recorded.status === "ready" || Date.now() > deadline)
+      ) {
+        throw new AdapterError(
+          `${recorded.path} names process ${recorded.pid} and port ${recorded.port}, but no server answers there: if no super-deploy command is running, delete that file and try again`,
+          { cause: error },
+        );
+      }
       if (!transient || Date.now() > deadline) {
         throw new AdapterError(
           `Embedded PostgreSQL in ${dataDir} does not accept connections: ${(error as Error).message}`,
@@ -248,35 +279,36 @@ export async function waitUntilAccepting(
 export async function runningPort(
   dataDir: string,
 ): Promise<number | undefined> {
-  return (await runningServer(dataDir))?.port;
+  const recorded = await readPidFile(dataDir);
+  return recorded !== undefined && isAlive(recorded.pid)
+    ? recorded.port
+    : undefined;
 }
 
 /**
- * The postmaster's pid and port, from `postmaster.pid`, if it names a live
- * process. A single-user backend writes its pid negated: not a server.
+ * What `postmaster.pid` records: the postmaster's pid, its port, and its
+ * status line (`starting`, `ready`, `standby`, `stopping`), if the file is
+ * there and readable.
  */
-async function runningServer(
+async function readPidFile(
   dataDir: string,
-): Promise<{ pid: number; port: number } | undefined> {
+): Promise<
+  { path: string; pid: number; port: number; status: string } | undefined
+> {
+  const path = join(dataDir, "postmaster.pid");
   let lines: string[];
   try {
-    lines = (await readFile(join(dataDir, "postmaster.pid"), "utf8")).split(
-      /\r?\n/,
-    );
+    lines = (await readFile(path, "utf8")).split(/\r?\n/);
   } catch {
     return undefined;
   }
   const pid = Number(lines[0]);
   const port = Number(lines[3]);
-  if (
-    !Number.isInteger(pid) ||
-    pid <= 0 ||
-    !Number.isInteger(port) ||
-    !isAlive(pid)
-  ) {
+  // A single-user backend records its pid negated: not a server.
+  if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) {
     return undefined;
   }
-  return { pid, port };
+  return { path, pid, port, status: lines[7]?.trim() ?? "" };
 }
 
 function lastLines(text: string): string {

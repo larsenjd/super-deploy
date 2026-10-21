@@ -1,4 +1,6 @@
-import { chmod, rename, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { join, relative, sep } from "node:path";
 import {
   draft,
   finalize,
@@ -8,7 +10,11 @@ import {
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
-import { createTestProject, embeddedConfig } from "../support/project.ts";
+import {
+  createTestProject,
+  embeddedConfig,
+  type TestProject,
+} from "../support/project.ts";
 
 let server: TestServer;
 beforeAll(async () => {
@@ -42,6 +48,40 @@ async function finalizedProject() {
   return { dir, project, tamper };
 }
 
+/**
+ * Rewrites index.json so migration `name`, the first, matches its folder's
+ * files again, by the hash format documented in src/store/hashing.ts.
+ */
+async function rehashMigration(dir: TestProject, name: string) {
+  const sha256 = (text: string) =>
+    createHash("sha256").update(text, "utf8").digest("hex");
+  const migration = dir.path(`data-model/migrations/${name}`);
+  const files = (
+    await readdir(migration, { recursive: true, withFileTypes: true })
+  )
+    .filter((entry) => entry.isFile())
+    .map((entry) =>
+      relative(migration, join(entry.parentPath, entry.name))
+        .split(sep)
+        .join("/"),
+    )
+    .sort();
+  let manifest = `super-deploy migration 1\nfolder ${JSON.stringify(name)}\n`;
+  for (const file of files) {
+    const text = await readFile(join(migration, file), "utf8");
+    manifest += `file ${JSON.stringify(file)} ${sha256(text)}\n`;
+  }
+  const contentHash = sha256(manifest);
+  const indexPath = "data-model/migrations/index.json";
+  const index = JSON.parse(await dir.read(indexPath));
+  index.migrations[0] = {
+    ...index.migrations[0],
+    contentHash,
+    chainHash: sha256(contentHash),
+  };
+  await dir.write(indexPath, JSON.stringify(index));
+}
+
 async function validationError(
   ...args: Parameters<typeof validate>
 ): Promise<ValidationFailedError> {
@@ -65,7 +105,14 @@ describe("validate", () => {
     });
   });
 
-  test("fails when a finalized file's content was edited", async () => {
+  const changedAfterFinalizing = {
+    severity: "error",
+    code: "content-hash-mismatch",
+    message: `${folder} was changed after it was finalized (its content hash does not match data-model/migrations/index.json): restore it from Git (\`git checkout HEAD -- ${folder}\`, and delete any file added to it), then run validate, which makes it read-only again. To change what a finalized migration does, finalize a new migration, or a Recovery for the targets where it failed`,
+    path: folder,
+  };
+
+  test("fails when a finalized file's content was edited, saying how to restore it", async () => {
     const { project, tamper } = await finalizedProject();
     await tamper(`${folder}/schema-change.sql`, (text) =>
       text.replace("NOT NULL", "NULL"),
@@ -73,14 +120,23 @@ describe("validate", () => {
 
     const error = await validationError(project);
 
-    expect(error.problems).toEqual([
-      {
-        severity: "error",
-        code: "content-hash-mismatch",
-        message: `${folder} was changed after it was finalized (its content hash does not match data-model/migrations/index.json)`,
-        path: folder,
-      },
-    ]);
+    expect(error.problems).toEqual([changedAfterFinalizing]);
+  });
+
+  test("fails the same way when a file was added to a finalized migration or its desired-schema snapshot was edited", async () => {
+    const added = await finalizedProject();
+    await chmod(added.dir.path(folder), 0o755);
+    await added.dir.write(`${folder}/notes.txt`, "why we did this\n");
+    const edited = await finalizedProject();
+    await edited.tamper(
+      `${folder}/desired-schema/customers.sql`,
+      (text) => `${text}-- edited\n`,
+    );
+
+    for (const { project } of [added, edited]) {
+      const error = await validationError(project);
+      expect(error.problems).toEqual([changedAfterFinalizing]);
+    }
   });
 
   test("a change only in line endings passes", async () => {
@@ -132,6 +188,24 @@ describe("validate", () => {
 
     expect(error.problems).toMatchObject([
       { severity: "error", code: "chain-hash-mismatch" },
+    ]);
+  });
+
+  test("fails when a migration has no schema-change.sql, even with its index entry rehashed to match", async () => {
+    const { dir, project } = await finalizedProject();
+    await chmod(dir.path(folder), 0o755);
+    await rm(dir.path(`${folder}/schema-change.sql`));
+    await rehashMigration(dir, "00001-add-customers");
+
+    const error = await validationError(project);
+
+    expect(error.problems).toEqual([
+      {
+        severity: "error",
+        code: "schema-change-missing",
+        message: `${folder} has no schema-change.sql; every migration has one, as finalize writes it`,
+        path: folder,
+      },
     ]);
   });
 

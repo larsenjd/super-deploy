@@ -24,6 +24,12 @@
 //      abandoned one throws InterruptedError naming the migration the target
 //      is still at (`rollback`), for the CLI's closing line
 //   9. release the lock and close both sessions, whatever happened
+// Both sessions are traced (session-ended.ts): when one of them ends, or a
+// read before the deploy transaction times out, the command fails with
+// TargetSessionEndedError or TargetTimeoutError naming the target and saying
+// nothing changed, or that the deploy transaction rolled back. A failed SQL
+// file (SqlFileFailedError) is told the target there too, so a timeout's
+// message quotes the target's own lockTimeout or statementTimeout.
 //
 // `applyMigrations` is the deploy transaction itself. SQL it sends on the
 // command session, in order (fault-injection wrappers match on these):
@@ -47,13 +53,18 @@
 
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
-import { SuperDeployError } from "../errors.ts";
+import { SuperDeployError, sessionEnding } from "../errors.ts";
 import { InterruptedError, type InterruptedRollback } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { type ReplayUnit, runUnit } from "../rehearsal/replay.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
 import { migrationFolderName } from "../store/migrations.ts";
-import { type Attempt, openAttempt, settleAttempts } from "./attempts.ts";
+import {
+  type Attempt,
+  type AttemptCommand,
+  openAttempt,
+  settleAttempts,
+} from "./attempts.ts";
 import {
   type AttemptOutcome,
   ensureHistorySchema,
@@ -65,6 +76,11 @@ import {
 import { interruptibleSession } from "./interruptible-session.ts";
 import { acquireTargetLock, type TargetLock } from "./lock.ts";
 import { requireHistorySchemaUsable } from "./preflight.ts";
+import {
+  markRolledBack,
+  targetFailure,
+  tracedSession,
+} from "./session-ended.ts";
 import { connectTarget, resolveTarget, targetTimeouts } from "./target.ts";
 
 /** What a command body gets: the target, its two sessions and its attempt. */
@@ -95,15 +111,15 @@ export function outcomeOf(
 export async function withLockedTarget<T>(
   project: Project,
   targetName: string,
-  command: string,
+  command: AttemptCommand,
   body: (locked: LockedTarget) => Promise<T>,
 ): Promise<T> {
   const { historySchema } = project.config;
   const { signal } = project;
   const target = resolveTarget(project, targetName);
-  const commandSession = await connectTarget(target, signal);
+  const commandSession = tracedSession(await connectTarget(target, signal));
   try {
-    const log = await connectTarget(target, signal);
+    const log = tracedSession(await connectTarget(target, signal));
     try {
       await requireHistorySchemaUsable(log, target.name, historySchema);
       await ensureHistorySchema(log, historySchema);
@@ -113,7 +129,7 @@ export async function withLockedTarget<T>(
       );
       const backendPid = rows[0]?.pid;
       const attempt = await openAttempt(log, historySchema, {
-        command,
+        ...command,
         target: target.name,
         backendPid,
       });
@@ -149,7 +165,10 @@ export async function withLockedTarget<T>(
                     : (signal?.reason ?? error),
                 rollback: await rolledBack(log, historySchema, target.name),
               })
-            : error;
+            : await targetFailure(error, target, async () => ({
+                noun: rolledBackNoun(command.command),
+                recorded: await rolledBack(log, historySchema, target.name),
+              }));
         await attempt
           .end(
             outcome,
@@ -193,6 +212,20 @@ async function rolledBack(
     };
   } catch {
     return undefined;
+  }
+}
+
+/** What a command's rolled-back transaction is called, e.g. `deployment`. */
+function rolledBackNoun(command: string): string {
+  switch (command) {
+    case "deploy":
+      return "deployment";
+    case "deploy-draft":
+      return "draft's deployment";
+    case "init --adopt":
+      return "adoption";
+    default:
+      return command;
   }
 }
 
@@ -266,6 +299,7 @@ export async function inDeployTransaction(
     await body();
   } catch (error) {
     await session.execute("ROLLBACK").catch(() => {});
+    markRolledBack(error);
     throw error;
   }
   await commitRecorded(session, options.target.name, options.attemptId);
@@ -286,7 +320,9 @@ export async function commitRecorded(
   try {
     await session.execute("COMMIT");
   } catch (error) {
-    if (error instanceof InterruptedError || refusedByServer(error)) {
+    // Refused by the server, or never sent (interrupted first): known not
+    // to have committed.
+    if (sessionEnding(error) === undefined) {
       throw error;
     }
     throw new CommitOutcomeUnknownError(targetName, attemptId, {
@@ -325,25 +361,6 @@ export async function runMigrations(
       recordedHow: "deployed",
     });
   }
-}
-
-/**
- * Whether the server itself refused the statement (a SQLSTATE), so the
- * transaction is known to have rolled back. Connection exceptions (class 08)
- * and shutdowns or terminations (57P) say nothing about a COMMIT's outcome,
- * and neither does an error without a SQLSTATE (a dropped connection).
- */
-function refusedByServer(error: unknown): boolean {
-  const code =
-    typeof error === "object" && error !== null && "code" in error
-      ? error.code
-      : undefined;
-  return (
-    typeof code === "string" &&
-    /^[0-9A-Z]{5}$/.test(code) &&
-    !code.startsWith("08") &&
-    !code.startsWith("57P")
-  );
 }
 
 /**

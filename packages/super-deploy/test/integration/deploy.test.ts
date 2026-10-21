@@ -3,6 +3,7 @@
 import { chmod } from "node:fs/promises";
 import { type AddressInfo, createServer } from "node:net";
 import { userInfo } from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   AdapterError,
   deploy,
@@ -291,14 +292,15 @@ describe("deploy", () => {
       server,
       { "customers.sql": customers },
       {
-        // Fault injection: the target refuses migration 2's schema change.
+        // Fault injection: the target refuses migration 2's schema change
+        // (a SQLSTATE: without one it would be a lost connection).
         adapter: `{
   async connect() {
     const session = await real.connect();
     return {
       ...session,
       async execute(sql) {
-        if (sql.includes('"orders"')) throw new Error("injected failure");
+        if (sql.includes('"orders"')) throw Object.assign(new Error("injected failure"), { code: "42501" });
         return session.execute(sql);
       },
     };
@@ -352,7 +354,7 @@ describe("deploy", () => {
   });
 
   test("fails fast when a lock isn't granted within the target's lock timeout", async () => {
-    const { project, error } = await deployWhileCustomersLocked(
+    const { project, database, error } = await deployWhileCustomersLocked(
       'lockTimeout: "200ms",',
     );
 
@@ -361,12 +363,31 @@ describe("deploy", () => {
       /lock timeout/,
     );
     const { message } = error as SqlFileFailedError;
-    expect(message).toContain("lockTimeout");
-    expect(message).toMatch(/retry/);
+    expect(message).toContain(
+      "Target dev's lockTimeout (200ms) ran out waiting for a lock: retry once whatever held the lock has finished, or raise lockTimeout for target dev in super-deploy.config.ts.",
+    );
+    expect(message).toContain("status --target dev");
+    expect(message).toContain("pg_blocking_pids");
     expect(message).not.toMatch(/recovery/i);
+    expect(
+      await server.query(
+        "select error from deployment_history.attempts where outcome = 'failed'",
+        [],
+        database,
+      ),
+    ).toEqual([{ error: message }]);
     expect(
       (await deploy(project, { target: "dev" })).deployed.map((m) => m.number),
     ).toEqual([2]);
+  });
+
+  test("a lock timeout the target doesn't set is reported as the default", async () => {
+    const { error } = await deployWhileCustomersLocked("");
+
+    expect(error).toBeInstanceOf(SqlFileFailedError);
+    expect((error as SqlFileFailedError).message).toContain(
+      "Target dev's lockTimeout (5s, the default) ran out",
+    );
   });
 
   test("cancels a statement that runs longer than the target's statement timeout", async () => {
@@ -378,7 +399,26 @@ describe("deploy", () => {
     expect((error as SqlFileFailedError).postgresMessage).toMatch(
       /statement timeout/,
     );
-    expect((error as SqlFileFailedError).message).toContain("statementTimeout");
+    expect((error as SqlFileFailedError).message).toContain(
+      "Target dev's statementTimeout (300ms) cancelled the statement",
+    );
+  });
+
+  test("a statement timeout the target doesn't set is reported as the server's statement_timeout", async () => {
+    const { error } = await deployWhileCustomersLocked(
+      'lockTimeout: "1min",',
+      (database) =>
+        server.query(
+          `alter database ${database} set statement_timeout = '300ms'`,
+        ),
+    );
+
+    expect(error).toBeInstanceOf(SqlFileFailedError);
+    const { message } = error as SqlFileFailedError;
+    expect(message).toContain(
+      "The server's statement_timeout for target dev's deploy role cancelled the statement",
+    );
+    expect(message).toContain("statementTimeout for target dev");
   });
 
   test("pins search path, time zone, date and interval styles and the target's timeouts inside the transaction", async () => {
@@ -545,19 +585,27 @@ const pausingAdapter = `{
 }`;
 
 /** Makes the next deployment through `pausingAdapter` wait at COMMIT until released. */
+/** How many sessions on `database` are waiting for a lock. */
+async function waitingForLocks(database: string): Promise<number> {
+  const [row] = await server.query<{ count: number }>(
+    "select count(*)::int as count from pg_stat_activity where datname = $1 and wait_event_type = 'Lock'",
+    [database],
+  );
+  return row?.count ?? 0;
+}
+
 /**
- * Deploys migration 1 (customers) to a target configured with `target`, then
- * deploys migration 2 (an ALTER TABLE on customers) while another session
- * holds ACCESS SHARE on customers: the drift check can still read the
- * table's definition, but the ALTER TABLE has to wait. Returns what the
- * second deploy threw, once the lock is released.
+ * A `dev` target (its config's target settings spliced from `target`) at
+ * migration 1, which creates customers, with migration 2, adding a column
+ * to it, pending.
  */
-async function deployWhileCustomersLocked(target: string) {
-  const { dir, project, database } = await deployProject(
+async function emailPending(target: string) {
+  const deployed = await deployProject(
     server,
     { "customers.sql": customers },
     { target },
   );
+  const { dir, project } = deployed;
   await finalizeMigration(project, "add customers");
   await deploy(project, { target: "dev" });
   await dir.write(
@@ -568,13 +616,30 @@ async function deployWhileCustomersLocked(target: string) {
     ),
   );
   await finalizeMigration(project, "add email");
+  return deployed;
+}
+
+/**
+ * Deploys migration 1 (customers) to a target configured with `target`, then
+ * deploys migration 2 (an ALTER TABLE on customers) while another session
+ * holds ACCESS SHARE on customers: the drift check can still read the
+ * table's definition, but the ALTER TABLE has to wait. Returns what the
+ * second deploy threw, once the lock is released. `before` runs before the
+ * lock is taken, e.g. to change the target database's settings.
+ */
+async function deployWhileCustomersLocked(
+  target: string,
+  before?: (database: string) => Promise<unknown>,
+) {
+  const { project, database } = await emailPending(target);
+  await before?.(database);
   const holder = await testSession(server, database);
   try {
     await holder.execute("BEGIN; LOCK TABLE customers IN ACCESS SHARE MODE");
     const error = await deploy(project, { target: "dev" }).catch(
       (e: unknown) => e,
     );
-    return { project, error };
+    return { project, database, error };
   } finally {
     await holder.close();
   }
@@ -681,21 +746,7 @@ describe("the target lock", () => {
   });
 
   test("the refusal names the holder's server process, what it is running since when, and how to end it", async () => {
-    const { dir, project, database } = await deployProject(
-      server,
-      { "customers.sql": customers },
-      { target: 'lockTimeout: "20s",' },
-    );
-    await finalizeMigration(project, "add customers");
-    await deploy(project, { target: "dev" });
-    await dir.write(
-      "data-model/desired-schema/customers.sql",
-      customers.replace(
-        "name text not null",
-        "name text not null,\n  email text",
-      ),
-    );
-    await finalizeMigration(project, "add email");
+    const { project, database } = await emailPending('lockTimeout: "20s",');
     // The first deployment's ALTER TABLE waits for this lock, active.
     const blocker = await testSession(server, database);
     let first: Promise<unknown> | undefined;
@@ -781,6 +832,50 @@ describe("the target lock", () => {
     expect(after.lockedBy).toBeUndefined();
     expect(after.drift).toEqual([]);
     expect(after.driftNotChecked).toBeUndefined();
+  });
+
+  test("status and the lock refusal name the session a holding deployment waits on for a lock", async () => {
+    const { project, database } = await emailPending('lockTimeout: "20s",');
+    const holder = await testSession(server, database);
+    let deploying: Promise<unknown> | undefined;
+    try {
+      const { rows } = await holder.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
+      const holderPid = rows[0]?.pid;
+      await holder.execute("SET application_name = 'blocking_holder'");
+      await holder.execute("BEGIN");
+      await holder.execute("SELECT * FROM customers");
+      deploying = deploy(project, { target: "dev" });
+      while ((await waitingForLocks(database)) === 0) {
+        await delay(50);
+      }
+
+      const report = await status(project, { target: "dev" });
+      const refusal = await deploy(project, { target: "dev" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(report.lockedBy?.blockedBy).toEqual([
+        {
+          pid: holderPid,
+          applicationName: "blocking_holder",
+          user: "deployer",
+          state: "idle in transaction",
+          stateSince: expect.any(Date),
+          statement: "SELECT * FROM customers",
+        },
+      ]);
+      expect(refusal).toBeInstanceOf(TargetLockedError);
+      expect((refusal as TargetLockedError).message).toMatch(
+        new RegExp(
+          `waiting for a lock held by server process ${holderPid} \\(blocking_holder, deployer, idle in transaction since \\S+: SELECT \\* FROM customers\\)`,
+        ),
+      );
+    } finally {
+      await holder.close();
+      await deploying;
+    }
   });
 
   test("is keyed from the history schema name: a project with another history schema on the same database is not blocked", async () => {
@@ -958,7 +1053,7 @@ describe("deploy configuration", () => {
     ).toEqual([{ history: null }]);
   });
 
-  test("refuses to deploy edited migrations without connecting to the target", async () => {
+  test("deploy and status refuse edited migrations without connecting to the target", async () => {
     const { dir, project, database } = await deployProject(server, {
       "customers.sql": customers,
     });
@@ -968,9 +1063,16 @@ describe("deploy configuration", () => {
     await chmod(dir.path(schemaChange), 0o644);
     await dir.write(schemaChange, `${await dir.read(schemaChange)}-- edited\n`);
 
-    await expect(deploy(project, { target: "dev" })).rejects.toBeInstanceOf(
-      MigrationIntegrityError,
-    );
+    // Both say how to restore the migration.
+    for (const command of [deploy, status]) {
+      const error = await command(project, { target: "dev" }).catch(
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(MigrationIntegrityError);
+      expect((error as Error).message).toContain(
+        "restore it from Git (`git checkout HEAD -- data-model/migrations/00001-add-customers`",
+      );
+    }
     // The embedded target creates its database on first connect.
     expect(await server.databases()).not.toContain(database);
   });

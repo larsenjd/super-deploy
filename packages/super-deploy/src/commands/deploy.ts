@@ -91,7 +91,7 @@ export async function deploy(
   return withLockedTarget(
     project,
     options.target,
-    "deploy",
+    { command: "deploy" },
     async ({ target, session, attempt }) => {
       const recorded = await readRecordedMigrations(
         session,
@@ -166,6 +166,7 @@ export async function deploy(
         }
         const last = recorded.at(-1);
         throw (error as SqlFileFailedError).rolledBack({
+          command: "deploy",
           target: target.name,
           lastRecorded:
             last === undefined
