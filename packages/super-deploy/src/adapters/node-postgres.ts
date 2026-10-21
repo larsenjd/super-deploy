@@ -24,10 +24,20 @@
 // `verify-full` and prints a SECURITY WARNING to stderr. The parameter is
 // appended rather than passed as parse's useLibpqCompat option, which throws
 // when the URL carries its own `uselibpqcompat`; appended, it wins over one.
+//
+// node-postgres's parser reads the `sslcert`, `sslkey` and `sslrootcert`
+// files whatever the `sslmode`, and its error loses which parameter it was.
+// So the check reads them first and names the unreadable one, with the path
+// resolved (a relative path is read from the working directory). Under
+// `sslmode=disable` libpq reads none of them, so clientConfig blanks them
+// (appended empty, they win over the URL's own) and the check skips them.
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import pg from "pg";
 import { parseIntoClientConfig } from "pg-connection-string";
 import { durationText } from "../config/config.ts";
+import { errorReason } from "../errors.ts";
 import type {
   ConnectOptions,
   DatabaseRequest,
@@ -115,7 +125,20 @@ export type ConnectionStringProblem =
   | { kind: "variable-unset"; variable: string }
   | { kind: "variable-empty"; variable: string }
   | { kind: "not-postgres-url" }
-  | { kind: "verify-ca-without-root-cert" };
+  | { kind: "verify-ca-without-root-cert" }
+  | {
+      kind: "unreadable-file";
+      parameter: FileParameter;
+      /** As the connection string gives it. */
+      path: string;
+      /** Absolute, as it was read. */
+      resolvedPath: string;
+      /** Why it can't be read, e.g. "no such file or directory". */
+      reason: string;
+    };
+
+/** The connection-string parameters naming a file to read. */
+type FileParameter = "sslcert" | "sslkey" | "sslrootcert";
 
 /**
  * A ConnectionSource gives no usable connection string. `subject` names who
@@ -125,13 +148,19 @@ export class ConnectionStringError extends AdapterError {
   override readonly code = "connection-string-invalid";
   readonly problem: ConnectionStringProblem;
 
-  constructor(problem: ConnectionStringProblem, subject: string) {
-    super(connectionStringMessage(problem, subject));
+  constructor(
+    problem: ConnectionStringProblem,
+    subject: string,
+    options?: ErrorOptions,
+  ) {
+    super(connectionStringMessage(problem, subject), options);
     this.problem = problem;
   }
 
   override about(subject: string): ConnectionStringError {
-    return new ConnectionStringError(this.problem, subject);
+    return new ConnectionStringError(this.problem, subject, {
+      cause: this.cause,
+    });
   }
 }
 
@@ -151,6 +180,10 @@ function connectionStringMessage(
       return `${subject}'s connection string is not a PostgreSQL URL (postgres://user:password@host:port/database)`;
     case "verify-ca-without-root-cert":
       return `${subject}'s connection string has sslmode=verify-ca without sslrootcert: verify-ca checks the server's certificate against the CA certificate in the file sslrootcert names (for a server with a public CA, use sslmode=verify-full)`;
+    case "unreadable-file":
+      return problem.path === problem.resolvedPath
+        ? `${subject}: ${problem.parameter} file ${problem.path} can't be read: ${problem.reason}`
+        : `${subject}: ${problem.parameter} file ${problem.path} (${problem.resolvedPath}) can't be read: ${problem.reason}. A relative path is read from the directory the command runs in.`;
   }
 }
 
@@ -164,7 +197,19 @@ function resolveConnectionString(
   if (problem !== undefined) {
     throw new ConnectionStringError(problem, subject);
   }
-  return value as string;
+  const connectionString = value as string;
+  const file = unreadableFile(connectionString);
+  if (file !== undefined) {
+    throw new ConnectionStringError(file.problem, subject, {
+      cause: file.cause,
+    });
+  }
+  try {
+    clientConfig(connectionString);
+  } catch {
+    throw new ConnectionStringError({ kind: "not-postgres-url" }, subject);
+  }
+  return connectionString;
 }
 
 /** What is wrong with `value`, read from `source`, if anything. */
@@ -196,28 +241,83 @@ function sourceProblem(
 }
 
 /**
- * What stops node-postgres from reading `value` as a postgres:// or
- * postgresql:// URL, if anything. Under libpq's sslmode it throws on
- * verify-ca without a CA, so that is checked first and named.
+ * What stops `value` being a postgres:// or postgresql:// URL node-postgres
+ * would connect with, short of reading its files (unreadableFile) and parsing
+ * it. Under libpq's sslmode node-postgres throws on verify-ca without a CA,
+ * so that is named.
  */
 function urlProblem(value: string): ConnectionStringProblem | undefined {
   if (!/^postgres(ql)?:\/\//i.test(value)) {
     return { kind: "not-postgres-url" };
   }
-  // node-postgres takes a repeated parameter's last value.
-  const parameters = URL.parse(value)?.searchParams;
   if (
-    parameters?.getAll("sslmode").at(-1) === "verify-ca" &&
-    !parameters.has("sslrootcert")
+    lastParameter(value, "sslmode") === "verify-ca" &&
+    lastParameter(value, "sslrootcert") === undefined
   ) {
     return { kind: "verify-ca-without-root-cert" };
   }
-  try {
-    clientConfig(value);
+  return undefined;
+}
+
+/** The last value of the URL's parameter `name`: node-postgres takes a repeated parameter's last. */
+function lastParameter(url: string, name: string): string | undefined {
+  return URL.parse(url)?.searchParams.getAll(name).at(-1);
+}
+
+/** Whether node-postgres connects without TLS, and so reads no files (see the header). */
+function unencrypted(connectionString: string): boolean {
+  return lastParameter(connectionString, "sslmode") === "disable";
+}
+
+const fileParameters: readonly FileParameter[] = [
+  "sslcert",
+  "sslkey",
+  "sslrootcert",
+];
+
+/** The first file named in `connectionString` that node-postgres would fail to read, with the error. */
+function unreadableFile(
+  connectionString: string,
+): { problem: ConnectionStringProblem; cause: unknown } | undefined {
+  if (unencrypted(connectionString)) {
     return undefined;
-  } catch {
-    return { kind: "not-postgres-url" };
   }
+  for (const parameter of fileParameters) {
+    const path = lastParameter(connectionString, parameter);
+    if (path === undefined || path === "") {
+      continue;
+    }
+    try {
+      readFileSync(path);
+    } catch (cause) {
+      const resolvedPath = isAbsolute(path) ? path : resolve(path);
+      return {
+        problem: {
+          kind: "unreadable-file",
+          parameter,
+          path,
+          resolvedPath,
+          reason: unreadableReason(cause),
+        },
+        cause,
+      };
+    }
+  }
+  return undefined;
+}
+
+const readErrors: Record<string, string> = {
+  ENOENT: "no such file or directory",
+  EISDIR: "it is a directory",
+  EACCES: "permission denied",
+  ENOTDIR: "part of the path is not a directory",
+};
+
+function unreadableReason(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException).code;
+  return (
+    (code === undefined ? undefined : readErrors[code]) ?? errorReason(error)
+  );
 }
 
 /** node-postgres's config for `connectionString`, read with libpq's `sslmode` (see the header). */
@@ -226,8 +326,11 @@ function clientConfig(connectionString: string): pg.ClientConfig {
   const end = fragment === -1 ? connectionString.length : fragment;
   const base = connectionString.slice(0, end);
   const separator = base.includes("?") ? "&" : "?";
+  const noFiles = unencrypted(connectionString)
+    ? fileParameters.map((parameter) => `&${parameter}=`).join("")
+    : "";
   return parseIntoClientConfig(
-    `${base}${separator}uselibpqcompat=true${connectionString.slice(end)}`,
+    `${base}${separator}uselibpqcompat=true${noFiles}${connectionString.slice(end)}`,
   );
 }
 
