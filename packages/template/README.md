@@ -13,7 +13,10 @@ pnpm install
 
 Initialise Git first: `pnpm install` then also installs the pre-commit hook
 (`.husky/pre-commit`, via Husky), which runs `pnpm precommit` on every commit.
-If you install before `git init`, run `pnpm install` again afterwards.
+If you install before `git init`, run `pnpm install` again afterwards. The
+hook lets you commit a draft in progress; CI should refuse it until it is
+finalized (see
+[The files of a draft and a migration](#the-files-of-a-draft-and-a-migration)).
 
 Nothing else is needed: `super-deploy.config.ts` runs a private PostgreSQL 18
 server in `.super-deploy/postgres` (gitignored). It provides the throwaway
@@ -405,9 +408,20 @@ name.
 
 Finalized migrations are read-only and hashed: never edit them.
 `super-deploy validate` checks their hashes, and `pnpm precommit` runs
-Biome, the type checker and `super-deploy validate --strict` (the pre-commit
-hook runs it before every commit). To change the newest migration before any
-target has run it, see [Changing your mind](#changing-your-mind).
+Biome, the type checker and `super-deploy validate --strict --allow-draft`
+(the pre-commit hook runs it before every commit). To change the newest
+migration before any target has run it, see
+[Changing your mind](#changing-your-mind).
+
+The hook blocks a commit on every error `validate` finds (an edited or
+renamed finalized migration, a refused statement) and, through `--strict`,
+on every warning except a draft in progress. A draft in progress, an
+unfinalized draft or desired-schema changes not yet drafted, is listed as a
+warning and doesn't block, so you can commit a draft with its hand-written
+scripts and push it for review before finalizing it. In CI, run
+`pnpm exec super-deploy validate --strict` without `--allow-draft`: it fails
+until the draft is finalized and the desired schema matches the newest
+migration, so work in progress can't be merged.
 
 ## Overriding a refusal
 
@@ -482,6 +496,16 @@ destructive, and neither is dropping a view, index, function, trigger, type
 or constraint that the migration then creates again (as `draft` does to
 change one). A table or column dropped and created again has lost its rows,
 so that stays destructive, and so does anything with `CASCADE`.
+
+Narrowing a column is destructive in a quieter way. `draft` changes a
+column's type with an explicit cast (`USING col::newtype`), so values that
+don't fit the new type are cut short or rounded, without an error, on every
+target. That applies to a shorter `varchar(n)`, `char(n)`, `bit(n)` or
+`varbit(n)`, such as `text` to `varchar(5)`, and to a `numeric` with fewer
+decimal places, such as `numeric(6,2)` to `numeric(4,1)`. The deployment
+doesn't fail. `draft` says how many values in the rehearsal data don't fit,
+and `finalize` asks for the change to be acknowledged. If those values
+matter, shorten or move them in the pre-migration script.
 
 `rehearse` lists a draft's destructive statements, and `finalize` needs them
 acknowledged. In a terminal, `finalize` lists them and asks. Without a

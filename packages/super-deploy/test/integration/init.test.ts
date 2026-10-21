@@ -126,7 +126,7 @@ create function customer_count() returns bigint
       `link:${libraryFolder}`,
     );
     expect(manifest.scripts.precommit).toBe(
-      "biome check && tsc --noEmit && super-deploy validate --strict",
+      "biome check && tsc --noEmit && super-deploy validate --strict --allow-draft",
     );
     // embedded-postgres's platform package must run its postinstall.
     const workspace = await readFile(join(root, "pnpm-workspace.yaml"), "utf8");
