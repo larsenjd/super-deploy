@@ -4,8 +4,14 @@
 // client whose release leaves no live one stops the server. So commands run
 // at the same time share the server, and none stops it under another.
 //
-// A client file holds its process's pid and start time; it is live while
-// that pid is (`process.kill(pid, 0)`, which Node also offers on Windows).
+// A client file holds its process's pid; it is live while that pid is
+// (`process.kill(pid, 0)`, which Node also offers on Windows). Node can't
+// read another process's start time without a platform-specific lookup, so
+// a pid the system has reused for an unrelated process keeps a dead client
+// counted live until that process exits too: meanwhile the server outlives
+// its last real client and leftover throwaway databases stay. Rare (a command
+// killed outright, then its pid reused), and harmless to data; the next
+// client to register after the reusing process exits takes the server over.
 // One process may hold several clients (a test harness and the projects it
 // runs), so a file is per client, not per process. A file whose process is
 // gone (a command killed outright) is dead: it is deleted by the next
@@ -88,11 +94,7 @@ export async function register(dataDir: string): Promise<Registration> {
     clientsDirectory,
     `${process.pid}-${randomUUID()}.json`,
   );
-  const startedAt = new Date(Date.now() - process.uptime() * 1000);
-  await writeFile(
-    file,
-    `${JSON.stringify({ pid: process.pid, startedAt: startedAt.toISOString() })}\n`,
-  );
+  await writeFile(file, `${JSON.stringify({ pid: process.pid })}\n`);
   return { file, others: others.length };
 }
 
