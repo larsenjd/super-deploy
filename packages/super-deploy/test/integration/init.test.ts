@@ -168,7 +168,7 @@ describe("init", () => {
     try {
       expect(Object.keys(project.config.targets)).toEqual(["dev", "qa"]);
       await expect(status(project, { target: "qa" })).rejects.toThrow(
-        "Environment variable QA_DATABASE_URL is not set",
+        "Target qa: environment variable QA_DATABASE_URL is not set",
       );
     } finally {
       await project.close();
