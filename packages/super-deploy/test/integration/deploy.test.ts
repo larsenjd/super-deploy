@@ -201,7 +201,7 @@ describe("deploy", () => {
     const file = "data-model/migrations/00003-require-names/schema-change.sql";
     expect(error).toBeInstanceOf(SqlFileFailedError);
     expect(error).toMatchObject({ file });
-    expect((error as SqlFileFailedError).detail).toContain(
+    expect((error as SqlFileFailedError).postgresMessage).toContain(
       "customers_name_present",
     );
     expect(
@@ -235,6 +235,54 @@ describe("deploy", () => {
         ended: true,
       },
     ]);
+  });
+
+  test("a data error on the target names the line and PostgreSQL's DETAIL, says the deployment rolled back, and suggests a Recovery", async () => {
+    const { dir, project, database } = await deployProject(server, {
+      "customers.sql": customers,
+    });
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    await server.query(
+      "insert into customers (id, name) values (1, 'Ada'), (2, 'Grace')",
+      [],
+      database,
+    );
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      customers.replace(
+        "name text not null",
+        "name text not null,\n  slug text constraint customers_slug_key unique",
+      ),
+    );
+    await draft(project, { name: "add slug" });
+    await dir.write(
+      "data-model/draft/post-migration.sql",
+      "update customers set slug = 'x' where false;\nupdate customers set slug = 'a';\n",
+    );
+    await finalize(project);
+
+    const error = await deploy(project, { target: "dev" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(SqlFileFailedError);
+    expect(error).toMatchObject({
+      file: "data-model/migrations/00002-add-slug/post-migration.sql",
+      line: 2,
+      sqlState: "23505",
+      detail: "Key (slug)=(a) already exists.",
+      rollback: {
+        target: "dev",
+        lastRecorded: "00001-add-customers",
+        migration: 2,
+      },
+    });
+    const { message } = error as SqlFileFailedError;
+    expect(message).toContain("Key (slug)=(a) already exists.");
+    expect(message).toContain("rolled back");
+    expect(message).toContain("00001-add-customers");
+    expect(message).toContain("super-deploy recovery --migration 2");
   });
 
   test("a first deployment that fails still creates the history schema and logs the failed attempt, and nothing else", async () => {
@@ -308,7 +356,13 @@ describe("deploy", () => {
     );
 
     expect(error).toBeInstanceOf(SqlFileFailedError);
-    expect((error as SqlFileFailedError).detail).toMatch(/lock timeout/);
+    expect((error as SqlFileFailedError).postgresMessage).toMatch(
+      /lock timeout/,
+    );
+    const { message } = error as SqlFileFailedError;
+    expect(message).toContain("lockTimeout");
+    expect(message).toMatch(/retry/);
+    expect(message).not.toMatch(/recovery/i);
     expect(
       (await deploy(project, { target: "dev" })).deployed.map((m) => m.number),
     ).toEqual([2]);
@@ -320,7 +374,10 @@ describe("deploy", () => {
     );
 
     expect(error).toBeInstanceOf(SqlFileFailedError);
-    expect((error as SqlFileFailedError).detail).toMatch(/statement timeout/);
+    expect((error as SqlFileFailedError).postgresMessage).toMatch(
+      /statement timeout/,
+    );
+    expect((error as SqlFileFailedError).message).toContain("statementTimeout");
   });
 
   test("pins search path, time zone, date and interval styles and the target's timeouts inside the transaction", async () => {

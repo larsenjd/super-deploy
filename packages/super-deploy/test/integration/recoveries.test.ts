@@ -139,6 +139,8 @@ describe("recovery", () => {
 
 const backfill =
   "update customers set email = 'unknown@example.com' where email is null;\n";
+/** `backfill` as replay sends it: statement by statement, without the semicolon. */
+const backfillStatement = backfill.replace(/;\n$/, "");
 const nullEmail = "insert into customers (id, email) values (7, null);\n";
 const recovery1 = `${migration2}/recoveries/recovery-1`;
 
@@ -346,14 +348,14 @@ describe("deploying with Recoveries", () => {
       status(setup.project, { target: "qa" }),
     );
 
-    expect(devReplica).toContain(backfill);
-    expect(qaReplica).not.toContain(backfill);
+    expect(devReplica).toContain(backfillStatement);
+    expect(qaReplica).not.toContain(backfillStatement);
     expect(qaReplica.some((sql) => sql.includes("SET NOT NULL"))).toBe(true);
     // deploy's replica of qa (up to date) replays its recorded original too.
     const later = await rehearsalSqlOf(() =>
       deploy(setup.project, { target: "qa" }),
     );
-    expect(later).not.toContain(backfill);
+    expect(later).not.toContain(backfillStatement);
   });
 });
 
