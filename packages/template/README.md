@@ -113,7 +113,9 @@ first version: these may be supported later, but none is yet.
 - Indexes: unique, partial and expression indexes, with any index method
   and storage parameters.
 - Views (with the options `security_invoker`, `security_barrier` and
-  `check_option`) and materialized views.
+  `check_option`) and materialized views. A view over a table with
+  hand-made policies needs `security_invoker` (see
+  [Permissions](#what-each-target-needs-set-up-outside-super-deploy)).
 - Functions and procedures in `sql` or `plpgsql`, and triggers.
 - Domains and composite types.
 - `COMMENT ON` the objects above.
@@ -503,13 +505,27 @@ default privileges as they are.
     on the column. Rehearsals can't catch it, because their databases have
     no hand-made policies. The deployment rolls back and PostgreSQL's error
     names the policy: drop the policy, deploy, then create it again.
-  - Row-level security doesn't apply to a table's owner, the deploy role,
-    unless the table has `FORCE ROW LEVEL SECURITY`. Then its policies would
-    hide rows from a deployment's own scripts and from the materialized
-    views it builds, so deployments run with `row_security` off, as
-    `pg_dump` does: a statement a policy would filter fails with `query
-    would be affected by row-level security policy for table "orders"`
-    instead of silently skipping rows, and the deployment rolls back.
+  - The deploy role owns every object, and row-level security doesn't apply
+    to a table's owner. A view reads its tables as its owner, so it shows
+    every row of a table whose policies hide them, unless it is created
+    `with (security_invoker = true)`, which makes it read them as the role
+    querying it. Declare views over tables that get policies that way:
+
+    ```sql
+    create view my_orders with (security_invoker = true) as
+      select id, total from orders;
+    ```
+
+    A materialized view is built and refreshed as the deploy role, so it
+    holds every row whatever the policies on its tables: don't build one
+    over rows a policy must hide.
+  - With `FORCE ROW LEVEL SECURITY`, a table's policies apply to its owner
+    too, so they would hide rows from a deployment's own scripts and from
+    the materialized views it builds. Deployments run with `row_security`
+    off, as `pg_dump` does: a statement a policy would filter fails with
+    `query would be affected by row-level security policy for table
+    "orders"` instead of silently skipping rows, and the deployment rolls
+    back.
     Rehearsals can't catch it. Run `ALTER TABLE orders NO FORCE ROW LEVEL
     SECURITY` while deploying and `FORCE` it again afterwards, or move the
     work out of the migration.
