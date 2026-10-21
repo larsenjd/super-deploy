@@ -22,10 +22,11 @@
 // command session, in order (fault-injection wrappers match on these):
 //   execute("BEGIN")
 //   execute(<SET LOCAL statements joined by ";\n">)
-//   per migration: execute(<one batch per deploy-time file: pre-migration
-//     script, schema change, post-migration script>), execute("SET CONSTRAINTS
-//     ALL IMMEDIATE"), execute("DISCARD TEMP"), then query(INSERT INTO
-//     <history>.migrations ...)
+//   per migration: execute(<each statement of each deploy-time file, one at
+//     a time and without its semicolon: pre-migration script, schema change,
+//     post-migration script>), execute("SET CONSTRAINTS ALL IMMEDIATE"),
+//     execute("DISCARD TEMP"), then query(INSERT INTO <history>.migrations
+//     ...)
 //   execute("COMMIT")            or execute("ROLLBACK") after a failure
 // Its frame (BEGIN, the SET LOCALs, COMMIT or ROLLBACK, a lost COMMIT's
 // classification) is `inDeployTransaction`, which deploy-draft and rebuild

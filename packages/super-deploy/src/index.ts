@@ -45,6 +45,7 @@ export {
   deployDraft,
   RecoveryBaseMismatchError,
   TargetBehindError,
+  UndraftedChangesError,
 } from "./commands/deploy-draft.ts";
 export {
   type DiscardDraftOptions,
@@ -183,6 +184,11 @@ export {
   OverwriteNotAcknowledgedError,
 } from "./questions.ts";
 export { OrderDependenceError } from "./rehearsal/order-independence.ts";
+export type {
+  DeploymentRollback,
+  PostgresRefusal,
+  SqlFileFailure,
+} from "./rehearsal/replay.ts";
 export { SqlFileFailedError } from "./rehearsal/replay.ts";
 export { UnknownRecordedMigrationError } from "./rehearsal/replica.ts";
 export { RehearsalMismatchError } from "./rehearsal/same-structure.ts";

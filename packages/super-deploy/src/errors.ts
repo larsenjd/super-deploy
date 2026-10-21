@@ -35,3 +35,29 @@ export function listed(objects: readonly string[]): string {
   const shown = objects.slice(0, 5).join(", ");
   return objects.length > 5 ? `${shown} and ${objects.length - 5} more` : shown;
 }
+
+/**
+ * A thrown value as a reason for people, never empty. An `AggregateError`
+ * (Node's for a refused connect to a host with several addresses, such as
+ * `localhost`) has an empty message of its own: its inner errors' reasons,
+ * deduplicated, joined with "; ". An error with no message falls back to its
+ * `code`, e.g. `ECONNREFUSED`.
+ */
+export function errorReason(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+  if (error.message !== "") {
+    return error.message;
+  }
+  if (error instanceof AggregateError) {
+    const inner = [...new Set(error.errors.map(errorReason))].filter(
+      (reason) => reason !== "",
+    );
+    if (inner.length > 0) {
+      return inner.join("; ");
+    }
+  }
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && code !== "" ? code : error.name;
+}

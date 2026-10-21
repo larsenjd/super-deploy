@@ -233,6 +233,12 @@ describe("deploy", () => {
     expect((error as Error).message).toContain(
       "Target dev has drifted from its recorded migrations: index customers_name_idx (extra)",
     );
+    // A hand-applied hotfix that the next pending migration catches up with is
+    // what `mark` records; the differences are still listed by status.
+    expect((error as Error).message).toContain("mark --target dev");
+    expect((error as Error).message).toContain(
+      "status --target dev lists the differences",
+    );
     expect(
       await server.query(
         `select (select array_agg(number order by number) from deployment_history.migrations) as recorded,
@@ -254,12 +260,20 @@ describe("deploy", () => {
     const { project, database } = await deployedProject();
     await server.query("drop table customers", [], database);
 
-    await expect(deploy(project, { target: "dev" })).rejects.toMatchObject({
+    const error = await deploy(project, { target: "dev" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toMatchObject({
       objects: [
         { object: "index customers_pkey", change: "missing" },
         { object: "table customers", change: "missing" },
       ],
     });
+    expect((error as Error).message).not.toContain("mark");
+    expect((error as Error).message).toContain(
+      "status --target dev lists the differences",
+    );
   });
 
   test("refuses when the rehearsed migrations don't produce the newest desired-schema snapshot, never touching the target", async () => {

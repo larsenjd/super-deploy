@@ -4,7 +4,9 @@
 // pre-flight (deploy/preflight.ts) → drift check → rehearse the pending
 // migrations on the drift replica and require a match with the newest
 // snapshot → one transaction on the target → close attempt. Pre-flight and
-// drift check run even when nothing is pending.
+// drift check run even when nothing is pending. A file failing on the target
+// is reported as a rollback (SqlFileFailedError.rolledBack): the migration
+// the target is still at, and a Recovery for a data error.
 
 import { join } from "node:path";
 import { applyMigrations, withLockedTarget } from "../deploy/engine.ts";
@@ -18,6 +20,7 @@ import {
 import { targetDatabaseRequest } from "../deploy/target.ts";
 import type { Project } from "../project.ts";
 import { rehearseDeployment } from "../rehearsal/rehearse-deployment.ts";
+import { SqlFileFailedError } from "../rehearsal/replay.ts";
 import {
   type MigrationWithUnit,
   newestVariant,
@@ -27,7 +30,10 @@ import {
 import { analyseDesiredSchema } from "../sql-analysis/index.ts";
 import { readDesiredSchema } from "../store/desired-schema.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
-import { snapshotFolderName } from "../store/migrations.ts";
+import {
+  migrationFolderName,
+  snapshotFolderName,
+} from "../store/migrations.ts";
 
 export interface DeployOptions {
   /** The target's name in config. */
@@ -122,12 +128,33 @@ export async function deploy(
         return result;
       }
 
-      await applyMigrations(session, pending, {
-        managedSchema: config.managedSchema,
-        historySchema: config.historySchema,
-        target,
-        attemptId: attempt.id,
-      });
+      try {
+        await applyMigrations(session, pending, {
+          managedSchema: config.managedSchema,
+          historySchema: config.historySchema,
+          target,
+          attemptId: attempt.id,
+        });
+      } catch (error) {
+        const failed =
+          error instanceof SqlFileFailedError
+            ? pending.find(({ unit }) =>
+                unit.files.some(({ file }) => file === error.file),
+              )
+            : undefined;
+        if (failed === undefined) {
+          throw error;
+        }
+        const last = recorded.at(-1);
+        throw (error as SqlFileFailedError).rolledBack({
+          target: target.name,
+          lastRecorded:
+            last === undefined
+              ? undefined
+              : migrationFolderName(last.number, last.name),
+          migration: failed.number,
+        });
+      }
       return result;
     },
   );

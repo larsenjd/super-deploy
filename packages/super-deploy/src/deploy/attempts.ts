@@ -4,6 +4,7 @@
 // and ends exactly once as succeeded, failed, abandoned or unknown.
 import { userInfo } from "node:os";
 import type { Session } from "../adapters/types.ts";
+import { errorReason } from "../errors.ts";
 import { SqlFileFailedError } from "../rehearsal/replay.ts";
 import { toolVersion } from "../version.ts";
 import { type AttemptOutcome, historyTable } from "./history.ts";
@@ -89,8 +90,7 @@ function errorMessage(error: unknown): string | null {
   if (error === undefined) {
     return null;
   }
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/\s*\n\s*/g, " ");
+  return errorReason(error).replace(/\s*\n\s*/g, " ");
 }
 
 function errorFile(error: unknown): string | null {

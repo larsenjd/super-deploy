@@ -26,7 +26,12 @@ import {
   readDesiredSchema,
   readDesiredSchemaFiles,
 } from "../store/desired-schema.ts";
-import { type DraftMetadata, NoDraftError, readDraft } from "../store/draft.ts";
+import {
+  type DraftMetadata,
+  NoDraftError,
+  readDraft,
+  recoverySchemaChange,
+} from "../store/draft.ts";
 import { type HashedFile, normaliseLineEndings } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
@@ -262,7 +267,11 @@ export async function checkRecoveryDraft(
   return { migration, seeded, analysis };
 }
 
-/** Refuses a Recovery draft whose schema-change.sql is no longer its migration's (line endings aside). */
+/**
+ * Refuses a Recovery draft whose schema-change.sql is no longer its
+ * migration's (line endings aside): the copy `recovery` writes, or a
+ * verbatim copy (as Recovery drafts made before that header existed hold).
+ */
 export async function requireOriginalSchemaChange(
   project: Project,
   migration: FinalizedMigration,
@@ -276,7 +285,13 @@ export async function requireOriginalSchemaChange(
       throw error;
     });
   const original = await read(join(migration.path, schemaChangeFileName));
-  if ((await read(project.paths.draftSchemaChange)) !== original) {
+  const copy = await read(project.paths.draftSchemaChange);
+  if (
+    copy === undefined ||
+    original === undefined ||
+    (copy !== original &&
+      copy !== recoverySchemaChange(original, migration.folder))
+  ) {
     throw new RecoverySchemaChangeEditedError(file, migration.folder);
   }
 }

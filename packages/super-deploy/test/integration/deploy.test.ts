@@ -1,6 +1,7 @@
 // API seam: deploy and status against embedded-postgres targets.
 
 import { chmod } from "node:fs/promises";
+import { type AddressInfo, createServer } from "node:net";
 import { userInfo } from "node:os";
 import {
   AdapterError,
@@ -201,7 +202,7 @@ describe("deploy", () => {
     const file = "data-model/migrations/00003-require-names/schema-change.sql";
     expect(error).toBeInstanceOf(SqlFileFailedError);
     expect(error).toMatchObject({ file });
-    expect((error as SqlFileFailedError).detail).toContain(
+    expect((error as SqlFileFailedError).postgresMessage).toContain(
       "customers_name_present",
     );
     expect(
@@ -235,6 +236,54 @@ describe("deploy", () => {
         ended: true,
       },
     ]);
+  });
+
+  test("a data error on the target names the line and PostgreSQL's DETAIL, says the deployment rolled back, and suggests a Recovery", async () => {
+    const { dir, project, database } = await deployProject(server, {
+      "customers.sql": customers,
+    });
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    await server.query(
+      "insert into customers (id, name) values (1, 'Ada'), (2, 'Grace')",
+      [],
+      database,
+    );
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      customers.replace(
+        "name text not null",
+        "name text not null,\n  slug text constraint customers_slug_key unique",
+      ),
+    );
+    await draft(project, { name: "add slug" });
+    await dir.write(
+      "data-model/draft/post-migration.sql",
+      "update customers set slug = 'x' where false;\nupdate customers set slug = 'a';\n",
+    );
+    await finalize(project);
+
+    const error = await deploy(project, { target: "dev" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(SqlFileFailedError);
+    expect(error).toMatchObject({
+      file: "data-model/migrations/00002-add-slug/post-migration.sql",
+      line: 2,
+      sqlState: "23505",
+      detail: "Key (slug)=(a) already exists.",
+      rollback: {
+        target: "dev",
+        lastRecorded: "00001-add-customers",
+        migration: 2,
+      },
+    });
+    const { message } = error as SqlFileFailedError;
+    expect(message).toContain("Key (slug)=(a) already exists.");
+    expect(message).toContain("rolled back");
+    expect(message).toContain("00001-add-customers");
+    expect(message).toContain("super-deploy recovery --migration 2");
   });
 
   test("a first deployment that fails still creates the history schema and logs the failed attempt, and nothing else", async () => {
@@ -308,7 +357,13 @@ describe("deploy", () => {
     );
 
     expect(error).toBeInstanceOf(SqlFileFailedError);
-    expect((error as SqlFileFailedError).detail).toMatch(/lock timeout/);
+    expect((error as SqlFileFailedError).postgresMessage).toMatch(
+      /lock timeout/,
+    );
+    const { message } = error as SqlFileFailedError;
+    expect(message).toContain("lockTimeout");
+    expect(message).toMatch(/retry/);
+    expect(message).not.toMatch(/recovery/i);
     expect(
       (await deploy(project, { target: "dev" })).deployed.map((m) => m.number),
     ).toEqual([2]);
@@ -320,7 +375,10 @@ describe("deploy", () => {
     );
 
     expect(error).toBeInstanceOf(SqlFileFailedError);
-    expect((error as SqlFileFailedError).detail).toMatch(/statement timeout/);
+    expect((error as SqlFileFailedError).postgresMessage).toMatch(
+      /statement timeout/,
+    );
+    expect((error as SqlFileFailedError).message).toContain("statementTimeout");
   });
 
   test("pins search path, time zone, date and interval styles and the target's timeouts inside the transaction", async () => {
@@ -717,6 +775,53 @@ describe("deploy configuration", () => {
     });
   });
 
+  test("names the reason when a target's server is down at a host with several addresses", async () => {
+    // localhost resolves to ::1 and 127.0.0.1: Node reports the refusal as an
+    // AggregateError whose own message is empty.
+    const port = await closedPort();
+    const { project } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      {
+        preamble: 'import { postgresTarget } from "super-deploy";',
+        otherTargets: `down: { adapter: postgresTarget({ connectionString: "postgres://u:p@localhost:${port}/x" }) },`,
+      },
+    );
+
+    const error = await status(project, { target: "down" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(AdapterError);
+    expect((error as Error).message).toMatch(
+      new RegExp(
+        `^The deployment adapter of target down failed to connect: .*ECONNREFUSED.*:${port}`,
+      ),
+    );
+  });
+
+  test("describes an ordinary connection error by its own message", async () => {
+    const { project } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      {
+        preamble: 'import { postgresTarget } from "super-deploy";',
+        otherTargets: `missing: { adapter: { async connect() {
+  return postgresTarget({ connectionString: await postgres.connectionString("no_such_database") }).connect();
+} } },`,
+      },
+    );
+
+    const error = await status(project, { target: "missing" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(AdapterError);
+    expect((error as Error).message).toBe(
+      'The deployment adapter of target missing failed to connect: database "no_such_database" does not exist',
+    );
+  });
+
   test("refuses a target that isn't in the config", async () => {
     const { project } = await deployProject(server, {
       "customers.sql": customers,
@@ -867,3 +972,12 @@ describe("status", () => {
     ]);
   });
 });
+
+/** A port nothing listens on: the OS hands out a free one, which is then closed. */
+async function closedPort(): Promise<number> {
+  const listener = createServer();
+  await new Promise<void>((resolve) => listener.listen(0, resolve));
+  const { port } = listener.address() as AddressInfo;
+  await new Promise((resolve) => listener.close(resolve));
+  return port;
+}
