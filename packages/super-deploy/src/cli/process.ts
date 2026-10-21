@@ -9,9 +9,16 @@
 // - SIGHUP never forces an exit: the terminal has gone, and no one is there
 //   to insist.
 // A signal prints one notice; closed output (e.g. `| head`) prints none, as
-// other CLIs stay quiet there. Exit codes: 129 SIGHUP, 130 SIGINT, 141 closed output, 143 SIGTERM,
-// 149 SIGBREAK. The code is also set as `process.exitCode` at once, so the
-// process exits with it even if its event loop drains before the command ends.
+// other CLIs stay quiet there. Exit codes: 129 SIGHUP, 130 SIGINT, 141 closed
+// output, 143 SIGTERM, 149 SIGBREAK. The code is also set as
+// `process.exitCode` at once, so the process exits with it even if its event
+// loop drains before the command ends.
+//
+// Once a command's outcome is settled (`commandSettled`: its function
+// returned or threw), an interruption while the CLI closes the project
+// (stopping embedded servers) keeps that command's exit code, and its notice
+// says the command had finished (ticket 144): a deploy that committed must not
+// look failed to `deploy && ...` or CI.
 
 const signalExitCodes = {
   SIGHUP: 129,
@@ -25,17 +32,33 @@ export const closedOutputExitCode = 141;
 /** How soon a repeat of the first signal still counts as the same interruption. */
 const sameInterruptionMs = 1000;
 
+/** A command whose function has returned or thrown, and the exit code it chose. */
+export interface SettledCommand {
+  readonly command: string;
+  readonly exitCode: number;
+}
+
 export interface ProcessInterruptions {
   /** Aborts at the first interruption. */
   readonly signal: AbortSignal;
-  /** The exit code the first interruption requires, once there has been one. */
+  /**
+   * The exit code the first interruption requires, once there has been one:
+   * its own, or the settled command's when it came after that command
+   * finished.
+   */
   readonly exitCode: number | undefined;
+  /**
+   * Called once a command's outcome is settled, and with undefined when the
+   * next command (in the menu) starts.
+   */
+  commandSettled(settled: SettledCommand | undefined): void;
 }
 
 export function watchInterruptions(): ProcessInterruptions {
   const controller = new AbortController();
   let exitCode: number | undefined;
   let first: { name: string; at: number } | undefined;
+  let settled: SettledCommand | undefined;
 
   const notice = (text: string) => {
     const lead = process.stderr.isTTY ? "\n" : "";
@@ -47,8 +70,8 @@ export function watchInterruptions(): ProcessInterruptions {
   };
 
   const interrupt = (code: number, reason: string) => {
-    exitCode = code;
-    process.exitCode = code;
+    exitCode = settled?.exitCode ?? code;
+    process.exitCode = exitCode;
     controller.abort(new Error(reason));
   };
 
@@ -64,7 +87,9 @@ export function watchInterruptions(): ProcessInterruptions {
       }
       first = { name, at: Date.now() };
       notice(
-        `Interrupted by ${name}: cleaning up before exiting (interrupt again to exit at once)`,
+        settled === undefined
+          ? `Interrupted by ${name}: cleaning up before exiting (interrupt again to exit at once)`
+          : `Interrupted by ${name} after ${settled.command} finished: closing up before exiting (interrupt again to exit at once)`,
       );
       interrupt(code, name);
     });
@@ -83,6 +108,9 @@ export function watchInterruptions(): ProcessInterruptions {
     signal: controller.signal,
     get exitCode() {
       return exitCode;
+    },
+    commandSettled(command) {
+      settled = command;
     },
   };
 }

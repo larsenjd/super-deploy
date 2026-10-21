@@ -652,6 +652,8 @@ running command. It cleans up first, then exits 130, 143 or 129: a
 deployment in progress rolls back and its attempt is recorded as abandoned,
 throwaway databases are dropped, and the embedded servers the command
 started are stopped. It prints one line when the interruption arrives.
+Once the command has finished, an interruption while it stops its servers
+doesn't change its exit code: a deployment that committed still exits 0.
 
 Interrupting again while it cleans up exits at once, leaving whatever
 wasn't cleaned up yet (the next command takes over a server left running).

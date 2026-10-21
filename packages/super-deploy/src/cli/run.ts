@@ -2,7 +2,9 @@
 // (menu.ts): load the project, get the option values, run, print any failure,
 // close the project. Exit codes: 0 success; 1 failed or refused; 2 usage
 // error (nothing ran). After an interruption the notice is the only message
-// and the process watcher (process.ts) decides the exit code.
+// and the process watcher (process.ts) decides the exit code; the command's
+// outcome is settled with it before the project closes, so an interruption
+// while closing keeps that outcome.
 import { relative } from "node:path";
 import { AdoptUnsupportedError } from "../commands/adopt.ts";
 import { errorReason } from "../errors.ts";
@@ -19,6 +21,7 @@ import type {
   OptionValues,
 } from "./definitions.ts";
 import { UsageError } from "./parse.ts";
+import type { ProcessInterruptions } from "./process.ts";
 import { askAtTerminal, confirmAtTerminal } from "./prompts.ts";
 
 export interface CliIo {
@@ -30,6 +33,7 @@ export interface CliIo {
   readonly interactive: boolean;
   /** Aborts when the process is interrupted. */
   readonly signal: AbortSignal;
+  readonly interruptions: Pick<ProcessInterruptions, "commandSettled">;
 }
 
 export const exitCodes = { success: 0, failure: 1, usage: 2 } as const;
@@ -58,6 +62,7 @@ export async function runCommand(
     io.stderr.write(describeError(error, debug));
     return error instanceof UsageError ? exitCodes.usage : exitCodes.failure;
   };
+  io.interruptions.commandSettled(undefined);
   let project: Project | undefined;
   let code: number = exitCodes.success;
   try {
@@ -82,6 +87,7 @@ export async function runCommand(
   } catch (error) {
     code = report(error);
   }
+  io.interruptions.commandSettled({ command: command.name, exitCode: code });
   await settleCleanups(io.signal);
   try {
     await project?.close();
