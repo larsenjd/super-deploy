@@ -392,9 +392,22 @@ nothing is written and every such object is listed: that includes a
 `SECURITY DEFINER` routine, objects owned by another role (see
 "Permissions"), and views, foreign keys, `LANGUAGE sql` functions and the
 like that reference an external schema (only PL/pgSQL bodies may). The
-refusal ends with what to do: change the target, declare a schema a
-PL/pgSQL body references in `externalSchemas`, or run adoption in a
-terminal to give override reasons (below). Grants,
+same list says whether the deploy role lacks `CREATE` on the database, and
+ends with the `ALTER ... OWNER TO` and `GRANT` statements that fix the
+ownership and `CREATE`, as a script to run as a superuser (an object that
+must be changed anyway isn't among them). The refusal ends with what to do:
+change the target, run those fixes, declare a schema a PL/pgSQL body
+references in `externalSchemas`, or run adoption in a terminal to give
+override reasons (below). Each object is named as PostgreSQL names it
+(`table app.users`), with the references or settings refused.
+
+Columns, defaults, views and other definitions that use another schema's
+types or functions (typically an extension installed in `public`, such as
+`citext` or `pgcrypto`) are refused, and declaring that schema in
+`externalSchemas` doesn't help: only PL/pgSQL bodies may reference it.
+Change them on the target first, for example to `text` with a `CHECK`
+constraint instead of `citext`, and to the built-in `gen_random_uuid()`
+instead of pgcrypto's functions. Grants,
 policies and row-level security on the target stay
 as they are, left out of the desired schema; adoption says how many grants
 and policies it left.
@@ -408,7 +421,8 @@ reason reviewers will read in `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`,
 which adoption writes on the line before the statement. Until then, its
 refusal names them, so you know which reasons it will ask for. An empty
 answer cancels the adoption, writing nothing. Without a terminal (in CI, for
-example) adoption refuses them, saying to run it in a terminal. `finalize` and `validate` show these
+example) adoption refuses them, listed apart from anything it doesn't
+support, saying to run it in a terminal. `finalize` and `validate` show these
 overrides like any other.
 
 ### Starting an adoption over
@@ -469,10 +483,13 @@ default privileges as they are.
   or be a member of the role that owns them (one granted `WITH INHERIT FALSE`
   doesn't count). `deploy`, `deploy-draft`, `mark` and `init --adopt`
   refuse a target where something in the managed schema is owned by another
-  role, listing each object with the `ALTER ... OWNER TO` that fixes it;
-  `status` lists them under "Deploy would refuse". For `public`, which `pg_database_owner` owns, deploy as the
+  role, listing each object with its owner, then the `ALTER ... OWNER TO`
+  statements that fix them as a script to run as a superuser (it can be
+  pasted into `psql` as it is); `status` lists them under "Deploy would
+  refuse". For `public`, which `pg_database_owner` owns, deploy as the
   database's owner: the refusal's fix for it is `ALTER DATABASE <database>
-  OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`. The deploy role also needs `CREATE` on the database for
+  OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`.
+  The deploy role also needs `CREATE` on the database for
   the first deployment, which creates the history schema (and the managed
   schema, if the target lacks it).
 - **The application's roles**, their role membership and their database
