@@ -509,7 +509,9 @@ warning and doesn't block, so you can commit a draft with its hand-written
 scripts and push it for review before finalizing it. In CI, run
 `pnpm exec super-deploy validate --strict` without `--allow-draft`: it fails
 until the draft is finalized and the desired schema matches the newest
-migration, so work in progress can't be merged.
+migration, so work in progress can't be merged. (`validate` changes
+nothing, so `pnpm exec` is fine there; for `deploy` in CI, see
+[Interrupting a command](#interrupting-a-command).)
 
 ## Overriding a refusal
 
@@ -663,6 +665,15 @@ up, saying what happened to the target:
 
 An interruption after the command has finished, while it stops its
 servers, doesn't change its exit code: a deployment that committed exits 0.
+
+**In CI or under a supervisor** (a CI runner cancelling a step, `docker
+stop`, systemd), run the binary directly, as
+`./node_modules/.bin/super-deploy deploy --target prod`, or make sure the
+stop signal reaches the whole process group. With pnpm installed through
+corepack, SIGTERM to `pnpm exec super-deploy ...` alone stops only pnpm's
+launcher: the job ends with 143 while the deployment carries on unseen and
+commits. After a cancelled job, `status --target prod` shows whether the
+attempt was abandoned or succeeded.
 
 Interrupting again while it cleans up exits at once, leaving whatever
 wasn't cleaned up yet (the next command takes over a server left running).
