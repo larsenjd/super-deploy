@@ -124,9 +124,10 @@ describe("deploy and status", () => {
     expect(report.stdout).toMatch(
       /^Target dev: 1 migration recorded, 0 pending\nDrift \(the target differs from its recorded migrations\):\n {2}extra: column note of table customers\n {4}- column: customers\.note text notnull=false .*\nRecent attempts:\n/,
     );
-    const error =
-      "Error: Target dev has drifted from its recorded migrations: column note of table customers (extra). Deployments refuse until it matches them again (status --target dev lists the differences)\n";
-    expect(report.stderr).toBe(`${superuserWarning}${error}`);
+    const drifted =
+      "Error: Target dev has drifted from its recorded migrations: column note of table customers (extra). Deployments refuse until it matches them again";
+    // status has just listed the differences: it doesn't point to itself.
+    expect(report.stderr).toBe(`${superuserWarning}${drifted}\n`);
 
     const refused = await runCli(["deploy", "--target", "dev"], {
       cwd: dir.root,
@@ -134,7 +135,7 @@ describe("deploy and status", () => {
     expect(refused).toMatchObject({
       exitCode: 1,
       stdout: "",
-      stderr: `${superuserWarning}${error}`,
+      stderr: `${superuserWarning}${drifted} (status --target dev lists the differences)\n`,
     });
 
     // The refused deploy had nothing pending; its attempt still reads as failed.
