@@ -21,7 +21,10 @@ finalized (see
 Nothing else is needed: `super-deploy.config.ts` runs a private PostgreSQL 18
 server in `.super-deploy/postgres` (gitignored). It provides the throwaway
 databases that rehearsals use and the local `dev` target, and starts on a free
-port whenever a command needs it.
+port whenever a command needs it. `dev` is deployed as the role `deployer`,
+which owns the `dev` database and isn't a superuser, like a real target's
+deploy role (see [Permissions](#permissions)); the server's superuser
+`super_deploy` only sets the server up and runs the rehearsals.
 
 1. Describe the schema you want as `CREATE` statements in `.sql` files under
    `data-model/desired-schema/` (any file names and folders). See
@@ -200,7 +203,8 @@ Each entry in `targets` is one target:
 
 - `adapter`: required. How to connect to the target:
   `postgres.target("<database>")` for a database on the private embedded
-  server, or `postgresTarget(...)` for an existing server (see
+  server (created on first use, owned by and deployed as the role
+  `deployer`), or `postgresTarget(...)` for an existing server (see
   [Adding a real target](#adding-a-real-target)).
 - `lockTimeout`: how long a statement waits for a lock on the target before
   failing (PostgreSQL's `lock_timeout`). A deployment that hits it rolls back
@@ -334,7 +338,8 @@ default privileges as they are.
   schema, if the target lacks it).
 - **The application's roles**, their role membership and their database
   privileges: `CONNECT` (and `TEMPORARY`, if needed). super-deploy never
-  creates or drops roles.
+  creates or drops roles, apart from `deployer` on its private embedded
+  server.
 - **The application's grants and any policies.** The recommended way is
   default privileges for the deploy role, so every object a deployment
   creates is granted automatically. For example, once the managed schema

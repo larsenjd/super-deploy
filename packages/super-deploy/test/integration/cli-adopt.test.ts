@@ -3,7 +3,7 @@
 // on stderr when it refuses. In a terminal it asks for override reasons.
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
-import { deployConfig } from "../support/deploy.ts";
+import { asSuperuser, deployConfig } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject } from "../support/project.ts";
 import { keys, spawnTerminal } from "../support/terminal.ts";
@@ -20,7 +20,7 @@ async function projectAdopting(sql: string, settings = "") {
   const prod = await server.createDatabase(sql);
   return createTestProject({
     config: deployConfig(server, {
-      otherTargets: `prod: { adapter: postgres.target(${JSON.stringify(prod)}) },`,
+      otherTargets: `prod: { adapter: ${asSuperuser(prod)} },`,
       settings,
     }).config,
   });

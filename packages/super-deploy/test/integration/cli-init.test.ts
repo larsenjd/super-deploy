@@ -118,7 +118,11 @@ describe("init", () => {
     ).toMatchObject({
       exitCode: 0,
       stdout: "Deployed 1 migration to dev: 00001-add-customers\n",
+      stderr: "",
     });
+    expect(
+      await runCli(["status", "--target", "dev"], { cwd: root }),
+    ).toMatchObject({ exitCode: 0, stderr: "" });
     expect(await runCli(["validate", "--strict"], { cwd: root })).toMatchObject(
       {
         exitCode: 0,
