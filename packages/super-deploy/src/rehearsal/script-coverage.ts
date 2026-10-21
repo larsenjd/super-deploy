@@ -11,7 +11,9 @@
 // type in the starting point, judged as finalize judges destructiveness)
 // needs nothing covered. A narrowing (`narrowingOf` in destructive.ts) is
 // reported with what the generated cast does to the values that don't fit,
-// counting only those.
+// counting only those (QA 111): a column with no values says so rather than
+// that every value fits, and a numeric's values too large for its new
+// precision, which fail the cast, are counted apart from those only rounded.
 //
 // Advisory only: `draft` reports these and carries on. Acknowledging data
 // loss at finalize is ticket 11's, from the same statements.
@@ -58,7 +60,8 @@ export interface ScriptCoverage {
    * Affected rows in the rehearsal data: every row (`dropped-table`,
    * `added-required-column`), the non-null values (`dropped-column`,
    * `changed-type`) or the nulls (`set-not-null`). For a `changed-type`
-   * that narrows the column, only the values it would cut or round.
+   * that narrows the column, only the values it would cut or round, or that
+   * are too large for it.
    */
   readonly rows: number;
   /** One line saying what is at risk and what the pre-migration script can do. */
@@ -90,17 +93,17 @@ export async function scriptCoverage(
         schema,
         candidate,
       );
-      const rows = keepsValues
+      const affected = keepsValues
         ? undefined
         : await affectedRows(source, schema, candidate, narrowing);
-      if (rows !== undefined) {
+      if (affected !== undefined) {
         found.push({
           kind: candidate.kind,
           table: candidate.table,
           column: candidate.column,
           statement: candidate.statement,
-          rows,
-          message: messageFor(candidate, rows, narrowing),
+          rows: affected.rows,
+          message: messageFor(candidate, affected, narrowing),
         });
       }
     }
@@ -206,17 +209,30 @@ function isRequired(column: Json): boolean {
   );
 }
 
+/** What a candidate affects in the rehearsal data. */
+interface Affected {
+  /** As `ScriptCoverage.rows`. */
+  readonly rows: number;
+  /** The column's non-null values (counted for a narrowing only). */
+  readonly values: number;
+  /**
+   * Of `rows`, the values too large for a numeric's new precision: the cast
+   * fails on them, so they aren't rounded. Zero for other candidates.
+   */
+  readonly tooLarge: number;
+}
+
 /**
  * The affected rows on `source`, or undefined when the table (or column)
  * doesn't exist there: the schema change creates it, so it holds no data.
- * For a `narrowing`, only the values it would change.
+ * For a `narrowing`, only the values it would change or fail on.
  */
 async function affectedRows(
   source: Session,
   schema: string,
   candidate: Candidate,
   narrowing: Narrowing | undefined,
-): Promise<number | undefined> {
+): Promise<Affected | undefined> {
   const relation = `${quoteIdentifier(schema)}.${quoteIdentifier(candidate.table)}`;
   const existing = await source.query<{ found: boolean }>(
     `SELECT to_regclass($1) IS NOT NULL
@@ -234,11 +250,34 @@ async function affectedRows(
   if (existing.rows[0]?.found !== true) {
     return undefined;
   }
-  const condition = affectedCondition(candidate, narrowing);
-  const counted = await source.query<{ rows: number }>(
-    `SELECT count(*)::integer AS rows FROM ${relation}${condition === undefined ? "" : ` WHERE ${condition}`}`,
+  const where = (condition: string | undefined) =>
+    condition === undefined ? "" : ` FILTER (WHERE ${condition})`;
+  const column =
+    narrowing === undefined || candidate.column === undefined
+      ? undefined
+      : quoteIdentifier(candidate.column);
+  const tooLarge =
+    column === undefined ? "false" : tooLargeFor(column, narrowing);
+  const counted = await source.query<Affected>(
+    `SELECT count(*)${where(affectedCondition(candidate, narrowing))}::integer AS rows,
+       ${column === undefined ? "0" : `count(${column})`}::integer AS values,
+       count(*) FILTER (WHERE ${tooLarge})::integer AS "tooLarge"
+     FROM ${relation}`,
   );
-  return counted.rows[0]?.rows ?? 0;
+  return counted.rows[0] ?? { rows: 0, values: 0, tooLarge: 0 };
+}
+
+/**
+ * The condition on `column`'s values that are too large for a numeric
+ * narrowing's new type once rounded to its scale (numeric(4,1) holds up to
+ * 999.9), so the cast fails with "numeric field overflow".
+ */
+function tooLargeFor(column: string, narrowing: Narrowing | undefined): string {
+  if (narrowing?.kind !== "scale" || !narrowing.overflows) {
+    return "false";
+  }
+  const limit = `1${"0".repeat(narrowing.precision - narrowing.scale)}`;
+  return `${column} <> 'NaN' AND abs(round(${column}, ${narrowing.scale})) >= ${limit}`;
 }
 
 /** The condition on the rows a candidate affects; undefined when all are. */
@@ -252,7 +291,7 @@ function affectedCondition(
     return `length(${column}) > ${narrowing.length}`;
   }
   if (narrowing?.kind === "scale") {
-    return `${column} <> round(${column}, ${narrowing.scale})`;
+    return `${column} <> round(${column}, ${narrowing.scale}) OR (${tooLargeFor(column, narrowing)})`;
   }
   switch (candidate.kind) {
     case "dropped-column":
@@ -327,17 +366,15 @@ async function parseTypeName(type: string): Promise<TypeName | undefined> {
 
 function messageFor(
   candidate: Candidate,
-  rows: number,
+  affected: Affected,
   narrowing: Narrowing | undefined,
 ): string {
   const { kind, table, column } = candidate;
   const subject = `${table}.${column ?? ""}`;
   if (narrowing !== undefined) {
-    const reason = narrowingReason(subject, narrowing);
-    return rows === 0
-      ? `${reason} (every value in the rehearsal data fits): if a target holds values that don't, shorten or move them in the pre-migration script if they matter`
-      : `${reason} (${rows} ${rows === 1 ? "value" : "values"} in the rehearsal data ${rows === 1 ? "doesn't" : "don't"} fit): shorten or move them in the pre-migration script if they matter`;
+    return `${narrowingReason(subject, narrowing)} ${narrowingCount(affected, narrowing)}`;
   }
+  const { rows } = affected;
   const count = (one: string, many: string) =>
     `(${rows === 0 ? `no ${many}` : `${rows} ${rows === 1 ? one : many}`} in the rehearsal data)`;
   switch (kind) {
@@ -352,4 +389,45 @@ function messageFor(
     case "added-required-column":
       return `Column ${subject} is added NOT NULL without a default ${count("row", "rows")}: add and backfill it in the pre-migration script`;
   }
+}
+
+/**
+ * A narrowing's count in the rehearsal data and what to do: no values, every
+ * value fitting, the values cut (length), or those rounded and those too
+ * large (scale), e.g. `(1 value in the rehearsal data is rounded; 1 is too
+ * large for numeric(4,1) and makes the rehearsal fail)`.
+ */
+function narrowingCount(
+  { rows, values, tooLarge }: Affected,
+  narrowing: Narrowing,
+): string {
+  const advice =
+    "shorten or move them in the pre-migration script if they matter";
+  if (values === 0) {
+    return `(no non-null values in the rehearsal data): if a target holds values that don't fit, ${advice}`;
+  }
+  if (rows === 0) {
+    return `(every value in the rehearsal data fits): if a target holds values that don't, ${advice}`;
+  }
+  const valuesIn = (n: number) =>
+    `${n} ${n === 1 ? "value" : "values"} in the rehearsal data`;
+  if (narrowing.kind === "length") {
+    return `(${valuesIn(rows)} ${rows === 1 ? "doesn't" : "don't"} fit): ${advice}`;
+  }
+  const parts = (
+    [
+      [rows - tooLarge, () => "rounded"],
+      [
+        tooLarge,
+        (n: number) =>
+          `too large for ${narrowing.to} and ${n === 1 ? "makes" : "make"} the rehearsal fail`,
+      ],
+    ] as const
+  )
+    .filter(([n]) => n > 0)
+    .map(
+      ([n, what], index) =>
+        `${index === 0 ? valuesIn(n) : n} ${n === 1 ? "is" : "are"} ${what(n)}`,
+    );
+  return `(${parts.join("; ")}): ${tooLarge > 0 ? "change or move them in the pre-migration script" : advice}`;
 }

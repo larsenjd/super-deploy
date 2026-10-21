@@ -698,9 +698,11 @@ target. That applies to a shorter `varchar(n)`, `char(n)`, `bit(n)` or
 decimal places, such as `numeric(6,2)` to `numeric(5,1)`. The deployment
 doesn't fail. A `numeric` that also allows fewer digits before the decimal
 point, such as `numeric(6,2)` to `numeric(4,1)`, rounds the same way, but a
-value too large for it fails the deployment. `draft` says how many values in the rehearsal data don't fit,
-and `finalize` asks for the change to be acknowledged. If those values
-matter, shorten or move them in the pre-migration script.
+value too large for it fails the deployment. `draft` says how many values in
+the rehearsal data don't fit (for such a `numeric`, how many are rounded and
+how many are too large, which makes the rehearsal fail too), and `finalize`
+asks for the change to be acknowledged. If those values matter, shorten or
+move them in the pre-migration script.
 
 `rehearse` lists a draft's destructive statements, and `finalize` needs them
 acknowledged. In a terminal, `finalize` lists them and asks. Without a
