@@ -3,7 +3,9 @@
 // `validate` to warn about undrafted changes) and the hash of the schema
 // change `draft` wrote (so a rehearsal mismatch can name a hand edit; drafts
 // written before it existed have none, and count as not edited);
-// draft/schema-change.sql is the generated schema change.
+// draft/schema-change.sql is the generated schema change, and
+// draft/schema-change.generated.sql a copy of it as generated, so a hand
+// edit is warned about and recorded (store/hand-edit.ts).
 //
 // A Recovery draft (created by `recovery --migration N`) has
 // `"recoveryOf": N` in draft.json and the name of migration N; its
@@ -33,6 +35,7 @@ import {
   listFiles,
   postMigrationFileName,
   preMigrationFileName,
+  readIfPresent,
   schemaChangeFileName,
   seedDataFileName,
 } from "./migrations.ts";
@@ -79,12 +82,23 @@ export async function writeRecoverySchemaChange(
 /** The draft's own metadata file; never copied into the finalized migration. */
 export const draftMetadataFileName = "draft.json";
 
-/** Every file a draft may hold: its metadata, then its SQL in the order it runs. */
+/**
+ * The schema change as `draft` generated it, kept beside the draft so a hand
+ * edit of schema-change.sql can be told and shown (store/hand-edit.ts).
+ * Never run, and never copied into the finalized migration.
+ */
+export const generatedSchemaChangeFileName = "schema-change.generated.sql";
+
+/**
+ * Every file a draft may hold: its metadata, then its SQL in the order it
+ * runs, with the generated copy of the schema change beside it.
+ */
 export const draftFileNames: readonly string[] = [
   draftMetadataFileName,
   seedDataFileName,
   preMigrationFileName,
   schemaChangeFileName,
+  generatedSchemaChangeFileName,
   postMigrationFileName,
 ];
 
@@ -153,14 +167,9 @@ export async function readDraft(
   paths: ProjectPaths,
 ): Promise<DraftMetadata | undefined> {
   const file = projectRelative(root, paths.draftMetadata);
-  let text: string;
-  try {
-    text = await readFile(paths.draftMetadata, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return undefined;
-    }
-    throw error;
+  const text = await readIfPresent(paths.draftMetadata);
+  if (text === undefined) {
+    return undefined;
   }
   let parsed: unknown;
   try {
@@ -211,16 +220,23 @@ export async function readDraft(
   };
 }
 
-/** Writes draft.json, with the hash of `schemaChange`, and the schema change. */
+/**
+ * Writes draft.json, with the hash of the generated schema change
+ * `generated`, a copy of it (generatedSchemaChangeFileName) and the schema
+ * change `schemaChange`: `generated` itself unless it is restored with a
+ * hand edit (unfinalize).
+ */
 export async function writeDraft(
   paths: ProjectPaths,
   metadata: Omit<DraftMetadata, "schemaChangeHash">,
-  schemaChange: string,
+  generated: string,
+  schemaChange: string = generated,
 ): Promise<void> {
   await writeDraftMetadata(paths, {
     ...metadata,
-    schemaChangeHash: fileHash(schemaChange),
+    schemaChangeHash: fileHash(generated),
   });
+  await writeFile(join(paths.draft, generatedSchemaChangeFileName), generated);
   await writeFile(paths.draftSchemaChange, schemaChange);
 }
 

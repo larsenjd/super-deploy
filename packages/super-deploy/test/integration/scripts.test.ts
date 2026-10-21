@@ -626,7 +626,7 @@ alter table customers alter column phone set not null;
       {
         file: "data-model/draft/post-migrate.sql",
         message:
-          "data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql and post-migration.sql)",
+          "data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)",
       },
     ];
 

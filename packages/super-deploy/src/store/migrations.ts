@@ -8,6 +8,8 @@
 //       post-migration.sql          (optional) hand-written, runs after the schema change
 //       seed-data.sql               (optional) the draft's seed data, frozen as an audit record
 //       metadata.json               tool, differ, parser and rehearsal server versions
+//       HAND-EDITED.md              (only when schema-change.sql was edited by hand)
+//                                   the diff from the generated one (store/hand-edit.ts)
 //       desired-schema/**/*.sql     snapshot of the desired schema at finalize
 //       recoveries/                 (optional) the migration's Recoveries
 //         recovery-1/               Recovery 1: replacement scripts and seed data
@@ -37,7 +39,11 @@ import { dirname, join } from "node:path";
 import { SuperDeployError } from "../errors.ts";
 import type { DeployTimeKind } from "../sql-analysis/index.ts";
 import { maxDraftNameLength } from "./draft-name.ts";
-import { decodeHashedText, type HashedFile } from "./hashing.ts";
+import {
+  decodeHashedText,
+  type HashedFile,
+  normaliseLineEndings,
+} from "./hashing.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";
 
 export const indexFileName = "index.json";
@@ -359,6 +365,26 @@ export async function writableFiles(folder: string): Promise<string[]> {
     }
   }
   return writable;
+}
+
+/** `path`'s text (UTF-8), or undefined if it doesn't exist. */
+export async function readIfPresent(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+/** readIfPresent, with line endings normalised (LF). */
+export async function readNormalisedIfPresent(
+  path: string,
+): Promise<string | undefined> {
+  const text = await readIfPresent(path);
+  return text === undefined ? undefined : normaliseLineEndings(text);
 }
 
 /** True if `path` exists. */

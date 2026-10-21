@@ -1,7 +1,6 @@
 // `rehearse`: replay every finalized migration plus the draft on a throwaway
 // database and prove the result matches the desired schema, without
 // finalizing anything.
-import { readFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import type { Project } from "../project.ts";
 import { rehearseDraft } from "../rehearsal/rehearse-draft.ts";
@@ -37,15 +36,19 @@ import {
   type UnknownDraftFileOptions,
 } from "../store/draft.ts";
 import {
+  draftSchemaChangeHandEdit,
+  type SchemaChangeHandEdit,
+} from "../store/hand-edit.ts";
+import {
   desiredSchemaHash,
   fileHash,
   type HashedFile,
-  normaliseLineEndings,
 } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
   type FinalizedMigration,
+  readNormalisedIfPresent,
   schemaChangeFileName,
   snapshotFolderName,
   UnknownMigrationError,
@@ -66,6 +69,11 @@ export interface RehearseResult {
   readonly destructive: readonly DestructiveStatement[];
   /** Statements that rewrite or scan an existing table while holding its lock (draft paths). */
   readonly warnings: readonly LockWarning[];
+  /**
+   * Project-relative path of the draft's schema change when it was edited by
+   * hand since `draft` generated it (store/hand-edit.ts); undefined if not.
+   */
+  readonly handEdited: string | undefined;
 }
 
 export type RehearseOptions = UnknownDraftFileOptions;
@@ -85,6 +93,7 @@ export async function rehearse(
     serverVersion: rehearsed.serverVersion,
     destructive: rehearsed.analysis.destructive,
     warnings: rehearsed.analysis.warnings,
+    handEdited: rehearsed.handEdit?.file,
   };
 }
 
@@ -100,6 +109,8 @@ export interface RehearsedDraft {
   readonly overrides: readonly Override[];
   /** The draft's deploy-time analysis (no violations by now). */
   readonly analysis: MigrationAnalysis;
+  /** The hand edit of a (non-Recovery) draft's schema change, if any. */
+  readonly handEdit: SchemaChangeHandEdit | undefined;
   /** Desired-schema routines whose bodies name its objects unqualified (none for a Recovery draft). */
   readonly unqualifiedNames: readonly UnqualifiedNameWarning[];
 }
@@ -158,6 +169,7 @@ export async function rehearseCurrentDraft(
     serverVersion,
     overrides: analysis.overrides,
     analysis,
+    handEdit: await draftSchemaChangeHandEdit(root, paths),
     unqualifiedNames,
   };
 }
@@ -273,6 +285,7 @@ async function rehearseRecoveryDraft(
     serverVersion,
     overrides: analysis.overrides,
     analysis,
+    handEdit: undefined,
     unqualifiedNames: [],
   };
 }
@@ -332,15 +345,10 @@ export async function requireOriginalSchemaChange(
   migration: FinalizedMigration,
 ): Promise<void> {
   const file = projectRelative(project.root, project.paths.draftSchemaChange);
-  const read = (path: string) =>
-    readFile(path, "utf8").then(normaliseLineEndings, (error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return undefined;
-      }
-      throw error;
-    });
-  const original = await read(join(migration.path, schemaChangeFileName));
-  const copy = await read(project.paths.draftSchemaChange);
+  const original = await readNormalisedIfPresent(
+    join(migration.path, schemaChangeFileName),
+  );
+  const copy = await readNormalisedIfPresent(project.paths.draftSchemaChange);
   if (
     copy === undefined ||
     original === undefined ||

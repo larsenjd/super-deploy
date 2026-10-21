@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises";
 import {
   draft,
   finalize,
@@ -161,6 +162,31 @@ describe("rehearse", () => {
     expect((error as RehearsalMismatchError).subject).toContain(
       "pg-delta can't generate the difference: make the change by hand in the pre-migration script",
     );
+  });
+
+  test("passes a hand edit of the schema change that still produces the desired schema, naming it as edited by hand", async () => {
+    const { dir, project } = await draftedProject();
+    expect((await rehearse(project)).handEdited).toBeUndefined();
+    const index = "create index customers_name_idx on customers (name);\n";
+    const file = "data-model/draft/schema-change.sql";
+    await dir.write(file, `${await dir.read(file)}${index}`);
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      `${customers}${index}`,
+    );
+
+    const result = await rehearse(project);
+
+    expect(result.handEdited).toBe(file);
+  });
+
+  test("a draft written before the generated copy of its schema change existed counts as not edited by hand", async () => {
+    const { dir, project } = await draftedProject();
+    await rm(dir.path("data-model/draft/schema-change.generated.sql"));
+    const file = "data-model/draft/schema-change.sql";
+    await dir.write(file, `${await dir.read(file)}-- a note\n`);
+
+    expect((await rehearse(project)).handEdited).toBeUndefined();
   });
 
   test("our own catalog comparison catches what pg-delta misses: a named NOT NULL constraint", async () => {

@@ -109,11 +109,42 @@ describe("validate", () => {
     });
   });
 
+  test("a hand-edited schema change: rehearse and finalize warn on stderr and exit 0, finalize says where it recorded it, validate --strict lists a notice and exits 0", async () => {
+    const dir = await draftedProject();
+    const index = "create index customers_name_idx on customers (name);\n";
+    const schemaChange = "data-model/draft/schema-change.sql";
+    await dir.write(schemaChange, `${await dir.read(schemaChange)}${index}`);
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      `${customers}${index}`,
+    );
+    const warning =
+      "warning: data-model/draft/schema-change.sql was edited by hand since draft generated it\n";
+    const run = (...args: string[]) => runCli(args, { cwd: dir.root });
+
+    const rehearsed = await run("rehearse");
+    const finalized = await run("finalize");
+    const validated = await run("validate", "--strict");
+
+    for (const result of [rehearsed, finalized]) {
+      expect(result).toMatchObject({ exitCode: 0, stderr: warning });
+    }
+    expect(finalized.stdout).toContain(
+      "Recorded the hand edit in its metadata.json and HAND-EDITED.md\n",
+    );
+    expect(validated).toEqual({
+      exitCode: 0,
+      stdout: "Validated 1 migration\n",
+      stderr:
+        "notice: Migration 00001-add-customers's schema change was edited by hand after draft generated it: data-model/migrations/00001-add-customers/HAND-EDITED.md shows the diff\n",
+    });
+  });
+
   test("a misnamed script in the draft: draft, rehearse and finalize warn on stderr and exit 0; validate --strict --allow-draft exits 1", async () => {
     const dir = await draftedProject();
     await dir.write("data-model/draft/post-migrate.sql", "select 1/0;\n");
     const warning =
-      "warning: data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql and post-migration.sql)";
+      "warning: data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)";
     const run = (...args: string[]) => runCli(args, { cwd: dir.root });
 
     const validated = await run("validate", "--strict", "--allow-draft");
@@ -137,7 +168,7 @@ describe("validate", () => {
       "update customers set name = name;\n",
     );
     const warning =
-      "warning: data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql and post-migration.sql)";
+      "warning: data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)";
     const run = (...args: string[]) => runCli(args, { cwd: dir.root });
 
     for (const command of ["draft", "rehearse", "finalize"]) {
