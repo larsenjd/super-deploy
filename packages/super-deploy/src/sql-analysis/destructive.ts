@@ -894,6 +894,26 @@ const textTypes = new Set(["text", "varchar"]);
 const timeTypes = new Set(["timestamp", "timestamptz", "time", "timetz"]);
 
 /**
+ * True when `command` (ALTER COLUMN ... TYPE on `column`, currently of type
+ * `current`) keeps every value unchanged: a known widening with no USING
+ * expression computing new values. The same judgement that keeps a type
+ * change from being destructive at finalize; the draft's script coverage
+ * uses it too.
+ */
+export function keepsEveryValue(
+  current: TypeName,
+  column: string,
+  command: AlterTableCmd,
+): boolean {
+  const target = unwrap<ColumnDef>(command.def, "ColumnDef");
+  return (
+    target?.typeName !== undefined &&
+    keepsValues(target.raw_default, column) &&
+    widens(current, target.typeName)
+  );
+}
+
+/**
  * True when every value of `from` converts to `to` unchanged: the known
  * widenings. Anything else (including every type super-deploy does not
  * know, such as domains) counts as lossy.
