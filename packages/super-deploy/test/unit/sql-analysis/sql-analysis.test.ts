@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   analyseDesiredSchema,
   checkRules,
+  desiredSchemaAnalysis,
   orderDesiredSchema,
   SqlRuleViolationError,
 } from "../../../src/sql-analysis/index.ts";
@@ -125,5 +126,79 @@ describe("analysing the desired schema", () => {
       ["data-model/desired-schema/people.sql", 4, "unnamed-constraint"],
       ["data-model/desired-schema/people.sql", 6, "unnamed-index"],
     ]);
+  });
+});
+
+describe("routine bodies resolved with the caller's search path", () => {
+  const tables = file(
+    "create table orders (id bigint primary key, customer_id bigint not null);\n",
+    "data-model/desired-schema/orders.sql",
+  );
+  const routines = (sql: string) =>
+    file(sql, "data-model/desired-schema/routines.sql");
+
+  async function unqualified(sql: string, managedSchema = "app") {
+    const analysis = await desiredSchemaAnalysis([tables, routines(sql)], {
+      managedSchema,
+    });
+    return analysis.unqualifiedNames;
+  }
+
+  const sqlBody =
+    "create function order_count(cid bigint) returns bigint\nlanguage sql stable as $$ select count(*) from orders where customer_id = cid $$;\n";
+  const plpgsqlBody =
+    "create function order_count(cid bigint) returns bigint\nlanguage plpgsql stable as $$\ndeclare n bigint;\nbegin\n  select count(*) into n from orders where customer_id = cid;\n  return n;\nend $$;\n";
+
+  test.each([
+    ["LANGUAGE sql string body", sqlBody, /BEGIN ATOMIC/],
+    ["PL/pgSQL body", plpgsqlBody, /SET search_path = app, pg_catalog/],
+  ])(
+    "warn about a %s naming a managed-schema object unqualified",
+    async (_name, sql, fix) => {
+      const [warning, ...rest] = await unqualified(sql);
+      expect(rest).toEqual([]);
+      expect(warning).toMatchObject({
+        file: "data-model/desired-schema/routines.sql",
+        line: 1,
+        routine: "function order_count(int8)",
+        names: ["orders"],
+      });
+      expect(warning?.message).toMatch(
+        /^function order_count\(int8\) names orders/,
+      );
+      expect(warning?.message).toMatch(/qualify/);
+      expect(warning?.message).toMatch(/SET search_path = app, pg_catalog/);
+      expect(warning?.message).toMatch(fix);
+    },
+  );
+
+  test.each([
+    [
+      "qualified names",
+      "create function order_count(cid bigint) returns bigint\nlanguage plpgsql stable as $$\nbegin\n  return (select count(*) from app.orders where customer_id = cid);\nend $$;\n",
+    ],
+    [
+      "SET search_path",
+      "create function order_count(cid bigint) returns bigint\nlanguage sql stable set search_path = app, pg_catalog as $$ select count(*) from orders where customer_id = cid $$;\n",
+    ],
+    [
+      "a BEGIN ATOMIC body",
+      "create function order_count(cid bigint) returns bigint\nlanguage sql stable begin atomic select count(*) from orders where customer_id = cid; end;\n",
+    ],
+    [
+      "only built-ins unqualified",
+      "create function stamp() returns text\nlanguage sql stable as $$ select count(*)::text || now()::text from app.orders $$;\n",
+    ],
+    [
+      "a CTE's name",
+      "create function recent() returns bigint\nlanguage sql stable as $$ with orders as (select 1) select count(*) from orders $$;\n",
+    ],
+  ])("no warning with %s", async (_name, sql) => {
+    expect(await unqualified(sql)).toEqual([]);
+  });
+
+  test("no warning when the managed schema is public", async () => {
+    expect(await unqualified(sqlBody, "public")).toEqual([]);
+    expect(await unqualified(plpgsqlBody, "public")).toEqual([]);
   });
 });

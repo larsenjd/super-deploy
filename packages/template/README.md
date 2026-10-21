@@ -196,8 +196,27 @@ super-deploy (see [Permissions](#permissions)).
 - **One managed schema**: no `CREATE SCHEMA`. super-deploy creates the
   managed schema (`managedSchema`, see [Project settings](#project-settings))
   itself. Write object names unqualified (or qualified with the managed
-  schema). Statements may refer only to the managed schema and
-  `pg_catalog`; PL/pgSQL bodies may also refer to `externalSchemas`.
+  schema), except in routine bodies (next rule). Statements may refer only
+  to the managed schema and `pg_catalog`; PL/pgSQL bodies may also refer to
+  `externalSchemas`.
+- **Routine bodies run with the caller's search path**: PostgreSQL resolves
+  the names in a function's or procedure's string body (`as $$ ... $$`, in
+  `sql` or `plpgsql`) each time it runs, with the `search_path` of whoever
+  calls it. Rehearsals and deployments put the managed schema on it, so
+  they pass; but unless the managed schema is `public`, your application's
+  roles don't have it on theirs, and every call fails with `relation
+  "orders" does not exist`. With `managedSchema: "app"`, write such a
+  body one of three ways:
+  - qualify the names: `select count(*) from app.orders`;
+  - give the routine `set search_path = app, pg_catalog`;
+  - for `language sql`, write the body as `begin atomic ... end;`, whose
+    names PostgreSQL binds once, at `CREATE`.
+
+  `draft`, `finalize` and `validate` warn about a routine whose string body
+  names something the desired schema creates without a schema and that has
+  no `SET search_path`, so `validate --strict` fails on it. With
+  `managedSchema: "public"`, which every default search path includes, they
+  don't. SQL built for `EXECUTE` isn't checked.
 - **Only `ALTER TABLE ... ADD CONSTRAINT`** among `ALTER` statements:
   declare columns and everything else in `CREATE TABLE`, written out (not
   copied with `LIKE`).
@@ -529,7 +548,7 @@ override marker on its own line, directly before the statement:
 create function load_staging(source text) returns void
 language plpgsql as $$
 begin
-  execute format('insert into staging select * from %I', source);
+  execute format('insert into app.staging select * from %I', source);
 end
 $$;
 ```

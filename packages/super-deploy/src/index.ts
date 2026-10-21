@@ -230,6 +230,7 @@ export {
   SqlRuleViolationError,
 } from "./sql-analysis/index.ts";
 export type { Override } from "./sql-analysis/overrides.ts";
+export type { UnqualifiedNameWarning } from "./sql-analysis/routine-bodies.ts";
 export {
   InvalidDraftError,
   NoDraftError,
