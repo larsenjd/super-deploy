@@ -197,6 +197,22 @@ function draftMismatch(
   draft: DeployedDraft,
   recorded: readonly RecordedMigration[],
 ): HistoryMismatch {
+  return {
+    number: (draft.baseMigration ?? 0) + 1,
+    reason: "draft",
+    message: `the target holds ${heldDraft(draft, recorded)}`,
+  };
+}
+
+/**
+ * The draft a target holds, for a message whose subject is the target:
+ * "draft <name> (deployed by attempt #N on top of <migration>, with(out)
+ * seed data), not a finalized migration: reset it with rebuild --to <N>".
+ */
+export function heldDraft(
+  draft: DeployedDraft,
+  recorded: readonly RecordedMigration[],
+): string {
   const base = recorded.find((entry) => entry.number === draft.baseMigration);
   const where =
     base === undefined
@@ -206,11 +222,7 @@ function draftMismatch(
     draft.baseMigration === undefined
       ? "rebuild --to N"
       : `rebuild --to ${draft.baseMigration}`;
-  return {
-    number: (draft.baseMigration ?? 0) + 1,
-    reason: "draft",
-    message: `the target holds draft ${draft.name} (deployed by attempt #${draft.attemptId} ${where}, ${draft.seedData ? "with" : "without"} seed data), not a finalized migration: reset it with ${reset}`,
-  };
+  return `draft ${draft.name} (deployed by attempt #${draft.attemptId} ${where}, ${draft.seedData ? "with" : "without"} seed data), not a finalized migration: reset it with ${reset}`;
 }
 
 /** The names in `wanted` that `sql` (selecting `name` for `$1`) doesn't return, in order. */
