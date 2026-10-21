@@ -1,6 +1,6 @@
 # 18: README doesn't say which PostgreSQL objects the desired schema supports; common ones (enums, sequences, extensions) are refused with "not supported in V1"
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Area:** newproj

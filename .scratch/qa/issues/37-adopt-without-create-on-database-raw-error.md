@@ -1,6 +1,6 @@
 # 37: Adoption without CREATE on the database fails with a bare "permission denied for database"
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** adopt

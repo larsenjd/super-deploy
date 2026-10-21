@@ -1,6 +1,6 @@
 # 66: deploy-draft deploys a stale draft without warning
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

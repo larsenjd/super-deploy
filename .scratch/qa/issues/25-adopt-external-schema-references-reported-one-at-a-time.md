@@ -1,6 +1,6 @@
 # 25: Adoption reports external-schema references one at a time, citing files it never wrote
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** adopt

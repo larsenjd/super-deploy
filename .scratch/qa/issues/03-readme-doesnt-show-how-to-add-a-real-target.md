@@ -1,6 +1,6 @@
 # 03: README says to add real targets to the config but never shows how (`postgresTarget` is undocumented)
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Merged:** 29, 13

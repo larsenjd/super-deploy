@@ -1,6 +1,6 @@
 # 08: `init` says "Next: pnpm install", but the README says to run `git init` first
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** newproj

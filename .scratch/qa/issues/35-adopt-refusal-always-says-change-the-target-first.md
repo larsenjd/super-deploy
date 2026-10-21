@@ -1,6 +1,6 @@
 # 35: Adoption refusal always ends "change the target first", even when the fix is a terminal or the config
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** adopt

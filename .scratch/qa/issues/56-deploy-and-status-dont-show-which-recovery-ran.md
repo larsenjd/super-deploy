@@ -1,6 +1,6 @@
 # 56: `deploy` and `status` don't show that a migration ran as its Recovery
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** fail

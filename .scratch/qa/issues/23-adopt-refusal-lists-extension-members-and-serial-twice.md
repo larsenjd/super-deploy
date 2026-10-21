@@ -1,6 +1,6 @@
 # 23: Adoption refusal lists every member of an extension, and calls a serial column a "standalone sequence" twice
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** adopt

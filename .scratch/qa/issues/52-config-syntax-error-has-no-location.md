@@ -1,6 +1,6 @@
 # 52: A syntax error in `super-deploy.config.ts` is reported without a line or column
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** fail

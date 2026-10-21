@@ -1,6 +1,6 @@
 # 24: Adopting a target that lacks the managed schema (e.g. a typo) records an empty adoption, and the docs don't say how to undo it
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** adopt

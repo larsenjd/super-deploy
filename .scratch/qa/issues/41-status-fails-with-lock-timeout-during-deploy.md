@@ -1,6 +1,6 @@
 # 41: `status` fails with a bare "canceling statement due to lock timeout" while a deploy is running
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** fail

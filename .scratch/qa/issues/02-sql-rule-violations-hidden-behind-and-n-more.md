@@ -1,6 +1,6 @@
 # 02: Desired-schema rule violations are shown one at a time ("and 4 more"), and the naming rule isn't documented
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Merged:** 36

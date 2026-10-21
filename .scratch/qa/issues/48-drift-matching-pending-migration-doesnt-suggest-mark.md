@@ -1,6 +1,6 @@
 # 48: Drift that is exactly the next pending migration doesn't suggest `mark`
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** fail

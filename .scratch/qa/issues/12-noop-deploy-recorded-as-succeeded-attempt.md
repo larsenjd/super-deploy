@@ -1,6 +1,6 @@
 # 12: A deploy with nothing to deploy is recorded as a "deploy succeeded" attempt with no migration
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** newproj

@@ -1,6 +1,6 @@
 # 19: Widening a column type warns that the cast "could fail or lose data" and generates a needless `DROP DEFAULT`
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** newproj

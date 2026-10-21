@@ -1,6 +1,6 @@
 # 67: A target holding a deployed draft is described as "recorded history doesn't match the project's migrations"
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

@@ -1,6 +1,6 @@
 # 43: An unreachable target host hangs for over 2 minutes with no output
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** fail

@@ -1,6 +1,6 @@
 # 50: "Target records a migration the repo doesn't have / with another hash" gives no way forward
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Area:** fail

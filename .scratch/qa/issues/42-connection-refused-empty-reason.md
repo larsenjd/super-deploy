@@ -1,6 +1,6 @@
 # 42: Connection refused on `localhost` gives an empty reason: "failed to connect: "
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** fail

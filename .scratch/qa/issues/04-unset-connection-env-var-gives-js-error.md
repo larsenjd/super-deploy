@@ -1,6 +1,6 @@
 # 04: An unset or empty connection string gives "Cannot read properties of undefined (reading 'charAt')" / "ENOTFOUND base"
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Merged:** 30, 53 (validation parts)

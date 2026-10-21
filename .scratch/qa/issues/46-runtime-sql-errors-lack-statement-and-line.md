@@ -1,6 +1,6 @@
 # 46: When a script fails at run time, the error doesn't say which statement or line
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Merged:** 45, 47

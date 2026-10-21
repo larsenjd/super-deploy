@@ -1,6 +1,6 @@
 # 15: README covers only the happy path: nothing on a deploy that fails on a target, destructive acknowledgements, or unfinalize/restore-schema/discard-draft
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Merged:** 60

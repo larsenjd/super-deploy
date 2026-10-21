@@ -1,6 +1,6 @@
 # 54: The dynamic-SQL refusal in the desired schema doesn't mention the override marker that allows it
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** fail

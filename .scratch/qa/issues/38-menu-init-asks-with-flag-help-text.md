@@ -1,6 +1,6 @@
 # 38: Choosing `init` from the menu asks the --adopt flag's help text as its question
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** adopt

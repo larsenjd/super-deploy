@@ -1,6 +1,6 @@
 # 64: Ctrl-D at a YES prompt exits 13 with "Detected unsettled top-level await"
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** disp
