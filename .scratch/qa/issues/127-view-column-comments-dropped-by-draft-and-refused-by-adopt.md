@@ -1,6 +1,6 @@
 # 127: Comments on view and materialized-view columns: adoption refuses them as "not-reproduced", and draft silently drops them
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** adopt

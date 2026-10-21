@@ -1,6 +1,6 @@
 # 167: A target holding a deployed draft can be flagged not disposable without warning, and then "reset it with rebuild" refuses
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

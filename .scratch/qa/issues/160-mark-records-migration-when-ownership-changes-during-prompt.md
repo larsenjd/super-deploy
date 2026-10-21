@@ -1,6 +1,6 @@
 # 160: mark records the migration when an object's owner changes while it waits for YES
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** disp

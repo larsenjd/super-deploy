@@ -1,6 +1,6 @@
 # 174: A failed deploy-draft doesn't say the target was rolled back, unlike deploy and rebuild
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

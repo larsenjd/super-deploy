@@ -1,6 +1,6 @@
 # 111: The narrowing warning says "every value in the rehearsal data fits" when there is no rehearsal data
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** newproj

@@ -1,6 +1,6 @@
 # 109: The README never explains drift, or how to clear it when there is no pending migration
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Merged:** 149

@@ -1,6 +1,6 @@
 # 184: Nothing warns that a deployment will drop and recreate objects carrying hand-made grants (e.g. a view recreated only because a column it reads changed type)
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Area:** privs

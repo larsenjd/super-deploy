@@ -1,6 +1,6 @@
 # 168: The confirmation's Host line shows the resolved address, not the host in the connection string
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

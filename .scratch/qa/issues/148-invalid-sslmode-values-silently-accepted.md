@@ -1,6 +1,6 @@
 # 148: Invalid `sslmode` values are accepted silently (as verify-full) rather than refused as libpq does
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** fail

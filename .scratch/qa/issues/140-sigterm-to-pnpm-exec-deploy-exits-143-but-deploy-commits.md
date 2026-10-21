@@ -1,6 +1,6 @@
 # 140: SIGTERM to `pnpm exec super-deploy deploy` exits 143, but the deployment keeps running and commits
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Area:** fail

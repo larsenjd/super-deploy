@@ -1,6 +1,6 @@
 # 107: unfinalize moves a migration dev has recorded without asking, and only warns afterwards, vaguely
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Area:** newproj

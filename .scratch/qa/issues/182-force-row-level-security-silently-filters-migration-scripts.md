@@ -1,6 +1,6 @@
 # 182: A hand-made `FORCE ROW LEVEL SECURITY` silently filters a deployment's scripts: backfills update nothing, deploy reports success
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** high
 **Area:** privs

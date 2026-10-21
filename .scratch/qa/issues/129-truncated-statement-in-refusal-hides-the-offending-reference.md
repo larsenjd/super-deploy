@@ -1,6 +1,6 @@
 # 129: Adoption refusals truncate the CREATE statement, hiding the part that is refused
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Area:** adopt

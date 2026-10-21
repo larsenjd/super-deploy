@@ -1,6 +1,6 @@
 # 126: For `public`, the ownership refusal suggests `ALTER SCHEMA public OWNER TO`, while the README says to deploy as the database owner
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Merged:** 188

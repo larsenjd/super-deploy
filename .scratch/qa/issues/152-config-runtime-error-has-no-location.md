@@ -1,6 +1,6 @@
 # 152: A runtime error in super-deploy.config.ts has no file location, unlike a syntax error
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** fail

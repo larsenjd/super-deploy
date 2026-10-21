@@ -1,6 +1,6 @@
 # 103: Changing a column's collation or a generated column's expression drops and re-adds the column
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** newproj

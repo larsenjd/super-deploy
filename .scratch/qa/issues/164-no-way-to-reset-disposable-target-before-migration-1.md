@@ -1,6 +1,6 @@
 # 164: A disposable target can't be reset to before migration 1, so a Recovery of migration 1 can be tried only once per database
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

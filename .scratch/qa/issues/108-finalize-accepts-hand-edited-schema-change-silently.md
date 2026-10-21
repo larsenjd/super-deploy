@@ -1,6 +1,6 @@
 # 108: finalize accepts a hand-edited schema-change.sql without a word
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** newproj

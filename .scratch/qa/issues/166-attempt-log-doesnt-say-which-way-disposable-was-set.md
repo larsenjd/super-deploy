@@ -1,6 +1,6 @@
 # 166: The attempt log doesn't say whether disposable was set to yes or no
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

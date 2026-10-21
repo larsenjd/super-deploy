@@ -1,6 +1,6 @@
 # 185: A pre-migration trigger with a dynamic-SQL override runs GRANT and DISABLE ROW LEVEL SECURITY at deploy, despite "no override marker gets past these refusals"
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** privs

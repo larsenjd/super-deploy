@@ -1,6 +1,6 @@
 # 153: Drift output prints multi-line definitions without indentation
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** fail

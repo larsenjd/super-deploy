@@ -1,6 +1,6 @@
 # 176: In the menu, disposable preselects "yes" and doesn't show the target's current flag
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

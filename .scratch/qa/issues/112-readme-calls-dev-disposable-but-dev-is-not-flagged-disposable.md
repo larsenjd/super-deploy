@@ -1,6 +1,6 @@
 # 112: The README calls dev "disposable", but deploy-draft and rebuild say dev is not disposable
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Merged:** 165

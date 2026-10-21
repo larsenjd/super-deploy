@@ -1,6 +1,6 @@
 # 151: The error for an edited finalized migration doesn't say how to restore it, and validate prints it twice
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** fail

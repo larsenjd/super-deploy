@@ -1,6 +1,6 @@
 # 180: Routines whose bodies use unqualified names deploy fine but fail for every caller when `managedSchema` isn't `public`
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** high
 **Area:** privs

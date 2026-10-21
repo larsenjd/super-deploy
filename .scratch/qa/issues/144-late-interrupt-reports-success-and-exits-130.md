@@ -1,6 +1,6 @@
 # 144: An interrupt that arrives after deploy or finalize has finished prints success, then "Interrupted" and exit 130
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** fail

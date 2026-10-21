@@ -1,6 +1,6 @@
 # 141: Closing the terminal during a command leaves the embedded rehearsal server running
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Merged:** 162

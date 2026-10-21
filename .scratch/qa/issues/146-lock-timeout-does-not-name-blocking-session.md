@@ -1,6 +1,6 @@
 # 146: Lock-timeout failures and "Locked by" don't name the session that holds the lock
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** fail

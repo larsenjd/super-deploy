@@ -1,6 +1,6 @@
 # 187: README's grant recipe gives app roles no way to refresh a materialized view (needs `MAINTAIN`)
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** privs

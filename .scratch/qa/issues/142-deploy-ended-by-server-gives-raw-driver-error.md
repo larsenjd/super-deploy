@@ -1,6 +1,6 @@
 # 142: A deploy whose session the server ends gets a raw driver error that doesn't say the deployment rolled back
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** fail

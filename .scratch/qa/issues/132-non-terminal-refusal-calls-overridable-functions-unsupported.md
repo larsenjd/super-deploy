@@ -1,6 +1,6 @@
 # 132: Without a terminal, functions that only need an override reason are counted as "things V1 doesn't support"
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** adopt

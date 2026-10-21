@@ -1,6 +1,6 @@
 # 147: A missing or unreadable `sslrootcert` is reported as "not a PostgreSQL URL"
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** fail

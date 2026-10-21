@@ -1,6 +1,6 @@
 # 134: Ctrl+C during an adoption that waits on a lock doesn't stop it until the lock clears or lockTimeout passes
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** adopt

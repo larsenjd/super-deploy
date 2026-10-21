@@ -1,6 +1,6 @@
 # 173: rebuild's confirmation and result don't show that a migration runs as its Recovery
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

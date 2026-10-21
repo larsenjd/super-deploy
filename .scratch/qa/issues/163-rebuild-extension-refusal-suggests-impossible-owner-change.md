@@ -1,6 +1,6 @@
 # 163: rebuild's refusal for a superuser's extension suggests changing its owner, which PostgreSQL can't do
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** disp

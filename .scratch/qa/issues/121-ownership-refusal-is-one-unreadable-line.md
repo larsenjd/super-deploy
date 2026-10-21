@@ -1,6 +1,6 @@
 # 121: The ownership refusal prints every object and fix on one line
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** adopt

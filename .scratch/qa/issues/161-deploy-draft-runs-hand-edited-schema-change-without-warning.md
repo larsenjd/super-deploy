@@ -1,6 +1,6 @@
 # 161: deploy-draft runs a hand-edited schema-change.sql without a word, though rehearse refuses it
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** disp

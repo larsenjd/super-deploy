@@ -1,6 +1,6 @@
 # 125: A history schema that exists but wasn't made by super-deploy gives raw PostgreSQL errors in adopt and status
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** adopt

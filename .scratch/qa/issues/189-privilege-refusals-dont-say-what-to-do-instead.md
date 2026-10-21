@@ -1,6 +1,6 @@
 # 189: Privilege refusals say "set up on targets outside super-deploy" but not what to do instead or where it's documented
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** privs

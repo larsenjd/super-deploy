@@ -1,6 +1,6 @@
 # 130: Adoption's "Left N grants and M policies" says nothing about row-level security or default privileges it left
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** adopt

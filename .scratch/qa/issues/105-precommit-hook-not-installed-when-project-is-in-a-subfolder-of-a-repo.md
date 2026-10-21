@@ -1,6 +1,6 @@
 # 105: In a subfolder of an existing Git repo, the pre-commit hook is silently not installed
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** newproj

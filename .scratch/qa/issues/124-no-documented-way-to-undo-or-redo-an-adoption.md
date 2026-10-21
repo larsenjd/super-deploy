@@ -1,6 +1,6 @@
 # 124: No documented way to undo or redo an adoption; both refusals give no way forward
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Area:** adopt

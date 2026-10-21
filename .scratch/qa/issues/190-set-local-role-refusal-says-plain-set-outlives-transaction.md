@@ -1,6 +1,6 @@
 # 190: `SET LOCAL ROLE` in a script is refused with a reason that doesn't apply ("a plain SET outlives the transaction")
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** privs

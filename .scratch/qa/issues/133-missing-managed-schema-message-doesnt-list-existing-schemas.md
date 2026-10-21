@@ -1,6 +1,6 @@
 # 133: "managed schema does not exist" doesn't show which schemas the target has (typos, mixed-case names)
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** adopt

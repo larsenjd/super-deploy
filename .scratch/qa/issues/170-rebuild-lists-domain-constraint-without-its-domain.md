@@ -1,6 +1,6 @@
 # 170: rebuild's confirmation names a domain's constraint without saying which domain
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

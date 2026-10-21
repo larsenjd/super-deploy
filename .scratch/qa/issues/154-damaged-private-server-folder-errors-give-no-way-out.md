@@ -1,6 +1,6 @@
 # 154: A stale or damaged private server folder fails every command with an error that doesn't say how to recover
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** fail

@@ -1,6 +1,6 @@
 # 104: Changing the type of a column a generated column uses: draft succeeds, but its schema change can never run
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** newproj

@@ -1,6 +1,6 @@
 # 102: Reordering a composite type's attributes gives an empty draft, then a rehearsal error that blames scripts that don't exist
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** newproj

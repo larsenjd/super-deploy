@@ -1,6 +1,6 @@
 # 186: A migration whose scripts fire a trigger that reads an external schema can never be rehearsed, though the README implies it's supported
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** privs

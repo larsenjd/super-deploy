@@ -1,6 +1,6 @@
 # 122: Adoption refuses in separate rounds (ownership, then CREATE, then unsupported objects), not with one list as the README says
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** adopt

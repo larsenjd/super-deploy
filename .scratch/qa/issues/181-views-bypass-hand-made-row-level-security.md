@@ -1,6 +1,6 @@
 # 181: Views in the desired schema bypass hand-made row-level security; the README doesn't warn
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** medium
 **Area:** privs

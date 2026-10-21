@@ -1,6 +1,6 @@
 # 150: When the deploy's client stops responding, its session stays "idle in transaction" holding table locks, with no timeout
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** fail

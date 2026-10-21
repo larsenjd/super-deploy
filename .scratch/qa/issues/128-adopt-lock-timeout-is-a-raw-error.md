@@ -1,6 +1,6 @@
 # 128: Adoption blocked by a lock fails with a raw "canceling statement due to lock timeout"
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** adopt

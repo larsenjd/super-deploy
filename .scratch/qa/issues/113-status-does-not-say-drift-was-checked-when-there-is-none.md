@@ -1,6 +1,6 @@
 # 113: status doesn't say that it checked for drift and found none
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** newproj

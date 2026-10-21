@@ -1,6 +1,6 @@
 # 101: Columns of a domain or composite type end up last in the table, not where the desired schema puts them
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Merged:** 120

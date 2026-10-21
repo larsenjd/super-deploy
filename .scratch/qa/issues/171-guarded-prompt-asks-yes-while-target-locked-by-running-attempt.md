@@ -1,6 +1,6 @@
 # 171: deploy-draft asks for YES while another attempt holds the target, then refuses
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

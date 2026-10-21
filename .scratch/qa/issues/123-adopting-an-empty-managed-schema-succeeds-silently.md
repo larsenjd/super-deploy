@@ -1,6 +1,6 @@
 # 123: Adopting an empty managed schema succeeds silently when the tables are in another schema (forgotten managedSchema)
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** adopt

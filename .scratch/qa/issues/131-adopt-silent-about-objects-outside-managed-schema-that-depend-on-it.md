@@ -1,6 +1,6 @@
 # 131: Adoption doesn't mention objects in other schemas that depend on the managed schema; later deploys fail on them
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** adopt

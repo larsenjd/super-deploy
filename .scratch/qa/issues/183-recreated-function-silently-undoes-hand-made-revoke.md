@@ -1,6 +1,6 @@
 # 183: A migration that recreates a function silently undoes a hand-made `REVOKE EXECUTE ... FROM PUBLIC`, widening access
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** privs

@@ -1,6 +1,6 @@
 # 175: mark's confirmation doesn't say the migration has a data script that will never run
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

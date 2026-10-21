@@ -1,6 +1,6 @@
 # 172: rebuild doesn't check who owns the managed schema, so it succeeds on a target deploy refuses
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** disp

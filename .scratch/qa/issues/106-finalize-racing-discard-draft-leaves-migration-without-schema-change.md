@@ -1,6 +1,6 @@
 # 106: finalize and discard-draft at the same time leave a finalized migration with no schema-change.sql, and validate accepts it
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** medium
 **Area:** newproj

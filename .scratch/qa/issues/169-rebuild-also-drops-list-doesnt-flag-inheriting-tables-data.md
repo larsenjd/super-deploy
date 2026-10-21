@@ -1,6 +1,6 @@
 # 169: rebuild's "Also drops" list doesn't say an inheriting table in another schema loses its rows
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Area:** disp

@@ -1,6 +1,6 @@
 # 145: Timeout failure messages quote the default, not the configured lockTimeout and statementTimeout
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** bug
 **Severity:** low
 **Area:** fail

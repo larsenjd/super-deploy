@@ -1,6 +1,6 @@
 # 110: Interrupting a deploy doesn't say the deployment was rolled back
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Category:** enhancement
 **Severity:** low
 **Merged:** 143
