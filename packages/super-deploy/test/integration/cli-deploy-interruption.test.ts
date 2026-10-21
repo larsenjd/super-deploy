@@ -2,8 +2,10 @@
 // attempt as abandoned, releases the target lock, drops throwaway databases
 // and exits with the signal's code, promptly even when Ctrl+C also stopped the
 // project's own embedded server. A process killed outright leaves its attempt
-// running, and the next `status` settles it. A `status` while a deployment
-// holds the target names the holder and leaves drift unchecked.
+// running, and the next `status` settles it; killed mid-statement, its
+// server process ends within seconds (the client connection check). A
+// `status` while a deployment holds the target names the holder, what its
+// server process runs and how to cancel it, and leaves drift unchecked.
 import { userInfo } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -225,12 +227,15 @@ test("status during a deployment names the holder, leaves drift unchecked and ex
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toMatch(
-      /^Error: Target dev is locked by attempt #1 \(deploy by .*\); try again when it has finished$/m,
+    const holder = `attempt #1 \\(deploy by ${userInfo().username}, started \\S+, server process (\\d+), active, statement started \\S+: select pg_sleep\\(60\\)\\)`;
+    const locked = result.stdout.match(
+      new RegExp(`^Locked by ${holder}$`, "m"),
     );
-    expect(result.stdout).toMatch(
+    expect(locked).not.toBeNull();
+    const pid = locked?.[1];
+    expect(result.stderr).toMatch(
       new RegExp(
-        `^Locked by attempt #1 \\(deploy by ${userInfo().username}, started \\S+, server process \\d+\\)$`,
+        `^Error: Target dev is locked by ${holder}; try again when it has finished, or, if it is known to be dead, end it with select pg_cancel_backend\\(${pid}\\)$`,
         "m",
       ),
     );
@@ -280,4 +285,31 @@ test("a deployment killed outright leaves its attempt running, and the next stat
       await server.query(`drop database "${name}" with (force)`);
     }
   }
+});
+
+test("a deployment killed outright mid-statement has its server process end within seconds, not when the statement finishes", async () => {
+  const { dir, database, marker } = await finalizedProject();
+  const cli = spawnCli(["deploy", "--target", "dev"], {
+    cwd: dir.root,
+    env: { TEST_STALL: "transaction", TEST_MARKER: marker },
+  });
+  await waitForFile(marker);
+
+  cli.signal("SIGKILL");
+  await cli.result;
+  const killed = Date.now();
+  // The orphaned `pg_sleep(60)` holds the target lock until its server
+  // process notices the client is gone: the 5 s client connection check plus
+  // a margin, well before the 60 s.
+  while ((await advisoryLocks(database)) > 0 && Date.now() - killed < 15_000) {
+    await delay(100);
+  }
+
+  expect(await advisoryLocks(database)).toBe(0);
+  const result = await runCli(["deploy", "--target", "dev"], {
+    cwd: dir.root,
+  });
+  expect(result.stdout).toBe(
+    "Deployed 1 migration to dev: 00001-add-customers\n",
+  );
 });

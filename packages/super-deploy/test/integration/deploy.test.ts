@@ -3,6 +3,7 @@
 import { chmod } from "node:fs/promises";
 import { type AddressInfo, createServer } from "node:net";
 import { userInfo } from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   AdapterError,
   deploy,
@@ -641,6 +642,62 @@ describe("the target lock", () => {
       },
       { id: expect.any(String), outcome: "failed", names_holder: true },
     ]);
+  });
+
+  test("the refusal names the holder's server process, what it is running since when, and how to cancel it", async () => {
+    const { dir, project, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { target: 'lockTimeout: "20s",' },
+    );
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      customers.replace(
+        "name text not null",
+        "name text not null,\n  email text",
+      ),
+    );
+    await finalizeMigration(project, "add email");
+    // The first deployment's ALTER TABLE waits for this lock, active.
+    const blocker = await testSession(server, database);
+    let first: Promise<unknown> | undefined;
+    try {
+      await blocker.execute("BEGIN; LOCK TABLE customers IN ACCESS SHARE MODE");
+      first = deploy(project, { target: "dev" });
+      const waiting = async () =>
+        server.query<{ pid: number }>(
+          `select pid from pg_stat_activity
+            where datname = $1 and state = 'active' and wait_event_type = 'Lock'
+              and query ilike 'alter table%'`,
+          [database],
+        );
+      while ((await waiting()).length === 0) {
+        await delay(20);
+      }
+      const [{ pid }] = (await waiting()) as [{ pid: number }];
+      const before = new Date();
+
+      const second = await deploy(project, { target: "dev" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(second).toBeInstanceOf(TargetLockedError);
+      const { holder, message } = second as TargetLockedError;
+      expect(holder.pid).toBe(pid);
+      expect(holder.activity).toMatchObject({
+        state: "active",
+        statement: expect.stringMatching(/^ALTER TABLE/i),
+      });
+      expect(holder.activity?.statementStartedAt?.getTime()).toBeLessThan(
+        before.getTime(),
+      );
+      expect(message).toContain(`select pg_cancel_backend(${pid})`);
+    } finally {
+      await blocker.close();
+      await first;
+    }
   });
 
   test("status reports the holder promptly and leaves drift unchecked while a deployment holds the target", async () => {

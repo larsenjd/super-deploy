@@ -134,7 +134,11 @@ export type {
   MigrationVariantIdentity,
   RecordedMigration,
 } from "./deploy/history.ts";
-export { type LockHolder, TargetLockedError } from "./deploy/lock.ts";
+export {
+  type LockHolder,
+  type LockHolderActivity,
+  TargetLockedError,
+} from "./deploy/lock.ts";
 export {
   HistoryMismatchError,
   MarkMismatchError,
