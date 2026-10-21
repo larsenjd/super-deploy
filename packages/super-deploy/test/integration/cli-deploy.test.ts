@@ -100,6 +100,24 @@ describe("deploy and status", () => {
     });
   });
 
+  test("status lists a history mismatch, with its way out, under what a deployment would refuse", async () => {
+    const dir = await finalizedProject();
+    for (const args of [
+      ["deploy", "--target", "dev"],
+      ["unfinalize", "--acknowledge-overwrite"],
+      ["discard-draft", "--acknowledge-overwrite"],
+    ]) {
+      expect((await runCli(args, { cwd: dir.root })).exitCode).toBe(0);
+    }
+
+    const report = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(report.stdout).toContain(
+      "Deploy would refuse:\n  the target records migration 00001-add-customers, which the repo doesn't have: restore 00001-add-customers (and index.json) from version control (a migration a target has recorded must never change, so put new changes in a new migration)\n",
+    );
+  });
+
   test("status lists a history schema the deploy role can't create as a refusal", async () => {
     const deployer = roleName("deployer");
     const database = targetDatabaseName();
