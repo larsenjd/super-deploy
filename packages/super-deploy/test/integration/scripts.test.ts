@@ -435,6 +435,21 @@ alter table customers alter column phone set not null;
     ).toEqual([narrowing]);
   });
 
+  test("a narrowing that cuts no value in the rehearsal data says so, and what to do on a target", async () => {
+    const { dir, project } = await withFirstMigration();
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      customers.replace("name text", "name varchar(5)"),
+    );
+
+    // Only Ada (3 characters), from migration 1.
+    const result = await draft(project, { name: "shorten names" });
+
+    expect(result.toCover.map(({ message }) => message)).toEqual([
+      "customers.name narrows from text to varchar(5): values longer than 5 characters are cut to 5 on every target, without an error (every value in the rehearsal data fits): if a target holds values that don't, shorten or move them in the pre-migration script if they matter",
+    ]);
+  });
+
   test("draft counts the bit strings cut and the numerics rounded by a narrowing", async () => {
     const { dir, project } = await deployProject(server, {
       "orders.sql": `create table orders (

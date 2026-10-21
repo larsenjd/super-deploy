@@ -320,11 +320,10 @@ function messageFor(
   const { kind, table, column } = candidate;
   const subject = `${table}.${column ?? ""}`;
   if (narrowing !== undefined) {
-    const fit =
-      rows === 0
-        ? "every value in the rehearsal data fits"
-        : `${rows} ${rows === 1 ? "value" : "values"} in the rehearsal data ${rows === 1 ? "doesn't" : "don't"} fit`;
-    return `${narrowingReason(subject, narrowing)} (${fit}): shorten or move them in the pre-migration script if they matter`;
+    const reason = narrowingReason(subject, narrowing);
+    return rows === 0
+      ? `${reason} (every value in the rehearsal data fits): if a target holds values that don't, shorten or move them in the pre-migration script if they matter`
+      : `${reason} (${rows} ${rows === 1 ? "value" : "values"} in the rehearsal data ${rows === 1 ? "doesn't" : "don't"} fit): shorten or move them in the pre-migration script if they matter`;
   }
   const count = (one: string, many: string) =>
     `(${rows === 0 ? `no ${many}` : `${rows} ${rows === 1 ? one : many}`} in the rehearsal data)`;

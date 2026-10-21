@@ -353,8 +353,13 @@ describe("narrowing type changes", () => {
     ],
     [
       "cost",
+      "numeric(5,1)",
+      "customers.cost narrows from numeric(6,2) to numeric(5,1): values are rounded to 1 decimal place on every target, without an error",
+    ],
+    [
+      "cost",
       "numeric(4,1)",
-      "customers.cost narrows from numeric(6,2) to numeric(4,1): values are rounded to 1 decimal place on every target, without an error",
+      "customers.cost narrows from numeric(6,2) to numeric(4,1): values are rounded to 1 decimal place on every target, without an error, and values too large for numeric(4,1) make the deployment fail",
     ],
   ])("%s to %s is a narrowing", async (column, type, message) => {
     expect(await destructive(generated(column, type))).toEqual([

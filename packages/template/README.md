@@ -581,8 +581,10 @@ column's type with an explicit cast (`USING col::newtype`), so values that
 don't fit the new type are cut short or rounded, without an error, on every
 target. That applies to a shorter `varchar(n)`, `char(n)`, `bit(n)` or
 `varbit(n)`, such as `text` to `varchar(5)`, and to a `numeric` with fewer
-decimal places, such as `numeric(6,2)` to `numeric(4,1)`. The deployment
-doesn't fail. `draft` says how many values in the rehearsal data don't fit,
+decimal places, such as `numeric(6,2)` to `numeric(5,1)`. The deployment
+doesn't fail. A `numeric` that also allows fewer digits before the decimal
+point, such as `numeric(6,2)` to `numeric(4,1)`, rounds the same way, but a
+value too large for it fails the deployment. `draft` says how many values in the rehearsal data don't fit,
 and `finalize` asks for the change to be acknowledged. If those values
 matter, shorten or move them in the pre-migration script.
 

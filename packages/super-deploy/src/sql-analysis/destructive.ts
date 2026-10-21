@@ -1015,6 +1015,12 @@ export type Narrowing = {
       readonly kind: "scale";
       /** Values are rounded to this many decimal places. */
       readonly scale: number;
+      /**
+       * The new type allows fewer digits before the decimal point than the
+       * old one, so a value too large for it fails the cast (numeric field
+       * overflow) and with it the deployment.
+       */
+      readonly overflows: boolean;
     }
 );
 
@@ -1056,7 +1062,13 @@ export function narrowingOf(
   const [newLength, newScale = 0] = typeModifiers(target);
   if (source === "numeric" && destination === "numeric") {
     return newLength !== undefined && (length === undefined || newScale < scale)
-      ? { ...types, kind: "scale", scale: newScale }
+      ? {
+          ...types,
+          kind: "scale",
+          scale: newScale,
+          overflows:
+            length === undefined || newLength - newScale < length - scale,
+        }
       : undefined;
   }
   const family = lengthFamilies.find(
@@ -1078,7 +1090,11 @@ export function narrowingReason(subject: string, narrowing: Narrowing): string {
     narrowing.kind === "length"
       ? `values longer than ${narrowing.length} ${narrowing.unit} are cut to ${narrowing.length}`
       : `values are rounded to ${narrowing.scale === 0 ? "whole numbers" : `${narrowing.scale} decimal place${narrowing.scale === 1 ? "" : "s"}`}`;
-  return `${subject} narrows from ${narrowing.from} to ${narrowing.to}: ${happens} on every target, without an error`;
+  const overflows =
+    narrowing.kind === "scale" && narrowing.overflows
+      ? `, and values too large for ${narrowing.to} make the deployment fail`
+      : "";
+  return `${subject} narrows from ${narrowing.from} to ${narrowing.to}: ${happens} on every target, without an error${overflows}`;
 }
 
 /** USING keeps the values when it is absent, the column itself, or a cast of it. */
