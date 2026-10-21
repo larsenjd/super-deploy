@@ -608,9 +608,15 @@ draft-finalize-deploy path:
   `rebuild` resets it.
 - **`rebuild --target X --to N`** resets a disposable target to migration
   N, in one transaction. It drops everything in the managed schema, with
-  `CASCADE`, so objects in other schemas that depend on it are dropped too.
-  The managed schema itself stays, with its owner, grants and default
-  privileges. Then it deletes the target's record of migrations and of any
+  `CASCADE`, so objects in other schemas that depend on it are dropped too:
+  a view on a managed table, a foreign key to one, a column of a managed
+  type (with its data). The confirmation lists each of them under "Also
+  drops, outside schema ...", and if that list changes while it waits for
+  `YES`, rebuild refuses without changing anything. It refuses before
+  asking when the managed schema holds something the deploy role can't
+  drop, such as an extension a superuser installed, naming each object and
+  its owner. The managed schema itself stays, with its owner, grants and
+  default privileges. Then it deletes the target's record of migrations and of any
   deployed draft, and runs migrations 1 to N as a deployment does, each as
   its newest Recovery if it has one. It never loads seed data, and keeps
   the attempt log and the disposable flag. In the menu, `--to` is a list

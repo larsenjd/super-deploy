@@ -35,7 +35,7 @@ import {
   preflightChecks,
   refusesDeployment,
 } from "../deploy/preflight.ts";
-import { TargetNotDisposableError } from "../deploy/target.ts";
+import { requireDisposable } from "../deploy/target.ts";
 import { SuperDeployError } from "../errors.ts";
 import { runGuarded } from "../guard/guard.ts";
 import type { Project } from "../project.ts";
@@ -113,10 +113,8 @@ export async function deployDraft(
     command: "deploy-draft",
     target: options.target,
     async check(view, session) {
+      requireDisposable("deploy-draft", view);
       const target = view.target.name;
-      if (!view.disposable) {
-        throw new TargetNotDisposableError("deploy-draft", target);
-      }
       const metadata = await readDraft(root, paths);
       if (metadata === undefined) {
         throw new NoDraftError("deploy");
