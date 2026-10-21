@@ -1,6 +1,7 @@
 // API seam: deploy and status against embedded-postgres targets.
 
 import { chmod } from "node:fs/promises";
+import { type AddressInfo, createServer } from "node:net";
 import { userInfo } from "node:os";
 import {
   AdapterError,
@@ -717,6 +718,53 @@ describe("deploy configuration", () => {
     });
   });
 
+  test("names the reason when a target's server is down at a host with several addresses", async () => {
+    // localhost resolves to ::1 and 127.0.0.1: Node reports the refusal as an
+    // AggregateError whose own message is empty.
+    const port = await closedPort();
+    const { project } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      {
+        preamble: 'import { postgresTarget } from "super-deploy";',
+        otherTargets: `down: { adapter: postgresTarget({ connectionString: "postgres://u:p@localhost:${port}/x" }) },`,
+      },
+    );
+
+    const error = await status(project, { target: "down" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(AdapterError);
+    expect((error as Error).message).toMatch(
+      new RegExp(
+        `^The deployment adapter of target down failed to connect: .*ECONNREFUSED.*:${port}`,
+      ),
+    );
+  });
+
+  test("describes an ordinary connection error by its own message", async () => {
+    const { project } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      {
+        preamble: 'import { postgresTarget } from "super-deploy";',
+        otherTargets: `missing: { adapter: { async connect() {
+  return postgresTarget({ connectionString: await postgres.connectionString("no_such_database") }).connect();
+} } },`,
+      },
+    );
+
+    const error = await status(project, { target: "missing" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(AdapterError);
+    expect((error as Error).message).toBe(
+      'The deployment adapter of target missing failed to connect: database "no_such_database" does not exist',
+    );
+  });
+
   test("refuses a target that isn't in the config", async () => {
     const { project } = await deployProject(server, {
       "customers.sql": customers,
@@ -867,3 +915,12 @@ describe("status", () => {
     ]);
   });
 });
+
+/** A port nothing listens on: the OS hands out a free one, which is then closed. */
+async function closedPort(): Promise<number> {
+  const listener = createServer();
+  await new Promise<void>((resolve) => listener.listen(0, resolve));
+  const { port } = listener.address() as AddressInfo;
+  await new Promise((resolve) => listener.close(resolve));
+  return port;
+}
