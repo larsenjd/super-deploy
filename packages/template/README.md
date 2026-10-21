@@ -73,10 +73,10 @@ program or set another `port`.
 The server runs only while something uses it: the first command that needs
 `dev` starts it, commands run at the same time share it, and it stops when
 the last of them ends. A command that was killed outright (`kill -9`, a
-closed terminal) can leave it running; the next command that uses `dev`
-takes it over and stops it when it ends. To keep it running while you
-connect, run this in the project folder and leave it running; Ctrl+C stops
-it, unless a command is still using it:
+crash) can leave it running; the next command that uses `dev` takes it over
+and stops it when it ends. To keep it running while you connect, run this
+in the project folder and leave it running; Ctrl+C stops it, unless a
+command is still using it:
 
 ```sh
 node --input-type=module -e 'const { devServer } = await import("./super-deploy.config.ts"); await devServer.start(); console.log("dev is running: Ctrl+C stops it"); const wait = setInterval(() => {}, 60_000); process.once("SIGINT", async () => { clearInterval(wait); await devServer.stop(); })'
