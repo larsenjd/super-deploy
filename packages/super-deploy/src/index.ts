@@ -67,11 +67,13 @@ export {
 } from "./commands/draft.ts";
 export {
   type DestructiveAcknowledgement,
+  DraftChangedError,
   type FinalizeOptions,
   type FinalizeResult,
   finalize,
   MigrationLimitError,
   type MigrationMetadata,
+  MigrationNotWrittenError,
 } from "./commands/finalize.ts";
 export {
   InitConflictError,
