@@ -6,6 +6,11 @@ import { createServer } from "node:net";
 /** The only address embedded servers listen on. */
 export const localHost = "127.0.0.1";
 
+/** `host:port` as a URL writes it: an IPv6 address in brackets. */
+export function hostAndPort(host: string, port: number | string): string {
+  return `${host.includes(":") ? `[${host}]` : host}:${port}`;
+}
+
 /** A port of 127.0.0.1 that is free now (the system picks it). */
 export function freePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {

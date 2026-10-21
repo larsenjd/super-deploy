@@ -44,6 +44,14 @@ export interface ConnectOptions {
 export interface DeploymentAdapter {
   connect(options?: ConnectOptions): Promise<Session>;
   /**
+   * Where `connect` connects, as configured: `host:port`, never credentials
+   * (`db.example.com:5432`). The guarded commands show it before asking for
+   * YES, next to the address the server reports, so the person typing YES
+   * recognises the target. Called only after a connect succeeded. Without
+   * it, they show the server's address alone.
+   */
+  host?(): Promise<string>;
+  /**
    * Releases anything the adapter holds: pools, and its client registration on
    * a server it shares with other commands, which stops that server if no
    * other client remains (the embedded adapter).

@@ -780,6 +780,8 @@ draft-finalize-deploy path:
 
 All four need a person at a terminal. Each shows the target's name, host,
 database and last recorded migration, and goes ahead only when you type
-`YES` exactly. They refuse in CI (when the `CI` environment variable is set
+`YES` exactly. The host is the one in the connection string, followed by the
+address the server reports when that differs, e.g.
+`db.prod.internal:5432 (10.0.4.7:5432)`. They refuse in CI (when the `CI` environment variable is set
 to anything but `false` or `0`) and without a terminal, and no flag skips
 the question.

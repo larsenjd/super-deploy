@@ -44,6 +44,7 @@ import pg from "pg";
 import { parseIntoClientConfig } from "pg-connection-string";
 import { durationText } from "../config/config.ts";
 import { errorReason } from "../errors.ts";
+import { hostAndPort } from "./ports.ts";
 import type {
   ConnectOptions,
   DatabaseRequest,
@@ -60,9 +61,14 @@ export type ConnectionSource = { connectionString: string } | { env: string };
 
 /** A deployment adapter connecting with node-postgres. */
 export function postgresTarget(source: ConnectionSource): DeploymentAdapter {
-  return targetOver(async () =>
-    resolveConnectionString(source, "The deployment adapter"),
-  );
+  const connectionString = async () =>
+    resolveConnectionString(source, "The deployment adapter");
+  return {
+    ...targetOver(connectionString),
+    async host() {
+      return configuredHost(clientConfig(await connectionString()));
+    },
+  };
 }
 
 /**
@@ -388,10 +394,14 @@ export async function connectSession(
   if (options === undefined) {
     await client.connect();
   } else {
-    const host = `${config.host ?? "localhost"}:${config.port ?? 5432}`;
-    await connectWithin(client, host, options);
+    await connectWithin(client, configuredHost(config), options);
   }
   return sessionOver(client);
+}
+
+/** The host and port node-postgres connects to with `config`, defaulted as it does. */
+function configuredHost(config: pg.ClientConfig): string {
+  return hostAndPort(config.host || "localhost", config.port ?? 5432);
 }
 
 /**
