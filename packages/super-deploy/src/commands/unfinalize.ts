@@ -7,8 +7,9 @@
 // unfinalize doesn't check targets (QA 107 decided against it), so it asks
 // nothing about them. It warns before anything moves instead: inside the
 // overwrite question when that is asked, else through `onWarning`.
-// Finalizing again unchanged reproduces the migration byte for byte, which
-// is the way back; restore-schema is not (it resets to the migration before
+// Finalizing again unchanged reproduces the migration byte for byte, with
+// the same super-deploy and rehearsal server versions (its hashed
+// metadata.json records them), which is the way back; restore-schema is not (it resets to the migration before
 // and deletes the draft). A target's refusal says the same (deploy/preflight.ts).
 //
 // Order on disk: draft and desired schema first, then index.json, then the
@@ -137,7 +138,7 @@ export async function unfinalize(
 
   const pending = await pendingRestore(project, snapshot);
   // A target that recorded the migration refuses to deploy once it changes.
-  const warning = `If migration ${newest.folder} was deployed anywhere, don't change it: finalize it again unchanged to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)`;
+  const warning = `If migration ${newest.folder} was deployed anywhere, don't change it: finalize it again unchanged, with the same super-deploy and rehearsal server versions, to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)`;
   let asked = false;
   const { confirm } = options;
   await acknowledgeOverwrite(

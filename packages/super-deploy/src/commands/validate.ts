@@ -45,7 +45,10 @@ import {
   readDraft,
   unknownDraftFiles,
 } from "../store/draft.ts";
-import { handEditReportFileName } from "../store/hand-edit.ts";
+import {
+  handEditReportFileName,
+  migrationEditedByHand,
+} from "../store/hand-edit.ts";
 import { desiredSchemaHash, InvalidEncodingError } from "../store/hashing.ts";
 import {
   checkMigrations,
@@ -55,7 +58,6 @@ import {
 } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
-  exists,
   makeReadOnly,
   schemaChangeFileName,
   snapshotFolderName,
@@ -110,7 +112,7 @@ export async function validate(
   const display = (absolute: string) => projectRelative(root, absolute);
   for (const migration of integrity.migrations) {
     const report = join(migration.path, handEditReportFileName);
-    if (await exists(report)) {
+    if (await migrationEditedByHand(migration.path)) {
       problems.push({
         severity: "notice",
         code: "hand-edited-schema-change",

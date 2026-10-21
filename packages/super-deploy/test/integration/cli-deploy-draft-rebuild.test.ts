@@ -1260,7 +1260,7 @@ unix("rebuild", () => {
     ).toEqual([{ id: 1 }]);
   });
 
-  test("lists a table in another schema inheriting from a managed table, or typed with a managed composite type, as dropped with its data", async () => {
+  test("lists a table of any kind in another schema inheriting from a managed table, or typed with a managed composite type, as dropped with its data", async () => {
     const { dir, database } = await deployedProject();
     await server.query(
       `create type public.pair as (a int, b int);
@@ -1268,7 +1268,10 @@ unix("rebuild", () => {
        create table reporting.child (extra int) inherits (public.customers);
        insert into reporting.child (id, name, extra) values (999, 'child row', 1);
        create table reporting.typed of public.pair;
-       insert into reporting.typed values (1, 2);`,
+       insert into reporting.typed values (1, 2);
+       create extension postgres_fdw schema reporting;
+       create server reporting_loopback foreign data wrapper postgres_fdw;
+       create foreign table reporting.remote () inherits (public.customers) server reporting_loopback;`,
       [],
       database,
     );
@@ -1283,6 +1286,7 @@ unix("rebuild", () => {
         "Also drops, outside schema public:",
       ),
     ).toEqual([
+      "foreign table reporting.remote (with its data)",
       "table reporting.child (with its data)",
       "table reporting.typed (with its data)",
     ]);

@@ -161,13 +161,9 @@ describe("rehearse", () => {
     );
   });
 
-  test("a draft written before the schema-change hash existed counts as not edited by hand", async () => {
+  test("a failing rehearsal of a draft written before the generated copy of its schema change existed counts it as not edited by hand", async () => {
     const { dir, project } = await draftedProject();
-    const metadata = "data-model/draft/draft.json";
-    const { schemaChangeHash: _, ...older } = JSON.parse(
-      await dir.read(metadata),
-    );
-    await dir.write(metadata, JSON.stringify(older));
+    await rm(dir.path("data-model/draft/schema-change.generated.sql"));
     const file = "data-model/draft/schema-change.sql";
     await dir.write(
       file,

@@ -85,7 +85,7 @@ When the draft is discarded, regenerated or finalized by another command while `
 **Desired behavior:**
 - `finalize` freezes the files it rehearsed. Just before writing the migration, it checks that the draft on disk still holds the same files with the same contents. If not (gone, changed, or already finalized), it refuses with a typed error: the draft changed while `finalize` was running, nothing was finalized, run it again. Nothing is written.
 - If writing or renaming the new folder fails anyway (e.g. the folder now exists), `finalize` removes its staging folder and refuses with a typed error naming the migration folder, never a raw file-system error.
-- `validate` (and so the hook) reports a migration or Recovery folder without `schema-change.sql` as an error. Every finalized migration has one, even an empty schema change (header only).
+- `validate` (and so the hook) reports a migration folder without `schema-change.sql` as an error. Every finalized migration has one, even an empty schema change (header only); a Recovery folder never does (it runs its migration's).
 
 **Key interfaces:**
 - `finalize` and the files it hashes (`readHashedFiles` over the draft).

@@ -15,7 +15,7 @@
 //   the edit in the pull request; `validate` lists such migrations as a
 //   notice, which `--strict` doesn't fail on.
 // - `unfinalize` restores the generated copy from that diff, so finalizing
-//   again unchanged reproduces the migration.
+//   again unchanged (with the same versions) reproduces the migration.
 //
 // A draft without the generated copy (written before it existed) counts as
 // not edited. A Recovery draft never has one: its schema change is its
@@ -25,11 +25,36 @@ import { join } from "node:path";
 import { generatedSchemaChangeFileName } from "./draft.ts";
 import { normaliseLineEndings } from "./hashing.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";
-import { readNormalisedIfPresent, schemaChangeFileName } from "./migrations.ts";
+import {
+  metadataFileName,
+  readIfPresent,
+  readNormalisedIfPresent,
+  schemaChangeFileName,
+} from "./migrations.ts";
 import { unapplyUnifiedDiff, unifiedDiff } from "./unified-diff.ts";
 
 /** The report finalize writes into a migration whose schema change was edited by hand. */
 export const handEditReportFileName = "HAND-EDITED.md";
+
+/**
+ * Whether the finalized migration in folder `path` records a hand-edited
+ * schema change (`schemaChangeEditedByHand` in its metadata.json). False
+ * when metadata.json is missing or isn't JSON: integrity reports those.
+ */
+export async function migrationEditedByHand(path: string): Promise<boolean> {
+  const text = await readIfPresent(join(path, metadataFileName));
+  try {
+    const metadata: unknown = text === undefined ? undefined : JSON.parse(text);
+    return (
+      typeof metadata === "object" &&
+      metadata !== null &&
+      "schemaChangeEditedByHand" in metadata &&
+      metadata.schemaChangeEditedByHand === true
+    );
+  } catch {
+    return false;
+  }
+}
 
 /** A draft's schema change that differs from the one `draft` generated. */
 export interface SchemaChangeHandEdit {

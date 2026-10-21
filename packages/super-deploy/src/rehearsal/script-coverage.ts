@@ -32,6 +32,7 @@ import type { PlannedStatement } from "../differ/index.ts";
 import {
   type ColumnReplacement,
   columnReplacement,
+  type DroppedColumn,
   keepsEveryValue,
   type Narrowing,
   narrowingOf,
@@ -122,7 +123,7 @@ export async function scriptCoverage(
         candidate.readded === undefined
           ? undefined
           : columnReplacement(
-              await currentType(source, schema, candidate),
+              await currentColumn(source, schema, candidate),
               candidate.readded.statement,
               candidate.readded.column,
               managedSchema,
@@ -365,7 +366,7 @@ async function typeChangeOn(
   if (retype === undefined || column === undefined) {
     return neither;
   }
-  const current = await currentType(source, schema, candidate);
+  const current = (await currentColumn(source, schema, candidate))?.typeName;
   return current === undefined
     ? neither
     : {
@@ -374,14 +375,17 @@ async function typeChangeOn(
       };
 }
 
-/** The column's type on `source`, or undefined when it doesn't exist there. */
-async function currentType(
+/**
+ * The column on `source`: its type, and whether it is generated; undefined
+ * when it doesn't exist there.
+ */
+async function currentColumn(
   source: Session,
   schema: string,
   candidate: Candidate,
-): Promise<TypeName | undefined> {
-  const current = await source.query<{ type: string }>(
-    `SELECT pg_catalog.format_type(atttypid, atttypmod) AS type
+): Promise<DroppedColumn | undefined> {
+  const current = await source.query<{ type: string; generated: boolean }>(
+    `SELECT pg_catalog.format_type(atttypid, atttypmod) AS type, attgenerated <> '' AS generated
      FROM pg_catalog.pg_attribute
      WHERE attrelid = to_regclass($1) AND attname = $2 AND NOT attisdropped`,
     [
@@ -389,8 +393,10 @@ async function currentType(
       candidate.column,
     ],
   );
-  const type = current.rows[0]?.type;
-  return type === undefined ? undefined : await parseTypeName(type);
+  const row = current.rows[0];
+  return row === undefined
+    ? undefined
+    : { typeName: await parseTypeName(row.type), generated: row.generated };
 }
 
 /** The syntax tree of a type as `format_type` prints it, e.g. `character varying(10)`. */
@@ -479,5 +485,5 @@ function narrowingCount(
       ([n, what], index) =>
         `${index === 0 ? valuesIn(n) : n} ${n === 1 ? "is" : "are"} ${what(n)}`,
     );
-  return `(${parts.join("; ")}): ${tooLarge > 0 ? "change or move them in the pre-migration script" : advice}`;
+  return `(${parts.join("; ")}): ${tooLarge > 0 ? "shorten or move them in the pre-migration script" : advice}`;
 }

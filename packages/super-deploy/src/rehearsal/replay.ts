@@ -456,7 +456,7 @@ function nextStep(
   const { sqlState } = failure;
   const generated = generatedColumnBlocking(failure);
   if (generated !== undefined) {
-    return `Next: drop generated column "${generated.generated}" in the pre-migration script and run draft again: the schema change then changes the type of "${generated.column}" and adds "${generated.generated}" back (see the README, "Changing the type of a column a generated column uses").`;
+    return `Next: drop generated column "${generated.generated}" in the pre-migration script and run draft again: the schema change then changes the type of "${generated.column}" and adds "${generated.generated}" back (or retype both in the pre-migration script; see the README, "Changing the type of a column a generated column uses").`;
   }
   const forced = forcedRowSecurityTable(failure);
   if (forced !== undefined) {
@@ -496,7 +496,11 @@ function dataErrorStep(rollback: FileRollback | undefined): string | undefined {
 /**
  * The columns in PostgreSQL's refusal to change the type of a column a
  * stored generated column uses (pg-delta's type change leaves the generated
- * column in place: research §8), read from its DETAIL.
+ * column in place: research §8), read from its DETAIL. That is PostgreSQL's
+ * English text: on a server whose lc_messages is another language the
+ * failure is reported all the same, without this next step. The SQLSTATE
+ * alone (0A000) would match other unsupported features too, and nothing
+ * else in the error names the generated column.
  */
 function generatedColumnBlocking(
   failure: SqlFileFailure,

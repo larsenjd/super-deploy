@@ -69,7 +69,10 @@ the hook only when the project's folder is the repository's root, so here
   pnpm precommit
   ```
 
-  `pnpm install` then sets the repository's hooks to `db/.husky`.
+  `pnpm install` then sets the repository's hooks to `db/.husky`. Both
+  paths are the project's path from the repository's root, where Git runs
+  hooks: for a project in `apps/db`, `"cd ../.. && husky apps/db/.husky"`
+  and `cd apps/db`.
 - If the repository already has a hook setup of its own (Husky, lefthook, a
   `core.hooksPath`), don't install a second one: Git runs only one. Add the
   line `pnpm --dir db precommit` to its pre-commit hook instead, and delete
@@ -853,6 +856,10 @@ column back, which computes it again for every row. For example, for
 alter table a drop column total;
 ```
 
+Or retype both in the pre-migration script: drop the generated column,
+change the type, and add the generated column back there, so the schema
+change has nothing left to do for them.
+
 Dropping a column is destructive, so `finalize` asks you to acknowledge it.
 
 ## Seed data
@@ -1080,8 +1087,10 @@ refuses the target (for example
 migration, in its question when it asks one. To change something a target
 has run, finalize a new migration, or a Recovery for the targets that
 haven't run it. If you already unfinalized one, `finalize` the draft
-unchanged: it reproduces the migration byte for byte (`status` suggests
-this while the draft is that migration). Or restore its original folder and
+unchanged, with the same super-deploy version and rehearsal server
+version: it then reproduces the migration byte for byte (its `metadata.json` records those
+versions, and is hashed with the rest; `status` suggests this while the
+draft is that migration). Or restore its original folder and
 `data-model/migrations/index.json` from Git, then run
 `pnpm exec super-deploy validate` to make the restored files read-only
 again.

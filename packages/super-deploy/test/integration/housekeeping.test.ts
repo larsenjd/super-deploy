@@ -257,7 +257,7 @@ describe("unfinalize", () => {
     expect(warnings).toEqual([
       {
         warning:
-          "If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)",
+          "If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged, with the same super-deploy and rehearsal server versions, to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)",
         moved: false,
       },
     ]);
@@ -365,7 +365,7 @@ describe("unfinalize", () => {
         kind: "acknowledge-overwrite",
         command: "unfinalize",
         message:
-          "If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target). Move migration 00001-add-customers back into the draft and restore its desired-schema snapshot, discarding draft add-orders and 1 changed file?",
+          "If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged, with the same super-deploy and rehearsal server versions, to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target). Move migration 00001-add-customers back into the draft and restore its desired-schema snapshot, discarding draft add-orders and 1 changed file?",
         paths: ["data-model/draft", "data-model/desired-schema/orders.sql"],
       },
     ]);

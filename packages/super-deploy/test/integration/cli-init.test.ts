@@ -21,7 +21,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, onTestFinished, test } from "vitest";
-import { cliPath, runCli } from "../support/cli.ts";
+import { runCli } from "../support/cli.ts";
 
 const packageDir = join(import.meta.dirname, "..", "..");
 const templateDir = join(packageDir, "..", "template");
@@ -54,6 +54,56 @@ async function linkDependencies(root: string): Promise<void> {
     await mkdir(dirname(link), { recursive: true });
     await symlink(installed, link, "junction");
   }
+}
+
+/**
+ * A `node_modules/.bin` for the project at `root`, as an install makes it:
+ * a shim per bin of each linked devDependency.
+ */
+async function linkBins(root: string): Promise<void> {
+  const binDir = join(root, "node_modules", ".bin");
+  await mkdir(binDir, { recursive: true });
+  const manifest = JSON.parse(
+    await readFile(join(root, "package.json"), "utf8"),
+  );
+  for (const name of Object.keys(manifest.devDependencies)) {
+    const installed = join(root, "node_modules", ...name.split("/"));
+    const { bin } = JSON.parse(
+      await readFile(join(installed, "package.json"), "utf8"),
+    );
+    const bins: Record<string, string> =
+      typeof bin === "string"
+        ? { [name.split("/").at(-1) ?? name]: bin }
+        : (bin ?? {});
+    for (const [command, path] of Object.entries(bins)) {
+      await writeFile(
+        join(binDir, command),
+        `#!/bin/sh\nexec "${process.execPath}" "${join(installed, path)}" "$@"\n`,
+        { mode: 0o755 },
+      );
+    }
+  }
+}
+
+/**
+ * A stand-in `pnpm` in a new folder under `parent` (returned, for PATH): it
+ * runs a package.json script as `pnpm <script>` and `pnpm --dir <folder>
+ * <script>` do, in the package's folder with its node_modules/.bin first on
+ * PATH. Tests run offline, so the real pnpm can't be relied on.
+ */
+async function standInPnpm(parent: string): Promise<string> {
+  const bin = join(parent, "bin");
+  await mkdir(bin);
+  await writeFile(
+    join(bin, "pnpm"),
+    `#!/bin/sh
+if [ "$1" = --dir ]; then cd "$2" || exit 1; shift 2; fi
+script=$("${process.execPath}" -e 'const s = JSON.parse(require("node:fs").readFileSync("package.json", "utf8")).scripts?.[process.argv[1]]; if (s === undefined) process.exit(1); console.log(s)' "$1") || exit 1
+PATH="$PWD/node_modules/.bin:$PATH" exec sh -c "$script"
+`,
+    { mode: 0o755 },
+  );
+  return bin;
 }
 
 /** This process's environment without Git's and Husky's own variables (as when run from a hook). */
@@ -215,27 +265,22 @@ describe("init", () => {
     expect(hook).toContain("A project inside another Git repository");
   });
 
-  test.skipIf(process.platform === "win32")(
-    "in a subfolder of a Git repo, the README's recipe makes a commit with a refused statement fail",
-    async () => {
+  test.skipIf(process.platform === "win32").each([
+    ["Husky's subfolder form, from the project", "husky"],
+    ["a line in the repository's own hook", "own hook"],
+  ] as const)(
+    "in a subfolder of a Git repo, the README's recipe (%s) makes a commit with a refused statement fail",
+    async (_, form) => {
       const root = await emptyDirectory();
       const repo = dirname(root);
       expect(await runCli(["init"], { cwd: root })).toMatchObject({
         exitCode: 0,
       });
       await linkDependencies(root);
-      // A stand-in pnpm whose precommit is the template's validate step, so
-      // the commit fails only if the hook ran it in the project's folder.
-      const bin = join(repo, "bin");
-      await mkdir(bin);
-      await writeFile(
-        join(bin, "pnpm"),
-        `#!/bin/sh\n[ "$1" = precommit ] || exit 1\nexec "${process.execPath}" "${cliPath}" validate --strict --allow-draft\n`,
-        { mode: 0o755 },
-      );
+      await linkBins(root);
       const env: NodeJS.ProcessEnv = {
         ...gitEnv(),
-        PATH: `${bin}:${process.env.PATH}`,
+        PATH: `${await standInPnpm(repo)}:${process.env.PATH}`,
       };
       const git = (args: readonly string[]) =>
         spawnSync("git", args, { cwd: repo, encoding: "utf8", env });
@@ -245,22 +290,34 @@ describe("init", () => {
       const manifest = JSON.parse(
         await readFile(join(root, "package.json"), "utf8"),
       );
-      manifest.scripts.prepare = "cd .. && husky shop/.husky";
+      if (form === "husky") {
+        manifest.scripts.prepare = "cd .. && husky shop/.husky";
+        await writeFile(
+          join(root, ".husky", "pre-commit"),
+          "cd shop\npnpm precommit\n",
+        );
+      } else {
+        delete manifest.scripts.prepare;
+        await rm(join(root, ".husky"), { recursive: true });
+        await mkdir(join(repo, ".githooks"));
+        await writeFile(
+          join(repo, ".githooks", "pre-commit"),
+          "#!/bin/sh\npnpm --dir shop precommit\n",
+          { mode: 0o755 },
+        );
+        expect(git(["config", "core.hooksPath", ".githooks"]).status).toBe(0);
+      }
       await writeFile(
         join(root, "package.json"),
         `${JSON.stringify(manifest, null, 2)}\n`,
       );
-      await writeFile(
-        join(root, ".husky", "pre-commit"),
-        "cd shop\npnpm precommit\n",
-      );
-      // What `pnpm install` runs: the prepare script, from the repo's root.
-      const husky = spawnSync(
-        process.execPath,
-        [join(root, "node_modules", "husky", "bin.js"), "shop/.husky"],
-        { cwd: repo, encoding: "utf8", env },
-      );
-      expect(husky.status).toBe(0);
+      // What `pnpm install` runs: the project's prepare script, if any.
+      if (manifest.scripts.prepare !== undefined) {
+        expect(
+          spawnSync("pnpm", ["prepare"], { cwd: root, encoding: "utf8", env })
+            .status,
+        ).toBe(0);
+      }
 
       await writeFile(
         join(root, "data-model", "desired-schema", "t.sql"),

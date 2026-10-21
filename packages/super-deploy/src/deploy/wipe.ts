@@ -168,8 +168,8 @@ outside AS (
      AND o.schema IS DISTINCT FROM $2
 )
 SELECT DISTINCT
-       CASE WHEN x.type = 'table column' THEN pg_catalog.format('column %s (with its data)', x.identity)
-            WHEN x.type = 'table' THEN pg_catalog.format('table %s (with its data)', x.identity)
+       CASE WHEN x.type IN ('table column', 'foreign table column') THEN pg_catalog.format('column %s (with its data)', x.identity)
+            WHEN x.type IN ('table', 'foreign table') THEN pg_catalog.format('%s %s (with its data)', x.type, x.identity)
             WHEN x.type = 'table constraint' AND EXISTS (
                    SELECT FROM pg_catalog.pg_constraint c
                     WHERE x.classid = 'pg_catalog.pg_constraint'::regclass AND c.oid = x.objid AND c.contype = 'f')

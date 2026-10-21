@@ -253,7 +253,7 @@ describe("deploy pre-flight", () => {
           {
             number: 2,
             reason: "not-in-repo",
-            message: `the target records migration 00002-add-orders, which the repo doesn't have: finalize draft add-orders unchanged to put it back (unfinalize moved that migration into it), or restore 00002-add-orders (and index.json) from version control (${keepRecorded})`,
+            message: `the target records migration 00002-add-orders, which the repo doesn't have: finalize draft add-orders unchanged, with the same super-deploy and rehearsal server versions, to put it back (unfinalize moved that migration into it), or restore 00002-add-orders (and index.json) from version control (${keepRecorded})`,
           },
         ],
       },
@@ -290,7 +290,7 @@ describe("deploy pre-flight", () => {
       {
         number: 1,
         reason: "not-in-repo",
-        message: `the target records migration 00001-add-customers, which the repo doesn't have: finalize draft add-customers unchanged to put it back (unfinalize moved that migration into it), or restore 00001-add-customers (and index.json) from version control (${keepRecorded})`,
+        message: `the target records migration 00001-add-customers, which the repo doesn't have: finalize draft add-customers unchanged, with the same super-deploy and rehearsal server versions, to put it back (unfinalize moved that migration into it), or restore 00001-add-customers (and index.json) from version control (${keepRecorded})`,
       },
     ]);
 

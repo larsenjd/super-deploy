@@ -24,7 +24,9 @@
 // or Recovery that the repo lacks or has differently is restored from version
 // control (see `restore`). When the migration the repo lacks is the project's
 // draft (the next number, same name: unfinalize moved it back), finalizing
-// the draft unchanged puts it back, and the message says so first (QA 107).
+// the draft unchanged puts it back, and the message says so first (QA 107):
+// with the same super-deploy and rehearsal server versions, which the
+// migration's hashed metadata.json records.
 // deploy, status and mark all show these messages.
 // `status` runs the same checks and reports them.
 //
@@ -388,7 +390,7 @@ export function historyMismatches(
       const inDraft =
         entry.number === migrations.length + 1 && entry.name === draftName;
       const refinalize = inDraft
-        ? `finalize draft ${draftName} unchanged to put it back (unfinalize moved that migration into it), or `
+        ? `finalize draft ${draftName} unchanged, with the same super-deploy and rehearsal server versions, to put it back (unfinalize moved that migration into it), or `
         : "";
       mismatches.push({
         number: entry.number,
