@@ -108,7 +108,7 @@ describe("init --adopt", () => {
       exitCode: 1,
       stdout: "",
       stderr:
-        'Error: Cannot adopt target prod: its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts). Nothing was written\n',
+        'Error: Cannot adopt target prod: its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts); the target has schemas app, public. Nothing was written\n',
     });
   });
 

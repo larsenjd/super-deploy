@@ -8,7 +8,9 @@
 // super-deploy.config.ts) and still empty: no finalized migrations, no draft
 // and no desired-schema SQL files. The target must record no migrations and
 // have the managed schema (a missing one is almost always a mistyped
-// managedSchema; an existing empty one is adopted), and its deploy role must
+// managedSchema: the refusal lists the target's schemas, and the rename one
+// needs whose name isn't lowercase; an existing empty one is adopted), and
+// its deploy role must
 // own that schema and everything in it (deploy/ownership.ts) and be able to
 // create the history schema if the target has none (deploy/preflight.ts),
 // all checked before anything is rehearsed.
@@ -307,7 +309,10 @@ async function readTarget(
     }
     if (!(await schemaExists(session, config.managedSchema))) {
       throw new AdoptConflictError(target.name, [
-        `its managed schema "${config.managedSchema}" does not exist (check managedSchema in super-deploy.config.ts)`,
+        missingManagedSchema(
+          config.managedSchema,
+          await userSchemas(session, config.historySchema),
+        ),
       ]);
     }
     // Later migrations alter what is adopted: the deploy role must own it.
@@ -427,6 +432,60 @@ async function readTarget(
   } finally {
     await session.close().catch(() => {});
   }
+}
+
+/** A schema on the target that isn't PostgreSQL's own or the history schema. */
+interface UserSchema {
+  /** As in the catalog, e.g. `MyApp`. */
+  readonly name: string;
+  /** Quoted where SQL needs it, e.g. `"MyApp"`, `shop`. */
+  readonly quoted: string;
+}
+
+/**
+ * The target's schemas, sorted, leaving out `pg_*` (the catalog, TOAST and
+ * temporary schemas), `information_schema` and the history schema.
+ */
+async function userSchemas(
+  session: Session,
+  historySchema: string,
+): Promise<UserSchema[]> {
+  const { rows } = await session.query<UserSchema>(
+    `SELECT nspname AS name, pg_catalog.quote_ident(nspname) AS quoted
+       FROM pg_catalog.pg_namespace
+      WHERE pg_catalog.left(nspname, 3) <> 'pg_' AND nspname <> 'information_schema' AND nspname <> $1
+      ORDER BY nspname COLLATE "C"`,
+    [historySchema],
+  );
+  return rows;
+}
+
+/**
+ * Why a missing managed schema is refused: the schemas the target has, and
+ * for one that differs only in case (managedSchema is lowercase), the rename.
+ */
+function missingManagedSchema(
+  managedSchema: string,
+  schemas: readonly UserSchema[],
+): string {
+  const has =
+    schemas.length === 0
+      ? "the target has no schemas besides the system ones"
+      : `the target has ${schemas.length === 1 ? "schema" : "schemas"} ${schemas.map((schema) => schema.quoted).join(", ")}`;
+  const otherCase = schemas.find(
+    (schema) => schema.name.toLowerCase() === managedSchema,
+  );
+  const rename =
+    otherCase === undefined
+      ? []
+      : [
+          `managedSchema must be lowercase: rename schema ${otherCase.quoted} first (ALTER SCHEMA ${otherCase.quoted} RENAME TO ${managedSchema}), and the application's references to it`,
+        ];
+  return [
+    `its managed schema "${managedSchema}" does not exist (check managedSchema in super-deploy.config.ts)`,
+    has,
+    ...rename,
+  ].join("; ");
 }
 
 /**

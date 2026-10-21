@@ -1152,7 +1152,7 @@ describe("adopt", () => {
       );
       expect(error).toBeInstanceOf(AdoptConflictError);
       expect((error as AdoptConflictError).reasons).toEqual([
-        'its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts)',
+        'its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts); the target has schemas app, public',
       ]);
       expect(mistyped.dir.exists("data-model/migrations")).toBe(false);
       expect(mistyped.dir.exists("data-model/desired-schema")).toBe(false);
@@ -1179,6 +1179,46 @@ describe("adopt", () => {
     } finally {
       await project.close();
     }
+  });
+
+  test("refusing a missing managed schema, lists the target's schemas, and says to rename one that differs only in case", async () => {
+    const prod = await server.createDatabase(`
+      create schema shop; create table shop.t (id bigint primary key);
+      create schema "MyApp";
+    `);
+    const otherTargets = `prod: { adapter: ${asSuperuser(prod)} },`;
+    const refusal = async (managedSchema: string) => {
+      const { dir, project } = await deployProject(
+        server,
+        {},
+        { otherTargets, settings: `managedSchema: "${managedSchema}",` },
+      );
+      try {
+        const error = await adopt(project, { target: "prod" }).catch(
+          (e: unknown) => e,
+        );
+        expect(error).toBeInstanceOf(AdoptConflictError);
+        expect(dir.exists("data-model/migrations")).toBe(false);
+        expect(dir.exists("data-model/desired-schema")).toBe(false);
+        return (error as AdoptConflictError).reasons.join("; ");
+      } finally {
+        await project.close();
+      }
+    };
+
+    expect(await refusal("shpo")).toBe(
+      'its managed schema "shpo" does not exist (check managedSchema in super-deploy.config.ts); the target has schemas "MyApp", public, shop',
+    );
+    expect(await refusal("myapp")).toBe(
+      'its managed schema "myapp" does not exist (check managedSchema in super-deploy.config.ts); the target has schemas "MyApp", public, shop; managedSchema must be lowercase: rename schema "MyApp" first (ALTER SCHEMA "MyApp" RENAME TO myapp), and the application\'s references to it',
+    );
+    expect(
+      await server.query(
+        "select 1 from pg_namespace where nspname = 'deployment_history'",
+        [],
+        prod,
+      ),
+    ).toEqual([]);
   });
 
   test("removes everything it wrote when the target no longer matches at marking time", async () => {
