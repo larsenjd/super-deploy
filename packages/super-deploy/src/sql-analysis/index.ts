@@ -60,6 +60,7 @@ export {
   isOverridable,
   type Override,
   overrideObject,
+  withoutOverrideHint,
 } from "./overrides.ts";
 export { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 export { externalSchemasBoundAtCreate } from "./routine-bodies.ts";

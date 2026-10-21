@@ -97,6 +97,7 @@ import {
   serialColumnFinding,
   virtualGeneratedColumnFinding,
   withOverrideMarkers,
+  withoutOverrideHint,
 } from "../sql-analysis/index.ts";
 import type { Override } from "../sql-analysis/overrides.ts";
 import { isSqlFile } from "../store/desired-schema.ts";
@@ -653,7 +654,7 @@ async function analyse(
         unsupported.push({
           object: firstLine(violation.statement) || violation.file,
           rule: violation.rule,
-          reason: violation.message,
+          reason: withoutOverrideHint(violation.message),
         });
       }
     }

@@ -2,7 +2,12 @@
 // desired-schema statements only an override marker stands between and
 // adoption, and writing the markers into the generated files once a person
 // has given a reason for each.
-import { isOverridable, markerPrefix, overrideObject } from "./overrides.ts";
+import {
+  isOverridable,
+  markerPrefix,
+  overrideObject,
+  withoutOverrideHint,
+} from "./overrides.ts";
 import { parseSqlFile, type SqlFile } from "./parse.ts";
 import type { RuleContext } from "./rule-types.ts";
 import { analyseFile } from "./rules.ts";
@@ -13,7 +18,7 @@ export interface OverrideNeeded {
   readonly object: string;
   /** The risk rules it breaks, sorted, e.g. `plpgsql-dynamic-sql`. */
   readonly rules: readonly string[];
-  /** Each rule's refusal, in the rules' words, in file order. */
+  /** Each rule's refusal, in the rules' words (without the override hint), in file order. */
   readonly findings: readonly {
     readonly rule: string;
     readonly message: string;
@@ -52,7 +57,7 @@ export async function overrideCandidates(
         const findings = new Map(
           own.map(({ rule, message }) => [
             `${rule}\0${message}`,
-            { rule, message },
+            { rule, message: withoutOverrideHint(message) },
           ]),
         );
         candidates.push({
