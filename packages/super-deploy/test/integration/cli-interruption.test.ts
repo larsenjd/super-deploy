@@ -1,10 +1,12 @@
 // Interruption at the CLI process seam: signals and closed output stop the
 // running command, clean up and exit 130, 141 or 143. Signals print one
 // notice; closed output prints none.
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { embeddedPostgres } from "super-deploy/embedded-postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli, spawnCli, waitForFile } from "../support/cli.ts";
+import { deployConfig } from "../support/deploy.ts";
 import {
   onStoppedServer,
   startTestServer,
@@ -128,6 +130,33 @@ test("closed output (e.g. `| head`) stops the command and exits 141 without a no
 
   expect(result.exitCode).toBe(141);
   expect(result.stderr).toBe("");
+});
+
+test("`status | head` with the pipe closed exits 141 without a notice, leaving no throwaway database or server client behind", async () => {
+  const { config } = deployConfig(server);
+  const dir = await createTestProject({
+    config,
+    files: { "data-model/desired-schema/customers.sql": customers },
+  });
+  for (const args of [
+    ["draft", "--name", "add customers"],
+    ["finalize"],
+    ["deploy", "--target", "dev"],
+  ]) {
+    expect((await runCli(args, { cwd: dir.root })).exitCode).toBe(0);
+  }
+  const clients = () => readdir(join(server.dataDir, "super-deploy-clients"));
+  const before = await clients();
+
+  // status reads the target and builds a replica for its drift check.
+  const cli = spawnCli(["status", "--target", "dev"], { cwd: dir.root });
+  cli.child.stdout?.destroy();
+  const result = await cli.result;
+
+  expect(result.exitCode).toBe(141);
+  expect(result.stderr).toBe("");
+  expect(await rehearsalDatabases()).toEqual([]);
+  expect(await clients()).toEqual(before);
 });
 
 async function ownServerProject() {
