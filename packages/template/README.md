@@ -41,6 +41,9 @@ database (QA, production), add it as a target: see
 The desired schema may hold only the statements below; super-deploy refuses
 everything else. `draft`, `rehearse`, `finalize` and `validate` list every
 refused statement on a line of its own, as `<file>:<line>: <reason> [<rule>]`.
+Problems between statements (a reference to something the desired schema
+doesn't create, a dependency cycle, an object created twice) are listed once
+nothing else is refused.
 Messages that say something "is not supported in V1" mean super-deploy's
 first version: these may be supported later, but none is yet.
 

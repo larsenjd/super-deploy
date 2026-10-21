@@ -120,6 +120,59 @@ interface Graph {
   readonly errors: RuleViolation[];
 }
 
+/** A violation of `rule` by `statement`, at the parser's `location` in it if given. */
+function violationAt(
+  statement: ParsedStatement,
+  rule: string,
+  message: string,
+  location?: number,
+): RuleViolation {
+  return {
+    file: statement.file,
+    line:
+      location === undefined
+        ? statement.line
+        : lineAtLocation(statement, location),
+    statement: statement.text,
+    rule,
+    message,
+  };
+}
+
+/**
+ * Ordering's checks of one statement on its own: the problems in its facts
+ * (unnamed constraints and indexes, ...), or `unorderable-statement`.
+ * Ordering runs them on every statement; the desired-schema analysis also
+ * runs them alone when the rules refused something, which the rest of
+ * ordering (references, duplicates, cycles) can't be trusted around.
+ */
+export function statementProblems(
+  statement: ParsedStatement,
+  managedSchema: string,
+): { facts: StatementFacts | undefined; problems: RuleViolation[] } {
+  const facts = statementFacts(statement.node, managedSchema);
+  return {
+    facts,
+    problems:
+      facts === undefined
+        ? [
+            violationAt(
+              statement,
+              "unorderable-statement",
+              `super-deploy can't order this ${statement.nodeType} statement, so it can't be part of the desired schema`,
+            ),
+          ]
+        : facts.problems.map((problem) =>
+            violationAt(
+              statement,
+              problem.rule,
+              problem.message,
+              problem.location,
+            ),
+          ),
+  };
+}
+
 function analyse(
   statements: readonly ParsedStatement[],
   managedSchema: string,
@@ -129,33 +182,16 @@ function analyse(
     statement: ParsedStatement,
     rule: string,
     message: string,
-    location?: number,
   ) => {
-    errors.push({
-      file: statement.file,
-      line:
-        location === undefined
-          ? statement.line
-          : lineAtLocation(statement, location),
-      statement: statement.text,
-      rule,
-      message,
-    });
+    errors.push(violationAt(statement, rule, message));
   };
 
   const nodes: GraphNode[] = [];
   for (const statement of statements) {
-    const facts = statementFacts(statement.node, managedSchema);
+    const { facts, problems } = statementProblems(statement, managedSchema);
+    errors.push(...problems);
     if (facts === undefined) {
-      violation(
-        statement,
-        "unorderable-statement",
-        `super-deploy can't order this ${statement.nodeType} statement, so it can't be part of the desired schema`,
-      );
       continue;
-    }
-    for (const problem of facts.problems) {
-      violation(statement, problem.rule, problem.message, problem.location);
     }
     nodes.push({
       id: nodes.length,

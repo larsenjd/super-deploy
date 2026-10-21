@@ -1,11 +1,12 @@
 // SQL analysis (database-free): rules and ordering, sharing one splitter.
 
-import { orderDesiredSchema } from "./ordering.ts";
+import { orderDesiredSchema, statementProblems } from "./ordering.ts";
 import type { Override } from "./overrides.ts";
-import type { ParsedStatement, SqlFile } from "./parse.ts";
+import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 import {
   analyseFile,
   type RuleContext,
+  type RuleViolation,
   SqlRuleViolationError,
 } from "./rules.ts";
 
@@ -86,7 +87,12 @@ export interface DesiredSchemaAnalysis {
 
 /**
  * Checks every desired-schema file against the rules and orders the
- * statements for loading; throws SqlRuleViolationError listing every problem.
+ * statements for loading; throws SqlRuleViolationError listing every problem
+ * at once. When the rules refuse something, ordering's checks of each
+ * statement on its own (unnamed constraints and indexes) are listed with
+ * them; its checks across statements (unknown references, duplicates,
+ * cycles) wait until the rules pass, since a refused statement may be what
+ * another refers to.
  */
 export async function analyseDesiredSchema(
   files: readonly SqlFile[],
@@ -108,7 +114,9 @@ export async function desiredSchemaAnalysis(
     overrides.push(...analysis.overrides);
   }
   if (violations.length > 0) {
-    throw new SqlRuleViolationError(violations);
+    throw new SqlRuleViolationError(
+      await withStatementProblems(files, violations, context),
+    );
   }
   const ordering = await orderDesiredSchema(
     files,
@@ -121,6 +129,49 @@ export async function desiredSchemaAnalysis(
   }
   return { statements: ordering.statements, overrides };
 }
+/**
+ * `violations` (the rules', in file order) with ordering's checks of each
+ * statement in a file that parses, sorted by file (in `files` order) and
+ * line. A statement the rules refused isn't also reported as unorderable.
+ */
+async function withStatementProblems(
+  files: readonly SqlFile[],
+  violations: readonly RuleViolation[],
+  context: Partial<RuleContext>,
+): Promise<RuleViolation[]> {
+  const refused = new Set(
+    violations.map(({ file, statement }) => `${file}\0${statement}`),
+  );
+  const all = [...violations];
+  for (const file of files) {
+    const parsed = await parseSqlFile(file);
+    for (const statement of parsed.ok ? parsed.statements : []) {
+      const { problems } = statementProblems(
+        statement,
+        context.managedSchema ?? "public",
+      );
+      all.push(
+        ...problems.filter(
+          (problem) =>
+            problem.rule !== "unorderable-statement" ||
+            !refused.has(`${statement.file}\0${statement.text}`),
+        ),
+      );
+    }
+  }
+  const order = new Map(files.map((file, index) => [file.path, index]));
+  return all
+    .map((violation, index) => ({ violation, index }))
+    .sort(
+      (a, b) =>
+        (order.get(a.violation.file) ?? 0) -
+          (order.get(b.violation.file) ?? 0) ||
+        a.violation.line - b.violation.line ||
+        a.index - b.index,
+    )
+    .map(({ violation }) => violation);
+}
+
 export {
   describeViolation,
   type RuleViolation,

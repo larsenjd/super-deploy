@@ -1,8 +1,10 @@
 // The SQL-analysis seam: pure functions over SQL text and file kind.
 import { describe, expect, test } from "vitest";
 import {
+  analyseDesiredSchema,
   checkRules,
   orderDesiredSchema,
+  SqlRuleViolationError,
 } from "../../../src/sql-analysis/index.ts";
 
 const file = (text: string, path = "data-model/desired-schema/a.sql") => ({
@@ -95,6 +97,33 @@ describe("ordering", () => {
       ["data-model/desired-schema/a.sql", 1, "create table a (id int)"],
       ["data-model/desired-schema/a.sql", 3, "create table c (id int)"],
       ["data-model/desired-schema/b.sql", 1, "create table b (id int)"],
+    ]);
+  });
+});
+
+describe("analysing the desired schema", () => {
+  test("lists a file's rule violations and ordering's unnamed constraints and indexes in one pass", async () => {
+    const error = await analyseDesiredSchema([
+      file(
+        "create type mood as enum ('happy', 'sad');\n",
+        "data-model/desired-schema/types.sql",
+      ),
+      file(
+        "create table people (\n  id bigint primary key,\n  feeling mood,\n  age int check (age >= 0)\n);\ncreate index on people (age);\n",
+        "data-model/desired-schema/people.sql",
+      ),
+    ]).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(SqlRuleViolationError);
+    // The refused enum's type isn't reported again as unknown to people.
+    expect(
+      (error as SqlRuleViolationError).violations.map(
+        ({ file, line, rule }) => [file, line, rule],
+      ),
+    ).toEqual([
+      ["data-model/desired-schema/types.sql", 1, "unsupported-object"],
+      ["data-model/desired-schema/people.sql", 4, "unnamed-constraint"],
+      ["data-model/desired-schema/people.sql", 6, "unnamed-index"],
     ]);
   });
 });
