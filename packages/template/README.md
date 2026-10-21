@@ -754,6 +754,15 @@ new constraint rejects, the whole transaction is rolled back: the target is
 as it was before the deployment, and records none of its migrations. Other
 migrations in the same deployment are rolled back too.
 
+If the target's session ends instead (an administrator's
+`pg_terminate_backend`, a server shutdown, a lost connection), or a lock or
+statement timeout runs out while super-deploy reads the target before
+deploying, the error says so, names the target, and says it is unchanged:
+nothing had changed yet, or the deployment rolled back. Retry once the
+target is reachable; if the session was ended on purpose, find out why
+first. Only a connection lost during the final COMMIT leaves the outcome
+unknown: the next `status` or `deploy` settles it.
+
 The migration that failed is finalized, so it can't be edited, and targets
 that already ran it keep it. Instead, give it a **Recovery**: replacement
 scripts and seed data for the targets that haven't run it yet. For a failure

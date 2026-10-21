@@ -9,9 +9,12 @@ import {
   type Session,
   status,
   TargetLockedError,
+  TargetSessionEndedError,
+  TargetTimeoutError,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
+  type DeployConfigOptions,
   deployProject,
   finalizeMigration,
   testSession,
@@ -410,15 +413,18 @@ describe("a deployment failing with an error that has no message of its own", ()
     );
     await finalizeMigration(project, "add customers");
 
+    // An error without a SQLSTATE is a lost connection.
     await expect(deploy(project, { target: "dev" })).rejects.toBeInstanceOf(
-      AggregateError,
+      TargetSessionEndedError,
     );
 
     expect(await attempts(database)).toEqual([
       {
         id: expect.any(String),
         outcome: "failed",
-        error: "connect ECONNREFUSED ::1:5432; ECONNRESET",
+        error: expect.stringContaining(
+          "(connect ECONNREFUSED ::1:5432; ECONNRESET)",
+        ),
       },
     ]);
   });
@@ -543,9 +549,181 @@ describe("a target session whose client stops responding", () => {
       release();
       await holder.close();
     }
-    expect(await deployment).toBeInstanceOf(Error);
+    expect(await deployment).toBeInstanceOf(TargetSessionEndedError);
     expect((await status(project, { target: "dev" })).pending).toEqual([
       expect.objectContaining({ number: 2 }),
     ]);
+  });
+});
+
+/** The server process of the session in `database` waiting for a lock. */
+async function waitingForLock(database: string): Promise<number> {
+  for (;;) {
+    const [row] = await server.query<{ pid: number }>(
+      "select pid from pg_stat_activity where datname = $1 and wait_event_type = 'Lock'",
+      [database],
+    );
+    if (row !== undefined) {
+      return row.pid;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+/**
+ * Migration 1 (customers) deployed to `dev`, and migration 2 (a column on
+ * customers, which takes ACCESS EXCLUSIVE) finalized and pending.
+ */
+async function columnPending(options: DeployConfigOptions = {}) {
+  const deployed = await deployProject(
+    server,
+    { "customers.sql": customers },
+    options,
+  );
+  await finalizeMigration(deployed.project, "add customers");
+  await deploy(deployed.project, { target: "dev" });
+  await deployed.dir.write(
+    "data-model/desired-schema/customers.sql",
+    customers.replace("name text not null", "name text not null,\n  note text"),
+  );
+  await finalizeMigration(deployed.project, "add note");
+  return deployed;
+}
+
+/** Holds `mode` on customers in `database` while `during` runs. */
+async function holdingCustomers<T>(
+  database: string,
+  mode: "ACCESS SHARE" | "ACCESS EXCLUSIVE",
+  during: () => Promise<T>,
+): Promise<T> {
+  const holder = await testSession(server, database);
+  try {
+    await holder.execute("BEGIN");
+    await holder.execute(`LOCK TABLE customers IN ${mode} MODE`);
+    return await during();
+  } finally {
+    await holder.execute("ROLLBACK").catch(() => {});
+    await holder.close();
+  }
+}
+
+describe("a target session that ends before the command finishes", () => {
+  test("ended by the server inside the deploy transaction: the deployment rolled back, and the target is still at its last migration", async () => {
+    const { project, database } = await columnPending({
+      target: 'lockTimeout: "30s",',
+    });
+
+    const error = await holdingCustomers(database, "ACCESS SHARE", async () => {
+      const deployment = deploy(project, { target: "dev" }).catch(
+        (e: unknown) => e,
+      );
+      await server.query("select pg_terminate_backend($1)", [
+        await waitingForLock(database),
+      ]);
+      return deployment;
+    });
+
+    expect(error).toBeInstanceOf(TargetSessionEndedError);
+    const { message } = error as TargetSessionEndedError;
+    expect(message).toContain(
+      "The server ended the session on target dev (terminating connection due to administrator command)",
+    );
+    expect(message).toContain(
+      "The deployment rolled back: target dev is unchanged, still at migration 00001-add-customers.",
+    );
+    expect(message).toContain("Next: retry once target dev is reachable");
+    expect(message).not.toContain("PostgreSQL refused it");
+    expect((await attempts(database)).at(-1)).toMatchObject({
+      outcome: "failed",
+      error: message,
+    });
+  });
+
+  test("ended by the server during the drift check: nothing changed", async () => {
+    const { project, database } = await columnPending({
+      target: 'lockTimeout: "30s",',
+    });
+
+    const error = await holdingCustomers(
+      database,
+      "ACCESS EXCLUSIVE",
+      async () => {
+        const deployment = deploy(project, { target: "dev" }).catch(
+          (e: unknown) => e,
+        );
+        await server.query("select pg_terminate_backend($1)", [
+          await waitingForLock(database),
+        ]);
+        return deployment;
+      },
+    );
+
+    expect(error).toBeInstanceOf(TargetSessionEndedError);
+    const { message } = error as TargetSessionEndedError;
+    expect(message).toContain("The server ended the session on target dev");
+    expect(message).toContain("Nothing changed on target dev.");
+    expect(message).not.toContain("rolled back");
+    expect((await attempts(database)).at(-1)).toMatchObject({
+      outcome: "failed",
+      error: message,
+    });
+  });
+
+  test("a lock timeout during the drift check names the target's lockTimeout: nothing changed", async () => {
+    const { project, database } = await columnPending({
+      target: 'lockTimeout: "200ms",',
+    });
+
+    const error = await holdingCustomers(database, "ACCESS EXCLUSIVE", () =>
+      deploy(project, { target: "dev" }).catch((e: unknown) => e),
+    );
+
+    expect(error).toBeInstanceOf(TargetTimeoutError);
+    const { message } = error as TargetTimeoutError;
+    expect(message).toContain("lockTimeout (200ms)");
+    expect(message).toContain("target dev");
+    expect(message).toContain("Nothing changed on target dev.");
+  });
+
+  test("a connection lost at the end of a migration isn't blamed on deferred constraints", async () => {
+    const { project, database } = await columnPending({
+      // Fault injection: the connection is lost when the migration ends.
+      adapter: `{
+  async connect() {
+    const session = await real.connect();
+    return {
+      ...session,
+      async execute(sql) {
+        if (globalThis.loseAtBoundary && sql === "SET CONSTRAINTS ALL IMMEDIATE") {
+          globalThis.loseAtBoundary = false;
+          throw new Error("Client has encountered a connection error and is not queryable");
+        }
+        return session.execute(sql);
+      },
+    };
+  },
+}`,
+    });
+    Object.assign(globalThis, { loseAtBoundary: true });
+
+    const error = await deploy(project, { target: "dev" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(TargetSessionEndedError);
+    const { message } = error as TargetSessionEndedError;
+    expect(message).toContain(
+      "The connection to target dev was lost (Client has encountered a connection error and is not queryable)",
+    );
+    expect(message).toContain(
+      "The deployment rolled back: target dev is unchanged, still at migration 00001-add-customers.",
+    );
+    expect(message).not.toContain("deferred constraints");
+    expect((await status(project, { target: "dev" })).pending).toEqual([
+      expect.objectContaining({ number: 2 }),
+    ]);
+    expect((await attempts(database)).at(-1)).toMatchObject({
+      outcome: "failed",
+    });
   });
 });

@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
 import { durationText, targetDefaults } from "../config/config.ts";
-import { errorReason, SuperDeployError } from "../errors.ts";
+import { errorReason, SuperDeployError, sessionEnding } from "../errors.ts";
 import { parseSqlFile } from "../sql-analysis/parse.ts";
 import { decodeHashedText } from "../store/hashing.ts";
 import { projectRelative } from "../store/layout.ts";
@@ -134,6 +134,10 @@ export async function replay(
  * unit's last file), and the migration's `ON COMMIT DROP` staging tables are
  * dropped (`DISCARD TEMP`), so the next migration may reuse their names.
  * Deferrable constraints then stay immediate for the rest of the transaction.
+ *
+ * An error saying the session is gone (`sessionEnding`: terminated, shut
+ * down, connection lost) is no refusal of the file: it is thrown as it is,
+ * for the command to report (deploy/session-ended.ts).
  */
 export async function runUnit(
   session: Session,
@@ -147,6 +151,9 @@ export async function runUnit(
     try {
       await session.execute("SET CONSTRAINTS ALL IMMEDIATE");
     } catch (error) {
+      if (sessionEnding(error) !== undefined) {
+        throw error;
+      }
       const refusal = refusalOf(error);
       throw new SqlFileFailedError(
         {
@@ -171,6 +178,9 @@ async function runFile(
     try {
       await session.execute(statement.text);
     } catch (error) {
+      if (sessionEnding(error) !== undefined) {
+        throw error;
+      }
       const within = lineAt(
         statement.text,
         (error as { position?: string }).position,
