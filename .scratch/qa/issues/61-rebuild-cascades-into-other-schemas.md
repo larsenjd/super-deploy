@@ -1,6 +1,6 @@
 # 61: rebuild silently drops views, foreign keys and columns in other schemas
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** high
 **Merged:** 63
@@ -134,3 +134,42 @@ are exactly what a user would expect to survive. Nothing is listed or warned.
 3. Keep the cascade, but correct the confirmation text and the docs to say objects elsewhere that depend on the managed schema go too.
 
 Whichever is chosen, the pre-YES refusal for objects the deploy role can't drop (63) applies.
+
+### Decided, 2026-10-21
+
+The maintainer chose **option 2: list the dependents in the confirmation and keep the cascade.** The pre-YES refusal for objects the deploy role can't drop (63) applies as the brief above says. This supersedes the brief above.
+
+## Brief (ready-for-agent)
+
+**Category:** bug
+
+**Summary:** Before asking YES, `rebuild` lists every object outside the managed and history schemas that its wipe will drop or alter, and refuses up front when the managed schema holds something the deploy role can't drop.
+
+**Current behavior:**
+- The wipe (`deploy/wipe.ts`) drops each managed object with `CASCADE`, so views, foreign keys and composite-typed columns (with their data) in other schemas that depend on managed objects go too. The confirmation (`commands/rebuild.ts`, `check`) says only "Drops everything in schema public, the recorded migrations ...".
+- An object in the managed schema the deploy role can't drop (e.g. an extension a superuser installed) is found only after YES: `Error: must be owner of extension pgcrypto`, exit 1, with no word that the target is unchanged.
+
+**Desired behavior:**
+- In `rebuild`'s guarded `check()` (before YES), read `pg_depend` for objects outside the managed and history schemas that depend, directly or transitively, on objects in the managed schema.
+- When there are any, the confirmation adds an "Also drops, outside schema <managed>:" block listing each one by kind and qualified name, e.g. `view reporting.customer_names`, `foreign key archive_customer_fk on reporting.orders_archive`, `column reporting.snap.c (with its data)`. Columns say "with its data". When there are none, the confirmation is exactly as today.
+- The cascade stays: after YES those listed objects are dropped, and nothing else outside the managed and history schemas is.
+- If the set of dependents differs between the question and the run (something was added or removed while the prompt waited), `rebuild` refuses with the existing target-changed refusal (`TargetChangedError`) and changes nothing.
+- Objects in the managed schema the deploy role can't drop (not owned by it or a role it is a member of, as the ownership pre-flight in `deploy/ownership.ts` judges it) make `rebuild` refuse before YES, naming each object and its owner, saying nothing changed, and saying what to do (drop it, change its owner to the deploy role, or ask its owner). No attempt is recorded.
+- If a drop error still escapes after YES, the error says the rebuild rolled back and the target is unchanged.
+- ADR-0005, spec story 80 and the README's `rebuild` entry say that dependents in other schemas are dropped and listed in the confirmation first. The wipe's header comment says the same.
+
+**Key interfaces:**
+- `commands/rebuild.ts`: the guarded `check()` and its `details` (the confirmation box), and whatever `runGuarded` compares to detect a changed target.
+- `deploy/wipe.ts`: the wipe and its post-check.
+- `deploy/ownership.ts`: reuse its ownership judgement for the can't-drop refusal.
+
+**Acceptance criteria:**
+- [ ] Pseudo-terminal test: a disposable target at migration 1 with `public.customers`, and in schema `reporting` a view on it, a foreign key to it and a column of its row type holding data. The confirmation lists all three, the column marked "with its data". After YES the three are gone, and an unrelated table in `reporting` is untouched.
+- [ ] Pseudo-terminal test: adding a dependent while the prompt waits makes `rebuild` refuse as target-changed after YES, with nothing dropped.
+- [ ] A superuser-owned extension in the managed schema makes `rebuild` refuse before YES, naming the extension and its owner; the target is unchanged and no rebuild attempt is recorded.
+- [ ] A rebuild with no dependents and nothing undroppable shows the same confirmation as today and behaves as today.
+- [ ] ADR-0005, spec story 80, the README and the wipe's header are updated.
+
+**Out of scope:**
+- Refusing because of dependents (option 1, decided against).
+- What the `disposable` confirmation shows (68).

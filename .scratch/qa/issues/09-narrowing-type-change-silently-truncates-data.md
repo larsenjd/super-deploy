@@ -1,6 +1,6 @@
 # 09: Narrowing a column type silently truncates data on the target (generated `USING col::varchar(n)`)
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** high
 **Area:** newproj
@@ -118,3 +118,45 @@ Every generated type change carries an explicit `USING col::newtype`. Explicit c
 3. Refuse narrowing type changes in the generated schema change unless the pre-migration script converts the column first.
 
 The needless `ALTER COLUMN ... DROP DEFAULT` that pg-delta emits before a type change on a column with no default (from 19) belongs to the same decision: post-process it away under option 1, or ask upstream under option 2.
+
+### Decided, 2026-10-21
+
+The maintainer chose: **keep pg-delta's output** (the generated `ALTER COLUMN ... TYPE ... USING col::newtype` stays as it is, so ADR-0003 is unchanged), and **warn clearly** whenever a type change narrows a column, saying values that don't fit are cut short with no error. This supersedes the brief above.
+
+## Brief (ready-for-agent)
+
+**Category:** enhancement
+
+**Summary:** When a migration narrows a column, `draft` and `finalize` say plainly that values which don't fit will be truncated or rounded on every target, without an error, and where to handle them instead.
+
+**Current behavior:**
+- `finalize` asks for an acknowledgement with "can lose data: not every text value fits varchar(5) unchanged" (`sql-analysis/destructive.ts`, `#typeChangeLoss`).
+- `draft`'s script coverage says "changes type by a plain cast (N non-null values in the rehearsal data): convert it in the pre-migration script if the cast could fail or lose data" (`rehearsal/script-coverage.ts`, `messageFor`, `changed-type`).
+- Neither says what actually happens: the generated `USING col::newtype` is an explicit cast, which truncates `varchar(n)`, `char(n)` and `bit(n)`/`varbit(n)` values silently and rounds `numeric` to the new scale. Users read "could fail" and expect the deploy to fail; it succeeds and the data is cut.
+
+**Desired behavior:**
+- A **narrowing** is a type change where values of the old type can be shortened rather than refused by the explicit cast:
+  - to `varchar(n)`, `char(n)`, `bit(n)` or `varbit(n)` from a text, char or bit type with no length or a greater one (e.g. `text` → `varchar(5)`, `varchar(100)` → `varchar(10)`, `varchar(10)` → `char(3)`, `bit(4)` → `bit(2)`);
+  - to `numeric(p,s)` with a smaller scale than the old type (values are rounded).
+- For a narrowing, both messages name the column and both types and say what happens, e.g.:
+  - finalize: `customers.display_name narrows from text to varchar(5): values longer than 5 characters are cut to 5 on every target, without an error`
+  - numeric: `... narrows from numeric(6,2) to numeric(4,1): values are rounded to 1 decimal place on every target, without an error`
+  - draft script coverage: the same sentence, then `(N values in the rehearsal data don't fit)` counting the rows whose value would change (`length(col) > n`, or `col <> round(col, s)` for numeric), then `: shorten or move them in the pre-migration script if they matter`.
+- Other lossy type changes (e.g. `text` → `integer`, where the cast fails rather than shortens) keep their current messages.
+- Narrowing stays destructive: `finalize` still needs the acknowledgement, and the acknowledged reason shown to reviewers (`validate`, migration metadata) uses the new wording.
+- The README's section on destructive changes says that narrowing a column truncates or rounds values silently, and that a pre-migration script is where to deal with them.
+- pg-delta research §8 ("Shapes of generated SQL") gains a bullet: every type change carries `USING col::newtype`, which truncates or rounds when narrowing; kept on purpose (QA 09), and warned about by `destructive.ts` and `script-coverage.ts`.
+
+**Key interfaces:**
+- `sql-analysis/destructive.ts`: `#typeChangeLoss` and `widens` (the known widenings; narrowing detection belongs next to them).
+- `rehearsal/script-coverage.ts`: the `changed-type` candidate, its rehearsal-data count, and `messageFor`.
+
+**Acceptance criteria:**
+- [ ] SQL-analysis seam: `text` → `varchar(5)`, `varchar(100)` → `varchar(10)`, `varchar(10)` → `char(3)`, `bit(4)` → `bit(2)` and `numeric(6,2)` → `numeric(4,1)` each give the narrowing reason; `text` → `integer` keeps the old one; a widening such as `varchar(5)` → `varchar(10)` gives none.
+- [ ] API seam: drafting `text` → `varchar(5)` with seed data holding one 8-character value and one 3-character value reports `1 value in the rehearsal data doesn't fit`; finalize without acknowledgement refuses with the narrowing reason.
+- [ ] The generated schema change is unchanged (still `USING ...::character varying(5)`).
+- [ ] README and pg-delta research §8 updated as above.
+
+**Out of scope:**
+- Changing or post-processing pg-delta's `USING` (decided against).
+- Making a narrowing fail the deployment.
