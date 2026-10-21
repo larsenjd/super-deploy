@@ -502,7 +502,9 @@ default privileges as they are.
   role, listing each object with its owner, then the `ALTER ... OWNER TO`
   statements that fix them as a script to run as a superuser (it can be
   pasted into `psql` as it is); `status` lists them under "Deploy would
-  refuse". For `public`, which `pg_database_owner` owns, deploy as the
+  refuse". `rebuild` refuses a target whose managed schema itself is owned
+  by another role, since `deploy` would refuse the result (what is in the
+  schema it drops and creates again, owned by the deploy role). For `public`, which `pg_database_owner` owns, deploy as the
   database's owner: the refusal's fix for it is `ALTER DATABASE <database>
   OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`.
   The deploy role also needs `CREATE` on the database for
@@ -1023,12 +1025,15 @@ path:
   throwaway replica of the recorded migrations), up to 10 objects. Objects
   in other schemas that depend on the managed schema are dropped too:
   a view on a managed table, a foreign key to one, a column of a managed
-  type (with its data). The confirmation lists each of them under "Also
+  type, a table inheriting from a managed table or typed with a managed
+  composite type (those two with their data). The confirmation lists each of them under "Also
   drops, outside schema ...", and if that list changes while it waits for
   `YES`, rebuild refuses without changing anything. It refuses before
   asking when the managed schema holds something the deploy role can't
   drop, such as an extension a superuser installed or a member of an
-  extension installed in another schema, naming each object and its owner. The managed schema itself stays, with its owner, grants and
+  extension installed in another schema, naming each object and its owner.
+  PostgreSQL can't give an extension another owner, so have its owner or a
+  superuser drop it (`DROP EXTENSION ... CASCADE`). The managed schema itself stays, with its owner, grants and
   default privileges. Then it deletes the target's record of migrations and of any
   deployed draft, and runs migrations 1 to N as a deployment does, each as
   its newest Recovery if it has one; the confirmation and the result name

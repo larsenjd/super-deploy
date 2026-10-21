@@ -21,8 +21,11 @@
 // managed ones. The confirmation lists them ("Also drops, outside schema
 // ..."), and the deploy transaction reads them again before wiping: a list
 // that changed while the prompt waited refuses with TargetChangedError.
-// Before asking, rebuild refuses a managed schema holding something the
-// deploy role can't drop (CannotWipeError), so that never surfaces after YES.
+// Before asking, rebuild refuses a managed schema the deploy role doesn't
+// own (NotOwnedError, as the deploy pre-flight would after the rebuild, QA
+// 172), then one holding something the deploy role can't drop
+// (CannotWipeError), so that never surfaces after YES. With the schema's
+// owner's privileges, only extensions and their members can block the wipe.
 //
 // The confirmation also lists what in the managed schema no recorded
 // migration created (QA 68): drift's objects "only on the target", from a
@@ -43,6 +46,7 @@ import {
   runMigrations,
 } from "../deploy/engine.ts";
 import { historyTable } from "../deploy/history.ts";
+import { requireManagedSchemaOwned } from "../deploy/ownership.ts";
 import { requireDisposable } from "../deploy/target.ts";
 import {
   dependentsOutside,
@@ -105,8 +109,10 @@ interface RebuildPlan {
  * No option skips that.
  *
  * Refuses before asking: TargetNotDisposableError; UnknownMigrationError when
- * `to` isn't 0 and the repo has no finalized migration `to`; CannotWipeError when the managed
- * schema holds something the deploy role can't drop. After YES, rolled back:
+ * `to` isn't 0 and the repo has no finalized migration `to`; NotOwnedError
+ * when the deploy role doesn't own the managed schema (deploy would refuse
+ * the result); CannotWipeError when the managed schema holds something the
+ * deploy role can't drop. After YES, rolled back:
  * TargetChangedError when what it drops outside the managed schema changed
  * meanwhile; WipeDropFailedError when PostgreSQL refuses a drop all the same;
  * WipeFailedError when the managed schema still holds something after the
@@ -154,6 +160,7 @@ export async function rebuild(
           ? []
           : [`deployed draft ${view.draft.name}`]),
       ];
+      await requireManagedSchemaOwned(session, target, config.managedSchema);
       await requireWipeable(session, target, config.managedSchema);
       const dependents = await dependentsOutside(
         session,
