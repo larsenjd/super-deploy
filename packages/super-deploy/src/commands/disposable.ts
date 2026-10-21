@@ -2,6 +2,14 @@
 // in its own history schema, never in config, so editing the config can never
 // make production disposable. A guarded command (guard/guard.ts):
 // terminal-only, YES typed exactly, a manual attempt, the target lock.
+//
+// Marking a target disposable also shows how much its managed schema holds
+// (tables and estimated rows), so a production-like database stands out
+// from an empty one before YES. The rows are PostgreSQL's estimate, not a
+// count(*): `reltuples`, or for a table never analyzed or vacuumed
+// (reltuples -1) the statistics' live-row count, so a freshly loaded table
+// doesn't look empty.
+import type { Session } from "../adapters/types.ts";
 import { historyTable } from "../deploy/history.ts";
 import { runGuarded } from "../guard/guard.ts";
 import type { Project } from "../project.ts";
@@ -34,11 +42,11 @@ export async function disposable(
   project: Project,
   options: DisposableOptions,
 ): Promise<DisposableResult> {
-  const { historySchema } = project.config;
+  const { historySchema, managedSchema } = project.config;
   return runGuarded<undefined, DisposableResult>(project, {
     command: "disposable",
     target: options.target,
-    async check(view) {
+    async check(view, session) {
       if (view.disposable === options.set) {
         return {
           nothingToDo: {
@@ -53,11 +61,12 @@ export async function disposable(
         action: options.set
           ? `Mark target ${view.target.name} as disposable`
           : `Mark target ${view.target.name} as not disposable`,
-        details: [
-          options.set
-            ? "deploy-draft and rebuild will then be allowed to wipe it and load seed data"
-            : "deploy-draft and rebuild will then refuse it",
-        ],
+        details: options.set
+          ? [
+              await describeContents(session, managedSchema),
+              "deploy-draft will then be allowed to deploy a draft to it, and rebuild to wipe it",
+            ]
+          : ["deploy-draft and rebuild will then refuse it"],
         plan: undefined,
       };
     },
@@ -74,4 +83,27 @@ export async function disposable(
       };
     },
   });
+}
+
+/** E.g. `Schema public holds 12 tables, about 48,000 rows`. */
+async function describeContents(
+  session: Session,
+  schema: string,
+): Promise<string> {
+  const { rows } = await session.query<{ tables: number; rows: number }>(
+    `SELECT count(*)::int AS tables,
+            coalesce(sum(CASE WHEN c.relkind <> 'r' THEN 0
+                              WHEN c.reltuples >= 0 THEN c.reltuples
+                              ELSE pg_catalog.pg_stat_get_live_tuples(c.oid) END), 0)::float8 AS rows
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND c.relkind IN ('r', 'p')`,
+    [schema],
+  );
+  const tables = rows[0]?.tables ?? 0;
+  if (tables === 0) {
+    return `Schema ${schema} holds no tables`;
+  }
+  const estimate = Math.round(rows[0]?.rows ?? 0);
+  return `Schema ${schema} holds ${tables} ${tables === 1 ? "table" : "tables"}, about ${estimate.toLocaleString("en-US")} ${estimate === 1 ? "row" : "rows"}`;
 }

@@ -256,6 +256,8 @@ describe("unfinalize", () => {
       restored: [customersFile],
       deleted: [],
       discardedDraft: undefined,
+      warning:
+        "If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)",
     });
     expect(dir.exists(folder)).toBe(false);
     expect(

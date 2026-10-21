@@ -312,6 +312,25 @@ connection string itself instead. The config is committed to Git, so keep
 credentials out of it: use `{ env }` for any connection string with a
 password in it.
 
+**TLS.** Set `sslmode` in the connection string. super-deploy reads it as
+`psql` and libpq do:
+
+- no `sslmode`, or `disable`: not encrypted.
+- `require` (or `prefer`): encrypted, but the server's certificate isn't
+  checked, so it doesn't stop a server impersonating yours. Unlike `psql`,
+  `prefer` never falls back to an unencrypted connection.
+- `verify-ca`: encrypted, and the server's certificate must be signed by the
+  CA certificate in the file `sslrootcert` names. Without `sslrootcert` the
+  connection string is refused.
+- `verify-full`: as `verify-ca`, and the certificate must also name the host
+  in the connection string. Without `sslrootcert` it trusts the public CAs
+  that Node.js ships with.
+
+For a server with a private CA, such as a managed database's own, download
+the CA certificate and use `verify-full` with `sslrootcert`:
+`postgresql://deploy_role:password@db.example.com:5432/app?sslmode=verify-full&sslrootcert=/etc/ssl/db-ca.pem`.
+A relative `sslrootcert` is read from the directory the command runs in.
+
 **The deploy role is the user in the connection string**: `deploy_role` in
 the example above. super-deploy runs everything on the target as that user,
 and "Permissions" says what it needs.
@@ -653,7 +672,10 @@ draft-finalize-deploy path:
 - **`disposable --target X --set yes|no`** flags target `X` as disposable,
   or not. The flag lives in the target itself, in its history schema
   (`deployment_history` by default), not in `super-deploy.config.ts`, so no
-  config change can make production disposable.
+  config change can make production disposable. Before you type `YES` to
+  mark it disposable, it shows how many tables the managed schema holds
+  and about how many rows (PostgreSQL's estimate), so a database full of
+  real data stands out.
 - **`deploy-draft --target X`** tries the current, unfinalized draft on a
   disposable target, so its scripts meet the target's data before you
   finalize. The target must have no pending migrations (a Recovery draft of
@@ -666,7 +688,10 @@ draft-finalize-deploy path:
   `rebuild` resets it.
 - **`rebuild --target X --to N`** resets a disposable target to migration
   N, in one transaction. It drops everything in the managed schema, with
-  `CASCADE`, so objects in other schemas that depend on it are dropped too:
+  `CASCADE`. The confirmation lists what in the managed schema no recorded
+  migration created (what `status` reports as only on the target, from a
+  throwaway replica of the recorded migrations), up to 10 objects. Objects
+  in other schemas that depend on the managed schema are dropped too:
   a view on a managed table, a foreign key to one, a column of a managed
   type (with its data). The confirmation lists each of them under "Also
   drops, outside schema ...", and if that list changes while it waits for

@@ -15,6 +15,15 @@
 // way to abandon it on an interruption anyway. Without the deadline an
 // unreachable host waits for the operating system's TCP timeout (minutes).
 // node-postgres ignores connect_timeout in the URL.
+//
+// `sslmode` means what it means to libpq and psql (the template README's TLS
+// paragraph): every connection string reaches node-postgres with
+// `uselibpqcompat=true` appended (clientConfig), so `require` encrypts
+// without verifying the certificate and `verify-ca`/`verify-full` verify.
+// Without it node-postgres treats `prefer`, `require` and `verify-ca` as
+// `verify-full` and prints a SECURITY WARNING to stderr. The parameter is
+// appended rather than passed as parse's useLibpqCompat option, which throws
+// when the URL carries its own `uselibpqcompat`; appended, it wins over one.
 import { randomBytes } from "node:crypto";
 import pg from "pg";
 import { parseIntoClientConfig } from "pg-connection-string";
@@ -105,7 +114,8 @@ export type ConnectionStringProblem =
   | { kind: "missing"; value: "undefined" | "empty" | "not a string" }
   | { kind: "variable-unset"; variable: string }
   | { kind: "variable-empty"; variable: string }
-  | { kind: "not-postgres-url" };
+  | { kind: "not-postgres-url" }
+  | { kind: "verify-ca-without-root-cert" };
 
 /**
  * A ConnectionSource gives no usable connection string. `subject` names who
@@ -139,6 +149,8 @@ function connectionStringMessage(
       return `${subject}: environment variable ${problem.variable} is empty`;
     case "not-postgres-url":
       return `${subject}'s connection string is not a PostgreSQL URL (postgres://user:password@host:port/database)`;
+    case "verify-ca-without-root-cert":
+      return `${subject}'s connection string has sslmode=verify-ca without sslrootcert: verify-ca checks the server's certificate against the CA certificate in the file sslrootcert names (for a server with a public CA, use sslmode=verify-full)`;
   }
 }
 
@@ -178,22 +190,45 @@ function sourceProblem(
             : "not a string",
     };
   }
-  return typeof value === "string" && isPostgresUrl(value)
-    ? undefined
+  return typeof value === "string"
+    ? urlProblem(value)
     : { kind: "not-postgres-url" };
 }
 
-/** A postgres:// or postgresql:// URL that node-postgres can parse. */
-function isPostgresUrl(value: string): boolean {
+/**
+ * What stops node-postgres from reading `value` as a postgres:// or
+ * postgresql:// URL, if anything. Under libpq's sslmode it throws on
+ * verify-ca without a CA, so that is checked first and named.
+ */
+function urlProblem(value: string): ConnectionStringProblem | undefined {
   if (!/^postgres(ql)?:\/\//i.test(value)) {
-    return false;
+    return { kind: "not-postgres-url" };
+  }
+  // node-postgres takes a repeated parameter's last value.
+  const parameters = URL.parse(value)?.searchParams;
+  if (
+    parameters?.getAll("sslmode").at(-1) === "verify-ca" &&
+    !parameters.has("sslrootcert")
+  ) {
+    return { kind: "verify-ca-without-root-cert" };
   }
   try {
-    parseIntoClientConfig(value);
-    return true;
+    clientConfig(value);
+    return undefined;
   } catch {
-    return false;
+    return { kind: "not-postgres-url" };
   }
+}
+
+/** node-postgres's config for `connectionString`, read with libpq's `sslmode` (see the header). */
+function clientConfig(connectionString: string): pg.ClientConfig {
+  const fragment = connectionString.indexOf("#");
+  const end = fragment === -1 ? connectionString.length : fragment;
+  const base = connectionString.slice(0, end);
+  const separator = base.includes("?") ? "&" : "?";
+  return parseIntoClientConfig(
+    `${base}${separator}uselibpqcompat=true${connectionString.slice(end)}`,
+  );
 }
 
 function createDatabaseSql(name: string, request: DatabaseRequest): string {
@@ -216,7 +251,7 @@ export async function connectSession(
   database?: string,
   options?: ConnectOptions,
 ): Promise<Session> {
-  const config = parseIntoClientConfig(connectionString);
+  const config = clientConfig(connectionString);
   const client = new pg.Client(
     database === undefined ? config : { ...config, database },
   );

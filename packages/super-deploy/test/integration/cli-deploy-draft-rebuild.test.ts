@@ -4,11 +4,19 @@
 // ahead only once YES is typed. Their API refusal in CI is in
 // deploy-draft-rebuild.test.ts.
 import { userInfo } from "node:os";
-import { deploy, draft, finalize, loadProject, recovery } from "super-deploy";
+import {
+  deploy,
+  draft,
+  finalize,
+  loadProject,
+  recovery,
+  unfinalize,
+} from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import {
   asDeployerPreamble,
+  asDeployRole,
   deployConfig,
   roleName,
   targetDatabaseName,
@@ -629,6 +637,13 @@ const reportingObjects = `select object from (
      where connamespace = 'reporting'::regnamespace and contype <> 'n'
   ) o order by object collate "C"`;
 
+/** The confirmation box's lines, without its borders. */
+function boxLines(shown: string): string[] {
+  return shown
+    .split("\n")
+    .map((line) => line.replace(/^[│├╯╮\s]+|[│├╯╮\s]+$/g, ""));
+}
+
 unix("rebuild", () => {
   test("wipes the managed schema and replays migrations up to N without seed data, keeping the schema's owner, comment, grants and default privileges and the attempt log", async () => {
     const { dir, database } = await twoMigrations();
@@ -712,6 +727,100 @@ unix("rebuild", () => {
     expect(deployed.stdout).toBe(
       "Deployed 1 migration to dev: 00002-add-orders\n",
     );
+  });
+
+  test("lists the objects in the managed schema that no recorded migration created before asking", async () => {
+    const { dir } = await twoMigrations();
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    const lines = boxLines(await terminal.waitFor("Type YES"));
+    const extra = lines.indexOf(
+      "Not from any recorded migration, in schema public:",
+    );
+    expect(extra).toBeGreaterThan(lines.indexOf("Seed data is never loaded"));
+    expect(lines.slice(extra + 1, lines.indexOf("", extra))).toEqual([
+      // Domain positive's CHECK: PostgreSQL describes it without its domain.
+      "constraint positive_check",
+      "function public.twice(integer)",
+      "sequence public.counter",
+      "table public.scratch",
+      "type public.mood",
+      "type public.positive",
+      "view public.ada",
+    ]);
+    terminal.type(keys.ctrlC);
+    expect(await terminal.exited).toBe(1);
+  });
+
+  test("lists at most 10 objects no recorded migration created, then says how many more", async () => {
+    const { dir, database } = await deployedProject();
+    await asDeployRole(
+      server,
+      database,
+      Array.from(
+        { length: 13 },
+        (_, i) =>
+          `create table handmade_${String(i + 1).padStart(2, "0")} (id int);`,
+      ).join("\n"),
+    );
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    const lines = boxLines(await terminal.waitFor("Type YES"));
+    const extra = lines.indexOf(
+      "Not from any recorded migration, in schema public:",
+    );
+    expect(lines.slice(extra + 1, lines.indexOf("", extra))).toEqual([
+      ...Array.from(
+        { length: 10 },
+        (_, i) => `table public.handmade_${String(i + 1).padStart(2, "0")}`,
+      ),
+      "and 3 more",
+    ]);
+    terminal.type(keys.ctrlC);
+    expect(await terminal.exited).toBe(1);
+  });
+
+  test("still rebuilds a target recording a migration the repo lacks, saying its objects weren't compared", async () => {
+    const { dir } = await twoMigrations();
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await unfinalize(project, { acknowledgeOverwrite: true });
+    } finally {
+      await project.close();
+    }
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    const shown = await terminal.waitFor("Type YES");
+    expect(boxLines(shown)).toContain(
+      "Can't tell what no recorded migration created: the repo lacks migration 2",
+    );
+    expect(shown).not.toContain("Not from any recorded migration");
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor("Rebuilt dev with 1 migration: 00001-add-customers");
+    expect(await terminal.exited).toBe(0);
+  });
+
+  test("says nothing about extra objects when the managed schema holds only what its migrations created", async () => {
+    const { dir } = await deployedProject();
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    expect(await terminal.waitFor("Type YES")).not.toContain(
+      "Not from any recorded migration",
+    );
+    terminal.type(keys.ctrlC);
+    expect(await terminal.exited).toBe(1);
   });
 
   test("replays and records each migration's newest variant: Recovery 1 of migration 2, without its seed data", async () => {
@@ -852,11 +961,7 @@ unix("rebuild", () => {
       ["rebuild", "--target", "dev", "--to", "1"],
       { cwd: dir.root },
     );
-    const shown = await terminal.waitFor("Type YES");
-    // The box's lines, without its borders.
-    const lines = shown
-      .split("\n")
-      .map((line) => line.replace(/^[│├╯╮\s]+|[│├╯╮\s]+$/g, ""));
+    const lines = boxLines(await terminal.waitFor("Type YES"));
     const also = lines.indexOf("Also drops, outside schema public:");
     expect(also).toBeGreaterThan(0);
     expect(lines.slice(also + 1, lines.indexOf("", also))).toEqual([

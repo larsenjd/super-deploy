@@ -18,29 +18,52 @@
 // that changed while the prompt waited refuses with TargetChangedError.
 // Before asking, rebuild refuses a managed schema holding something the
 // deploy role can't drop (CannotWipeError), so that never surfaces after YES.
+//
+// The confirmation also lists what in the managed schema no recorded
+// migration created (QA 68): drift's objects "only on the target", from a
+// replica of the target's recorded migrations as `status` builds it (so a
+// deployed draft's objects are listed too), at most 10 and then "and N
+// more". It is the repo's migrations of those numbers that are replayed, so
+// a recorded migration whose content differs from the repo's is compared as
+// the repo has it; a target recording a migration the repo lacks gets a line
+// saying why nothing is listed instead, and is still rebuilt. Unlike the
+// dependents outside, this list isn't read again under the lock: an object
+// appearing meanwhile is in the managed schema, which the box already says
+// is dropped entirely, and reading it again would mean another replica.
+
+import type { Session } from "../adapters/types.ts";
 import {
   inDeployTransaction,
   type MigrationToApply,
   runMigrations,
 } from "../deploy/engine.ts";
 import { historyTable } from "../deploy/history.ts";
-import { requireDisposable } from "../deploy/target.ts";
+import { requireDisposable, targetDatabaseRequest } from "../deploy/target.ts";
 import {
   dependentsOutside,
   requireWipeable,
   wipeManagedSchema,
 } from "../deploy/wipe.ts";
-import { runGuarded, TargetChangedError } from "../guard/guard.ts";
+import {
+  runGuarded,
+  TargetChangedError,
+  type TargetView,
+} from "../guard/guard.ts";
 import type { Project } from "../project.ts";
 import {
+  type MigrationWithUnit,
   newestVariant,
   readMigrationsWithUnits,
+  replicaUnits,
+  UnknownRecordedMigrationError,
+  withReplica,
 } from "../rehearsal/replica.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import {
   migrationFolderName,
   UnknownMigrationError,
 } from "../store/migrations.ts";
+import { driftBetween } from "../verification/drift.ts";
 import type { DeployedMigration } from "./deploy.ts";
 
 export interface RebuildOptions {
@@ -98,10 +121,11 @@ export async function rebuild(
       const replayed = migrations.filter(
         (migration) => migration.number <= options.to,
       );
+      const withUnits = await readMigrationsWithUnits(root, migrations);
       // Each migration's newest variant, as a deployment to a new target.
-      const variants = (await readMigrationsWithUnits(root, replayed)).map(
-        newestVariant,
-      );
+      const variants = withUnits
+        .filter((migration) => migration.number <= options.to)
+        .map(newestVariant);
       const range =
         options.to === 1 ? "migration 1" : `migrations 1-${options.to}`;
       const wiped = [
@@ -123,6 +147,7 @@ export async function rebuild(
           `Drops ${wiped.join(", ")}, then deploys in one transaction:`,
           ...replayed.map((migration) => `  ${migration.folder}`),
           "Seed data is never loaded",
+          ...(await notFromMigrations(project, view, session, withUnits)),
           ...(dependents.length === 0
             ? []
             : [
@@ -187,4 +212,52 @@ export async function rebuild(
       };
     },
   });
+}
+
+const shownExtras = 10;
+
+/**
+ * The confirmation's lines on what in the managed schema no recorded
+ * migration created, after a blank line; none when there is nothing.
+ */
+async function notFromMigrations(
+  project: Project,
+  view: TargetView,
+  session: Session,
+  migrations: readonly MigrationWithUnit[],
+): Promise<string[]> {
+  const schema = project.config.managedSchema;
+  let units: ReturnType<typeof replicaUnits>;
+  try {
+    units = replicaUnits(view.target.name, migrations, view.recorded);
+  } catch (error) {
+    if (!(error instanceof UnknownRecordedMigrationError)) {
+      throw error;
+    }
+    return [
+      "",
+      `Can't tell what no recorded migration created: the repo lacks migration${error.numbers.length === 1 ? "" : "s"} ${error.numbers.join(", ")}`,
+    ];
+  }
+  const drifted = await withReplica(
+    project,
+    await targetDatabaseRequest(session),
+    units,
+    (replica) =>
+      driftBetween(session, replica, schema, { target: view.target }),
+  );
+  const extras = drifted
+    .filter((drift) => drift.change === "extra")
+    .map((drift) => drift.object);
+  if (extras.length === 0) {
+    return [];
+  }
+  return [
+    "",
+    `Not from any recorded migration, in schema ${schema}:`,
+    ...extras.slice(0, shownExtras).map((object) => `  ${object}`),
+    ...(extras.length > shownExtras
+      ? [`  and ${extras.length - shownExtras} more`]
+      : []),
+  ];
 }
