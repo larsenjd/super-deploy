@@ -172,6 +172,53 @@ describe("draft", () => {
     );
   });
 
+  test("rule violations are listed one per line, each at its own line, then a summary Error line", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: {
+        "data-model/desired-schema/types.sql":
+          "create domain email_address as text check (value ~ '^[^@\\s]+@[^@\\s]+$');\n",
+        "data-model/desired-schema/tables/customers.sql": `create table customers (
+  id bigint generated always as identity primary key,
+  email email_address not null unique,
+  full_name text not null
+);
+`,
+        "data-model/desired-schema/tables/orders.sql": `create table orders (
+  id bigint generated always as identity primary key,
+  customer_id bigint not null references customers (id),
+  status text not null default 'new' check (status in ('new', 'paid')),
+  total_cents integer not null check (total_cents >= 0)
+);
+`,
+      },
+    });
+
+    const result = await runCli(["draft", "--name", "initial schema"], {
+      cwd: dir.root,
+    });
+
+    expect(result.exitCode).toBe(1);
+    const at = (file: string, line: number, about: string) =>
+      expect.stringMatching(
+        new RegExp(
+          `^data-model/desired-schema/${file}:${line}: The ${about} has no name; .* \\[unnamed-constraint\\]$`,
+        ),
+      );
+    expect(oneLine(result.stderr)).toEqual([
+      at("tables/customers.sql", 3, "unique constraint on customers.email"),
+      at(
+        "tables/orders.sql",
+        3,
+        "foreign key constraint on orders.customer_id",
+      ),
+      at("tables/orders.sql", 4, "check constraint on orders.status"),
+      at("tables/orders.sql", 5, "check constraint on orders.total_cents"),
+      at("types.sql", 1, "check constraint on domain email_address"),
+      "Error: 5 SQL rule violations (listed above)",
+    ]);
+  });
+
   test("--debug adds the stack trace", async () => {
     const dir = await createTestProject();
 

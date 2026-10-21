@@ -80,6 +80,11 @@ export interface GeneratedConstraintName {
 export interface Problem {
   readonly rule: string;
   readonly message: string;
+  /**
+   * The parser's `location` of the offending node (a UTF-8 byte offset in
+   * the file), when it has one; the problem is reported at its line.
+   */
+  readonly location?: number;
 }
 
 export interface StatementFacts {
@@ -117,6 +122,11 @@ function strings(list: unknown): string[] {
     }
   }
   return out;
+}
+
+/** A node's `location`, spread into a Problem (absent when the parser gives none). */
+function locationOf(node: Json): { location?: number } {
+  return typeof node.location === "number" ? { location: node.location } : {};
 }
 
 function str(value: unknown): string | undefined {
@@ -552,6 +562,7 @@ function addTableConstraint(
       facts.problems.push({
         rule: "unnamed-constraint",
         message: `The ${word} constraint on ${column === undefined ? `table ${table}` : `${table}.${column}`} has no name; name it (CONSTRAINT <name> ...), because generated names can depend on load order`,
+        ...locationOf(constraint),
       });
       return;
     }
@@ -730,6 +741,7 @@ const extractors: Record<string, Extractor> = {
         facts.problems.push({
           rule: "unnamed-constraint",
           message: `The check constraint on domain ${name} has no name; name it (CONSTRAINT <name> CHECK ...), because generated names can depend on load order`,
+          ...locationOf(constraint),
         });
       }
     }

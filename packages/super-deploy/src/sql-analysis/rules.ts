@@ -80,7 +80,10 @@ export async function analyseFile(
 export interface RuleViolation {
   /** Project-relative path with forward slashes. */
   file: string;
-  /** 1-based line where the statement (or syntax error) starts. */
+  /**
+   * 1-based line of the offending part where the parser locates it (e.g. an
+   * unnamed constraint), else where the statement (or syntax error) starts.
+   */
   line: number;
   /** The offending statement's text (empty for syntax errors). */
   statement: string;
@@ -89,15 +92,22 @@ export interface RuleViolation {
   message: string;
 }
 
+/** One violation as one line: `<file>:<line>: <message> [<rule>]`. */
+export function describeViolation(violation: RuleViolation): string {
+  return `${violation.file}:${violation.line}: ${violation.message} [${violation.rule}]`;
+}
+
+/**
+ * The message names the first violation and counts the rest; `violations`
+ * holds them all, and the CLI prints each on a line of its own.
+ */
 export class SqlRuleViolationError extends SuperDeployError {
   readonly code = "sql-rule-violation";
   readonly violations: readonly RuleViolation[];
 
   constructor(violations: readonly RuleViolation[]) {
     const [first] = violations;
-    const where = first
-      ? `${first.file}:${first.line}: ${first.message} [${first.rule}]`
-      : "";
+    const where = first ? describeViolation(first) : "";
     const more =
       violations.length > 1 ? ` (and ${violations.length - 1} more)` : "";
     super(`${where}${more}`);

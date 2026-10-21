@@ -7,7 +7,12 @@
 // names and statement positions never decide the order; they only label
 // byte-identical duplicates, whose relative order cannot matter.
 import { createHash } from "node:crypto";
-import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
+import {
+  lineAtLocation,
+  type ParsedStatement,
+  parseSqlFile,
+  type SqlFile,
+} from "./parse.ts";
 import {
   pgCatalogFunctions,
   pgCatalogRelations,
@@ -124,10 +129,14 @@ function analyse(
     statement: ParsedStatement,
     rule: string,
     message: string,
+    location?: number,
   ) => {
     errors.push({
       file: statement.file,
-      line: statement.line,
+      line:
+        location === undefined
+          ? statement.line
+          : lineAtLocation(statement, location),
       statement: statement.text,
       rule,
       message,
@@ -146,7 +155,7 @@ function analyse(
       continue;
     }
     for (const problem of facts.problems) {
-      violation(statement, problem.rule, problem.message);
+      violation(statement, problem.rule, problem.message, problem.location);
     }
     nodes.push({
       id: nodes.length,

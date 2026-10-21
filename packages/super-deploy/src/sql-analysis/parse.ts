@@ -97,3 +97,12 @@ export function lineAtByte(bytes: Buffer, offset: number): number {
   }
   return line;
 }
+
+/** 1-based line of a parser node's `location` (a UTF-8 byte offset in the file) within `statement`. */
+export function lineAtLocation(
+  statement: ParsedStatement,
+  location: number,
+): number {
+  const text = Buffer.from(statement.text, "utf8");
+  return statement.line - 1 + lineAtByte(text, location - statement.offset);
+}
