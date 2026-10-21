@@ -629,7 +629,8 @@ describe("privileges, roles, ownership, row-level security and SECURITY DEFINER"
     );
   });
 
-  const runOnTargets = /remove it and run it on each target instead/;
+  const runOnTargets =
+    /remove it from the file and run it on each target instead/;
   const removeIt = /remove it: the deploy role owns everything it creates/;
   test.each([
     ["grant select on t to reader", runOnTargets],

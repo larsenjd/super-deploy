@@ -69,7 +69,7 @@ describe("init --adopt", () => {
     );
   });
 
-  test("adopting an empty managed schema warns on stderr, naming the schemas that hold objects", async () => {
+  test("adopting an empty managed schema warns on stderr, naming the schemas that hold objects, with the count said once", async () => {
     const dir = await projectAdopting(
       "create schema shop; create table shop.t (id bigint primary key);",
     );
@@ -81,7 +81,7 @@ describe("init --adopt", () => {
     expect(result).toEqual({
       exitCode: 0,
       stdout:
-        "Adopted target prod: 0 objects from schema public, as migration 00001-adopt in data-model/migrations/00001-adopt, recorded on it as marked (attempt #1)\n",
+        "Adopted target prod as migration 00001-adopt in data-model/migrations/00001-adopt, recorded on it as marked (attempt #1)\n",
       stderr:
         "warning: Adopted 0 objects from schema public; schema shop holds 1 table: is managedSchema right?\n",
     });
@@ -328,8 +328,13 @@ describe("init --adopt", () => {
     });
   });
 
-  test("without a terminal lists the functions that need an override reason apart from anything unsupported, advising a terminal", async () => {
-    const dir = await projectAdopting(loader);
+  test("without a terminal lists the functions that need an override reason apart from anything unsupported, each once, advising a terminal", async () => {
+    const dir = await projectAdopting(`${loader}
+create function notify_event() returns void language plpgsql
+  as $$ begin perform pg_notify('events', 'x'); end $$;
+create function purge_kind(k text) returns void language plpgsql
+  as $$ begin execute format('delete from %I', k); perform pg_notify('purged', k); end $$;
+`);
 
     const result = await runCli(["init", "--adopt", "prod"], {
       cwd: dir.root,
@@ -338,10 +343,17 @@ describe("init --adopt", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).not.toContain("doesn't support");
     expect(result.stderr).toMatch(
-      /^Target prod has 1 object that needs an override reason, asked only in a terminal:\n {2}function load_staging\(text\)\n {4}plpgsql-dynamic-sql: EXECUTE \(dynamic SQL\) is not allowed/,
+      /^Target prod has 3 objects that need an override reason, asked only in a terminal:\n/,
     );
+    for (const object of [
+      "function load_staging(text)",
+      "function notify_event()",
+      "function purge_kind(text)",
+    ]) {
+      expect(result.stderr.split("\n")).toContain(`  ${object}`);
+    }
     expect(result.stderr).toMatch(
-      /\nError: Cannot adopt target prod without a terminal: 1 object needs an override reason, listed above\. Nothing was written; run adoption in a terminal to give an override reason for each object that breaks only risk rules\n$/,
+      /\nError: Cannot adopt target prod without a terminal: 3 objects need an override reason, listed above\. Nothing was written; run adoption in a terminal to give an override reason for each object that breaks only risk rules\n$/,
     );
     expect(dir.exists("data-model/desired-schema")).toBe(false);
   });

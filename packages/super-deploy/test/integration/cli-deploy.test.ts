@@ -205,6 +205,30 @@ describe("deploy and status", () => {
     );
   });
 
+  test("status lists public, owned by pg_database_owner, with ALTER DATABASE as its fix under Deploy would refuse", async () => {
+    const deployer = roleName("deployer");
+    const database = targetDatabaseName();
+    await server.query(`create role ${deployer} login password 'deployer'`);
+    await server.query(`create database ${database}`);
+    await server.query(`grant create on database ${database} to ${deployer}`);
+    const dir = await createTestProject({
+      config: deployConfig(server, {
+        database,
+        preamble: asDeployerPreamble(database, deployer),
+        adapter: "asDeployer",
+      }).config,
+    });
+
+    const report = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+
+    expect(report.exitCode).toBe(1);
+    expect(report.stdout).toContain(
+      `Deploy would refuse:\n  schema public is owned by pg_database_owner (the owner of database ${database}, super_deploy), whose privileges the deploy role doesn't have (fix: ALTER DATABASE ${database} OWNER TO ${deployer})\n`,
+    );
+  });
+
   test("status indents a multi-line definition's continuation lines under its difference", async () => {
     const { config, database } = deployConfig(server);
     const dir = await createTestProject({

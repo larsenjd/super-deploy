@@ -175,7 +175,9 @@ describe("privileges, roles, ownership, row-level security and SECURITY DEFINER"
         )
       ).map(({ message }) => message);
       expect(messages).toEqual([
-        expect.stringMatching(/remove it and run it on each target instead/),
+        expect.stringMatching(
+          /remove it from the file and run it on each target instead/,
+        ),
         expect.stringMatching(/run it on each target as the deploy role/),
         expect.stringMatching(/remove it: the deploy role owns everything/),
       ]);
@@ -281,7 +283,7 @@ describe("transaction control, CALL and DO", () => {
 
 describe("SET and RESET", () => {
   const roleReason =
-    /a deployment runs everything as the deploy role, and roles and privileges are set up on targets outside super-deploy/;
+    /a deployment runs everything as the deploy role, and roles and privileges are set up on targets outside super-deploy; remove it from the file, and run what needs another role on each target instead \(see the README, "Permissions"\)/;
   const localReason =
     /super-deploy pins the session settings for every migration in the deployment's one transaction, and SET LOCAL would change them for the rest of it/;
   const plainReason =

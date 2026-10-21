@@ -456,6 +456,14 @@ async function readTargetOn(
   { withOverrides, context }: { withOverrides: boolean; context: RuleContext },
 ): Promise<ReadTarget> {
   const { config } = project;
+  // Every read waits for locks (the history table a running deploy holds,
+  // definitions the differ reads behind table locks): never longer than
+  // the target allows.
+  await session.execute(
+    targetTimeouts(target)
+      .map((statement) => statement.replace(/^SET LOCAL /, "SET "))
+      .join(";\n"),
+  );
   const recorded = await readRecordedMigrations(session, config.historySchema);
   if (recorded.length > 0) {
     const [first] = recorded;
@@ -485,13 +493,6 @@ async function readTargetOn(
   const historySchema = await historySchemaNotCreatable(
     session,
     config.historySchema,
-  );
-  // The differ reads definitions that wait for table locks: never longer
-  // than the target allows.
-  await session.execute(
-    targetTimeouts(target)
-      .map((statement) => statement.replace(/^SET LOCAL /, "SET "))
-      .join(";\n"),
   );
   const request = await targetDatabaseRequest(session);
   const serials = await serialColumns(session, config.managedSchema);

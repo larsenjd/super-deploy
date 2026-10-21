@@ -386,22 +386,12 @@ export class SqlFileFailedError extends SuperDeployError {
 
   /** The same failure, reported by the command whose transaction rolled back. */
   rolledBack(rollback: FileRollback): SqlFileFailedError {
-    return new SqlFileFailedError(this, {
-      cause: this.cause,
-      rollback,
-      missingExternalSchema: this.missingExternalSchema,
-      target: this.target,
-    });
+    return this.with({ rollback });
   }
 
   /** The same failure on `target`, whose timeouts a timeout's next step quotes. */
   onTarget(target: TargetTimeoutSettings): SqlFileFailedError {
-    return new SqlFileFailedError(this, {
-      cause: this.cause,
-      rollback: this.rollback,
-      missingExternalSchema: this.missingExternalSchema,
-      target,
-    });
+    return this.with({ target });
   }
 
   /**
@@ -413,12 +403,22 @@ export class SqlFileFailedError extends SuperDeployError {
     const schema = externalSchemaNamed(this, externalSchemas);
     return schema === undefined
       ? this
-      : new SqlFileFailedError(this, {
-          cause: this.cause,
-          rollback: this.rollback,
-          missingExternalSchema: schema,
-          target: this.target,
-        });
+      : this.with({ missingExternalSchema: schema });
+  }
+
+  /** The same failure with `changes` to what the message adds. */
+  private with(changes: {
+    rollback?: FileRollback;
+    missingExternalSchema?: string;
+    target?: TargetTimeoutSettings;
+  }): SqlFileFailedError {
+    return new SqlFileFailedError(this, {
+      cause: this.cause,
+      rollback: this.rollback,
+      missingExternalSchema: this.missingExternalSchema,
+      target: this.target,
+      ...changes,
+    });
   }
 }
 

@@ -341,8 +341,13 @@ const initCommand: DirectoryCommandDefinition = {
             `Wrote ${context.displayPath(join(project.root, file))}`,
           );
         }
+        // An empty schema's warning gives the count itself: said once.
+        const adopted =
+          result.warning === undefined
+            ? `: ${plural(result.objects, "object")} from schema ${project.config.managedSchema},`
+            : "";
         context.result(
-          `Adopted target ${result.target}: ${plural(result.objects, "object")} from schema ${project.config.managedSchema}, as migration ${result.migration.folder} in ${context.displayPath(result.migration.path)}, recorded on it as marked (attempt #${result.attemptId})`,
+          `Adopted target ${result.target}${adopted} as migration ${result.migration.folder} in ${context.displayPath(result.migration.path)}, recorded on it as marked (attempt #${result.attemptId})`,
         );
         if (result.warning !== undefined) {
           context.warn(`warning: ${result.warning}`);

@@ -1749,6 +1749,40 @@ describe("adopt", () => {
     }
   });
 
+  test("refuses with the same typed error when its first read, of the history table, waits longer than the target's lockTimeout", async () => {
+    const prod = await server.createDatabase();
+    await asDeployRole(server, prod, "create table t (id bigint primary key)");
+    const target = `prod: { adapter: postgres.target(${JSON.stringify(prod)}), lockTimeout: "200ms" },`;
+    const adopted = await deployProject(server, {}, { otherTargets: target });
+    try {
+      await adopt(adopted.project, { target: "prod" });
+    } finally {
+      await adopted.project.close();
+    }
+    const { project } = await deployProject(
+      server,
+      {},
+      { otherTargets: target },
+    );
+    const holder = await testSession(server, prod);
+    try {
+      await holder.execute(
+        "BEGIN; LOCK TABLE deployment_history.migrations IN ACCESS EXCLUSIVE MODE",
+      );
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(TargetTimeoutError);
+      expect((error as TargetTimeoutError).message).toContain(
+        "lockTimeout (200ms)",
+      );
+    } finally {
+      await holder.close();
+      await project.close();
+    }
+  });
+
   test("refusing a read the differ's own catalog query waited on, names no internal library", async () => {
     // A column default: the lock holds up the differ's read.
     const { project, error } = await adoptingWhileLocked(

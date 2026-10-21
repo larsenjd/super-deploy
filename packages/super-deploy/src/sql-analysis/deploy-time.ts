@@ -424,7 +424,7 @@ function classify(statement: ParsedStatement): Classification {
     if (roleSwitch !== undefined) {
       return refuse(
         "escapes-transaction",
-        `${verb} ${roleSwitch} is not allowed: a deployment runs everything as the deploy role, and roles and privileges are set up on targets outside super-deploy`,
+        `${verb} ${roleSwitch} is not allowed: a deployment runs everything as the deploy role, and roles and privileges are set up on targets outside super-deploy; remove it from the file, and run what needs another role on each target instead (see the README, "Permissions")`,
       );
     }
     return refuse(
