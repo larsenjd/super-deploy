@@ -777,22 +777,26 @@ const statusCommand: CommandDefinition = {
         context.result(`  ${describeAttempt(attempt, report.recorded)}`);
       }
     }
-    // Exit 0 only when nothing would make deploy refuse and drift was checked
-    // and found none (pending migrations are fine), so a pipeline can gate
-    // deploy on status and a scheduled status alerts on drift and on drift
-    // going unchecked. Drift is unchecked only for a history mismatch (itself
-    // a refusal) or while another command holds the target lock.
+    // Exit 0 only when drift was checked and found none and nothing would
+    // make deploy refuse (pending migrations are fine), so a pipeline can
+    // gate deploy on status and a scheduled status alerts on drift and on
+    // drift going unchecked. The error says why.
     if (report.drift !== undefined && report.drift.length > 0) {
       throw new DriftError(report.target, report.drift, {
         command: "status",
         pending: report.pending.length,
       });
     }
+    if (report.drift === undefined) {
+      // Unchecked while another command holds the target lock, or for a
+      // history mismatch, itself a refusal.
+      throw report.driftNotChecked === "target-locked" &&
+        report.lockedBy !== undefined
+        ? new TargetLockedError(report.target, report.lockedBy)
+        : new PreflightFailedError(report.target, preflight);
+    }
     if (refusals.length > 0) {
       throw new PreflightFailedError(report.target, preflight);
-    }
-    if (report.lockedBy !== undefined) {
-      throw new TargetLockedError(report.target, report.lockedBy);
     }
   },
 };
