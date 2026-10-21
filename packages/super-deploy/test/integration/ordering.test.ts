@@ -182,11 +182,11 @@ describe("order-independence check in draft", () => {
     expect(error).toBeInstanceOf(OrderDependenceError);
     expect(error).toMatchObject({
       code: "order-dependent-desired-schema",
-      objects: ["table beta"],
+      objects: ["table public.beta"],
       differences: ["+ comment: pg_class beta created first"],
       failure: undefined,
     });
-    expect((error as Error).message).toContain("table beta");
+    expect((error as Error).message).toContain("table public.beta");
     expect(dir.exists("data-model/draft")).toBe(false);
     expect(await server.databases()).toEqual(before);
   });
@@ -253,7 +253,7 @@ describe("order-independence check in rehearse and finalize", () => {
 
     await expect(rehearse(project)).rejects.toMatchObject({
       code: "order-dependent-desired-schema",
-      objects: ["table beta"],
+      objects: ["table public.beta"],
     });
     expect(await server.databases()).toEqual(before);
   });

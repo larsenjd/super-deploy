@@ -78,12 +78,9 @@ export async function rehearseDeployment(
               managedSchema,
               externalSchemas,
             );
-            await requireSameStructure(
-              replica,
-              desired,
-              managedSchema,
-              `The deployment rehearsal does not match the desired-schema snapshot of ${snapshot.folder}`,
-            );
+            await requireSameStructure(replica, desired, managedSchema, {
+              subject: `The deployment rehearsal does not match the desired-schema snapshot of ${snapshot.folder}`,
+            });
           },
         );
       }

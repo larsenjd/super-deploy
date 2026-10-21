@@ -58,10 +58,43 @@ describe("status", () => {
     const { drift } = await status(project, { target: "dev" });
 
     expect(drift?.map(({ object, change }) => ({ object, change }))).toEqual([
-      { object: "column name of table customers", change: "changed" },
-      { object: "column note of table customers", change: "extra" },
-      { object: "index audit_pkey", change: "extra" },
-      { object: "table audit", change: "extra" },
+      { object: "column name of table public.customers", change: "changed" },
+      { object: "column note of table public.customers", change: "extra" },
+      { object: "index public.audit_pkey", change: "extra" },
+      { object: "table public.audit", change: "extra" },
+    ]);
+    expect(drift?.[0]?.differences).toEqual([
+      {
+        side: "target",
+        line: expect.stringMatching(
+          /^column: customers\.name character varying\(100\) /,
+        ),
+      },
+      {
+        side: "expected",
+        line: expect.stringMatching(/^column: customers\.name text /),
+      },
+    ]);
+    expect(drift?.[1]?.differences).toEqual([
+      {
+        side: "target",
+        line: expect.stringMatching(/^column: customers\.note text /),
+      },
+    ]);
+  });
+
+  test("names objects with their schema, quoting a name once where it needs quotes", async () => {
+    const { project, database } = await deployedProject();
+    await server.query(
+      `create table "Audit Log" (id bigint, "Noted At" timestamptz)`,
+      [],
+      database,
+    );
+
+    const { drift } = await status(project, { target: "dev" });
+
+    expect(drift?.map(({ object, change }) => ({ object, change }))).toEqual([
+      { object: 'table public."Audit Log"', change: "extra" },
     ]);
   });
 
@@ -81,10 +114,13 @@ create index orders_customer_idx on orders (customer_id);
 
     expect(drift).toEqual([
       {
-        object: "index orders_customer_idx",
+        object: "index public.orders_customer_idx",
         change: "missing",
         differences: [
-          "+ index: CREATE INDEX orders_customer_idx ON public.orders USING btree (customer_id) valid=true clustered=false replident=false",
+          {
+            side: "expected",
+            line: "index: CREATE INDEX orders_customer_idx ON public.orders USING btree (customer_id) valid=true clustered=false replident=false",
+          },
         ],
       },
     ]);
@@ -106,12 +142,12 @@ create index orders_customer_idx on orders (customer_id);
     const { drift } = await status(project, { target: "dev" });
 
     expect(drift?.map(({ object, change }) => ({ object, change }))).toEqual([
-      { object: "function total(bigint)", change: "extra" },
+      { object: "function public.total(bigint)", change: "extra" },
       {
-        object: "rule customers_no_delete on table customers",
+        object: "rule customers_no_delete on table public.customers",
         change: "extra",
       },
-      { object: "statistics object customers_stats", change: "extra" },
+      { object: "statistics object public.customers_stats", change: "extra" },
     ]);
   });
 
@@ -164,11 +200,17 @@ create index orders_customer_idx on orders (customer_id);
     );
     expect((await status(project, { target: "dev" })).drift).toEqual([
       {
-        object: "column name of table customers",
+        object: "column name of table public.customers",
         change: "changed",
         differences: [
-          "- comment: pg_class customers.name Display name",
-          "+ comment: pg_class customers.name Full name",
+          {
+            side: "target",
+            line: "comment: pg_class customers.name Display name",
+          },
+          {
+            side: "expected",
+            line: "comment: pg_class customers.name Full name",
+          },
         ],
       },
     ]);
@@ -200,8 +242,14 @@ create index orders_customer_idx on orders (customer_id);
     const { drift } = await status(project, { target: "dev" });
 
     expect(drift?.map(({ object, change }) => ({ object, change }))).toEqual([
-      { object: "column height of composite type size", change: "changed" },
-      { object: "column width of composite type size", change: "changed" },
+      {
+        object: "column height of composite type public.size",
+        change: "changed",
+      },
+      {
+        object: "column width of composite type public.size",
+        change: "changed",
+      },
     ]);
   });
 });
@@ -228,10 +276,10 @@ describe("deploy", () => {
     expect(error).toMatchObject({
       code: "target-drifted",
       target: "dev",
-      objects: [{ object: "index customers_name_idx", change: "extra" }],
+      objects: [{ object: "index public.customers_name_idx", change: "extra" }],
     });
     expect((error as Error).message).toContain(
-      "Target dev has drifted from its recorded migrations: index customers_name_idx (extra)",
+      "Target dev has drifted from its recorded migrations: index public.customers_name_idx (only on the target)",
     );
     // A change made by hand that the next pending migration catches up with is
     // what `mark` records; the differences are still listed by status.
@@ -266,8 +314,8 @@ describe("deploy", () => {
 
     expect(error).toMatchObject({
       objects: [
-        { object: "index customers_pkey", change: "missing" },
-        { object: "table customers", change: "missing" },
+        { object: "index public.customers_pkey", change: "missing" },
+        { object: "table public.customers", change: "missing" },
       ],
     });
     expect((error as Error).message).not.toContain("mark");
@@ -315,7 +363,9 @@ describe("deploy", () => {
       "The deployment rehearsal does not match the desired-schema snapshot of 00002-add-orders",
     );
     expect((error as RehearsalMismatchError).differences).toContainEqual(
-      expect.stringMatching(/^catalog: \+ relation: r not_in_migrations /),
+      expect.stringMatching(
+        /^catalog: from the desired schema: relation: r not_in_migrations /,
+      ),
     );
     expect(
       await server.query(

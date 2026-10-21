@@ -7,6 +7,11 @@
 // which never compares column order and normalises ownership. pg-delta isn't
 // used here: it would read the whole target database (history schema and
 // all) rather than the managed schema.
+//
+// Each difference says in words which side it is on, never a bare `-`/`+`
+// (QA 16): `status`, `mark` and the deploy refusal all use `driftLabel` and
+// `listedDrift`. Adoption, whose replica is a generated desired schema, words
+// its own.
 
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
@@ -29,16 +34,52 @@ export type DriftChange =
   | "changed";
 
 export interface DriftedObject {
-  /** The object as PostgreSQL describes it, e.g. `table audit`, `column note of table customers`. */
+  /**
+   * The object as PostgreSQL describes it, schema-qualified, e.g.
+   * `table app.audit`, `column note of table app.customers`.
+   */
   readonly object: string;
   readonly change: DriftChange;
   /**
-   * The catalog lines that differ: `- <kind>: <line>` only on the target,
-   * `+ <kind>: <line>` only on the replica. Lines of parts of an extra or
-   * missing object (its columns, constraints) are folded into it.
+   * The catalog lines that differ, those on the target first. Lines of
+   * parts of an extra or missing object (its columns, constraints) are
+   * folded into it.
    */
-  readonly differences: readonly string[];
+  readonly differences: readonly DriftDifference[];
 }
+
+/** One catalog line of a drifted object, and the side it was found on. */
+export interface DriftDifference {
+  /**
+   * `target`: only on the target. `expected`: only on the replica, i.e.
+   * expected by the recorded migrations.
+   */
+  readonly side: "target" | "expected";
+  /** `<kind>: <line>`, e.g. `index: CREATE INDEX ...`. */
+  readonly line: string;
+}
+
+/**
+ * The words a drifted object's difference is shown with, by `status`, the
+ * deploy refusal and `mark`: one-sided objects are `only on the target` or
+ * `missing from the target`; a changed object's lines are `on the target` or
+ * `expected by migrations`.
+ */
+export function driftLabel(
+  change: DriftChange,
+  side: DriftDifference["side"],
+): string {
+  if (change !== "changed") {
+    return changeWords[change];
+  }
+  return side === "target" ? "on the target" : "expected by migrations";
+}
+
+const changeWords: Readonly<Record<DriftChange, string>> = {
+  extra: "only on the target",
+  missing: "missing from the target",
+  changed: "changed",
+};
 
 /** The drifted objects, sorted by object; empty when the managed schemas match. */
 export async function driftBetween(
@@ -71,16 +112,18 @@ export function driftedObjects(
   target: readonly CatalogFact[],
   replica: readonly CatalogFact[],
 ): DriftedObject[] {
-  const byObject = new Map<string, { sides: Set<string>; lines: string[] }>();
+  const byObject = new Map<string, DriftDifference[]>();
   for (const { side, fact } of factDifferences(target, replica)) {
-    const entry = byObject.get(fact.object) ?? { sides: new Set(), lines: [] };
-    entry.sides.add(side);
-    entry.lines.push(`${side} ${factLine(fact)}`);
-    byObject.set(fact.object, entry);
+    const lines = byObject.get(fact.object) ?? [];
+    lines.push({
+      side: side === "actual" ? "target" : "expected",
+      line: factLine(fact),
+    });
+    byObject.set(fact.object, lines);
   }
   const onTarget = new Set(target.map((fact) => fact.object));
   const onReplica = new Set(replica.map((fact) => fact.object));
-  const objects = [...byObject].map(([object, { lines }]) => ({
+  const objects = [...byObject].map(([object, lines]) => ({
     object,
     change: (!onReplica.has(object)
       ? "extra"
@@ -99,7 +142,7 @@ export function driftedObjects(
       .map((o) => [o.object, o] as const),
   );
   const reported: DriftedObject[] = [];
-  const folded = new Map<string, string[]>();
+  const folded = new Map<string, DriftDifference[]>();
   for (const drifted of objects) {
     const parent =
       drifted.change === "changed"
@@ -129,9 +172,12 @@ export function driftedObjects(
     .sort((a, b) => (a.object < b.object ? -1 : a.object > b.object ? 1 : 0));
 }
 
-/** Up to five drifted objects with their change, e.g. `table t (changed)`. */
+/**
+ * Up to five drifted objects with their change in words, e.g.
+ * `table app.t (changed)`, `index app.i (only on the target)`.
+ */
 export function listedDrift(objects: readonly DriftedObject[]): string {
-  return listed(objects.map((o) => `${o.object} (${o.change})`));
+  return listed(objects.map((o) => `${o.object} (${changeWords[o.change]})`));
 }
 
 /** What a {@link DriftError}'s message depends on besides the drift. */
