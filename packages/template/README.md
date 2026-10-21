@@ -319,13 +319,22 @@ super-deploy's reads of the target's schema (its drift check, and
 number of milliseconds (`500`) or a string with the unit `ms`, `s`, `min` or
 `h`: `"500ms"`, `"5s"`, `"2min"`, `"1h"`.
 
-If the CLI dies during a deployment (killed, or its machine lost), the
-server rolls the deployment back once it notices the connection is gone.
-super-deploy has the server check every 5 seconds while a statement runs
-(PostgreSQL's `client_connection_check_interval`; a server on Windows can't,
-and runs the statement to its end). Until then the target stays locked:
-`deploy` and `status` name the holding attempt, its server process, and the
-statement it is running and since when. If you know that command is dead,
+If the CLI dies or hangs during a deployment (killed, frozen, or its machine
+or network lost), the server rolls the deployment back once it ends the
+session, and super-deploy sets each target session up so that comes soon:
+
+- a statement whose client is gone is ended within seconds: the server
+  checks every 5 seconds while a statement runs (PostgreSQL's
+  `client_connection_check_interval`; a server on Windows can't, and runs
+  the statement to its end);
+- a session left idle in its transaction is ended after a minute
+  (`idle_in_transaction_session_timeout`);
+- a vanished machine is detected within about a minute, even between
+  statements (`tcp_keepalives_idle` and friends; not over a Unix socket).
+
+A server that refuses one of these settings runs without it. Until the
+session ends the target stays locked: `deploy` and `status` name the holding
+attempt, its server process, and the statement it is running and since when. If you know that command is dead,
 `select pg_terminate_backend(<server process>)` ends its session, which rolls
 the deployment back and releases the lock. Cancelling only its statement
 (`pg_cancel_backend`) isn't enough: the lock belongs to the session.
@@ -887,6 +896,15 @@ new constraint rejects, the whole transaction is rolled back: the target is
 as it was before the deployment, and records none of its migrations. Other
 migrations in the same deployment are rolled back too.
 
+If the target's session ends instead (an administrator's
+`pg_terminate_backend`, a server shutdown, a lost connection), or a lock or
+statement timeout runs out while super-deploy reads the target before
+deploying, the error says so, names the target, and says it is unchanged:
+nothing had changed yet, or the deployment rolled back. Retry once the
+target is reachable; if the session was ended on purpose, find out why
+first. Only a connection lost during the final COMMIT leaves the outcome
+unknown: the next `status` or `deploy` settles it.
+
 The migration that failed is finalized, so it can't be edited, and targets
 that already ran it keep it. Instead, give it a **Recovery**: replacement
 scripts and seed data for the targets that haven't run it yet. For a failure
@@ -1075,7 +1093,10 @@ path:
   an older desired schema (run `draft` again), and its confirmation says so
   when `schema-change.sql` was edited by hand since `draft` generated it.
   `--with-seed` loads the draft's seed data first, which
-  may clash with data already on the target. The target then records that
+  may clash with data already on the target. If a file fails, the whole
+  transaction rolls back and the error says the target is unchanged; for a
+  data error it says to fix the draft's scripts (or its seed data) and run
+  `deploy-draft` again. Otherwise the target records that
   it holds the draft, not a migration: `deploy`, `mark` and another
   `deploy-draft` refuse it, and `status` doesn't check it for drift, until
   `rebuild` resets it.

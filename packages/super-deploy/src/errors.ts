@@ -70,3 +70,42 @@ export function errorReason(error: unknown): string {
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" && code !== "" ? code : error.name;
 }
+
+/**
+ * The SQLSTATE an error carries, if any. Node's own codes (`EPIPE`,
+ * `ECONNRESET`) aren't SQLSTATEs: a SQLSTATE's class starts with a digit or
+ * F, H, P or X.
+ */
+export function sqlStateOf(error: unknown): string | undefined {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? error.code
+      : undefined;
+  return typeof code === "string" && /^[0-9FHPX][0-9A-Z]{4}$/.test(code)
+    ? code
+    : undefined;
+}
+
+/** How a session ended: by the server, or by losing the connection. */
+export type SessionEnding = "ended" | "lost";
+
+/**
+ * Whether a statement's error says its session is gone, and how: `ended` by
+ * the server (SQLSTATE 57P01-57P05, such as `pg_terminate_backend` or a
+ * shutdown, and 25P03, the idle-in-transaction timeout), or `lost` (class 08,
+ * or no SQLSTATE at all: node-postgres reports a dropped connection without
+ * one). Undefined when the server refused the statement and the session
+ * lives on, and for the library's own errors (e.g. InterruptedError).
+ */
+export function sessionEnding(error: unknown): SessionEnding | undefined {
+  if (error instanceof SuperDeployError) {
+    return undefined;
+  }
+  const sqlState = sqlStateOf(error);
+  if (sqlState === undefined || sqlState.startsWith("08")) {
+    return "lost";
+  }
+  return sqlState.startsWith("57P") || sqlState === "25P03"
+    ? "ended"
+    : undefined;
+}

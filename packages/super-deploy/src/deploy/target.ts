@@ -2,14 +2,30 @@
 // deployment adapter (only when a command actually touches it), check the
 // server, and read the locale its rehearsals must match.
 //
-// Every target session sets client_connection_check_interval (5 s). Without
-// it PostgreSQL notices a vanished client only when it next writes to it, so
-// a statement whose CLI was killed (SIGKILL, a lost laptop) runs to its end,
-// possibly hours, holding the target lock and its table locks. With it the
-// server polls the socket while the statement runs and ends the session soon
-// after the client is gone. The setting is user-settable, but a server on a
-// platform that can't poll (Windows) refuses any value but 0 with
-// invalid_parameter_value; such a server runs without the check.
+// Every target session sets what makes the server end it once its client is
+// gone, so a dead or hung CLI never holds the target lock and its table
+// locks for long (QA 150). All are user-settable:
+// - client_connection_check_interval (5 s). Without it PostgreSQL notices a
+//   vanished client only when it next writes to it, so a statement whose CLI
+//   was killed (SIGKILL, a lost laptop) runs to its end, possibly hours. With
+//   it the server polls the socket while a statement runs. Only while one
+//   runs: between statements it doesn't apply.
+// - idle_in_transaction_session_timeout (1 min): a transaction left idle by
+//   a hung or vanished client rolls back and its session ends. No command
+//   keeps a target transaction idle while it works on its own: the YES
+//   prompt comes before the lock, rehearsals run on throwaway databases while
+//   the target session sits outside any transaction, and the drift check's
+//   READ ONLY transaction is one short read.
+// - tcp_keepalives_idle 30 s, tcp_keepalives_interval 10 s,
+//   tcp_keepalives_count 3: a vanished machine's connection is found dead in
+//   about a minute even while idle outside a transaction (without them the
+//   operating system's defaults apply, about 2 h 11 min on Linux). A Unix
+//   socket ignores them.
+// Each is set on its own, and a server that refuses one runs without it: a
+// server on a platform that can't poll the socket (Windows) refuses any
+// client_connection_check_interval but 0 with invalid_parameter_value.
+// Not set: idle_session_timeout, which would end the session-level target
+// lock during a long rehearsal.
 
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
 import { AdapterError } from "../adapters/types.ts";
@@ -43,8 +59,8 @@ export function targetTimeouts(target: ResolvedTarget): string[] {
 
 /**
  * Opens a session to `target` through its adapter and refuses a server that
- * isn't PostgreSQL 18, then sets the client connection check (see the
- * header). Every call is one `adapter.connect()`; a deployment calls it
+ * isn't PostgreSQL 18, then sets what ends its session once its client is
+ * gone (see the header). Every call is one `adapter.connect()`; a deployment calls it
  * twice (see deploy/engine.ts for which session is which). The
  * adapter is handed the target's connectTimeout and `signal`; a connect that
  * fails once `signal` has aborted is InterruptedError. A connection-string
@@ -84,12 +100,27 @@ export async function connectTarget(
   return session;
 }
 
-/** Sets client_connection_check_interval for the session, where the server's platform supports it (see the header). */
+/** What the server ends a session whose client is gone by (see the header). */
+const clientGoneSettings: readonly (readonly [string, string])[] = [
+  ["client_connection_check_interval", "5s"],
+  ["idle_in_transaction_session_timeout", "1min"],
+  ["tcp_keepalives_idle", "30s"],
+  ["tcp_keepalives_interval", "10s"],
+  ["tcp_keepalives_count", "3"],
+];
+
+/** Sets each of `clientGoneSettings` for the session, skipping any the server refuses. */
 const checkClientConnection = `DO $$
 BEGIN
-  PERFORM set_config('client_connection_check_interval', '5s', false);
-EXCEPTION WHEN invalid_parameter_value THEN
-  NULL;
+${clientGoneSettings
+  .map(
+    ([name, value]) => `  BEGIN
+    PERFORM set_config('${name}', '${value}', false);
+  EXCEPTION WHEN invalid_parameter_value THEN
+    NULL;
+  END;`,
+  )
+  .join("\n")}
 END
 $$`;
 

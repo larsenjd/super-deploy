@@ -291,14 +291,15 @@ describe("deploy", () => {
       server,
       { "customers.sql": customers },
       {
-        // Fault injection: the target refuses migration 2's schema change.
+        // Fault injection: the target refuses migration 2's schema change
+        // (a SQLSTATE: without one it would be a lost connection).
         adapter: `{
   async connect() {
     const session = await real.connect();
     return {
       ...session,
       async execute(sql) {
-        if (sql.includes('"orders"')) throw new Error("injected failure");
+        if (sql.includes('"orders"')) throw Object.assign(new Error("injected failure"), { code: "42501" });
         return session.execute(sql);
       },
     };
