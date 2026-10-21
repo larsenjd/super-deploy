@@ -105,7 +105,14 @@ function projectManifest(text: string, root: string): string {
 
 /** The template's config with `port` as its `dev` server's port. */
 function withDevPort(config: string, port: number): string {
-  return config.replace(/^(\s*port: )\d+,$/m, `$1${port},`);
+  const portLine = /^(\s*port: )\d+,$/m;
+  if (!portLine.test(config)) {
+    // A template change broke init: fail rather than share the template's port.
+    throw new Error(
+      "The template's super-deploy.config.ts has no `port: <number>,` line for init to rewrite",
+    );
+  }
+  return config.replace(portLine, `$1${port},`);
 }
 
 /** An npm package name from a folder name: lowercase, URL-safe characters only. */

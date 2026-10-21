@@ -12,6 +12,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import pg from "pg";
@@ -22,6 +23,7 @@ import {
   InitConflictError,
   init,
   loadProject,
+  rehearse,
   status,
 } from "super-deploy";
 import { describe, expect, onTestFinished, test, vi } from "vitest";
@@ -47,6 +49,20 @@ async function queryAt(url: string, sql: string): Promise<unknown[]> {
     return (await client.query(sql)).rows;
   } finally {
     await client.end();
+  }
+}
+
+/** Listens on `port` of 127.0.0.1 until the test finishes, unless something already does. */
+async function holdPort(port: number): Promise<void> {
+  const holder = createServer();
+  const listening = await new Promise<boolean>((resolve) => {
+    holder.once("error", () => resolve(false));
+    holder.listen(port, "127.0.0.1", () => resolve(true));
+  });
+  if (listening) {
+    onTestFinished(
+      () => new Promise<void>((resolve) => holder.close(() => resolve())),
+    );
   }
 }
 
@@ -142,42 +158,78 @@ create function customer_count() returns bigint
     expect(existsSync(join(root, ".super-deploy", "rehearsal"))).toBe(true);
   });
 
-  test("rehearsals create their databases on a server of their own, never on dev's", async () => {
+  test("a rehearsal creates its databases on a server of its own, never on dev's", async () => {
     const root = await emptyDirectory();
     await init({ directory: root });
+    await mkdir(join(root, "data-model", "desired-schema"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(root, "data-model", "desired-schema", "customers.sql"),
+      "create table customers (id bigint primary key, name text not null);\n",
+    );
     const project = await loadProject({ cwd: root });
     try {
+      await draft(project, { name: "add customers" });
       // Starts dev's server.
       await (await project.config.targets.dev?.adapter.connect())?.close();
-      const throwaway = await project.config.rehearsal.createDatabase({
-        encoding: "UTF8",
-        locale: "C",
-        collationProvider: "libc",
-      });
-      try {
-        const databases =
-          "select datname from pg_database where not datistemplate order by 1";
-        const session = await throwaway.connect();
-        try {
-          expect((await session.query(databases)).rows).toContainEqual({
-            datname: throwaway.name,
-          });
-        } finally {
-          await session.close();
-        }
-        const port = await devPort(root);
-        expect(
-          await queryAt(
-            `postgres://super_deploy:super_deploy@127.0.0.1:${port}/postgres`,
-            databases,
-          ),
-        ).not.toContainEqual({ datname: throwaway.name });
-      } finally {
-        await throwaway.drop();
+      const devDatabases = () =>
+        queryAt(
+          `postgres://super_deploy:super_deploy@127.0.0.1:${port}/postgres`,
+          databases,
+        );
+      const databases =
+        "select datname from pg_database where not datistemplate order by 1";
+      const port = await devPort(root);
+      // The databases on both servers, listed each time the rehearsal has
+      // just created one.
+      const seen: { created: string; rehearsal: unknown[]; dev: unknown[] }[] =
+        [];
+      const { rehearsal } = project.config;
+      const createDatabase = rehearsal.createDatabase.bind(rehearsal);
+      vi.spyOn(rehearsal, "createDatabase").mockImplementation(
+        async (request) => {
+          const throwaway = await createDatabase(request);
+          const session = await throwaway.connect();
+          try {
+            seen.push({
+              created: throwaway.name,
+              rehearsal: (await session.query(databases)).rows,
+              dev: await devDatabases(),
+            });
+          } finally {
+            await session.close();
+          }
+          return throwaway;
+        },
+      );
+
+      await rehearse(project);
+
+      expect(seen).not.toEqual([]);
+      for (const { created, rehearsal: onRehearsal, dev } of seen) {
+        expect(onRehearsal).toContainEqual({ datname: created });
+        expect(dev).toEqual([{ datname: "dev" }, { datname: "postgres" }]);
       }
     } finally {
       await project.close();
     }
+  });
+
+  test("the dev port is written into the config, never the template's own", async () => {
+    const template = await readFile(
+      join(libraryFolder, "..", "template", "super-deploy.config.ts"),
+      "utf8",
+    );
+    const templatePort = Number(/^\s*port: (\d+),$/m.exec(template)?.[1]);
+    expect(templatePort).toBeGreaterThan(0);
+    // Held, so a free port can't happen to be the template's.
+    await holdPort(templatePort);
+    const root = await emptyDirectory();
+
+    await init({ directory: root });
+
+    expect(await devPort(root)).not.toBe(templatePort);
   });
 
   test("the project is named after its folder and depends on this library, not the workspace", async () => {
