@@ -455,11 +455,60 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
     ]);
   });
 
-  test("takes the target lock: refuses while a deployment holds it, naming that attempt", async () => {
+  test("refuses before asking while a deployment holds the target lock, naming that attempt: no attempt is recorded", async () => {
     const { dir, database } = await guardedProject({
       adapter: pausingAtCommit,
     });
-    const project = await loadProject({ cwd: dir.root });
+    await whileDeploying(dir.root, async () => {
+      const terminal = spawnTerminal(
+        ["disposable", "--target", "dev", "--set", "yes"],
+        { cwd: dir.root },
+      );
+      await terminal.waitFor(
+        /Error: Target dev is locked by attempt #1 \(deploy by \S+, started/,
+      );
+      expect(await terminal.exited).toBe(1);
+      expect(terminal.screen).not.toContain("Type YES");
+    });
+    expect(await attemptOutcomes(database)).toEqual([
+      { command: "deploy", outcome: "succeeded" },
+    ]);
+  });
+
+  test("takes the target lock after YES: refuses if a deployment took it while the question waited", async () => {
+    const { dir, database } = await guardedProject({
+      adapter: pausingAtCommit,
+    });
+    const terminal = spawnTerminal(
+      ["disposable", "--target", "dev", "--set", "yes"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor("Type YES");
+    await whileDeploying(dir.root, async () => {
+      terminal.type(`YES${keys.enter}`);
+      await terminal.waitFor(
+        /Error: Target dev is locked by attempt #1 \(deploy by \S+, started/,
+      );
+      expect(await terminal.exited).toBe(1);
+    });
+    expect(await attemptOutcomes(database)).toEqual([
+      { command: "deploy", outcome: "succeeded" },
+      { command: "disposable", outcome: "failed" },
+    ]);
+  });
+});
+
+/**
+ * Finalizes `add customers` and runs `body` while its deployment to `dev`
+ * holds the target lock, paused at COMMIT (the project's adapter must be
+ * `pausingAtCommit`); the deployment then finishes.
+ */
+async function whileDeploying(
+  root: string,
+  body: () => Promise<void>,
+): Promise<void> {
+  const project = await loadProject({ cwd: root });
+  try {
     await draft(project, { name: "add customers" });
     await finalize(project);
     let release = () => {};
@@ -476,33 +525,23 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
     const deploying = deploy(project, { target: "dev" });
     try {
       await reached;
-      const terminal = spawnTerminal(
-        ["disposable", "--target", "dev", "--set", "yes"],
-        { cwd: dir.root },
-      );
-      await terminal.waitFor("Type YES");
-      terminal.type(`YES${keys.enter}`);
-      await terminal.waitFor(
-        /Error: Target dev is locked by attempt #1 \(deploy by \S+, started/,
-      );
-      expect(await terminal.exited).toBe(1);
+      await body();
     } finally {
       release();
       await deploying;
-      await project.close();
     }
-    expect(
-      await server.query(
-        "select command, outcome from deployment_history.attempts order by id",
-        [],
-        database,
-      ),
-    ).toEqual([
-      { command: "deploy", outcome: "succeeded" },
-      { command: "disposable", outcome: "failed" },
-    ]);
-  });
-});
+  } finally {
+    await project.close();
+  }
+}
+
+async function attemptOutcomes(database: string) {
+  return server.query(
+    "select command, outcome from deployment_history.attempts order by id",
+    [],
+    database,
+  );
+}
 
 describe.skipIf(process.platform === "win32")("from the menu", () => {
   test("disposable asks for the target and the value, then goes through the guard and returns to the menu", async () => {

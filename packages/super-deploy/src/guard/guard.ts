@@ -2,20 +2,25 @@
 // mark) goes through before it changes a target. In order:
 //   1. refuse in CI or without a terminal on stdin and stdout (before the
 //      target is touched at all)
-//   2. connect and read the target's view (host, database, recorded
-//      migrations, deployed draft, disposable flag); the command checks its preconditions
-//      on it and says what it is about to do (or that there is nothing to do)
-//   3. show the action plus the target's name, host, database and last
+//   2. connect and, without waiting or taking it, check whether the target
+//      lock is held: another attempt running is refused at once with the
+//      TargetLockedError step 6 would give, before the person reads a target
+//      state that attempt is about to change (QA 171). Two people can still
+//      both reach the question; step 6's try-lock stays the real guard
+//   3. read the target's view (host, database, recorded migrations, deployed
+//      draft, disposable flag); the command checks its preconditions on it
+//      and says what it is about to do (or that there is nothing to do)
+//   4. show the action plus the target's name, host, database and last
 //      recorded migration at the terminal. The host is the one the adapter
 //      says it connects to (DeploymentAdapter.host), then the address the
 //      server reports in brackets when it differs: behind a load balancer or
 //      pooler the server's address alone is one the user may never have
 //      seen. The fingerprint compares the server's address.
-//   4. require YES, typed exactly (anything else, Escape or Ctrl+C refuses)
-//   5. withLockedTarget: open the manual attempt (command name, OS username),
+//   5. require YES, typed exactly (anything else, Escape or Ctrl+C refuses)
+//   6. withLockedTarget: open the manual attempt (command name, OS username),
 //      take the target lock
-//   6. re-read the view under the lock: if what was shown has changed, refuse
-//   7. run the command's body; the attempt ends as withLockedTarget decides
+//   7. re-read the view under the lock: if what was shown has changed, refuse
+//   8. run the command's body; the attempt ends as withLockedTarget decides
 //
 // Terminal-only by design: the guard reads this process's own stdin and
 // stdout and asks there itself. There is no answer callback and no option,
@@ -34,6 +39,7 @@ import {
   readRecordedMigrations,
   readTargetSettings,
 } from "../deploy/history.ts";
+import { lockHolder, TargetLockedError } from "../deploy/lock.ts";
 import { connectTarget, resolveTarget } from "../deploy/target.ts";
 import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
@@ -96,6 +102,7 @@ export async function runGuarded<P, T>(
   let decision: Proceed<P> | NothingToDo<T>;
   let configured: string | undefined;
   try {
+    await refuseIfLocked(project, target, session);
     shown = await readTargetView(project, target, session);
     decision = await action.check(shown, session);
     configured = await configuredHost(target);
@@ -143,6 +150,18 @@ function requireTerminal(command: GuardedCommand): void {
   }
   if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
     throw new TerminalRequiredError(command, "no-terminal");
+  }
+}
+
+/** Step 2: another attempt holding the target lock refuses before anything is asked. */
+async function refuseIfLocked(
+  project: Project,
+  target: ResolvedTarget,
+  session: Session,
+): Promise<void> {
+  const holder = await lockHolder(session, project.config.historySchema);
+  if (holder.pid !== undefined) {
+    throw new TargetLockedError(target.name, holder);
   }
 }
 
