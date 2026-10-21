@@ -44,7 +44,11 @@ import {
 } from "./history.ts";
 import { pendingMigrations } from "./pending.ts";
 import type { HistoryMismatch } from "./preflight.ts";
-import { heldDraft, historyMismatches } from "./preflight.ts";
+import {
+  describeHeldDraft,
+  historyMismatches,
+  onlyHeldDraft,
+} from "./preflight.ts";
 import { targetDatabaseRequest } from "./target.ts";
 
 /**
@@ -74,13 +78,11 @@ export function nextToMark(
 ): MigrationWithUnit {
   const mismatches = historyMismatches(migrations, recorded, draft);
   if (mismatches.length > 0) {
-    const onlyDraft =
-      draft !== undefined &&
-      mismatches.every((mismatch) => mismatch.reason === "draft");
+    const held = onlyHeldDraft(mismatches, draft);
     throw new HistoryMismatchError(
       targetName,
       mismatches,
-      onlyDraft ? heldDraft(draft, recorded) : undefined,
+      held === undefined ? undefined : describeHeldDraft(held, recorded),
     );
   }
   const [next] = pendingMigrations(migrations, recorded);

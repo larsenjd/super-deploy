@@ -138,14 +138,28 @@ export async function preflightChecks(
   };
 }
 
+/**
+ * Each reason the findings refuse a deployment, as a line for people:
+ * missing external schemas, the history schema, ownership, then history
+ * mismatches. Empty when they don't refuse (warnings never do).
+ */
+export function preflightRefusals(findings: PreflightFindings): string[] {
+  return [
+    ...findings.missingExternalSchemas.map(
+      (schema) =>
+        `external schema "${schema}" does not exist (it is declared in externalSchemas)`,
+    ),
+    ...(findings.historySchemaNotCreatable === undefined
+      ? []
+      : [historySchemaNotCreatableMessage(findings.historySchemaNotCreatable)]),
+    ...findings.notOwned.map(notOwnedMessage),
+    ...findings.historyMismatches.map((mismatch) => mismatch.message),
+  ];
+}
+
 /** True when the findings refuse a deployment (warnings never do). */
 export function refusesDeployment(findings: PreflightFindings): boolean {
-  return (
-    findings.missingExternalSchemas.length > 0 ||
-    findings.historySchemaNotCreatable !== undefined ||
-    findings.notOwned.length > 0 ||
-    findings.historyMismatches.length > 0
-  );
+  return preflightRefusals(findings).length > 0;
 }
 
 /**
@@ -308,8 +322,23 @@ function draftMismatch(
   return {
     number: (draft.baseMigration ?? 0) + 1,
     reason: "draft",
-    message: `the target holds ${heldDraft(draft, recorded)}`,
+    message: `the target holds ${describeHeldDraft(draft, recorded)}`,
   };
+}
+
+/**
+ * The target's deployed draft when it is the only history mismatch: its
+ * recorded migrations match the project's, and only the draft is in the way.
+ */
+export function onlyHeldDraft(
+  mismatches: readonly HistoryMismatch[],
+  draft: DeployedDraft | undefined,
+): DeployedDraft | undefined {
+  return draft !== undefined &&
+    mismatches.length > 0 &&
+    mismatches.every((mismatch) => mismatch.reason === "draft")
+    ? draft
+    : undefined;
 }
 
 /**
@@ -317,7 +346,7 @@ function draftMismatch(
  * "draft <name> (deployed by attempt #N on top of <migration>, with(out)
  * seed data), not a finalized migration: reset it with rebuild --to <N>".
  */
-export function heldDraft(
+export function describeHeldDraft(
   draft: DeployedDraft,
   recorded: readonly RecordedMigration[],
 ): string {
@@ -399,23 +428,8 @@ export class PreflightFailedError extends SuperDeployError {
   readonly findings: PreflightFindings;
 
   constructor(target: string, findings: PreflightFindings) {
-    const schemas = findings.missingExternalSchemas.map(
-      (schema) =>
-        `external schema "${schema}" does not exist (it is declared in externalSchemas)`,
-    );
-    const history = findings.historyMismatches.map(
-      (mismatch) => mismatch.message,
-    );
-    const historySchema =
-      findings.historySchemaNotCreatable === undefined
-        ? []
-        : [
-            historySchemaNotCreatableMessage(
-              findings.historySchemaNotCreatable,
-            ),
-          ];
     super(
-      `Target ${target} failed the deploy pre-flight checks: ${[...schemas, ...historySchema, ...findings.notOwned.map(notOwnedMessage), ...history].join("; ")}`,
+      `Target ${target} failed the deploy pre-flight checks: ${preflightRefusals(findings).join("; ")}`,
     );
     this.target = target;
     this.findings = findings;

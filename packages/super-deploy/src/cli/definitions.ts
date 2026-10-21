@@ -23,8 +23,7 @@ import { ValidationFailedError, validate } from "../commands/validate.ts";
 import type { AttemptRecord, RecordedMigration } from "../deploy/history.ts";
 import { describeLockHolder, lockHolderName } from "../deploy/lock.ts";
 import { MarkMismatchError } from "../deploy/mark.ts";
-import { notOwnedMessage } from "../deploy/ownership.ts";
-import { historySchemaNotCreatableMessage } from "../deploy/preflight.ts";
+import { preflightRefusals } from "../deploy/preflight.ts";
 import { plural } from "../errors.ts";
 import type { Project } from "../project.ts";
 import type {
@@ -704,20 +703,7 @@ const statusCommand: CommandDefinition = {
     if (report.lockedBy !== undefined) {
       context.result(`Locked by ${describeLockHolder(report.lockedBy)}`);
     }
-    const refusals = [
-      ...preflight.missingExternalSchemas.map(
-        (schema) => `external schema "${schema}" does not exist`,
-      ),
-      ...(preflight.historySchemaNotCreatable === undefined
-        ? []
-        : [
-            historySchemaNotCreatableMessage(
-              preflight.historySchemaNotCreatable,
-            ),
-          ]),
-      ...preflight.notOwned.map(notOwnedMessage),
-      ...preflight.historyMismatches.map((mismatch) => mismatch.message),
-    ];
+    const refusals = preflightRefusals(preflight);
     if (refusals.length > 0) {
       context.result("Deploy would refuse:");
       for (const refusal of refusals) {

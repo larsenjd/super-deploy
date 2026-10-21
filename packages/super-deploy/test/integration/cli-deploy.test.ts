@@ -86,7 +86,7 @@ describe("deploy and status", () => {
     expect(report).toMatchObject({
       exitCode: 0,
       stdout:
-        'Target dev: 0 migrations recorded, 1 pending\nDeploy would refuse:\n  external schema "loader" does not exist\nPending:\n  00001-add-customers\n',
+        'Target dev: 0 migrations recorded, 1 pending\nDeploy would refuse:\n  external schema "loader" does not exist (it is declared in externalSchemas)\nPending:\n  00001-add-customers\n',
       stderr: superuserWarning,
     });
 

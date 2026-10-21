@@ -25,6 +25,7 @@ import {
 import { type LockHolder, lockHolder } from "../deploy/lock.ts";
 import { pendingMigrations } from "../deploy/pending.ts";
 import {
+  onlyHeldDraft,
   type PreflightFindings,
   preflightChecks,
 } from "../deploy/preflight.ts";
@@ -127,8 +128,7 @@ export async function status(
         ? lockedBy !== undefined
           ? "target-locked"
           : undefined
-        : draft !== undefined &&
-            mismatches.every((mismatch) => mismatch.reason === "draft")
+        : onlyHeldDraft(mismatches, draft) !== undefined
           ? "deployed-draft"
           : "history-mismatch";
     const drift =
