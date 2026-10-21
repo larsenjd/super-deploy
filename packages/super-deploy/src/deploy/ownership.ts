@@ -19,7 +19,10 @@
 // sequence (its `a` dependency on the table), anything with an internal (`i`)
 // dependency (identity sequences, row types, arrays, multiranges, a range's
 // constructors) and an extension's members (`e`). Each object comes with the ALTER ... OWNER TO that
-// gives it to the deploy role, its names quoted and schema-qualified.
+// gives it to the deploy role, its names quoted and schema-qualified. What
+// `pg_database_owner` owns (`public`) gets ALTER DATABASE ... OWNER TO
+// instead, as the README advises: re-owning `public` would break
+// PostgreSQL's convention that the database's owner owns it.
 //
 // `rebuild` judges with the same test what its wipe can drop
 // (`objectsNotDroppable`), which is less than ownership: the schema's owner
@@ -36,9 +39,17 @@ import { SuperDeployError } from "../errors.ts";
 export interface NotOwnedObject {
   /** e.g. `schema app`, `table app.customers`, `function app.answer()`. */
   readonly object: string;
-  /** The role that owns it. */
+  /**
+   * The role that owns it. `pg_database_owner` comes with the database and
+   * the role it stands for: `pg_database_owner (the owner of database shop,
+   * postgres)`.
+   */
   readonly owner: string;
-  /** The statement that gives it to the deploy role, e.g. `ALTER TABLE app.customers OWNER TO deployer`. */
+  /**
+   * The statement that gives it to the deploy role, e.g. `ALTER TABLE
+   * app.customers OWNER TO deployer`; for what `pg_database_owner` owns,
+   * `ALTER DATABASE shop OWNER TO deployer`.
+   */
   readonly fix: string;
 }
 
@@ -125,25 +136,45 @@ export async function objectsNotOwned(
     kind: string;
     name: string;
     owner: string;
+    database: string;
+    database_owner: string;
     deploy_role: string;
   }>(
     `WITH s AS (SELECT oid, nspname, nspowner FROM pg_catalog.pg_namespace WHERE nspname = $1),
-     owned AS (${ownedObjectsQuery})
-     SELECT kind, name, pg_catalog.pg_get_userbyid(owner) AS owner,
+     owned AS (${ownedObjectsQuery}),
+     db AS (SELECT pg_catalog.quote_ident(datname) AS name, pg_catalog.pg_get_userbyid(datdba) AS owner
+              FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())
+     SELECT kind, owned.name, pg_catalog.pg_get_userbyid(owned.owner) AS owner,
+            db.name AS database, db.owner AS database_owner,
             pg_catalog.quote_ident(current_user) AS deploy_role
-       FROM owned
-      WHERE NOT pg_catalog.pg_has_role(current_user, owner, 'USAGE')
+       FROM owned, db
+      WHERE NOT pg_catalog.pg_has_role(current_user, owned.owner, 'USAGE')
         AND NOT EXISTS (SELECT FROM pg_catalog.pg_depend d
                          WHERE d.classid = owned.class AND d.objid = owned.oid AND d.deptype IN ('e', 'i'))
-      ORDER BY kind <> 'SCHEMA', kind COLLATE "C", name COLLATE "C"`,
+      ORDER BY kind <> 'SCHEMA', kind COLLATE "C", owned.name COLLATE "C"`,
     [managedSchema],
   );
-  return rows.map(({ kind, name, owner, deploy_role }) => ({
-    object: `${kind.toLowerCase()} ${name}`,
-    owner,
-    fix: `ALTER ${kind} ${name} OWNER TO ${deploy_role}`,
-  }));
+  return rows.map(
+    ({ kind, name, owner, database, database_owner, deploy_role }) =>
+      owner === databaseOwnerRole
+        ? {
+            object: `${kind.toLowerCase()} ${name}`,
+            owner: `${owner} (the owner of database ${database}, ${database_owner})`,
+            fix: `ALTER DATABASE ${database} OWNER TO ${deploy_role}`,
+          }
+        : {
+            object: `${kind.toLowerCase()} ${name}`,
+            owner,
+            fix: `ALTER ${kind} ${name} OWNER TO ${deploy_role}`,
+          },
+  );
 }
+
+/**
+ * The role PostgreSQL 14+ stands in for the database's owner with; it owns
+ * `public` from 15 on.
+ */
+const databaseOwnerRole = "pg_database_owner";
 
 /**
  * The objects in the managed schema (sorted) that the session's current role

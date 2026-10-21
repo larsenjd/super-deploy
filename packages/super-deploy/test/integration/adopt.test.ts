@@ -762,6 +762,49 @@ describe("adopt", () => {
     }
   });
 
+  test("refuses public owned by pg_database_owner with the database's owner and ALTER DATABASE as its fix, until the deploy role owns the database", async () => {
+    const deployer = roleName("adopt_public_deployer");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      do $$ begin execute format('grant connect, create on database %I to ${deployer}', current_database()); end $$;
+      create table public.t (id bigint generated always as identity primary key);
+      alter table public.t owner to ${deployer};
+    `);
+    const { project } = await deployProject(
+      server,
+      {},
+      {
+        preamble: asDeployerPreamble(prod, deployer),
+        otherTargets: "prod: { adapter: asDeployer },",
+      },
+    );
+    try {
+      const fix = `ALTER DATABASE ${prod} OWNER TO ${deployer}`;
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(NotOwnedError);
+      expect((error as NotOwnedError).objects).toEqual([
+        {
+          object: "schema public",
+          owner: `pg_database_owner (the owner of database ${prod}, super_deploy)`,
+          fix,
+        },
+      ]);
+      expect(
+        (await status(project, { target: "prod" })).preflight.notOwned,
+      ).toEqual([expect.objectContaining({ fix })]);
+
+      await server.query(fix, [], prod);
+      await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
+        migration: { folder: "00001-adopt" },
+      });
+    } finally {
+      await project.close();
+    }
+  });
+
   test("refuses a target whose deploy role can't create the history schema, naming the grant, before rehearsing or writing anything, until it can", async () => {
     const deployer = roleName("adopt_deployer");
     const prod = await server.createDatabase(`
