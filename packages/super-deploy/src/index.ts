@@ -208,8 +208,11 @@ export {
 export { OrderDependenceError } from "./rehearsal/order-independence.ts";
 export type {
   DeploymentRollback,
+  DraftDeploymentRollback,
   PostgresRefusal,
+  RebuildRollback,
   SqlFileFailure,
+  TargetRollback,
 } from "./rehearsal/replay.ts";
 export { SqlFileFailedError } from "./rehearsal/replay.ts";
 export { UnknownRecordedMigrationError } from "./rehearsal/replica.ts";

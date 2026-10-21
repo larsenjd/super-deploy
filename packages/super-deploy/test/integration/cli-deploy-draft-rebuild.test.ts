@@ -502,7 +502,11 @@ unix("deploy-draft", () => {
     await terminal.waitFor("Type YES");
     terminal.type(`YES${keys.enter}`);
     await terminal.waitFor(/Error: .*data-model\/draft\/schema-change\.sql/);
+    await terminal.waitFor(
+      "The draft's deployment rolled back: target dev is unchanged, still at migration 00001-add-customers (no draft deployed). Next: fix the draft's scripts, then run deploy-draft again.",
+    );
     expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("recovery");
     expect(
       await server.query(
         "select id, name, city from customers order by id",
@@ -528,6 +532,32 @@ unix("deploy-draft", () => {
       cwd: dir.root,
     });
     expect(status.stdout).not.toContain("holds draft");
+  });
+  test("seed data that clashes with the target's rows rolls back too, pointing at the draft's scripts or its seed data", async () => {
+    const { dir, database } = await deployedProject();
+    await requireCityDraft(dir);
+    await dir.write(
+      "data-model/draft/seed-data.sql",
+      "insert into customers (id, name) values (1, 'Ada again');\n",
+    );
+
+    const terminal = spawnTerminal(
+      ["deploy-draft", "--target", "dev", "--with-seed"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor("Type YES");
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor(
+      /Error: data-model\/draft\/seed-data\.sql:1: PostgreSQL refused it: duplicate key value/,
+    );
+    await terminal.waitFor(
+      "The draft's deployment rolled back: target dev is unchanged, still at migration 00001-add-customers (no draft deployed). Next: fix the draft's scripts or its seed data, then run deploy-draft again.",
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("recovery");
+    expect(
+      await server.query("select id, name from customers", [], database),
+    ).toEqual([{ id: "1", name: "Ada" }]);
   });
 });
 
@@ -1178,6 +1208,44 @@ unix("rebuild", () => {
         database,
       ),
     ).toEqual([{ command: "deploy" }]);
+  });
+
+  test("says it rolled back when a migration's file fails during the replay, without suggesting a Recovery", async () => {
+    // Fault injection: once rebuild's deploy transaction has begun, the
+    // target refuses CREATE TABLE as a data error would be refused.
+    const { dir, database } = await deployedProject({
+      adapter: `{
+  async connect() {
+    const session = await real.connect();
+    let deploying = false;
+    return {
+      ...session,
+      async execute(sql) {
+        deploying ||= sql.includes("lock_timeout") && !sql.includes("READ ONLY");
+        if (deploying && process.env.TEST_REFUSE === "1" && /^CREATE TABLE/i.test(sql)) {
+          throw Object.assign(new Error("refused for the test"), { code: "23514" });
+        }
+        return session.execute(sql);
+      },
+    };
+  },
+}`,
+    });
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root, env: { TEST_REFUSE: "1" } },
+    );
+    await terminal.waitFor("Type YES");
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor(
+      /Error: data-model\/migrations\/00001-add-customers\/schema-change\.sql:\d+: PostgreSQL refused it: refused for the test\. The rebuild rolled back: target dev is unchanged\./,
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("recovery");
+    expect(
+      await server.query("select id, name from customers", [], database),
+    ).toEqual([{ id: "1", name: "Ada" }]);
   });
 
   test("says it rolled back when PostgreSQL refuses a drop after YES", async () => {

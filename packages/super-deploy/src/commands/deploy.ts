@@ -165,6 +165,7 @@ export async function deploy(
         }
         const last = recorded.at(-1);
         throw (error as SqlFileFailedError).rolledBack({
+          command: "deploy",
           target: target.name,
           lastRecorded:
             last === undefined

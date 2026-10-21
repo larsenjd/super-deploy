@@ -7,9 +7,11 @@
 // change, post-migration script, in one transaction with the pinned settings
 // and the target's timeouts), after its seed data only with `withSeed`. It is
 // not rehearsed first: the target is disposable and the transaction rolls
-// back on any failure. An ordinary draft goes on top of the newest finalized
-// migration; a Recovery draft of migration N goes on top of N-1, since it
-// runs N's schema change between its scripts. An ordinary draft must have
+// back on any failure; a failing file's error then says so, and for a data
+// error points at the draft's scripts (or seed data), never at `recovery`:
+// the draft isn't finalized. An ordinary draft goes on top of the newest
+// finalized migration; a Recovery draft of migration N goes on top of N-1,
+// since it runs N's schema change between its scripts. An ordinary draft must have
 // been generated from the desired schema now on disk (the hash comparison
 // validate warns on), so what is tried is the current work; a Recovery
 // draft, like its rehearsal, ignores the desired schema. A schema change
@@ -42,7 +44,7 @@ import { SuperDeployError } from "../errors.ts";
 import { runGuarded } from "../guard/guard.ts";
 import type { Project } from "../project.ts";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
-import { runUnit } from "../rehearsal/replay.ts";
+import { runUnit, SqlFileFailedError } from "../rehearsal/replay.ts";
 import type { SeededUnit } from "../rehearsal/seed-data.ts";
 import { type DraftMetadata, NoDraftError, readDraft } from "../store/draft.ts";
 import {
@@ -228,7 +230,16 @@ export async function deployDraft(
             attemptId: attempt.id,
           });
         },
-      );
+      ).catch((error: unknown) => {
+        throw error instanceof SqlFileFailedError
+          ? error.rolledBack({
+              command: "deploy-draft",
+              target: target.name,
+              lastRecorded: plan.baseFolder,
+              seedData: plan.seedData,
+            })
+          : error;
+      });
       return {
         target: target.name,
         name: plan.name,

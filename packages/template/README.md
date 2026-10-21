@@ -872,7 +872,10 @@ draft-finalize-deploy path:
   an older desired schema (run `draft` again), and its confirmation says so
   when `schema-change.sql` was edited by hand since `draft` generated it.
   `--with-seed` loads the draft's seed data first, which
-  may clash with data already on the target. The target then records that
+  may clash with data already on the target. If a file fails, the whole
+  transaction rolls back and the error says the target is unchanged; for a
+  data error it says to fix the draft's scripts (or its seed data) and run
+  `deploy-draft` again. Otherwise the target records that
   it holds the draft, not a migration: `deploy`, `mark` and another
   `deploy-draft` refuse it, and `status` doesn't check it for drift, until
   `rebuild` resets it.

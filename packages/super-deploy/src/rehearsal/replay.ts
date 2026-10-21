@@ -263,13 +263,39 @@ export interface SqlFileFailure extends PostgresRefusal {
   readonly line: number | undefined;
 }
 
-/** A deployment's transaction rolled back because a file failed. */
+/**
+ * A command's transaction on a target rolled back because a file failed: what
+ * the error then says about the target, and the next step it suggests.
+ */
+export type TargetRollback =
+  | DeploymentRollback
+  | DraftDeploymentRollback
+  | RebuildRollback;
+
+/** A deployment's transaction rolled back. */
 export interface DeploymentRollback {
+  readonly command: "deploy";
   readonly target: string;
   /** Folder of the newest migration the target records, e.g. `00003-add-email`; undefined when it records none. */
   readonly lastRecorded: string | undefined;
   /** Number of the finalized migration whose file failed. */
   readonly migration: number;
+}
+
+/** deploy-draft's transaction rolled back: the target holds no draft. */
+export interface DraftDeploymentRollback {
+  readonly command: "deploy-draft";
+  readonly target: string;
+  /** Folder of the newest migration the target records; undefined when it records none. */
+  readonly lastRecorded: string | undefined;
+  /** Whether the draft's seed data ran first (`--with-seed`). */
+  readonly seedData: boolean;
+}
+
+/** rebuild's transaction rolled back: nothing was wiped. */
+export interface RebuildRollback {
+  readonly command: "rebuild";
+  readonly target: string;
 }
 
 /**
@@ -286,11 +312,13 @@ export function unchangedTarget(
 
 /**
  * PostgreSQL refused a deploy-time SQL file, in a rehearsal or a deployment.
- * The message adds a next step by SQLSTATE: the target setting behind a lock
- * (55P03) or statement (57014) timeout, for a data error (classes 22,
- * 23) in a deployment, a Recovery of the failing migration, and for a type
- * change a generated column blocks (0A000 with its DETAIL), the
- * pre-migration fix.
+ * Reported by a command whose transaction on a target rolled back
+ * (`rolledBack`), it says so and what the target is still at. The message
+ * adds a next step by SQLSTATE: the target setting behind a lock (55P03) or
+ * statement (57014) timeout; for a data error (classes 22, 23), a Recovery of
+ * the failing migration in a deployment, or fixing the draft in deploy-draft
+ * (QA 174); and for a type change a generated column blocks (0A000 with its
+ * DETAIL), the pre-migration fix.
  */
 export class SqlFileFailedError extends SuperDeployError {
   readonly code = "sql-file-failed";
@@ -302,12 +330,12 @@ export class SqlFileFailedError extends SuperDeployError {
   readonly detail: string | undefined;
   readonly hint: string | undefined;
   readonly sqlState: string | undefined;
-  /** Set when a deployment rolled back. */
-  readonly rollback: DeploymentRollback | undefined;
+  /** Set when a command's transaction on a target rolled back. */
+  readonly rollback: TargetRollback | undefined;
 
   constructor(
     failure: SqlFileFailure,
-    options?: ErrorOptions & { rollback?: DeploymentRollback | undefined },
+    options?: ErrorOptions & { rollback?: TargetRollback | undefined },
   ) {
     const rollback = options?.rollback;
     super(
@@ -321,9 +349,7 @@ export class SqlFileFailedError extends SuperDeployError {
         failure.hint === undefined
           ? undefined
           : sentence(`Hint: ${failure.hint}`),
-        rollback === undefined
-          ? undefined
-          : `The deployment rolled back: ${unchangedTarget(rollback.target, rollback.lastRecorded)}.`,
+        rollback === undefined ? undefined : rolledBackSentence(rollback),
         nextStep(failure, rollback),
       ]
         .filter((part) => part !== undefined)
@@ -339,9 +365,21 @@ export class SqlFileFailedError extends SuperDeployError {
     this.rollback = rollback;
   }
 
-  /** The same failure, reported by a deployment that rolled back. */
-  rolledBack(rollback: DeploymentRollback): SqlFileFailedError {
+  /** The same failure, reported by the command whose transaction rolled back. */
+  rolledBack(rollback: TargetRollback): SqlFileFailedError {
     return new SqlFileFailedError(this, { cause: this.cause, rollback });
+  }
+}
+
+/** E.g. `The deployment rolled back: target qa is unchanged, still at migration 00003-add-email.` */
+function rolledBackSentence(rollback: TargetRollback): string {
+  switch (rollback.command) {
+    case "deploy":
+      return `The deployment rolled back: ${unchangedTarget(rollback.target, rollback.lastRecorded)}.`;
+    case "deploy-draft":
+      return `The draft's deployment rolled back: ${unchangedTarget(rollback.target, rollback.lastRecorded)} (no draft deployed).`;
+    case "rebuild":
+      return `The rebuild rolled back: target ${rollback.target} is unchanged.`;
   }
 }
 
@@ -351,7 +389,7 @@ function sentence(text: string): string {
 
 function nextStep(
   failure: SqlFileFailure,
-  rollback: DeploymentRollback | undefined,
+  rollback: TargetRollback | undefined,
 ): string | undefined {
   const { sqlState } = failure;
   const generated = generatedColumnBlocking(failure);
@@ -370,12 +408,30 @@ function nextStep(
     return `The target's statementTimeout (default ${statementDefault}) cancelled the statement: retry once whatever held it up has finished, or raise the setting.`;
   }
   if (
-    rollback !== undefined &&
-    (sqlState?.startsWith("22") === true || sqlState?.startsWith("23") === true)
+    sqlState?.startsWith("22") === true ||
+    sqlState?.startsWith("23") === true
   ) {
-    return `Next: super-deploy recovery --migration ${rollback.migration}, with seed data that reproduces the problem rows in the rehearsal.`;
+    return dataErrorStep(rollback);
   }
   return undefined;
+}
+
+/**
+ * What to do about a data error: a Recovery for a deployment's finalized
+ * migration; the draft itself for deploy-draft (it isn't finalized). None
+ * for rebuild (it replays what other targets ran) or a rehearsal.
+ */
+function dataErrorStep(
+  rollback: TargetRollback | undefined,
+): string | undefined {
+  switch (rollback?.command) {
+    case "deploy":
+      return `Next: super-deploy recovery --migration ${rollback.migration}, with seed data that reproduces the problem rows in the rehearsal.`;
+    case "deploy-draft":
+      return `Next: fix the draft's scripts${rollback.seedData ? " or its seed data" : ""}, then run deploy-draft again.`;
+    default:
+      return undefined;
+  }
 }
 
 /**
