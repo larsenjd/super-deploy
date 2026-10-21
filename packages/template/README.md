@@ -97,6 +97,16 @@ again, which rebuilds it from your migrations (as `deployer`). Data you
 added to `dev` by hand is lost with it, and so is its disposable flag (see
 [Disposable targets and the guarded commands](#disposable-targets-and-the-guarded-commands)).
 
+`.super-deploy/rehearsal` holds only the throwaway databases rehearsals
+use: whenever no command is running, you can delete it, and nothing is
+lost. If a crash or reboot leaves a server folder stale or damaged, commands
+that need it fail naming what looks wrong. For a `postmaster.pid` that
+names a process which isn't its server, delete that file with no command
+running. For a folder that isn't a complete PostgreSQL data folder, delete
+the folder with no command running: for `.super-deploy/rehearsal` nothing
+is lost; for `.super-deploy/dev`, run `deploy --target dev` again, which
+loses what you added to `dev` by hand.
+
 ## What the desired schema supports
 
 The desired schema may hold only the statements below; super-deploy refuses
@@ -1015,6 +1025,14 @@ Recovery for the targets that haven't run it. If you already unfinalized
 one, restore its original folder and `data-model/migrations/index.json`
 from Git, then run `pnpm exec super-deploy validate` to make the restored
 files read-only again.
+
+If a finalized migration (or Recovery) was edited, had a file added, or had
+its `desired-schema/` snapshot changed, `validate`, `status` and `deploy`
+refuse it as `changed after it was finalized`. Restore its folder from Git
+(`git checkout HEAD -- data-model/migrations/00002-add-orders`, and delete
+any file you added to it), then run `pnpm exec super-deploy validate`, which
+makes it read-only again. To change what the migration does, finalize a new
+migration, or a Recovery for the targets where it failed.
 
 ## Disposable targets and the guarded commands
 

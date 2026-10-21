@@ -61,6 +61,28 @@ describe("rehearse and finalize", () => {
     ]);
   });
 
+  test("a rehearsal mismatch indents a multi-line difference's continuation lines", async () => {
+    const dir = await draftedProject();
+    await dir.write(
+      "data-model/desired-schema/answer.sql",
+      "create function answer() returns int language sql as 'select 42';\n",
+    );
+
+    const result = await runCli(["rehearse"], { cwd: dir.root });
+
+    expect(result.exitCode).toBe(1);
+    const lines = result.stderr.trimEnd().split("\n");
+    expect(lines).toContain(
+      "catalog: from the desired schema: routine: CREATE OR REPLACE FUNCTION public.answer()",
+    );
+    expect(lines).toContain("   RETURNS integer");
+    // Every line is a difference's label line, indented under one, or the Error line.
+    for (const line of lines.slice(0, -1)) {
+      expect(line).toMatch(/^(pg-delta: |catalog: | {2}\S| {3}\S)/);
+    }
+    expect(lines.at(-1)).toMatch(/^Error: .*listed above/);
+  });
+
   test("finalize prints the new migration's folder and exits 0", async () => {
     const dir = await draftedProject();
 
@@ -91,7 +113,7 @@ describe("validate", () => {
     expect(strict.stdout).toBe("");
     expect(strict.stderr.trimEnd().split("\n")).toEqual([
       "warning: Draft add-customers is not finalized yet",
-      "Error: Validation failed with 1 warning (--strict): Draft add-customers is not finalized yet",
+      "Error: Validation failed with 1 warning (--strict) (listed above)",
     ]);
   });
 
@@ -208,7 +230,7 @@ describe("validate", () => {
     expect(result.stdout).toContain("--allow-draft");
   });
 
-  test("lists every error and exits 1 when a finalized migration was edited", async () => {
+  test("lists every error once, with the way back, and exits 1 when a finalized migration was edited", async () => {
     const dir = await draftedProject();
     expect((await runCli(["finalize"], { cwd: dir.root })).exitCode).toBe(0);
     const file = "data-model/migrations/00001-add-customers/schema-change.sql";
@@ -219,8 +241,10 @@ describe("validate", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr.trimEnd().split("\n")).toEqual([
-      "error: data-model/migrations/00001-add-customers was changed after it was finalized (its content hash does not match data-model/migrations/index.json)",
-      expect.stringMatching(/^Error: Validation failed with 1 error: /),
+      expect.stringMatching(
+        /^error: data-model\/migrations\/00001-add-customers was changed after it was finalized .*: restore it from Git \(`git checkout HEAD -- data-model\/migrations\/00001-add-customers`/,
+      ),
+      "Error: Validation failed with 1 error (listed above)",
     ]);
   });
 });

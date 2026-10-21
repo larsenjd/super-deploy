@@ -187,9 +187,38 @@ describe("loadProject", () => {
     expect(error.message).toContain("this is not ts {");
   });
 
-  test("reports a config that throws as it loads without a location", async () => {
+  test("reports an error the config throws as it runs at its line and the source line", async () => {
     const dir = await createTestProject({
-      config: `throw new SyntaxError("not valid here");\n`,
+      config: configWith("targets: { qa: { adapter: QA_DATABASE_URL } },"),
+    });
+
+    const error = await nativeLoadError(dir.root);
+
+    expect(error).toMatchObject({ configError: true, code: "invalid-config" });
+    expect(error.message).toBe(
+      "super-deploy.config.ts:8: QA_DATABASE_URL is not defined in `targets: { qa: { adapter: QA_DATABASE_URL } },`",
+    );
+  });
+
+  test("locates an error thrown by a function the config calls at the config's call", async () => {
+    const dir = await createTestProject({
+      config: `import { check } from "./check.ts";\n\ncheck();\n`,
+      files: {
+        "check.ts": `export function check(): void {\n  throw new Error("check failed");\n}\n`,
+      },
+    });
+
+    const error = await nativeLoadError(dir.root);
+
+    expect(error.message).toBe(
+      "super-deploy.config.ts:3: check failed in `check();`",
+    );
+  });
+
+  test("reports a module the config imports that throws as it loads without a location", async () => {
+    const dir = await createTestProject({
+      config: `import "./broken.ts";\n`,
+      files: { "broken.ts": `throw new SyntaxError("not valid here");\n` },
     });
 
     const error = await nativeLoadError(dir.root);

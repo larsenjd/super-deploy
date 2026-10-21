@@ -413,6 +413,8 @@ export class ValidationFailedError extends SuperDeployError {
   /** Every finding, errors and warnings, in report order. */
   readonly problems: readonly ValidationProblem[];
   readonly strict: boolean;
+  /** The counts alone, for after a listing of `problems`. */
+  readonly summary: string;
 
   constructor(
     problems: readonly ValidationProblem[],
@@ -432,5 +434,6 @@ export class ValidationFailedError extends SuperDeployError {
     super(`Validation failed with ${counts}: ${summarise(failing)}`);
     this.problems = problems;
     this.strict = strict;
+    this.summary = `Validation failed with ${counts} (listed above)`;
   }
 }

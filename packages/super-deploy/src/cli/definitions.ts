@@ -60,7 +60,7 @@ import {
   type DriftedObject,
   driftLabel,
 } from "../verification/drift.ts";
-import { ReportedError } from "./run.ts";
+import { indentContinuation, ReportedError } from "./run.ts";
 
 export type CommandGroup =
   | "Start"
@@ -1013,13 +1013,15 @@ function reportMarkMismatch(
 
 /**
  * Each drifted object, then its catalog lines, each saying which side it is
- * on (`driftLabel`), as `status` and `mark` list them.
+ * on (`driftLabel`), as `status` and `mark` list them. A line spanning
+ * several (a routine's or rule's definition) is indented under its label.
  */
 function driftListing(objects: readonly DriftedObject[]): string[] {
   return objects.flatMap((drifted) => [
     `  ${drifted.object}:`,
     ...drifted.differences.map(
-      ({ side, line }) => `    ${driftLabel(drifted.change, side)}: ${line}`,
+      ({ side, line }) =>
+        `    ${driftLabel(drifted.change, side)}: ${indentContinuation(line, "      ")}`,
     ),
   ]);
 }
