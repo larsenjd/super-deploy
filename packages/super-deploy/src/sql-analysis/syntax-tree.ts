@@ -177,3 +177,30 @@ export function walkNodes(
   };
   descend(root, undefined);
 }
+
+/** A token as libpg-query's `scanSync` gives it: UTF-8 byte offsets in the text scanned. */
+export interface Token {
+  readonly start: number;
+  readonly end: number;
+  readonly text: string;
+}
+
+/** How a token changes the parenthesis depth. */
+export function nesting(token: Token | undefined): number {
+  return token?.text === "(" ? 1 : token?.text === ")" ? -1 : 0;
+}
+
+/** The index of the token closing the parenthesis at `open`. */
+export function closingParen(
+  tokens: readonly Token[],
+  open: number,
+): number | undefined {
+  let depth = 0;
+  for (let index = open; index < tokens.length; index += 1) {
+    depth += nesting(tokens[index]);
+    if (depth === 0) {
+      return index;
+    }
+  }
+  return undefined;
+}

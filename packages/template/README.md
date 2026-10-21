@@ -794,6 +794,21 @@ value too large for it fails the deployment. `draft` says how many values in the
 and `finalize` asks for the change to be acknowledged. If those values
 matter, shorten or move them in the pre-migration script.
 
+Changing a column's collation, or a stored generated column's expression,
+makes `draft` drop the column and add it again (the differ can't change
+either in place), at the end of the table. `draft` warns, and `finalize`
+asks, naming the column as dropped and re-added and giving the statement
+that makes the change in place instead. Put that statement in the
+pre-migration script and run `draft` again; the schema change then has
+nothing left to do for the column:
+
+- a collation: the drop loses every value in the column, on every target.
+  Change it in place with
+  `ALTER TABLE customers ALTER COLUMN nickname TYPE text COLLATE "C"`;
+- a generation expression: the values are computed again, so none is lost,
+  but the drop still needs acknowledging. Change it in place with
+  `ALTER TABLE a ALTER COLUMN total SET EXPRESSION AS (price * qty * 1.2)`.
+
 `rehearse` lists a draft's destructive statements, and `finalize` needs them
 acknowledged. In a terminal, `finalize` lists them and asks. Without a
 terminal (in CI, for example) it refuses, listing them:

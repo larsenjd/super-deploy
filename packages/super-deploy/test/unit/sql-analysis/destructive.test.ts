@@ -405,6 +405,86 @@ describe("narrowing type changes", () => {
   });
 });
 
+describe("columns pg-delta replaces to change them (QA 103)", () => {
+  const previous = `create table customers (id bigint primary key, nickname text, note text);
+create table a (
+  id bigint primary key,
+  price numeric(10,2) not null,
+  qty integer not null,
+  total numeric generated always as (price * qty) stored
+);
+`;
+  const messages = async (sql: string) =>
+    (await analyse([["schema-change", sql]], previous)).destructive.map(
+      ({ kind, line, message }) => ({ kind, line, message }),
+    );
+
+  test("a collation change names the replaced column and the in-place statement keeping its values", async () => {
+    expect(
+      await messages(`DROP INDEX "public"."customers_nick_idx";
+ALTER TABLE "public"."customers" DROP COLUMN "nickname";
+ALTER TABLE "public"."customers" ADD COLUMN "nickname" text COLLATE pg_catalog."C";
+CREATE INDEX customers_nick_idx ON public.customers USING btree (nickname);
+`),
+    ).toEqual([
+      {
+        kind: "drop-column",
+        line: 2,
+        message:
+          'public.customers.nickname is dropped and re-added to change its collation: its values are lost. To keep them, change it in place in the pre-migration script: ALTER TABLE "public"."customers" ALTER COLUMN "nickname" TYPE text COLLATE pg_catalog."C"',
+      },
+    ]);
+  });
+
+  test('a collation change back to the default names COLLATE "default"', async () => {
+    const [found] =
+      await messages(`ALTER TABLE "public"."customers" DROP COLUMN "note";
+ALTER TABLE "public"."customers" ADD COLUMN "note" text;
+`);
+    expect(found?.message).toContain(
+      'ALTER TABLE "public"."customers" ALTER COLUMN "note" TYPE text COLLATE "default"',
+    );
+  });
+
+  test("a generation expression change names the replaced column and SET EXPRESSION", async () => {
+    expect(
+      await messages(`ALTER TABLE "public"."a" DROP COLUMN "total";
+ALTER TABLE "public"."a" ADD COLUMN "total" numeric GENERATED ALWAYS AS (((price * (qty)::numeric) * 1.2)) STORED;
+`),
+    ).toEqual([
+      {
+        kind: "drop-column",
+        line: 1,
+        message:
+          'public.a.total is dropped and re-added to change its generation expression: its values are computed again, but it moves to the end of the table and finalize needs the drop acknowledged. To avoid both, change it in place in the pre-migration script: ALTER TABLE "public"."a" ALTER COLUMN "total" SET EXPRESSION AS (((price * (qty)::numeric) * 1.2))',
+      },
+    ]);
+  });
+
+  test("dropping one column and adding another, or the same name with another type, keeps the plain message", async () => {
+    expect(
+      await messages(`ALTER TABLE "public"."customers" DROP COLUMN "note";
+ALTER TABLE "public"."customers" ADD COLUMN "memo" text;
+ALTER TABLE "public"."customers" DROP COLUMN "nickname";
+ALTER TABLE "public"."customers" ADD COLUMN "nickname" integer;
+`),
+    ).toEqual([
+      {
+        kind: "drop-column",
+        line: 1,
+        message:
+          "ALTER TABLE public.customers DROP COLUMN note drops the column and its data",
+      },
+      {
+        kind: "drop-column",
+        line: 3,
+        message:
+          "ALTER TABLE public.customers DROP COLUMN nickname drops the column and its data",
+      },
+    ]);
+  });
+});
+
 describe("deleting data", () => {
   test.each([
     ["delete from t where qty = 0", ["delete"]],
