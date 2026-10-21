@@ -180,20 +180,9 @@ describe("adopt", () => {
             object: "operator public.===(integer,integer)",
             rule: "unsupported-object",
           },
-          {
-            object: expect.stringContaining('CREATE TYPE "public"."mood"'),
-            rule: "unsupported-object",
-          },
-          {
-            object: expect.stringContaining(
-              'CREATE SEQUENCE "public"."counter"',
-            ),
-            rule: "unsupported-object",
-          },
-          {
-            object: expect.stringContaining("CREATE UNLOGGED TABLE"),
-            rule: "unsupported-object",
-          },
+          { object: "type public.mood", rule: "unsupported-object" },
+          { object: "sequence public.counter", rule: "unsupported-object" },
+          { object: "table public.scratch", rule: "unsupported-object" },
         ]),
       );
       for (const { reason } of objects) {
@@ -423,16 +412,10 @@ describe("adopt", () => {
       const { objects } = error as AdoptUnsupportedError;
       expect(objects.map(({ object, rule }) => ({ object, rule }))).toEqual(
         expect.arrayContaining([
+          { object: "type public.mood", rule: "unsupported-object" },
+          { object: "function public.batch()", rule: "plpgsql-dynamic-sql" },
           {
-            object: expect.stringContaining('CREATE TYPE "public"."mood"'),
-            rule: "unsupported-object",
-          },
-          {
-            object: expect.stringContaining("CREATE PROCEDURE public.batch()"),
-            rule: "plpgsql-dynamic-sql",
-          },
-          {
-            object: expect.stringContaining("CREATE PROCEDURE public.batch()"),
+            object: "function public.batch()",
             rule: "plpgsql-transaction-control",
           },
         ]),
@@ -558,22 +541,81 @@ describe("adopt", () => {
       expect(objects).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            object: expect.stringContaining('CREATE TABLE "public"."child"'),
+            object: "table public.child",
             reason: expect.stringContaining("Table inheritance"),
           }),
           expect.objectContaining({
-            object: expect.stringContaining('CREATE TABLE "public"."tmp_like"'),
+            object: "table public.tmp_like",
             reason: expect.stringContaining("Table storage parameters"),
           }),
           expect.objectContaining({
-            object: expect.stringContaining(
-              'CREATE TYPE "public"."order_status"',
-            ),
+            object: "type public.order_status",
             reason: expect.stringContaining("Enums are not supported in V1"),
           }),
         ]),
       );
       expect(objects).toHaveLength(3);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("names every refused statement by its object, and its reason by the references or parameters refused", async () => {
+    const { project } = await adoptableProject(
+      `
+      create extension citext;
+      create extension pgcrypto;
+      create schema app;
+      create table app.users (
+        id int primary key,
+        email public.citext not null,
+        token bytea not null default public.gen_random_bytes(16)
+      );
+      create table app.logs (
+        id bigint primary key,
+        created timestamp with time zone not null default now(),
+        note text
+      ) with (fillfactor = 70);
+      create sequence app.ticket_seq;
+      create table app.base (id int primary key);
+      create function app.check_base() returns trigger language plpgsql as $$ begin return null; end $$;
+      create constraint trigger ct after insert on app.base deferrable for each row execute function app.check_base();
+      create function app.users_named(wanted public.citext) returns bigint language sql stable
+        as $$ select count(*) from app.users where email = wanted $$;
+    `,
+      'managedSchema: "app",',
+    );
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const { objects } = error as AdoptUnsupportedError;
+      expect(objects).toEqual(
+        expect.arrayContaining([
+          {
+            object: "table app.users",
+            rule: "undeclared-schema",
+            reason: expect.stringMatching(
+              /public\.citext, public\.gen_random_bytes.*declaring it in externalSchemas won't help/,
+            ),
+          },
+          {
+            object: "table app.logs",
+            rule: "unsupported-object",
+            reason: expect.stringContaining("fillfactor=70"),
+          },
+          expect.objectContaining({ object: "sequence app.ticket_seq" }),
+          expect.objectContaining({ object: "trigger ct on table app.base" }),
+          expect.objectContaining({
+            object: "function app.users_named(public.citext)",
+          }),
+        ]),
+      );
+      for (const { object } of objects) {
+        expect(object).not.toMatch(/^(CREATE|ALTER) |…$/);
+      }
     } finally {
       await project.close();
     }
@@ -842,7 +884,7 @@ describe("adopt", () => {
       );
       expect(refusal.objects.map(({ object }) => object)).toEqual(
         expect.arrayContaining([
-          expect.stringContaining("UNLOGGED"),
+          "table app.scratch",
           "statistics object app.scratch_stats",
         ]),
       );
@@ -937,17 +979,17 @@ describe("adopt", () => {
       expect(objects).toEqual(
         expect.arrayContaining([
           {
-            object: "constraint profiles_user_id_fkey on table profiles",
+            object: "constraint profiles_user_id_fkey on table public.profiles",
             rule: "outside-managed-schema",
             reason,
           },
           {
-            object: "view profile_names",
+            object: "view public.profile_names",
             rule: "outside-managed-schema",
             reason,
           },
           {
-            object: "function user_name(int8)",
+            object: "function public.user_name(bigint)",
             rule: "outside-managed-schema",
             reason,
           },
@@ -1073,7 +1115,7 @@ describe("adopt", () => {
       const { objects, message } = error as AdoptUnsupportedError;
       expect(objects).toEqual([
         {
-          object: "function no_name()",
+          object: "function public.no_name()",
           rule: "not-reproduced",
           reason: expect.stringContaining('relation "users" does not exist'),
         },

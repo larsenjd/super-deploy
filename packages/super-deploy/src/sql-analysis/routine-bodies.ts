@@ -15,7 +15,11 @@ import { parsePlPgSQLSync, parseSync } from "libpg-query";
 import { denylistFindings } from "./denylist.ts";
 import type { ParsedStatement } from "./parse.ts";
 import type { RuleContext, RuleFinding } from "./rule-types.ts";
-import { referencedSchemas, referenceFindings } from "./schemas.ts";
+import {
+  qualifiedReferences,
+  referencedSchemas,
+  referenceFindings,
+} from "./schemas.ts";
 import {
   defElemString,
   defElems,
@@ -118,7 +122,12 @@ function plpgsqlNodeFindings(
       const schema = declaredTypeSchema(typname);
       return schema === undefined
         ? []
-        : referenceFindings([schema], context, "bound-at-create", line);
+        : referenceFindings(
+            [{ schema, name: typname.trim() }],
+            context,
+            "bound-at-create",
+            line,
+          );
     }
   }
   const expression = object.PLpgSQL_expr;
@@ -134,7 +143,7 @@ function plpgsqlNodeFindings(
       ...denylistFindings(tree, line),
       ...notifyFindings(tree, line),
       ...referenceFindings(
-        referencedSchemas(tree),
+        qualifiedReferences(tree),
         context,
         "plpgsql-body",
         line,
@@ -224,7 +233,7 @@ export function sqlBodyFindings(
   return unique([
     ...denylistFindings(tree, line),
     ...referenceFindings(
-      referencedSchemas(tree),
+      qualifiedReferences(tree),
       context,
       "bound-at-create",
       line,

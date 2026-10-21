@@ -367,7 +367,16 @@ ownership and `CREATE`, as a script to run as a superuser (an object that
 must be changed anyway isn't among them). The refusal ends with what to do:
 change the target, run those fixes, declare a schema a PL/pgSQL body
 references in `externalSchemas`, or run adoption in a terminal to give
-override reasons (below). Grants,
+override reasons (below). Each object is named as PostgreSQL names it
+(`table app.users`), with the references or settings refused.
+
+Columns, defaults, views and other definitions that use another schema's
+types or functions (typically an extension installed in `public`, such as
+`citext` or `pgcrypto`) are refused, and declaring that schema in
+`externalSchemas` doesn't help: only PL/pgSQL bodies may reference it.
+Change them on the target first, for example to `text` with a `CHECK`
+constraint instead of `citext`, and to the built-in `gen_random_uuid()`
+instead of pgcrypto's functions. Grants,
 policies and row-level security on the target stay
 as they are, left out of the desired schema; adoption says how many grants
 and policies it left.

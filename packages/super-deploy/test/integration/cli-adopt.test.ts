@@ -88,9 +88,9 @@ describe("init --adopt", () => {
     expect(result.stderr).toBe(
       [
         "Target prod has 2 things V1 doesn't support:",
-        '  CREATE SEQUENCE "public"."counter" AS bigint INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE …',
+        "  sequence public.counter",
         "    unsupported-object: Standalone sequences are not supported in V1: use an identity column (`bigint generated always as identity`)",
-        `  CREATE TYPE "public"."mood" AS ENUM ('sad')`,
+        "  type public.mood",
         "    unsupported-object: Enums are not supported in V1: use a lookup table with a foreign key, or a CHECK constraint",
         "Error: Cannot adopt target prod: its managed schema has 2 things V1 doesn't support, listed above. Nothing was written; change the target first, then adopt again",
         "",
@@ -258,7 +258,7 @@ describe.skipIf(process.platform === "win32")(
       expect(await terminal.exited).toBe(1);
       const screen = terminal.screen.replace(/\s+/g, " ");
       expect(screen).toContain(
-        "Target prod has 1 thing V1 doesn't support: CREATE TYPE",
+        "Target prod has 1 thing V1 doesn't support: type public.mood",
       );
       expect(screen).toContain(
         "Once nothing else is refused, adoption will ask an override reason for 1 object that breaks only risk rules: function load_staging(text)",

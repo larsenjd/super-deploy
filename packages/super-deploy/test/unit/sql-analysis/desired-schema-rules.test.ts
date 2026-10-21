@@ -348,8 +348,8 @@ describe("refused table features", () => {
     ],
     [
       "table storage parameters",
-      "create table t (a int) with (fillfactor = 70)",
-      /^Table storage parameters are not supported in V1/,
+      "create table t (a int) with (fillfactor = 70, autovacuum_enabled = false)",
+      /^Table storage parameters are not supported in V1: fillfactor=70, autovacuum_enabled=false$/,
     ],
     [
       "column storage",
@@ -696,46 +696,79 @@ describe("schemas", () => {
   );
 
   test.each([
-    ["table in a view", "create view v as select a from other.t"],
-    ["function in a default", "create table t (a int default other.f())"],
-    ["column type", "create table t (a other.money)"],
+    ["table in a view", "create view v as select a from other.t", "other.t"],
+    [
+      "function in a default",
+      "create table t (a int default other.f())",
+      "other.f",
+    ],
+    ["column type", "create table t (a other.money)", "other.money"],
     [
       "%TYPE argument",
       "create function f(x other.t.a%type) returns int language sql as $$ select 1 $$",
+      "other.t.a",
     ],
     [
       "foreign key",
       "create table t (a int constraint t_a_fk references other.u (id))",
+      "other.u",
     ],
     [
       "trigger function",
       "create trigger tr before insert on t for each row execute function other.f()",
+      "other.f",
     ],
     [
       "BEGIN ATOMIC body",
       "create function f() returns bigint language sql begin atomic select count(*) from other.t; end",
+      "other.t",
     ],
     [
       "LANGUAGE sql body",
       "create function f() returns bigint language sql as $$ select count(*) from other.t $$",
+      "other.t",
     ],
     [
       "information_schema",
       "create view v as select table_name from information_schema.tables",
+      "information_schema.tables",
     ],
-  ])("references to undeclared schemas are refused: %s", async (_name, sql) => {
-    const found = await violations(`${sql};`);
-    const schema = sql.includes("information_schema")
-      ? "information_schema"
-      : "other";
-    expect(found).toEqual([
+  ])(
+    "references to undeclared schemas are refused, naming each reference and that declaring the schema won't help: %s",
+    async (_name, sql, name) => {
+      const found = await violations(`${sql};`);
+      const schema = sql.includes("information_schema")
+        ? "information_schema"
+        : "other";
+      expect(found).toEqual([
+        {
+          file: path,
+          line: 1,
+          statement: sql,
+          rule: "undeclared-schema",
+          message: `Schema "${schema}" can't be referenced here (${name}): tables, views, defaults, types and everything else PostgreSQL binds at CREATE may reference only the managed schema "public" and pg_catalog, and declaring it in externalSchemas won't help (only PL/pgSQL bodies may reference external schemas)`,
+          reference: { schema, names: [name], where: "bound-at-create" },
+        },
+      ]);
+    },
+  );
+
+  test("a table's references to an extension's type and function in public are named together, once each", async () => {
+    expect(
+      await violations(
+        "create table users (email public.citext not null, token bytea default public.gen_random_bytes(16), backup public.citext);",
+        { managedSchema: "app" },
+      ),
+    ).toMatchObject([
       {
-        file: path,
-        line: 1,
-        statement: sql,
         rule: "undeclared-schema",
-        message: `Schema "${schema}" is not declared: the desired schema may reference only the managed schema "public" and pg_catalog (PL/pgSQL bodies may also reference the externalSchemas in super-deploy.config.ts)`,
-        reference: { schema, where: "bound-at-create" },
+        message: expect.stringMatching(
+          /^Schema "public" can't be referenced here \(public\.citext, public\.gen_random_bytes\)/,
+        ),
+        reference: {
+          schema: "public",
+          names: ["public.citext", "public.gen_random_bytes"],
+        },
       },
     ]);
   });
@@ -761,7 +794,9 @@ describe("schemas", () => {
     ).toMatchObject([
       {
         rule: "undeclared-schema",
-        message: expect.stringContaining('Schema "public" is not declared'),
+        message: expect.stringContaining(
+          'Schema "public" can\'t be referenced here (public.t)',
+        ),
       },
     ]);
   });
@@ -960,12 +995,18 @@ describe("PL/pgSQL bodies", () => {
     ]);
   });
 
-  test("an external schema is still undeclared unless listed", async () => {
+  test("an external schema is still undeclared unless listed, and its reference says to declare it", async () => {
     expect(await violations(plpgsql("  return ext.score(1);"))).toMatchObject([
       {
         line: 3,
         rule: "undeclared-schema",
-        message: expect.stringContaining('"ext"'),
+        message:
+          'Schema "ext" is not declared (ext.score): the desired schema may reference only the managed schema "public" and pg_catalog (PL/pgSQL bodies may also reference the externalSchemas in super-deploy.config.ts)',
+        reference: {
+          schema: "ext",
+          names: ["ext.score"],
+          where: "plpgsql-body",
+        },
       },
     ]);
   });

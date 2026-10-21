@@ -39,7 +39,11 @@
 //      pass, every object the files don't reproduce exactly (loaded on a
 //      throwaway database and compared with the target like the drift
 //      check; a statement the throwaway database refuses is listed by its
-//      object, never by a file that was never written). Nothing is written
+//      object, never by a file that was never written). Every entry is named
+//      by its object, as the catalog check names it (`namedOnTarget`: the
+//      statement's object found on the target by name), never by a
+//      statement's text; one the catalogs can't find keeps adoptedObject's
+//      name. Nothing is written
 //      before this passes. The refusal's advice follows the rules broken:
 //      an undeclared schema in a PL/pgSQL body goes into externalSchemas,
 //      risk rules without the callback need a terminal, ownership and
@@ -106,6 +110,8 @@ import {
   type AdoptedFile,
   adoptedDesiredSchema,
   adoptedObject,
+  adoptedObjectReference,
+  type CatalogReference,
   catalogObjectFinding,
   desiredSchemaAnalysis,
   externalSchemaReferences,
@@ -116,7 +122,9 @@ import {
   oneLine,
   overrideCandidates,
   type ParsedStatement,
+  parseSqlFile,
   type RuleContext,
+  type RuleViolation,
   type SqlFile,
   SqlRuleViolationError,
   serialColumnFinding,
@@ -139,6 +147,7 @@ import {
   isVirtualGeneratedColumn,
   type ObjectAddress,
   objectNames,
+  referencedObjectNames,
 } from "../verification/catalog.ts";
 import {
   type DriftChange,
@@ -367,13 +376,13 @@ async function readTarget(
       },
     );
 
-    const unsupported = (
+    const found: Found[] = (
       await catalogFacts(session, config.managedSchema, {
         settings: targetTimeouts(target),
       })
     ).flatMap(unsupportedFact);
     const serial = serialColumnFinding();
-    unsupported.push(
+    found.push(
       ...serials.map(({ column }) => ({
         object: `serial column ${column}`,
         rule: serial.rule,
@@ -390,15 +399,21 @@ async function readTarget(
       context,
       serials.map((serial) => serial.sequence),
     );
-    unsupported.push(...analysed.unsupported);
-    unsupported.push(
+    found.push(...analysed.unsupported);
+    found.push(
       ...(
         await externalSchemaReferences(sqlFiles(project, files), context)
-      ).map(({ object, schemas }) => ({
+      ).map(({ object, reference, schemas }) => ({
         object,
+        reference,
         rule: "outside-managed-schema",
         reason: `It references ${externalSchemaExplanation(schemas)}`,
       })),
+    );
+    const unsupported = await namedOnTarget(
+      session,
+      config.managedSchema,
+      found,
     );
     const notOwnedSupported = await ownedIfSupported(
       session,
@@ -435,16 +450,16 @@ async function readTarget(
           target,
         });
       },
-    ).catch((error: unknown) => {
+    ).catch(async (error: unknown) => {
       if (!(error instanceof DesiredSchemaLoadError)) {
         throw error;
       }
       throw new AdoptUnsupportedError(
         target.name,
         {
-          objects: [
+          objects: await namedOnTarget(session, config.managedSchema, [
             refusedStatement(error, analysed.statements, config.managedSchema),
-          ],
+          ]),
         },
         needed,
       );
@@ -729,7 +744,7 @@ async function analyse(
   serialSequences: readonly string[],
 ): Promise<{
   statements: readonly ParsedStatement[];
-  unsupported: UnsupportedObject[];
+  unsupported: Found[];
 }> {
   try {
     const { statements } = await desiredSchemaAnalysis(
@@ -741,7 +756,7 @@ async function analyse(
     if (!(error instanceof SqlRuleViolationError)) {
       throw error;
     }
-    const unsupported: UnsupportedObject[] = [];
+    const unsupported: Found[] = [];
     for (const violation of error.violations) {
       if (!(await isSequenceStatement(violation.statement, serialSequences))) {
         // Declaring a schema allows it only in PL/pgSQL bodies: a reference
@@ -751,7 +766,7 @@ async function analyse(
             ? violation.reference.schema
             : undefined;
         unsupported.push({
-          object: firstLine(violation.statement) || violation.file,
+          ...(await statementObject(violation, context.managedSchema)),
           rule: violation.rule,
           reason: violation.message,
           ...(schema === undefined ? {} : { schemaToDeclare: schema }),
@@ -772,7 +787,7 @@ function refusedStatement(
   error: DesiredSchemaLoadError,
   statements: readonly ParsedStatement[],
   managedSchema: string,
-): UnsupportedObject {
+): Found {
   const statement = statements
     .filter(({ file, line }) => file === error.file && line <= error.line)
     .reduce<ParsedStatement | undefined>(
@@ -781,18 +796,69 @@ function refusedStatement(
       undefined,
     );
   return {
-    object:
-      statement === undefined
-        ? "the generated desired schema"
-        : adoptedObject(statement, managedSchema),
+    ...(statement === undefined
+      ? { object: "the generated desired schema" }
+      : {
+          object: adoptedObject(statement, managedSchema),
+          reference: adoptedObjectReference(statement, managedSchema),
+        }),
     rule: "not-reproduced",
     reason: `PostgreSQL refused to create it: ${error.detail}${error.hint === undefined ? "" : `. Hint: ${error.hint}`}`,
   };
 }
 
-function firstLine(statement: string): string {
-  const line = statement.split("\n", 1)[0]?.trim() ?? "";
-  return line.length > 120 ? `${line.slice(0, 119)}…` : line;
+/**
+ * What a rule violation's statement creates, as `adoptedObject` names it
+ * and as the target's catalogs find it; its file for a statement that
+ * doesn't parse (never expected from the differ).
+ */
+async function statementObject(
+  violation: RuleViolation,
+  managedSchema: string,
+): Promise<Pick<Found, "object" | "reference">> {
+  const parsed = await parseSqlFile({
+    path: violation.file,
+    text: violation.statement,
+  });
+  const [statement] = parsed.ok ? parsed.statements : [];
+  return statement === undefined
+    ? { object: violation.file }
+    : {
+        object: adoptedObject(statement, managedSchema),
+        reference: adoptedObjectReference(statement, managedSchema),
+      };
+}
+
+/** An entry as found: `reference` finds its object on the target to name it. */
+interface Found extends UnsupportedObject {
+  readonly reference?: CatalogReference | undefined;
+}
+
+/**
+ * The entries as the refusal lists them: each one whose object the target
+ * has named as the catalog check names objects (`table app.users`,
+ * `trigger ct on table app.base`), the others as found.
+ */
+async function namedOnTarget(
+  session: Session,
+  managedSchema: string,
+  found: readonly Found[],
+): Promise<UnsupportedObject[]> {
+  const references = found.flatMap(({ reference }) =>
+    reference === undefined ? [] : [reference],
+  );
+  const names =
+    references.length === 0
+      ? []
+      : await referencedObjectNames(session, managedSchema, references);
+  let next = 0;
+  return found.map(({ reference, ...entry }) => {
+    if (reference === undefined) {
+      return entry;
+    }
+    const name = names[next++];
+    return name === undefined ? entry : { ...entry, object: name };
+  });
 }
 
 /** What undoing adoption restores: the project as adoption found it. */
@@ -898,8 +964,10 @@ export class AdoptConflictError extends SuperDeployError {
 /** Something V1 doesn't support, found by `init --adopt`. */
 export interface UnsupportedObject {
   /**
-   * The object as PostgreSQL describes it (`statistics object st`), or the
-   * first line of the statement the target's schema needs.
+   * The object as PostgreSQL describes it, qualified (`table app.users`,
+   * `statistics object app.st`, `column v of table app.people`), or, for
+   * one the target's catalogs can't find by name, as an override marker
+   * names it (`function load_staging(text)`). Never a statement's text.
    */
   readonly object: string;
   /** The rule id that refuses it, e.g. `unsupported-object`. */
