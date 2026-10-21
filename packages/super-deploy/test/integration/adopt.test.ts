@@ -885,6 +885,33 @@ describe("adopt", () => {
     }
   });
 
+  test("refusing a view's or a LANGUAGE sql body's reference to an undeclared schema, advises changing the target, not declaring it", async () => {
+    // Bound at CREATE: declaring auth would only trade this refusal for the
+    // external-schema one.
+    const { project } = await adoptableProject(`
+      create schema auth;
+      create table auth.users (id bigint primary key, name text);
+      create view user_names as select name from auth.users;
+      create function user_name(uid bigint) returns text language sql stable
+        as $$ select name from auth.users where id = uid $$;
+    `);
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const { objects, advice } = error as AdoptUnsupportedError;
+      expect(objects.map(({ rule }) => rule)).toEqual([
+        "undeclared-schema",
+        "undeclared-schema",
+      ]);
+      expect(advice).toEqual(["change the target first, then adopt again"]);
+    } finally {
+      await project.close();
+    }
+  });
+
   test("refusing for several causes, gives each piece of advice once", async () => {
     const { project } = await adoptableProject(`${loaders}
       create type mood as enum ('sad', 'happy');

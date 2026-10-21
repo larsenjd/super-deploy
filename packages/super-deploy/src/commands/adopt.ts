@@ -660,7 +660,12 @@ async function analyse(
     const unsupported: UnsupportedObject[] = [];
     for (const violation of error.violations) {
       if (!(await isSequenceStatement(violation.statement, serialSequences))) {
-        const schema = violation.reference?.schema;
+        // Declaring a schema allows it only in PL/pgSQL bodies: a reference
+        // bound at CREATE would then be refused as an external one.
+        const schema =
+          violation.reference?.where === "plpgsql-body"
+            ? violation.reference.schema
+            : undefined;
         unsupported.push({
           object: firstLine(violation.statement) || violation.file,
           rule: violation.rule,
@@ -819,7 +824,7 @@ export interface UnsupportedObject {
   readonly reason: string;
   /**
    * For an `undeclared-schema` reference that declaring the schema in
-   * externalSchemas would allow: the schema.
+   * externalSchemas would allow (one in a PL/pgSQL body): the schema.
    */
   readonly schemaToDeclare?: string;
 }
