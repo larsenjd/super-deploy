@@ -1,11 +1,14 @@
 // Interruption at the CLI process seam: signals and closed output stop the
 // running command, clean up, print one notice and exit 130, 141 or 143.
 import { join } from "node:path";
-import pg from "pg";
 import { embeddedPostgres } from "super-deploy/embedded-postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli, spawnCli, waitForFile } from "../support/cli.ts";
-import { startTestServer, type TestServer } from "../support/postgres.ts";
+import {
+  onStoppedServer,
+  startTestServer,
+  type TestServer,
+} from "../support/postgres.ts";
 import {
   createTestProject,
   downTargetConfig,
@@ -136,28 +139,8 @@ async function ownServerProject() {
   return { dir, marker, env: { TEST_STALL: "query", TEST_MARKER: marker } };
 }
 
-/** Runs one statement on a project's own (stopped) embedded server, starting and stopping it. */
-async function onOwnServer<Row>(dataDir: string, sql: string): Promise<Row[]> {
-  const own = embeddedPostgres({ dataDir });
-  await own.start();
-  try {
-    const client = new pg.Client({
-      connectionString: await own.connectionString(),
-    });
-    client.on("error", () => {});
-    await client.connect();
-    try {
-      return (await client.query(sql)).rows as Row[];
-    } finally {
-      await client.end();
-    }
-  } finally {
-    await own.stop();
-  }
-}
-
 async function ownServerDatabases(dataDir: string): Promise<string[]> {
-  const rows = await onOwnServer<{ datname: string }>(
+  const rows = await onStoppedServer<{ datname: string }>(
     dataDir,
     "select datname from pg_database where datname like 'super_deploy_rehearsal_%'",
   );
@@ -185,7 +168,7 @@ test("SIGTERM while the command runs its own embedded server drops throwaway dat
   );
 });
 
-test("Ctrl+C reaching an embedded server the command started still exits 130 and stops it", async () => {
+test("Ctrl+C to the process group of a command that started its embedded server exits 130 and stops the server", async () => {
   const { dir, marker, env } = await ownServerProject();
   const cli = spawnCli(["draft", "--name", "add customers"], {
     cwd: dir.root,
@@ -204,10 +187,13 @@ test("Ctrl+C reaching an embedded server the command started still exits 130 and
   expect(dir.exists(".super-deploy/postgres/postmaster.pid")).toBe(false);
 });
 
-test("throwaway databases left on the project's own embedded server (e.g. by Ctrl+C stopping it too) are dropped when a command next starts it", async () => {
+test("throwaway databases left on the project's own stopped embedded server are dropped when a command next starts it", async () => {
   const { dir } = await ownServerProject();
   const dataDir = dir.path(".super-deploy/postgres");
-  await onOwnServer(dataDir, "create database super_deploy_rehearsal_00ff");
+  const own = embeddedPostgres({ dataDir });
+  await own.start();
+  await own.stop();
+  await onStoppedServer(dataDir, "create database super_deploy_rehearsal_00ff");
 
   const result = await runCli(["draft", "--name", "add customers"], {
     cwd: dir.root,

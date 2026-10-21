@@ -43,7 +43,11 @@ export interface ConnectOptions {
 /** Connects to one named target. Called only by commands that touch that target. */
 export interface DeploymentAdapter {
   connect(options?: ConnectOptions): Promise<Session>;
-  /** Releases anything the adapter holds (pools, servers it started). */
+  /**
+   * Releases anything the adapter holds: pools, and its client registration on
+   * a server it shares with other commands, which stops that server if no
+   * other client remains (the embedded adapter).
+   */
   close?(): Promise<void>;
 }
 
@@ -71,7 +75,11 @@ export interface ThrowawayDatabase {
  */
 export interface RehearsalAdapter {
   createDatabase(request: DatabaseRequest): Promise<ThrowawayDatabase>;
-  /** Releases anything the adapter holds (pools, servers it started). */
+  /**
+   * Releases anything the adapter holds: pools, and its client registration on
+   * a server it shares with other commands, which stops that server if no
+   * other client remains (the embedded adapter).
+   */
   close?(): Promise<void>;
 }
 

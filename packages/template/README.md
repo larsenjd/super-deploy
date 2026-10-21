@@ -70,13 +70,16 @@ passwords never leave your machine. If another program already listens on
 the port, every command that uses `dev` fails naming the port: stop that
 program or set another `port`.
 
-The server runs only while something uses it: a command that needs `dev`
-starts it, and stops it when the command ends. To keep it running while you
+The server runs only while something uses it: the first command that needs
+`dev` starts it, commands run at the same time share it, and it stops when
+the last of them ends. A command that was killed outright (`kill -9`, a
+closed terminal) can leave it running; the next command that uses `dev`
+takes it over and stops it when it ends. To keep it running while you
 connect, run this in the project folder and leave it running; Ctrl+C stops
-it:
+it, unless a command is still using it:
 
 ```sh
-node --input-type=module -e 'const { devServer } = await import("./super-deploy.config.ts"); await devServer.start(); console.log("dev is running: Ctrl+C stops it")'
+node --input-type=module -e 'const { devServer } = await import("./super-deploy.config.ts"); await devServer.start(); console.log("dev is running: Ctrl+C stops it"); const wait = setInterval(() => {}, 60_000); process.once("SIGINT", async () => { clearInterval(wait); await devServer.stop(); })'
 ```
 
 Commands you run meanwhile use the running server and leave it running.

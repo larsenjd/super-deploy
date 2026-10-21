@@ -174,8 +174,9 @@ describe.each([
   });
 });
 
-// Ctrl+C in a terminal reaches the whole process group, so it also stops the
-// project's own embedded server before the CLI has cleaned up.
+// Ctrl+C in a terminal reaches the whole process group. The project's own
+// embedded server runs in a session of its own, so the CLI cleans up on it
+// and then stops it as its last client.
 describe.each([
   ["SIGINT", 130, "rehearsal"],
   ["SIGTERM", 143, "transaction"],
@@ -198,7 +199,7 @@ describe.each([
       const result = await cli.result;
 
       expect(result.exitCode).toBe(exitCode);
-      // Not after the 10 s an exit hook waits for a server that has already stopped.
+      // Promptly: well inside a stop's 60 s timeout.
       expect(Date.now() - started).toBeLessThan(8_000);
       expect(dir.exists(".super-deploy/postgres/postmaster.pid")).toBe(false);
       const status = await runCli(["status", "--target", "dev"], {

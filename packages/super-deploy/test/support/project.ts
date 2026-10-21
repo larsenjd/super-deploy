@@ -80,6 +80,7 @@ export async function createTestProject(
  * for interruption tests. Environment variables (read when the command runs):
  * - `TEST_STALL=query`: every throwaway session's first `execute` first runs
  *   `pg_sleep(60)`, after writing the file named by `TEST_MARKER`.
+ *   `TEST_STALL_SECONDS` sleeps that long instead, for a stall that ends.
  * - `TEST_STALL=drop`: as `query`, and dropping a throwaway database never finishes.
  * `dataDir` is a JS expression (a string literal or `new URL(...)`).
  */
@@ -106,7 +107,9 @@ const rehearsal = {
             if (stall !== undefined && !stalled) {
               stalled = true;
               writeFileSync(process.env.TEST_MARKER, "");
-              await session.query("select pg_sleep(60)");
+              await session.query("select pg_sleep($1)", [
+                Number(process.env.TEST_STALL_SECONDS ?? 60),
+              ]);
             }
             return session.execute(sql);
           },

@@ -1,8 +1,8 @@
 // An embedded-postgres adapter: a private PostgreSQL 18 server in a project
 // folder that provides rehearsal databases, local targets such as `dev`, or
 // both. Imported as `super-deploy/embedded-postgres`; `embedded-postgres`
-// itself is an optional peer dependency, loaded only when the server is first
-// needed (importing it installs process exit and signal hooks).
+// itself is an optional peer dependency, whose binaries are found only when
+// the server is first needed (`embedded-server.ts`).
 //
 // The generated config runs two (packages/template/super-deploy.config.ts):
 // one for `dev` in `.super-deploy/dev` on a fixed `port`, so users and their
@@ -10,12 +10,21 @@
 // `.super-deploy/rehearsal` on a free port, so a rehearsal never creates a
 // database next to `dev` (ticket 06).
 //
-// The server starts when a command first needs it, on its `port` or else a
-// free one, and stops when the project is closed. A `port` something else
-// listens on fails the start with an AdapterError naming it and the setting.
-// If the data directory's server is already running (another command, or a
-// test harness), the adapter attaches to it, on whatever port it has, and
-// leaves it running.
+// One server per data directory, shared by every client of it under a lease
+// (`server-lease.ts`, ticket 14): an instance registers when it is first
+// needed, starting the server on its `port` or else a free one if it isn't
+// running, or attaching to it, on whatever port it has, if it is (another
+// command, a test harness). `stop()` releases the registration, and the last
+// live client stops the server. So commands run at the same time in one
+// project all share it, and none stops it under another. A client that finds
+// only dead clients (commands killed outright) has taken the server over: it
+// drops the throwaway databases they left behind, and its `stop()` stops the
+// server. A `port` something else listens on fails the start with an
+// AdapterError naming it and the setting.
+//
+// The server runs in a session of its own, so Ctrl+C in one terminal doesn't
+// stop it under a command in another; the interrupted command's close
+// releases its registration like any other.
 //
 // The server's superuser `super_deploy` sets the server up and runs the
 // rehearsal databases. A target (`target(database)`) is deployed as the
@@ -27,19 +36,16 @@
 // there (for the history schema) and `public`, through `pg_database_owner`.
 // A database created before the deploy role existed keeps what the superuser
 // created in it: the ownership pre-flight lists those objects.
-//
-// Ctrl+C in a terminal reaches the whole process group, so the server may
-// have stopped before the command closes it. Stopping it is then a no-op: the
-// library's `stop()` waits for an `exit` event that has already fired. Of the
-// library's exit hooks, the `beforeExit` one is removed on import: it would
-// end a process whose event loop drains with exit code 0.
-import type { ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type EmbeddedPostgresServer from "embedded-postgres";
 import pg from "pg";
+import {
+  initialise,
+  runningPort,
+  startServer,
+  stopServer,
+  waitUntilAccepting,
+} from "./embedded-server.ts";
 import {
   connectSession,
   rehearsalDatabasePrefix,
@@ -47,6 +53,12 @@ import {
   targetOver,
 } from "./node-postgres.ts";
 import { freePort, localHost as host, portInUse } from "./ports.ts";
+import {
+  type Registration,
+  register,
+  release,
+  withLeaseLock,
+} from "./server-lease.ts";
 import type { DeploymentAdapter, RehearsalAdapter } from "./types.ts";
 import { AdapterError } from "./types.ts";
 
@@ -73,9 +85,15 @@ export interface EmbeddedPostgres {
    * superuser and owns the database.
    */
   target(database: string): DeploymentAdapter;
-  /** Starts the server, or attaches to it if it is already running. */
+  /**
+   * Registers as a client of the data directory's server, starting the server
+   * if it isn't running.
+   */
   start(): Promise<void>;
-  /** Stops the server if this instance started it. */
+  /**
+   * Releases this client's registration. The server stops when no live client
+   * of its data directory remains.
+   */
   stop(): Promise<void>;
   /**
    * A connection string for `database` (default `postgres`) as the server's
@@ -103,148 +121,114 @@ END $$`;
 export function embeddedPostgres(
   options: EmbeddedPostgresOptions,
 ): EmbeddedPostgres {
-  const dataDir =
+  const dataDir = resolve(
     options.dataDir instanceof URL
       ? fileURLToPath(options.dataDir)
-      : resolve(options.dataDir);
+      : options.dataDir,
+  );
   let running: Promise<number> | undefined;
-  let owned: EmbeddedPostgresServer | undefined;
+  let registration: Registration | undefined;
 
   function port(): Promise<number> {
-    running ??= startOrAttach().catch((error: unknown) => {
+    running ??= registerAndStart().catch((error: unknown) => {
       running = undefined;
       throw error;
     });
     return running;
   }
 
-  async function startOrAttach(): Promise<number> {
-    const attached = await runningPort(dataDir);
-    if (attached !== undefined) {
-      return attached;
-    }
-    const log: string[] = [];
-    const remember = (message: unknown) => {
-      log.push(String(message).trim());
-      log.splice(0, log.length - 20);
-    };
-    const { default: EmbeddedPostgresClass } = await importDeferringExitHooks();
-    const pgFlags = [
-      "-c",
-      `listen_addresses=${host}`,
-      "-c",
-      "unix_socket_directories=",
-    ];
-    if (!existsSync(join(dataDir, "PG_VERSION"))) {
-      await mkdir(dirname(dataDir), { recursive: true });
-      const initialiser = new EmbeddedPostgresClass({
-        ...serverOptions(0),
-        initdbFlags: ["--encoding=UTF8", "--locale=C", "--no-sync"],
-      });
-      await initialiser.initialise().catch((error: unknown) => {
-        throw new AdapterError(
-          `Embedded PostgreSQL failed to initialise ${dataDir}`,
-          {
-            cause: error,
-          },
-        );
-      });
-    }
+  async function registerAndStart(): Promise<number> {
+    await initialise(dataDir, user, password);
+    return withLeaseLock(dataDir, async () => {
+      const lease = await register(dataDir);
+      try {
+        const serverPort = (await runningPort(dataDir)) ?? (await start());
+        const admin = urlAs(user, password, "postgres", serverPort);
+        await waitUntilAccepting(admin, dataDir);
+        if (lease.others === 0) {
+          await sweepLeftovers(admin);
+        }
+        registration = lease;
+        return serverPort;
+      } catch (error) {
+        await releaseLease(lease).catch(() => {});
+        throw error;
+      }
+    });
+  }
+
+  /** Starts the server, which isn't running. Call under the lease lock. */
+  async function start(): Promise<number> {
     for (let attempt = 1; ; attempt++) {
       if (options.port !== undefined && (await portInUse(options.port))) {
-        // Perhaps this data directory's server, started by another process
-        // meanwhile.
-        const other = await runningPort(dataDir);
-        if (other !== undefined) {
-          return other;
-        }
         throw new AdapterError(
           `Embedded PostgreSQL can't start in ${dataDir}: port ${options.port} on ${host} is in use by another program. Stop that program, or set another \`port\` in embeddedPostgres({ ... }) in super-deploy.config.ts`,
         );
       }
       const candidate = options.port ?? (await freePort());
-      const server = new EmbeddedPostgresClass({
-        ...serverOptions(candidate),
-        postgresFlags: pgFlags,
-      });
       try {
-        await server.start();
-        owned = server;
+        await startServer(dataDir, candidate);
         return candidate;
-      } catch {
-        // Another process may have started the same data directory meanwhile.
-        const other = await runningPort(dataDir);
-        if (other !== undefined) {
-          return other;
-        }
-        if (attempt === 3) {
-          throw new AdapterError(
-            `Embedded PostgreSQL failed to start in ${dataDir}: ${log.join(" | ")}`,
-          );
+      } catch (error) {
+        // A free port may have been taken meanwhile: try another.
+        if (attempt === 3 || options.port !== undefined) {
+          throw error;
         }
       }
     }
+  }
 
-    function serverOptions(serverPort: number) {
-      return {
-        databaseDir: dataDir,
-        port: serverPort,
-        user,
-        password,
-        authMethod: "password" as const,
-        persistent: true,
-        onLog: remember,
-        onError: remember,
-      };
+  /** Releases a registration, stopping the server if it was the last. */
+  async function releaseLease(lease: Registration): Promise<void> {
+    if (
+      (await release(dataDir, lease)) === 0 &&
+      (await runningPort(dataDir)) !== undefined
+    ) {
+      await stopServer(dataDir);
     }
   }
 
-  async function connectionString(database = "postgres"): Promise<string> {
-    return connectionStringAs(user, password, database);
-  }
-
-  async function connectionStringAs(
+  function urlAs(
     role: string,
     rolePassword: string,
     database: string,
-  ): Promise<string> {
-    const serverPort = await port();
+    serverPort: number,
+  ): string {
     return `postgres://${role}:${rolePassword}@${host}:${serverPort}/${encodeURIComponent(database)}`;
   }
 
+  async function connectionString(database = "postgres"): Promise<string> {
+    return urlAs(user, password, database, await port());
+  }
+
   async function stop(): Promise<void> {
-    const server = owned;
-    owned = undefined;
+    const starting = running;
     running = undefined;
-    swept = undefined;
-    if (server !== undefined && !hasExited(server)) {
-      await server.stop();
+    await starting?.catch(() => {});
+    const lease = registration;
+    registration = undefined;
+    if (lease !== undefined) {
+      await withLeaseLock(dataDir, () => releaseLease(lease));
     }
   }
 
-  // Throwaway databases left behind on a server only this process uses, e.g.
-  // when Ctrl+C in a terminal also reached the server and stopped it before
-  // they could be dropped. Never swept on a server this process attached to:
-  // another process may be using them.
-  let swept: Promise<void> | undefined;
-  async function sweepLeftovers(): Promise<void> {
-    await port();
-    if (owned === undefined) {
-      return;
-    }
-    const admin = await connectSession(await connectionString());
+  // Throwaway databases left behind by clients that are gone, e.g. a command
+  // killed outright mid-rehearsal. Dropped only by a client registering next
+  // to no live one: another client may be using them.
+  async function sweepLeftovers(admin: string): Promise<void> {
+    const session = await connectSession(admin);
     try {
-      const { rows } = await admin.query<{ datname: string }>(
+      const { rows } = await session.query<{ datname: string }>(
         "SELECT datname FROM pg_database WHERE starts_with(datname, $1)",
         [rehearsalDatabasePrefix],
       );
       for (const { datname } of rows) {
-        await admin.query(
+        await session.query(
           `DROP DATABASE IF EXISTS ${pg.escapeIdentifier(datname)} WITH (FORCE)`,
         );
       }
     } finally {
-      await admin.close();
+      await session.close();
     }
   }
 
@@ -252,14 +236,7 @@ export function embeddedPostgres(
 
   return {
     rehearsal: {
-      async createDatabase(request) {
-        swept ??= sweepLeftovers().catch((error: unknown) => {
-          swept = undefined;
-          throw error;
-        });
-        await swept;
-        return rehearsal.createDatabase(request);
-      },
+      createDatabase: (request) => rehearsal.createDatabase(request),
       async close() {
         await rehearsal.close();
         await stop();
@@ -285,7 +262,7 @@ export function embeddedPostgres(
         } finally {
           await admin.close();
         }
-        return connectionStringAs(deployRole, deployRolePassword, database);
+        return urlAs(deployRole, deployRolePassword, database, await port());
       });
       return { connect: (options) => target.connect(options), close: stop };
     },
@@ -295,87 +272,4 @@ export function embeddedPostgres(
     stop,
     connectionString,
   };
-}
-
-/**
- * Whether the server's postmaster has exited. The library keeps its process
- * private (the peer dependency is pinned to one version); if that ever
- * changes, this answers false and `stop()` is called as before.
- */
-function hasExited(server: EmbeddedPostgresServer): boolean {
-  const child = (server as unknown as { process?: ChildProcess }).process;
-  return (
-    child !== undefined &&
-    (child.exitCode !== null || child.signalCode !== null)
-  );
-}
-
-const hookedSignals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] as const;
-
-/**
- * Imports embedded-postgres. Importing it installs async-exit-hook handlers
- * that stop every server and exit on SIGINT, SIGTERM, SIGHUP and SIGBREAK.
- * Where the process already handles one of those signals (the CLI does, to
- * roll back and drop throwaway databases first), the new handler is removed
- * again and the process's own handler stays in charge; the server is then
- * stopped by `close()` or, failing that, by the hook's `exit` handler.
- *
- * The hook's `beforeExit` handler is always removed: it calls
- * `process.exit(0)`, so a process whose event loop drains would exit 0
- * whatever its own exit code, e.g. after an interruption.
- */
-async function importDeferringExitHooks(): Promise<
-  typeof import("embedded-postgres")
-> {
-  const before = new Map(
-    hookedSignals.map((signal) => [signal, process.listeners(signal)]),
-  );
-  const beforeExit = process.listeners("beforeExit");
-  const module = await import("embedded-postgres");
-  for (const [signal, existing] of before) {
-    if (existing.length > 0) {
-      for (const listener of process.listeners(signal)) {
-        if (!existing.includes(listener)) {
-          process.removeListener(signal, listener);
-        }
-      }
-    }
-  }
-  for (const listener of process.listeners("beforeExit")) {
-    if (!beforeExit.includes(listener)) {
-      process.removeListener("beforeExit", listener);
-    }
-  }
-  return module;
-}
-
-/** The port of the server running on `dataDir`, if one is. */
-async function runningPort(dataDir: string): Promise<number | undefined> {
-  let lines: string[];
-  try {
-    lines = (await readFile(join(dataDir, "postmaster.pid"), "utf8")).split(
-      /\r?\n/,
-    );
-  } catch {
-    return undefined;
-  }
-  const pid = Number(lines[0]);
-  const serverPort = Number(lines[3]);
-  if (
-    !Number.isInteger(pid) ||
-    !Number.isInteger(serverPort) ||
-    !isAlive(pid)
-  ) {
-    return undefined;
-  }
-  return serverPort;
-}
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
 }

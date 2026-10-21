@@ -105,5 +105,5 @@ try {
   code = 1;
   console.error(`Error: ${error instanceof Error ? error.message : error}`);
 }
-// Exit explicitly: embedded-postgres's exit hook would otherwise exit with 0.
+// Exit explicitly, with the interruption's or the failure's code.
 process.exit(interruptedCode ?? code);

@@ -21,7 +21,7 @@ How an implementer works here, usually alongside others, each in a git worktree 
 Other worktrees run their suites on this machine at the same time.
 
 - Every server you start, in a test, a script or a hand-run CLI, gets a free port and a data dir of its own. Tests get both from `startTestServer`. The embedded adapter picks a free port unless its config sets `port` (the template's `dev` server does): a test or script that sets one picks a port that is free when it runs. Keep its `dataDir` inside your worktree or a new temp folder.
-- Stop what you started (`server.stop()` in tests, `project.close()` in scripts), and find any leftover by its data dir. Every other postgres process belongs to someone else's run.
+- Stop what you started (`server.stop()` in tests, `project.close()` in scripts), and find any leftover by its data dir. A server runs in a session of its own, so it outlives a command or test killed outright: stop a leftover with `pg_ctl stop -D <dataDir>` (or `stopServerOn(dataDir)` in a test). Every other postgres process belongs to someone else's run.
 
 ## The shell
 

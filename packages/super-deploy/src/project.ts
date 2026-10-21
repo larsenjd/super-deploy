@@ -32,7 +32,7 @@ export interface Project {
   readonly paths: ProjectPaths;
   /** The interruption signal the project was loaded with, if any. */
   readonly signal: AbortSignal | undefined;
-  /** Closes every adapter (dropping leftover throwaway databases, stopping servers it started). */
+  /** Closes every adapter (dropping leftover throwaway databases, releasing embedded servers: the last client stops one). */
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 }
