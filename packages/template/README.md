@@ -44,7 +44,10 @@ sets the server up and runs the rehearsals.
 Run `pnpm exec super-deploy` with no arguments for an interactive menu, or
 `pnpm exec super-deploy --help` for every command. To deploy to a real
 database (QA, production), add it as a target: see
-[Adding a real target](#adding-a-real-target).
+[Adding a real target](#adding-a-real-target). To try a draft on `dev`
+before finalizing it (`deploy-draft`), or reset `dev` to a migration
+(`rebuild`), flag `dev` disposable first: see
+[Disposable targets and the guarded commands](#disposable-targets-and-the-guarded-commands).
 
 ## Connecting to dev
 
@@ -87,10 +90,11 @@ Commands you run meanwhile use the running server and leave it running.
 A project whose `dev` was deployed by an earlier version of super-deploy,
 as the server's superuser rather than `deployer`, holds objects the deploy
 role doesn't own, so `deploy --target dev` and `status --target dev` refuse
-them. `dev` is local and disposable: with no command running, delete the
-`.super-deploy` folder and run `deploy --target dev` again, which rebuilds
-it from your migrations (as `deployer`). Data you added to `dev` by hand is
-lost with it.
+them. `dev` is local, so it is safe to delete and rebuild: with no command
+running, delete the `.super-deploy` folder and run `deploy --target dev`
+again, which rebuilds it from your migrations (as `deployer`). Data you
+added to `dev` by hand is lost with it, and so is its disposable flag (see
+[Disposable targets and the guarded commands](#disposable-targets-and-the-guarded-commands)).
 
 ## What the desired schema supports
 
@@ -830,9 +834,22 @@ files read-only again.
 
 ## Disposable targets and the guarded commands
 
-A disposable target is one you may wipe and experiment on, such as your own
-`dev` database. Four commands change a target outside the normal
-draft-finalize-deploy path:
+A disposable target is one flagged as safe to wipe and experiment on, with
+`disposable --target X --set yes`. Every target starts not disposable, `dev`
+included, so `deploy-draft` and `rebuild` refuse it until it is flagged.
+Before the first `deploy-draft` or `rebuild` on `dev`, flag it once:
+
+```sh
+pnpm exec super-deploy disposable --target dev --set yes
+```
+
+and type `YES`. The flag lives in the target's database, so a database
+rebuilt outside super-deploy starts unflagged again: deleting
+`.super-deploy` to rebuild `dev` loses it, and `dev` needs flagging again.
+(`rebuild` keeps it.) `status` shows a flagged target as `(disposable)`.
+
+Four commands change a target outside the normal draft-finalize-deploy
+path:
 
 - **`disposable --target X --set yes|no`** flags target `X` as disposable,
   or not. The flag lives in the target itself, in its history schema
