@@ -65,7 +65,14 @@ describe("validate", () => {
     });
   });
 
-  test("fails when a finalized file's content was edited", async () => {
+  const changedAfterFinalizing = {
+    severity: "error",
+    code: "content-hash-mismatch",
+    message: `${folder} was changed after it was finalized (its content hash does not match data-model/migrations/index.json): restore it from Git (\`git checkout HEAD -- ${folder}\`, and delete any file added to it), then run validate, which makes it read-only again. To change what a finalized migration does, finalize a new migration, or a Recovery for the targets where it failed`,
+    path: folder,
+  };
+
+  test("fails when a finalized file's content was edited, saying how to restore it", async () => {
     const { project, tamper } = await finalizedProject();
     await tamper(`${folder}/schema-change.sql`, (text) =>
       text.replace("NOT NULL", "NULL"),
@@ -73,14 +80,23 @@ describe("validate", () => {
 
     const error = await validationError(project);
 
-    expect(error.problems).toEqual([
-      {
-        severity: "error",
-        code: "content-hash-mismatch",
-        message: `${folder} was changed after it was finalized (its content hash does not match data-model/migrations/index.json)`,
-        path: folder,
-      },
-    ]);
+    expect(error.problems).toEqual([changedAfterFinalizing]);
+  });
+
+  test("fails the same way when a file was added to a finalized migration or its desired-schema snapshot was edited", async () => {
+    const added = await finalizedProject();
+    await chmod(added.dir.path(folder), 0o755);
+    await added.dir.write(`${folder}/notes.txt`, "why we did this\n");
+    const edited = await finalizedProject();
+    await edited.tamper(
+      `${folder}/desired-schema/customers.sql`,
+      (text) => `${text}-- edited\n`,
+    );
+
+    for (const { project } of [added, edited]) {
+      const error = await validationError(project);
+      expect(error.problems).toEqual([changedAfterFinalizing]);
+    }
   });
 
   test("a change only in line endings passes", async () => {

@@ -6,7 +6,9 @@
 // rebuild, deploy-draft, disposable and init --adopt. Contention fails at
 // once, naming the holder's running attempt and what its server process is
 // doing (pg_stat_activity), so a user can tell a live command from a dead
-// CLI's statement still running, and how to end that.
+// CLI's statement still running, and how to end that. Guarded commands also
+// look for a holder before asking YES (`lockHolder`, guard/guard.ts), without
+// taking the lock.
 //
 // The advice is `pg_terminate_backend`, not `pg_cancel_backend` (ticket 51's
 // decision said cancel): cancelling ends only the running statement, and the

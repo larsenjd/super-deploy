@@ -105,6 +105,11 @@ export interface StatementFacts {
   fieldSelections: string[];
   /** For routines: the name and input argument types (identity form). */
   routine?: { name: string; arguments: string[] };
+  /**
+   * For `COMMENT ON COLUMN`: the key of the relation whose column it is
+   * (`rel:v`), so ordering can refuse a comment on a view's column.
+   */
+  commentedColumnOf?: string;
   problems: Problem[];
 }
 
@@ -891,9 +896,14 @@ const extractors: Record<string, Extractor> = {
       case "OBJECT_SEQUENCE":
         collector.add("relation", names, "rel");
         break;
-      case "OBJECT_COLUMN":
+      case "OBJECT_COLUMN": {
         collector.add("relation", names.slice(0, -1), "rel");
+        const [relation] = collector.references;
+        if (relation !== undefined) {
+          facts.commentedColumnOf = relation.key;
+        }
         break;
+      }
       case "OBJECT_TABCONSTRAINT":
       case "OBJECT_TRIGGER": {
         const table = names.slice(0, -1);

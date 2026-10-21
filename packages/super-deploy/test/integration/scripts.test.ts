@@ -372,6 +372,93 @@ alter type money_amount_new rename to money_amount;
     ).toEqual([{ price: "2.5", total: "7.5" }]);
   });
 
+  test("a collation or generation expression change: draft and finalize name the replaced columns and the in-place statements, which keep the values", async () => {
+    const table = (
+      collation: string,
+      factor: string,
+    ) => `create table customers (
+  id bigint primary key,
+  nickname text${collation},
+  price numeric(10,2) not null,
+  qty integer not null,
+  total numeric generated always as (price * qty${factor}) stored
+);
+create index customers_nick_idx on customers (nickname);
+`;
+    const { dir, project, database } = await deployProject(server, {
+      "customers.sql": table("", ""),
+    });
+    await draft(project, { name: "add customers" });
+    await finalize(project);
+    await deploy(project, { target: "dev" });
+    await server.query(
+      "insert into customers (id, nickname, price, qty) values (1, 'nick', 2.50, 3)",
+      [],
+      database,
+    );
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      table(' collate "C"', " * 1.2"),
+    );
+    await dir.write(
+      "data-model/draft/seed-data.sql",
+      "insert into customers (id, nickname, price, qty) values (1, 'nick', 2.50, 3);\n",
+    );
+
+    // pg-delta drops and adds both columns (research §8): kept as generated.
+    const drafted = await draft(project, { name: "misc attrs" });
+
+    const replaced = drafted.toCover.map(({ kind, column, message }) => ({
+      kind,
+      column,
+      message,
+    }));
+    expect(replaced).toEqual([
+      {
+        kind: "dropped-column",
+        column: "nickname",
+        message: expect.stringMatching(
+          /^Column customers\.nickname is dropped and re-added to change its collation \(1 non-null value in the rehearsal data\): its values are lost\. To keep them, change it in place in the pre-migration script: ALTER TABLE .* ALTER COLUMN "nickname" TYPE text COLLATE .*"C"$/,
+        ),
+      },
+      {
+        kind: "dropped-column",
+        column: "total",
+        message: expect.stringMatching(
+          /^Column customers\.total is dropped and re-added to change its generation expression \(1 non-null value in the rehearsal data\): its values are computed again, .* change it in place in the pre-migration script: ALTER TABLE .* ALTER COLUMN "total" SET EXPRESSION AS \(.*1\.2.*\)$/,
+        ),
+      },
+    ]);
+    const refusal = await finalize(project).catch((e: unknown) => e);
+    expect(refusal).toBeInstanceOf(DestructiveNotAcknowledgedError);
+    expect(
+      (refusal as DestructiveNotAcknowledgedError).question.statements.map(
+        ({ message }) => message.replace(/:.*/, ""),
+      ),
+    ).toEqual([
+      "public.customers.nickname is dropped and re-added to change its collation",
+      "public.customers.total is dropped and re-added to change its generation expression",
+    ]);
+
+    // Following the advice: nothing left to generate, nothing destructive.
+    await dir.write(
+      "data-model/draft/pre-migration.sql",
+      replaced
+        .map(
+          ({ message }) => `${message.split("pre-migration script: ")[1]};\n`,
+        )
+        .join(""),
+    );
+    const fixed = await draft(project);
+    expect(fixed.statements).toEqual([]);
+    expect(fixed.toCover).toEqual([]);
+    await finalize(project);
+    await deploy(project, { target: "dev" });
+    expect(
+      await server.query("select nickname, total from customers", [], database),
+    ).toEqual([{ nickname: "nick", total: "9.000" }]);
+  });
+
   test("draft reports what the scripts still need to cover, counting the rows the rehearsal data has", async () => {
     const { dir, project } = await deployProject(server, {
       "customers.sql": `create table customers (

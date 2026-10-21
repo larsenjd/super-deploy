@@ -743,12 +743,43 @@ create view v2 as
       "comment on trigger cm_t on cm is 'tr'",
       "comment on type cm_type is 'ty'",
       "comment on domain cm_dom is 'd'",
-      "comment on column cm_v.id is 'view column'",
       "comment on constraint cm_dom_positive on domain cm_dom is 'dc'",
     ),
     before: [
       ["create index cm_a_idx", "comment on index cm_a_idx"],
       ["create trigger cm_t", "comment on trigger cm_t"],
+    ],
+  },
+  {
+    // pg-delta doesn't generate them (QA 127), so no migration would.
+    name: "C17b comments on view and materialized-view columns are refused",
+    files: {
+      "a.sql": `create table cv (id int constraint cv_pk primary key, v text);
+create view cv_v as select id, v from cv;
+create materialized view cv_mv as select id from cv;
+comment on column cv.v is 'table column';
+comment on view cv_v is 'the view';
+`,
+      "b.sql": `comment on column cv_v.v is 'view column';
+comment on column public.cv_mv.id is 'materialized-view column';
+`,
+    },
+    errors: [
+      {
+        file: "b.sql",
+        line: 1,
+        rule: "unsupported-object",
+        message: [
+          "Comments on view and materialized-view columns are not supported in V1",
+          "view cv_v",
+        ],
+      },
+      {
+        file: "b.sql",
+        line: 2,
+        rule: "unsupported-object",
+        message: ["materialized view cv_mv"],
+      },
     ],
   },
   {

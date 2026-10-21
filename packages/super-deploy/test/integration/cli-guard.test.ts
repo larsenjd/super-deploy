@@ -208,6 +208,30 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
     expect(status.stdout).toMatch(/^Target dev \(disposable\):/);
   });
 
+  test("each disposable attempt records which way it set the flag, and status shows it", async () => {
+    const { dir } = await deployedProject();
+    for (const [set, now] of [
+      ["yes", "disposable"],
+      ["no", "not disposable"],
+    ] as const) {
+      const terminal = spawnTerminal(
+        ["disposable", "--target", "dev", "--set", set],
+        { cwd: dir.root },
+      );
+      await terminal.waitFor("Type YES");
+      terminal.type(`YES${keys.enter}`);
+      await terminal.waitFor(`Target dev is now ${now}`);
+      expect(await terminal.exited).toBe(0);
+    }
+
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).toMatch(
+      /^ {2}#3 disposable set no succeeded by \S+ at \S+\n {2}#2 disposable set yes succeeded by \S+ at \S+\n {2}#1 deploy succeeded migration 1 by /m,
+    );
+  });
+
   test("disposable --set yes says how many tables the managed schema holds and about how many rows, and what the flag allows", async () => {
     const { dir, database } = await deployedProject();
     await asDeployRole(
@@ -453,13 +477,66 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
       { command: "deploy", outcome: "succeeded" },
       { command: "disposable", outcome: "failed" },
     ]);
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).toContain("#2 disposable set yes failed by ");
   });
 
-  test("takes the target lock: refuses while a deployment holds it, naming that attempt", async () => {
+  test("refuses before asking while a deployment holds the target lock, naming that attempt: no attempt is recorded", async () => {
     const { dir, database } = await guardedProject({
       adapter: pausingAtCommit,
     });
-    const project = await loadProject({ cwd: dir.root });
+    await whileDeploying(dir.root, async () => {
+      const terminal = spawnTerminal(
+        ["disposable", "--target", "dev", "--set", "yes"],
+        { cwd: dir.root },
+      );
+      await terminal.waitFor(
+        /Error: Target dev is locked by attempt #1 \(deploy by \S+, started/,
+      );
+      expect(await terminal.exited).toBe(1);
+      expect(terminal.screen).not.toContain("Type YES");
+    });
+    expect(await attemptOutcomes(database)).toEqual([
+      { command: "deploy", outcome: "succeeded" },
+    ]);
+  });
+
+  test("takes the target lock after YES: refuses if a deployment took it while the question waited", async () => {
+    const { dir, database } = await guardedProject({
+      adapter: pausingAtCommit,
+    });
+    const terminal = spawnTerminal(
+      ["disposable", "--target", "dev", "--set", "yes"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor("Type YES");
+    await whileDeploying(dir.root, async () => {
+      terminal.type(`YES${keys.enter}`);
+      await terminal.waitFor(
+        /Error: Target dev is locked by attempt #1 \(deploy by \S+, started/,
+      );
+      expect(await terminal.exited).toBe(1);
+    });
+    expect(await attemptOutcomes(database)).toEqual([
+      { command: "deploy", outcome: "succeeded" },
+      { command: "disposable", outcome: "failed" },
+    ]);
+  });
+});
+
+/**
+ * Finalizes `add customers` and runs `body` while its deployment to `dev`
+ * holds the target lock, paused at COMMIT (the project's adapter must be
+ * `pausingAtCommit`); the deployment then finishes.
+ */
+async function whileDeploying(
+  root: string,
+  body: () => Promise<void>,
+): Promise<void> {
+  const project = await loadProject({ cwd: root });
+  try {
     await draft(project, { name: "add customers" });
     await finalize(project);
     let release = () => {};
@@ -476,36 +553,26 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
     const deploying = deploy(project, { target: "dev" });
     try {
       await reached;
-      const terminal = spawnTerminal(
-        ["disposable", "--target", "dev", "--set", "yes"],
-        { cwd: dir.root },
-      );
-      await terminal.waitFor("Type YES");
-      terminal.type(`YES${keys.enter}`);
-      await terminal.waitFor(
-        /Error: Target dev is locked by attempt #1 \(deploy by \S+, started/,
-      );
-      expect(await terminal.exited).toBe(1);
+      await body();
     } finally {
       release();
       await deploying;
-      await project.close();
     }
-    expect(
-      await server.query(
-        "select command, outcome from deployment_history.attempts order by id",
-        [],
-        database,
-      ),
-    ).toEqual([
-      { command: "deploy", outcome: "succeeded" },
-      { command: "disposable", outcome: "failed" },
-    ]);
-  });
-});
+  } finally {
+    await project.close();
+  }
+}
+
+async function attemptOutcomes(database: string) {
+  return server.query(
+    "select command, outcome from deployment_history.attempts order by id",
+    [],
+    database,
+  );
+}
 
 describe.skipIf(process.platform === "win32")("from the menu", () => {
-  test("disposable asks for the target and the value, then goes through the guard and returns to the menu", async () => {
+  test("disposable asks for the target, then whether it should be disposable, naming its current flag with no preselected; the confirmation shows the flag too", async () => {
     const { dir, database } = await guardedProject();
     const terminal = spawnTerminal([], { cwd: dir.root });
 
@@ -513,12 +580,28 @@ describe.skipIf(process.platform === "win32")("from the menu", () => {
     await terminal.chooseMenuItem("disposable");
     await terminal.waitFor("The target to use");
     terminal.type(keys.enter);
-    await terminal.waitFor("yes to make the target disposable");
+    await terminal.waitFor(
+      "Target dev is not disposable now. Make it disposable?",
+    );
+    await terminal.waitFor(noSelected);
+    terminal.type(keys.up);
     terminal.type(keys.enter);
-    await terminal.waitFor("Last recorded migration: none");
+    await terminal.waitFor("Now: not disposable");
     await terminal.waitFor("Type YES to mark target dev as disposable");
     terminal.type(`YES${keys.enter}`);
     await terminal.waitFor("Target dev is now disposable");
+
+    await terminal.waitFor("quit");
+    await terminal.chooseMenuItem("disposable");
+    await terminal.waitFor("The target to use");
+    terminal.type(keys.enter);
+    await terminal.waitFor("Target dev is disposable now. Keep it disposable?");
+    await terminal.waitFor(noSelected);
+    terminal.type(keys.enter);
+    await terminal.waitFor("Now: disposable");
+    await terminal.waitFor("Type YES to mark target dev as not disposable");
+    terminal.type(`no${keys.enter}`);
+    await terminal.waitFor("was not confirmed");
 
     await terminal.waitFor("quit");
     terminal.type(keys.escape);
@@ -531,7 +614,35 @@ describe.skipIf(process.platform === "win32")("from the menu", () => {
       ),
     ).toEqual([{ disposable: true }]);
   });
+
+  test("disposable says when it can't read the target's current flag, and still preselects no", async () => {
+    const { dir } = await guardedProject({
+      otherTargets:
+        'down: { adapter: { connect: async () => { throw new Error("no route to host"); } } },',
+    });
+    const terminal = spawnTerminal([], { cwd: dir.root });
+
+    await terminal.waitFor("quit");
+    await terminal.chooseMenuItem("disposable");
+    await terminal.waitFor("The target to use");
+    terminal.type(keys.down);
+    terminal.type(keys.enter);
+    await terminal.waitFor(
+      "Couldn't read whether target down is disposable now (",
+    );
+    await terminal.waitFor("no route to host");
+    await terminal.waitFor("Make it disposable?");
+    await terminal.waitFor(noSelected);
+    terminal.type(keys.escape);
+    await terminal.waitFor("Cancelled: nothing ran");
+    await terminal.waitFor("quit");
+    terminal.type(keys.escape);
+    expect(await terminal.exited).toBe(0);
+  });
 });
+
+/** A yes/no select with no selected, as the screen shows it. */
+const noSelected = /○ yes[^●]*● no/;
 
 /**
  * A `dev` adapter whose deploy transaction waits at COMMIT while
