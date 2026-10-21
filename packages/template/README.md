@@ -752,6 +752,51 @@ The schema change never changes: a Recovery always runs its migration's
 draft's copy: `rehearse` and `finalize` refuse a Recovery draft whose schema
 change is no longer the migration's.
 
+A deployment can also refuse before it runs anything, because the target
+has drifted: see [Drift](#drift).
+
+## Drift
+
+A target has drifted when its managed schema differs from a replica that
+super-deploy builds, in a throwaway database, from the migrations the target
+records: a table, column, index or other object made, dropped or changed on
+the target by hand. `deploy` checks for drift before it changes anything
+and refuses a drifted target, naming what differs. `status --target X`
+lists each difference, saying which side it is on, and exits 1 on drift.
+Every difference counts, even an object a pending migration would create
+exactly as it is.
+
+Not compared, so never drift:
+
+- grants, default privileges, policies and row-level security, which are set
+  up on each target outside super-deploy (see [Permissions](#permissions));
+- ownership: the deploy pre-flight checks it separately, and `deploy` and
+  `status` name objects the deploy role doesn't own;
+- column order (except a composite type's attributes, whose order is part of
+  the type).
+
+`status` says `Drift: none` when it checked and found none, and
+`Drift: not checked (...)`, exiting 1, when it couldn't check: the target
+holds a deployed draft (`rebuild` resets it), its recorded history doesn't
+match the project's migrations, or another command holds the target's lock.
+
+To get a drifted target deploying again, make it match its recorded
+migrations, in one of these ways:
+
+- **Undo it.** Reverse the change on the target by hand, as the deploy role,
+  until `status --target X` shows `Drift: none`.
+- **Keep it.** Make the desired schema describe the target as it now is
+  (add what was added, remove what was dropped, change what changed), then
+  `draft` and `finalize` a migration, and run `mark --target X`. `mark`
+  records that migration as deployed on the drifted target without running
+  it, once the target matches a replica of the migrations up to it (see
+  [Disposable targets and the guarded commands](#disposable-targets-and-the-guarded-commands)).
+  Other targets deploy the migration normally. If a pending migration
+  already makes the change that was made by hand, `mark` it the same way.
+- **Rebuild it.** On a disposable target, `rebuild --target X --to N` drops
+  everything in the managed schema and replays migrations 1 to N, losing
+  the target's data in it.
+
 ## Changing your mind
 
 Three commands throw unfinished work away:

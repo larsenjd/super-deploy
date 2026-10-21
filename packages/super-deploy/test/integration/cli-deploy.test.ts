@@ -243,8 +243,10 @@ describe("deploy and status", () => {
     );
     const drifted =
       "Error: Target dev has drifted from its recorded migrations: column name of table public.customers (changed), column note of table public.customers (only on the target), index public.customers_name_idx (missing from the target). Deployments refuse until it matches them again";
+    const wayBack =
+      'Undo the change on the target, or keep it: add it to the desired schema, draft and finalize a migration, then mark --target dev records that migration as deployed without running it (see the README, "Drift")';
     // status has just listed the differences: it doesn't point to itself.
-    expect(report.stderr).toBe(`${drifted}\n`);
+    expect(report.stderr).toBe(`${drifted}. ${wayBack}\n`);
 
     const refused = await runCli(["deploy", "--target", "dev"], {
       cwd: dir.root,
@@ -252,7 +254,7 @@ describe("deploy and status", () => {
     expect(refused).toMatchObject({
       exitCode: 1,
       stdout: "",
-      stderr: `${drifted} (status --target dev lists the differences)\n`,
+      stderr: `${drifted} (status --target dev lists the differences). ${wayBack}\n`,
     });
 
     // The refused deploy had nothing pending; its attempt still reads as failed.

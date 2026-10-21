@@ -196,7 +196,10 @@ export interface DriftContext {
  * With migrations pending, the message points to `mark`: drift is often a
  * change made on the target by hand that the next pending migration catches
  * up with. Whether it is exactly that migration isn't checked here (it would
- * take a second replica); `mark` checks it.
+ * take a second replica); `mark` checks it. With none pending, it gives the
+ * ways back (QA 109): undo the change, or capture it in a new migration and
+ * `mark` that. Either way it points to the README's "Drift" section, which
+ * has the ways back in full.
  */
 export class DriftError extends SuperDeployError {
   readonly code = "target-drifted";
@@ -213,12 +216,12 @@ export class DriftError extends SuperDeployError {
       context.command === "status"
         ? ""
         : ` (status --target ${target} lists the differences)`;
-    const mark =
+    const wayBack =
       context.pending === 0
-        ? ""
-        : `. If its changes are those of the next pending migration applied by hand, mark --target ${target} records that migration as deployed`;
+        ? `Undo the change on the target, or keep it: add it to the desired schema, draft and finalize a migration, then mark --target ${target} records that migration as deployed without running it`
+        : `If its changes are those of the next pending migration applied by hand, mark --target ${target} records that migration as deployed`;
     super(
-      `Target ${target} has drifted from its recorded migrations: ${listedDrift(objects)}. Deployments refuse until it matches them again${differences}${mark}`,
+      `Target ${target} has drifted from its recorded migrations: ${listedDrift(objects)}. Deployments refuse until it matches them again${differences}. ${wayBack} (see the README, "Drift")`,
     );
     this.target = target;
     this.objects = objects;
