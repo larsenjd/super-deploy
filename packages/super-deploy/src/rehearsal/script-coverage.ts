@@ -14,20 +14,32 @@
 // counting only those (QA 111): a column with no values says so rather than
 // that every value fits, and a numeric's values too large for its new
 // precision, which fail the cast, are counted apart from those only rounded.
+// A dropped column the schema change adds again with the same type is
+// pg-delta changing its collation or generation expression (QA 103): the
+// warning names it as replaced, with the in-place statement
+// (`columnReplacement` in destructive.ts, as finalize words it).
 //
 // Advisory only: `draft` reports these and carries on. Acknowledging data
 // loss at finalize is ticket 11's, from the same statements.
-import type { AlterTableCmd, TypeCast, TypeName } from "@pgsql/types";
+import type {
+  AlterTableCmd,
+  ColumnDef,
+  TypeCast,
+  TypeName,
+} from "@pgsql/types";
 import type { Session } from "../adapters/types.ts";
 import { quoteIdentifier } from "../deploy/history.ts";
 import type { PlannedStatement } from "../differ/index.ts";
 import {
+  type ColumnReplacement,
+  columnReplacement,
   keepsEveryValue,
   type Narrowing,
   narrowingOf,
   narrowingReason,
+  replacedColumnReason,
 } from "../sql-analysis/destructive.ts";
-import { parseSqlFile } from "../sql-analysis/parse.ts";
+import { type ParsedStatement, parseSqlFile } from "../sql-analysis/parse.ts";
 import {
   isObject,
   type Json,
@@ -76,6 +88,12 @@ interface Candidate {
   readonly statement: string;
   /** The ALTER COLUMN ... TYPE subcommand, for `changed-type`. */
   readonly retype?: AlterTableCmd | undefined;
+  /**
+   * For `dropped-column`: the ADD COLUMN adding it again later in the
+   * schema change, pg-delta's way to change a collation or a generation
+   * expression (QA 103).
+   */
+  readded?: { statement: ParsedStatement; column: ColumnDef };
 }
 
 /** What `planned` (run on `source`) needs scripts to cover, in statement order. */
@@ -85,39 +103,54 @@ export async function scriptCoverage(
   managedSchema: string,
 ): Promise<ScriptCoverage[]> {
   const found: ScriptCoverage[] = [];
+  const candidates: Candidate[] = [];
   for (const statement of planned) {
-    for (const candidate of await candidatesIn(statement.sql)) {
-      const schema = candidate.schema ?? managedSchema;
-      const { keepsValues, narrowing } = await typeChangeOn(
-        source,
-        schema,
-        candidate,
-      );
-      const affected = keepsValues
-        ? undefined
-        : await affectedRows(source, schema, candidate, narrowing);
-      if (affected !== undefined) {
-        found.push({
-          kind: candidate.kind,
-          table: candidate.table,
-          column: candidate.column,
-          statement: candidate.statement,
-          rows: affected.rows,
-          message: messageFor(candidate, affected, narrowing),
-        });
-      }
+    await candidatesIn(statement.sql, candidates);
+  }
+  for (const candidate of candidates) {
+    const schema = candidate.schema ?? managedSchema;
+    const { keepsValues, narrowing } = await typeChangeOn(
+      source,
+      schema,
+      candidate,
+    );
+    const affected = keepsValues
+      ? undefined
+      : await affectedRows(source, schema, candidate, narrowing);
+    if (affected !== undefined) {
+      const replacement =
+        candidate.readded === undefined
+          ? undefined
+          : columnReplacement(
+              await currentType(source, schema, candidate),
+              candidate.readded.statement,
+              candidate.readded.column,
+              managedSchema,
+            );
+      found.push({
+        kind: candidate.kind,
+        table: candidate.table,
+        column: candidate.column,
+        statement: candidate.statement,
+        rows: affected.rows,
+        message: messageFor(candidate, affected, narrowing, replacement),
+      });
     }
   }
   return found;
 }
 
-async function candidatesIn(sql: string): Promise<Candidate[]> {
+/** Appends `sql`'s candidates to `candidates`, the schema change's so far. */
+async function candidatesIn(
+  sql: string,
+  candidates: Candidate[],
+): Promise<void> {
   const parsed = await parseSqlFile({ path: "schema-change.sql", text: sql });
   if (!parsed.ok) {
-    return [];
+    return;
   }
-  const candidates: Candidate[] = [];
-  for (const { node } of parsed.statements) {
+  for (const statement of parsed.statements) {
+    const { node } = statement;
     const drop = unwrap(node, "DropStmt");
     if (drop?.removeType === "OBJECT_TABLE") {
       for (const object of list(drop.objects)) {
@@ -184,12 +217,21 @@ async function candidatesIn(sql: string): Promise<Candidate[]> {
           if (column !== undefined && isRequired(column)) {
             push("added-required-column", column.colname);
           }
+          const dropped = candidates.findLast(
+            (candidate) =>
+              candidate.kind === "dropped-column" &&
+              candidate.schema === schema &&
+              candidate.table === table &&
+              candidate.column === column?.colname,
+          );
+          if (dropped !== undefined && column !== undefined) {
+            dropped.readded = { statement, column: column as ColumnDef };
+          }
           break;
         }
       }
     }
   }
-  return candidates;
 }
 
 /** NOT NULL with nothing to fill existing rows: no default, identity or generation. */
@@ -368,6 +410,7 @@ function messageFor(
   candidate: Candidate,
   affected: Affected,
   narrowing: Narrowing | undefined,
+  replacement: ColumnReplacement | undefined,
 ): string {
   const { kind, table, column } = candidate;
   const subject = `${table}.${column ?? ""}`;
@@ -381,6 +424,13 @@ function messageFor(
     case "dropped-table":
       return `Table ${table} is dropped with its data ${count("row", "rows")}: copy what you need in the pre-migration script`;
     case "dropped-column":
+      if (replacement !== undefined) {
+        return replacedColumnReason(
+          `Column ${subject}`,
+          replacement,
+          ` ${count("non-null value", "non-null values")}`,
+        );
+      }
       return `Column ${subject} is dropped with its data ${count("non-null value", "non-null values")}: rename it, or copy what you need, in the pre-migration script`;
     case "changed-type":
       return `Column ${subject} changes type by a plain cast ${count("non-null value", "non-null values")}: convert it in the pre-migration script if the cast could fail or lose data`;

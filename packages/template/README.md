@@ -123,7 +123,8 @@ first version: these may be supported later, but none is yet.
   [Permissions](#what-each-target-needs-set-up-outside-super-deploy)).
 - Functions and procedures in `sql` or `plpgsql`, and triggers.
 - Domains and composite types.
-- `COMMENT ON` the objects above.
+- `COMMENT ON` the objects above, except on a view's or materialized
+  view's columns (refused below).
 - `CREATE EXTENSION plpgsql`, which is installed in every database anyway.
 
 ### Refused
@@ -173,7 +174,12 @@ Table, view and routine features:
 - routine options other than `LANGUAGE`, volatility, `STRICT`,
   `LEAKPROOF`, `PARALLEL`, `COST`, `ROWS` and `SET` (such as `WINDOW` and
   `SUPPORT`);
-- view options other than the three above.
+- view options other than the three above;
+- comments on view and materialized-view columns (`COMMENT ON COLUMN
+  <view>.<column>`): the differ doesn't generate them, so no migration
+  would add one. Describe the column in the view's own comment instead.
+  Adopting a database that has one is refused until it is removed there
+  (`COMMENT ON COLUMN <view>.<column> IS NULL`).
 
 Physical storage settings:
 
@@ -730,6 +736,31 @@ NOT NULL, rename its constraint too: PostgreSQL 18 names NOT NULL constraints
 would refuse the draft. For example,
 `alter table t rename constraint t_old_not_null to t_new_not_null`.
 
+## Column order
+
+A table's columns may not be in the order the desired schema declares
+them, and their order may differ between targets:
+
+- A column added to an existing table goes at the end of it.
+- A new table gets its columns in the declared order, except a column whose
+  type (a domain or a composite type) or default (a function) is created in
+  the same migration as the table: the differ creates the table first and
+  adds that column afterwards, after the table's other columns. Declaring
+  the type or function first in the desired schema doesn't change this.
+- A column whose collation or generation expression changes is dropped and
+  added again, at the end (see [Destructive changes](#destructive-changes)).
+
+For an adopted database, this means the adopted target keeps its own
+column order, while `dev`, rehearsals and every target built from
+`00001-adopt` can have such columns at the end of their tables.
+
+A table's column order is never compared: rehearsals, drift and `mark`
+ignore it, so nothing refuses or warns about it. What depends on it is SQL that uses
+columns by position. A draft's scripts and seed data refuse it: `INSERT`
+without a column list, `SELECT *`, `ORDER BY` or `GROUP BY` by position,
+`NATURAL JOIN` and whole-row references. Write your application's SQL the
+same way, naming its columns.
+
 ## Reordering a composite type's attributes
 
 `draft` can't reorder a composite type's attributes, or add one anywhere
@@ -811,6 +842,21 @@ the rehearsal data don't fit (for such a `numeric`, how many are rounded and
 how many are too large, which makes the rehearsal fail too), and `finalize`
 asks for the change to be acknowledged. If those values matter, shorten or
 move them in the pre-migration script.
+
+Changing a column's collation, or a stored generated column's expression,
+makes `draft` drop the column and add it again (the differ can't change
+either in place), at the end of the table. `draft` warns, and `finalize`
+asks, naming the column as dropped and re-added and giving the statement
+that makes the change in place instead. Put that statement in the
+pre-migration script and run `draft` again; the schema change then has
+nothing left to do for the column:
+
+- a collation: the drop loses every value in the column, on every target.
+  Change it in place with
+  `ALTER TABLE customers ALTER COLUMN nickname TYPE text COLLATE "C"`;
+- a generation expression: the values are computed again, so none is lost,
+  but the drop still needs acknowledging. Change it in place with
+  `ALTER TABLE a ALTER COLUMN total SET EXPRESSION AS (price * qty * 1.2)`.
 
 `rehearse` lists a draft's destructive statements, and `finalize` needs them
 acknowledged. In a terminal, `finalize` lists them and asks. Without a

@@ -17,9 +17,12 @@
 import { scanSync } from "libpg-query";
 import {
   alterTableCommands,
+  closingParen,
   type Json,
   list,
+  nesting,
   rangeVar,
+  type Token,
   unwrap,
 } from "./syntax-tree.ts";
 
@@ -238,32 +241,6 @@ function withOptions(after: string, options: readonly string[]): string {
   const end = tokens.at(-1)?.text === ";" ? tokens.at(-1)?.start : bytes.length;
   const [head, tail] = at(end);
   return `${head.trimEnd()} WITH (${options.join(", ")})${tail}`;
-}
-
-interface Token {
-  readonly start: number;
-  readonly end: number;
-  readonly text: string;
-}
-
-/** How a token changes the parenthesis depth. */
-function nesting(token: Token | undefined): number {
-  return token?.text === "(" ? 1 : token?.text === ")" ? -1 : 0;
-}
-
-/** The index of the token closing the parenthesis at `open`. */
-function closingParen(
-  tokens: readonly Token[],
-  open: number,
-): number | undefined {
-  let depth = 0;
-  for (let index = open; index < tokens.length; index += 1) {
-    depth += nesting(tokens[index]);
-    if (depth === 0) {
-      return index;
-    }
-  }
-  return undefined;
 }
 
 /** Byte ranges of the comma-separated items between `open` and `close`. */
