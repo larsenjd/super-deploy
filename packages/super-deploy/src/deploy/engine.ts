@@ -164,7 +164,7 @@ export async function withLockedTarget<T>(
                 rollback: await rolledBack(log, historySchema, target.name),
               })
             : await targetFailure(error, target, async () => ({
-                noun: rolledBackNoun(command),
+                noun: rolledBackNoun(command.command),
                 recorded: await rolledBack(log, historySchema, target.name),
               }));
         await attempt
