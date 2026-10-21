@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] A new pre-flight refusal: the managed schema, or any object in it (tables, views, sequences, routines, types, domains and so on), is owned by a role the deploy role is not a member of. Membership counts, as it does for PostgreSQL's own ownership checks, so `public`, owned by `pg_database_owner`, passes when the deploy role owns the database. A target without the managed schema yet passes.
 - [ ] The message lists each object, its owner, and the `ALTER ... OWNER TO <deploy role>` that fixes it.
