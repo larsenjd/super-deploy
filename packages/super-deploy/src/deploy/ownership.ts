@@ -2,8 +2,9 @@
 // schema and everything in it (GLOSSARY "Deploy role", ADR-0006), so later
 // migrations can alter and drop what earlier ones created. Ownership is never
 // managed or compared (drift ignores it), only checked: the deploy pre-flight
-// (deploy, deploy-draft, status), `mark` before asking YES and `init --adopt`
-// (in its one refusal, with everything unsupported) refuse a managed schema,
+// (deploy, deploy-draft, status), `mark` before asking YES, `init --adopt`
+// (in its one refusal, with everything unsupported) and both again under the
+// target lock, right before recording (deploy/mark.ts) refuse a managed schema,
 // or an object in it, whose owner the deploy role doesn't have the
 // privileges of. Refusals list each object with its owner, then the fixes
 // as a script a DBA can paste into psql (`notOwnedDetails`). Without the

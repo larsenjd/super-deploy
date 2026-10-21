@@ -21,10 +21,11 @@ import {
   embeddedDeployRole,
   roleName,
   targetDatabaseName,
+  testSession,
 } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject, type TestProject } from "../support/project.ts";
-import { keys, spawnTerminal } from "../support/terminal.ts";
+import { keys, spawnTerminal, type Terminal } from "../support/terminal.ts";
 
 let server: TestServer;
 beforeAll(async () => {
@@ -65,14 +66,17 @@ async function customersDeployed(config: string): Promise<TestProject> {
 async function deployedProject({
   disposable = true,
   adapter,
+  target,
 }: {
   disposable?: boolean;
   adapter?: string;
+  /** Settings spliced into target dev, e.g. `lockTimeout: "20s",`. */
+  target?: string;
 } = {}) {
-  const { config, database } = deployConfig(
-    server,
-    adapter === undefined ? {} : { adapter },
-  );
+  const { config, database } = deployConfig(server, {
+    ...(adapter === undefined ? {} : { adapter }),
+    ...(target === undefined ? {} : { target }),
+  });
   const dir = await customersDeployed(config);
   await server.query(
     "insert into customers (id, name) values (1, 'Ada')",
@@ -209,6 +213,57 @@ unix("deploy-draft", () => {
     });
     expect(deployed.exitCode).toBe(1);
     expect(deployed.stderr).toContain("the target holds draft require-city");
+  });
+
+  test("refuses before asking while another attempt holds the target, naming it: nothing is recorded", async () => {
+    const { dir, database } = await deployedProject({
+      target: 'lockTimeout: "20s",',
+    });
+    await requireCityDraft(dir);
+    // A rebuild, YES typed, waits for this lock to drop customers.
+    const blocker = await testSession(server, database);
+    let rebuilding: Terminal | undefined;
+    try {
+      await blocker.execute("BEGIN; LOCK TABLE customers IN ACCESS SHARE MODE");
+      rebuilding = spawnTerminal(["rebuild", "--target", "dev", "--to", "1"], {
+        cwd: dir.root,
+      });
+      await rebuilding.waitFor("Type YES");
+      rebuilding.type(`YES${keys.enter}`);
+      await expect
+        .poll(
+          () =>
+            server.query(
+              `select pid from pg_stat_activity
+                where datname = $1 and state = 'active' and wait_event_type = 'Lock'`,
+              [database],
+            ),
+          { timeout: 10_000 },
+        )
+        .not.toEqual([]);
+
+      const terminal = spawnTerminal(["deploy-draft", "--target", "dev"], {
+        cwd: dir.root,
+      });
+      await terminal.waitFor(
+        /Error: Target dev is locked by attempt #2 \(rebuild by \S+, started [^,]+, server process \d+, active, statement started \S+: DROP /,
+      );
+      expect(await terminal.exited).toBe(1);
+      expect(terminal.screen).not.toContain("Type YES");
+    } finally {
+      await blocker.close();
+    }
+    expect(await rebuilding?.exited).toBe(0);
+    expect(
+      await server.query(
+        "select command, outcome from deployment_history.attempts order by id",
+        [],
+        database,
+      ),
+    ).toEqual([
+      { command: "deploy", outcome: "succeeded" },
+      { command: "rebuild", outcome: "succeeded" },
+    ]);
   });
 
   test("flagging a target holding a draft not disposable says what that leaves; status and deploy then advise flagging it disposable before rebuild", async () => {

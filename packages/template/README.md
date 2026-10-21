@@ -998,6 +998,10 @@ path:
   real data stands out. Marking a target that holds a deployed draft not
   disposable warns that `deploy` refuses it until `rebuild` resets it, which
   then needs it flagged disposable again; `status` and `deploy` say so too.
+  Each run's attempt records which way it set the flag, so `status`'s recent
+  attempts show who made the target disposable and when
+  (`#5 disposable set yes succeeded by ana at ...`). In the menu, the
+  question says whether the target is disposable now, with no preselected.
 - **`deploy-draft --target X`** tries the current, unfinalized draft on a
   disposable target, so its scripts meet the target's data before you
   finalize. The target must have no pending migrations (a Recovery draft of
@@ -1043,7 +1047,10 @@ path:
   migrations up to that one. The comparison ignores column order and
   ownership, and separately the deploy role must own the managed schema and
   everything in it (see [Permissions](#permissions)). Each run marks one
-  migration.
+  migration. None of the migration's files run, its pre-migration and
+  post-migration scripts included: make their changes by hand too, such as
+  a backfill of the column you added, since the comparison sees structure,
+  not data. The confirmation names each script that won't run.
 
 All four need a person at a terminal. Each shows the target's name, host,
 database and last recorded migration, and goes ahead only when you type
@@ -1051,4 +1058,5 @@ database and last recorded migration, and goes ahead only when you type
 address the server reports when that differs, e.g.
 `db.prod.internal:5432 (10.0.4.7:5432)`. They refuse in CI (when the `CI` environment variable is set
 to anything but `false` or `0`) and without a terminal, and no flag skips
-the question.
+the question. While another command holds the target, they refuse before
+asking, naming it as `deploy` does.

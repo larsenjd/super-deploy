@@ -2,8 +2,10 @@
 // running it, because someone already brought the target there by hand. Only
 // when the target's managed schema matches, with no exceptions, a replica of
 // its migrations up to that one (column order and ownership aside, as in the
-// drift check; `mark` and adoption check ownership on their own,
-// deploy/ownership.ts). The record is the migration's original variant, marked
+// drift check). Ownership is checked on its own (deploy/ownership.ts), and
+// under the lock too: an object given to another role while `mark` waited
+// for YES would otherwise be recorded, and deploy would then refuse the
+// target (QA 160). The record is the migration's original variant, marked
 // rather than deployed, and is the only thing written: one `migrations` row
 // in the target's history schema, inside its own transaction.
 //
@@ -39,6 +41,7 @@ import {
   readTargetSettings,
   recordMigration,
 } from "./history.ts";
+import { requireOwnership } from "./ownership.ts";
 import { pendingMigrations } from "./pending.ts";
 import {
   type DraftHolder,
@@ -149,8 +152,9 @@ export async function recordMarked(
 /**
  * Marks the locked target's next pending migration: reads what it records
  * (under the lock), picks the next pending migration (`nextToMark`), sets
- * the attempt's range to it, runs the replica check (`requireReplicaMatch`)
- * and records it as marked (`recordMarked`). Returns the migration marked.
+ * the attempt's range to it, checks the deploy role owns the managed schema
+ * and everything in it (NotOwnedError), runs the replica check
+ * (`requireReplicaMatch`) and records it as marked (`recordMarked`). Returns the migration marked.
  *
  * No guard: the caller decides who may do this. `mark` asks for YES first;
  * `init --adopt` (ticket 22) calls it directly from `init`.
@@ -176,6 +180,11 @@ export async function markNextPending(
     await readDeployedDraft(locked.session, project.config.historySchema),
   );
   await locked.attempt.setRange([next]);
+  await requireOwnership(
+    locked.session,
+    locked.target.name,
+    project.config.managedSchema,
+  );
   await requireReplicaMatch(project, locked.target, locked.session, {
     migrations,
     recorded,
