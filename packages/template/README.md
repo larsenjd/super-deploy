@@ -141,8 +141,10 @@ desired schema and migration `00001-adopt`, which is recorded on that target
 as already deployed. If the target has no schema of that name (usually a
 typo in `managedSchema`), adoption refuses and writes nothing. If the
 database holds anything super-deploy doesn't support, nothing is written and
-every such object is listed: that includes a `SECURITY DEFINER` routine and
-objects owned by another role (see "Permissions"). Grants, policies and row-level security on the target stay
+every such object is listed: that includes a `SECURITY DEFINER` routine,
+objects owned by another role (see "Permissions"), and views, foreign keys,
+`LANGUAGE sql` functions and the like that reference an external schema
+(only PL/pgSQL bodies may). Grants, policies and row-level security on the target stay
 as they are, left out of the desired schema; adoption says how many grants
 and policies it left.
 

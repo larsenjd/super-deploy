@@ -161,8 +161,17 @@ function externalHint(
   if (schemas.length === 0) {
     return undefined;
   }
+  return `this statement references ${externalSchemaExplanation(schemas)}`;
+}
+
+/**
+ * Why a statement referencing these external schemas can't load, as the
+ * object of "references": `external schema "auth", which rehearsals don't
+ * contain. ...`.
+ */
+export function externalSchemaExplanation(schemas: readonly string[]): string {
   const names = schemas.map((schema) => `"${schema}"`).join(", ");
-  return `this statement references external schema ${names}, which rehearsals don't contain. Only PL/pgSQL bodies may reference external schemas: views, defaults, foreign keys, triggers, LANGUAGE sql and BEGIN ATOMIC bodies, and PL/pgSQL variable declarations bind their references at CREATE`;
+  return `external schema ${names}, which rehearsals don't contain. Only PL/pgSQL bodies may reference external schemas: views, defaults, foreign keys, triggers, LANGUAGE sql and BEGIN ATOMIC bodies, and PL/pgSQL variable declarations bind their references at CREATE`;
 }
 
 /**
