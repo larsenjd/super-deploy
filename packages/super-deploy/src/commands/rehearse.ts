@@ -32,7 +32,12 @@ import {
   readDraft,
   recoverySchemaChange,
 } from "../store/draft.ts";
-import { type HashedFile, normaliseLineEndings } from "../store/hashing.ts";
+import {
+  desiredSchemaHash,
+  fileHash,
+  type HashedFile,
+  normaliseLineEndings,
+} from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
@@ -121,7 +126,11 @@ export async function rehearseCurrentDraft(
   // The draft's seed data loads just before its pre-migration script; the
   // finalized migrations' seed data is never loaded.
   units.push(...seededUnits(seeded));
-  const { serverVersion } = await rehearseDraft(project, statements, units);
+  const { serverVersion } = await rehearseDraft(project, statements, units, {
+    desiredSchemaChanged:
+      draft.desiredSchemaHash !== desiredSchemaHash(desiredSchema),
+    editedSchemaChange: editedSchemaChange(project, draft, seeded),
+  });
   return {
     draft,
     migrations,
@@ -131,6 +140,29 @@ export async function rehearseCurrentDraft(
     overrides: analysis.overrides,
     analysis,
   };
+}
+
+/**
+ * The draft's schema change's project-relative path if it is not the one
+ * `draft` wrote (or is missing); undefined if it is, or draft.json has no
+ * hash of it (a draft written before the hash existed).
+ */
+function editedSchemaChange(
+  project: Project,
+  draft: DraftMetadata,
+  seeded: SeededUnit,
+): string | undefined {
+  if (draft.schemaChangeHash === undefined) {
+    return undefined;
+  }
+  const file = projectRelative(project.root, project.paths.draftSchemaChange);
+  const schemaChange = seeded.migration.files.find(
+    (candidate) => candidate.file === file,
+  );
+  return schemaChange !== undefined &&
+    fileHash(schemaChange.sql) === draft.schemaChangeHash
+    ? undefined
+    : file;
 }
 
 export interface CheckedDraft {

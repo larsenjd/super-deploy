@@ -12,7 +12,9 @@
 //                  strings, with chain[0] = "" (so chain[1] = sha256(content[1]))
 //
 // The desired-schema hash uses the same file lines under the header
-// "super-deploy desired schema 1\n" and no folder line.
+// "super-deploy desired schema 1\n" and no folder line. The draft's
+// schema-change hash (draft.json) is the file hash of the schema change
+// `draft` wrote.
 //
 // A Recovery (<migration>/recoveries/recovery-K/) is hashed on its own, so
 // adding one never changes its migration's content or chain hash:
@@ -61,13 +63,15 @@ export function normaliseLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n");
 }
 
+/** sha256 of a file's text with its line endings normalised. */
+export function fileHash(text: string): string {
+  return sha256(normaliseLineEndings(text));
+}
+
 function fileLines(files: readonly HashedFile[]): string {
   return [...files]
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
-    .map(
-      (file) =>
-        `file ${JSON.stringify(file.path)} ${sha256(normaliseLineEndings(file.text))}\n`,
-    )
+    .map((file) => `file ${JSON.stringify(file.path)} ${fileHash(file.text)}\n`)
     .join("");
 }
 

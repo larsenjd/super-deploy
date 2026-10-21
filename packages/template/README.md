@@ -404,7 +404,8 @@ just before the pre-migration script (see [Seed data](#seed-data)). It is
 never run by a deployment.
 
 No other file in a draft or migration is run. `draft.json` holds the draft's
-name.
+name, and hashes of the desired schema and the schema change `draft`
+generated, so `rehearse` can tell whether running `draft` again would help.
 
 Finalized migrations are read-only and hashed: never edit them.
 `super-deploy validate` checks their hashes, and `pnpm precommit` runs
