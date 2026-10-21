@@ -13,7 +13,11 @@
 
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
 import { AdapterError } from "../adapters/types.ts";
-import type { ResolvedTarget } from "../config/config.ts";
+import {
+  durationText,
+  type ResolvedTarget,
+  targetDefaults,
+} from "../config/config.ts";
 import { SuperDeployError } from "../errors.ts";
 import type { GuardedCommand, TargetView } from "../guard/guard.ts";
 import { InterruptedError } from "../interruption.ts";
@@ -39,6 +43,55 @@ export function targetTimeouts(target: ResolvedTarget): string[] {
       ? []
       : [`SET LOCAL statement_timeout TO '${target.statementTimeoutMs}ms'`]),
   ];
+}
+
+/** A target's lock and statement timeouts, as messages about them need them. */
+export type TargetTimeoutSettings = Pick<
+  ResolvedTarget,
+  "name" | "lockTimeoutMs" | "statementTimeoutMs"
+>;
+
+/**
+ * The timeout that made PostgreSQL cancel a statement on `target`, by its
+ * SQLSTATE (55P03 lock timeout, 57014 statement timeout), for a message:
+ * `setting` names it with the value that ran out ("the target's lockTimeout
+ * (2s)", "... (5s, the default)", or, when the target sets no
+ * statementTimeout, "the server's statement_timeout for the deploy role"),
+ * and `change` says how to change it in the config. Undefined for any other SQLSTATE.
+ */
+export function timeoutThatRanOut(
+  target: TargetTimeoutSettings,
+  sqlState: string | undefined,
+):
+  | {
+      readonly lock: boolean;
+      readonly setting: string;
+      readonly change: string;
+    }
+  | undefined {
+  const where = `for target ${target.name} in super-deploy.config.ts`;
+  if (sqlState === "55P03") {
+    const value = durationText(target.lockTimeoutMs);
+    return {
+      lock: true,
+      setting: `the target's lockTimeout (${target.lockTimeoutMs === targetDefaults.lockTimeoutMs ? `${value}, the default` : value})`,
+      change: `raise lockTimeout ${where}`,
+    };
+  }
+  if (sqlState === "57014") {
+    return target.statementTimeoutMs === undefined
+      ? {
+          lock: false,
+          setting: "the server's statement_timeout for the deploy role",
+          change: `set statementTimeout ${where}, which overrides it`,
+        }
+      : {
+          lock: false,
+          setting: `the target's statementTimeout (${durationText(target.statementTimeoutMs)})`,
+          change: `raise statementTimeout ${where}`,
+        };
+  }
+  return undefined;
 }
 
 /**

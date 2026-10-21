@@ -20,7 +20,9 @@
 //   8. end the attempt: succeeded, or the outcome `outcomeOf` picks (unknown
 //      for a lost COMMIT, abandoned when interrupted, else failed); an
 //      abandoned one throws InterruptedError naming the migration the target
-//      is still at (`rollback`), for the CLI's closing line
+//      is still at (`rollback`), for the CLI's closing line, and a failed SQL
+//      file (SqlFileFailedError) is told the target, so a timeout's message
+//      quotes the target's own lockTimeout or statementTimeout
 //   9. release the lock and close both sessions, whatever happened
 //
 // `applyMigrations` is the deploy transaction itself. SQL it sends on the
@@ -48,7 +50,11 @@ import type { ResolvedTarget } from "../config/config.ts";
 import { SuperDeployError } from "../errors.ts";
 import { InterruptedError, type InterruptedRollback } from "../interruption.ts";
 import type { Project } from "../project.ts";
-import { type ReplayUnit, runUnit } from "../rehearsal/replay.ts";
+import {
+  type ReplayUnit,
+  runUnit,
+  SqlFileFailedError,
+} from "../rehearsal/replay.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
 import { migrationFolderName } from "../store/migrations.ts";
 import { type Attempt, openAttempt, settleAttempts } from "./attempts.ts";
@@ -147,7 +153,9 @@ export async function withLockedTarget<T>(
                     : (signal?.reason ?? error),
                 rollback: await rolledBack(log, historySchema, target.name),
               })
-            : error;
+            : error instanceof SqlFileFailedError
+              ? error.onTarget(target)
+              : error;
         await attempt
           .end(
             outcome,

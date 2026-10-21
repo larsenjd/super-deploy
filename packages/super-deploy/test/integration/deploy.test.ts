@@ -352,7 +352,7 @@ describe("deploy", () => {
   });
 
   test("fails fast when a lock isn't granted within the target's lock timeout", async () => {
-    const { project, error } = await deployWhileCustomersLocked(
+    const { project, database, error } = await deployWhileCustomersLocked(
       'lockTimeout: "200ms",',
     );
 
@@ -361,12 +361,29 @@ describe("deploy", () => {
       /lock timeout/,
     );
     const { message } = error as SqlFileFailedError;
-    expect(message).toContain("lockTimeout");
-    expect(message).toMatch(/retry/);
+    expect(message).toContain(
+      "The target's lockTimeout (200ms) ran out waiting for a lock: retry once whatever held the lock has finished, or raise lockTimeout for target dev in super-deploy.config.ts.",
+    );
     expect(message).not.toMatch(/recovery/i);
+    expect(
+      await server.query(
+        "select error from deployment_history.attempts where outcome = 'failed'",
+        [],
+        database,
+      ),
+    ).toEqual([{ error: message }]);
     expect(
       (await deploy(project, { target: "dev" })).deployed.map((m) => m.number),
     ).toEqual([2]);
+  });
+
+  test("a lock timeout the target doesn't set is reported as the default", async () => {
+    const { error } = await deployWhileCustomersLocked("");
+
+    expect(error).toBeInstanceOf(SqlFileFailedError);
+    expect((error as SqlFileFailedError).message).toContain(
+      "The target's lockTimeout (5s, the default) ran out",
+    );
   });
 
   test("cancels a statement that runs longer than the target's statement timeout", async () => {
@@ -378,7 +395,26 @@ describe("deploy", () => {
     expect((error as SqlFileFailedError).postgresMessage).toMatch(
       /statement timeout/,
     );
-    expect((error as SqlFileFailedError).message).toContain("statementTimeout");
+    expect((error as SqlFileFailedError).message).toContain(
+      "The target's statementTimeout (300ms) cancelled the statement",
+    );
+  });
+
+  test("a statement timeout the target doesn't set is reported as the server's statement_timeout", async () => {
+    const { error } = await deployWhileCustomersLocked(
+      'lockTimeout: "1min",',
+      (database) =>
+        server.query(
+          `alter database ${database} set statement_timeout = '300ms'`,
+        ),
+    );
+
+    expect(error).toBeInstanceOf(SqlFileFailedError);
+    const { message } = error as SqlFileFailedError;
+    expect(message).toContain(
+      "The server's statement_timeout for the deploy role cancelled the statement",
+    );
+    expect(message).toContain("statementTimeout for target dev");
   });
 
   test("pins search path, time zone, date and interval styles and the target's timeouts inside the transaction", async () => {
@@ -552,7 +588,15 @@ const pausingAdapter = `{
  * table's definition, but the ALTER TABLE has to wait. Returns what the
  * second deploy threw, once the lock is released.
  */
-async function deployWhileCustomersLocked(target: string) {
+/**
+ * Deploys a second migration to `dev` (its config's target settings spliced
+ * from `target`) while a test session holds a lock on customers; `before`
+ * runs first, e.g. to change the target database's settings.
+ */
+async function deployWhileCustomersLocked(
+  target: string,
+  before?: (database: string) => Promise<unknown>,
+) {
   const { dir, project, database } = await deployProject(
     server,
     { "customers.sql": customers },
@@ -568,13 +612,14 @@ async function deployWhileCustomersLocked(target: string) {
     ),
   );
   await finalizeMigration(project, "add email");
+  await before?.(database);
   const holder = await testSession(server, database);
   try {
     await holder.execute("BEGIN; LOCK TABLE customers IN ACCESS SHARE MODE");
     const error = await deploy(project, { target: "dev" }).catch(
       (e: unknown) => e,
     );
-    return { project, error };
+    return { project, database, error };
   } finally {
     await holder.close();
   }

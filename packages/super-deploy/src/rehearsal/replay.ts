@@ -8,11 +8,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
+import type { ResolvedConfig } from "../config/config.ts";
 import {
-  durationText,
-  type ResolvedConfig,
-  targetDefaults,
-} from "../config/config.ts";
+  type TargetTimeoutSettings,
+  timeoutThatRanOut,
+} from "../deploy/target.ts";
 import { errorReason, SuperDeployError } from "../errors.ts";
 import { parseSqlFile } from "../sql-analysis/parse.ts";
 import { decodeHashedText } from "../store/hashing.ts";
@@ -303,8 +303,9 @@ export function unchangedTarget(
 
 /**
  * PostgreSQL refused a deploy-time SQL file, in a rehearsal or a deployment.
- * The message adds a next step by SQLSTATE: the target setting behind a lock
- * (55P03) or statement (57014) timeout, for a data error (classes 22,
+ * The message adds a next step by SQLSTATE: on a target (`onTarget`), the
+ * setting behind a lock (55P03) or statement (57014) timeout with the value
+ * that ran out, for a data error (classes 22,
  * 23) in a deployment, a Recovery of the failing migration, and for a type
  * change a generated column blocks (0A000 with its DETAIL), the
  * pre-migration fix, and for a statement a forced row-level security policy
@@ -326,16 +327,20 @@ export class SqlFileFailedError extends SuperDeployError {
   readonly rollback: DeploymentRollback | undefined;
   /** The declared external schema a rehearsal failed for lack of. */
   private readonly missingExternalSchema: string | undefined;
+  /** The target the file failed on, for its timeouts. */
+  private readonly target: TargetTimeoutSettings | undefined;
 
   constructor(
     failure: SqlFileFailure,
     options?: ErrorOptions & {
       rollback?: DeploymentRollback | undefined;
       missingExternalSchema?: string | undefined;
+      target?: TargetTimeoutSettings | undefined;
     },
   ) {
     const rollback = options?.rollback;
     const missingExternalSchema = options?.missingExternalSchema;
+    const target = options?.target;
     super(
       [
         sentence(
@@ -353,7 +358,7 @@ export class SqlFileFailedError extends SuperDeployError {
         rollback === undefined
           ? undefined
           : `The deployment rolled back: ${unchangedTarget(rollback.target, rollback.lastRecorded)}.`,
-        nextStep(failure, rollback),
+        nextStep(failure, rollback, target),
       ]
         .filter((part) => part !== undefined)
         .join(" "),
@@ -367,6 +372,7 @@ export class SqlFileFailedError extends SuperDeployError {
     this.sqlState = failure.sqlState;
     this.rollback = rollback;
     this.missingExternalSchema = missingExternalSchema;
+    this.target = target;
   }
 
   /** The same failure, reported by a deployment that rolled back. */
@@ -375,6 +381,17 @@ export class SqlFileFailedError extends SuperDeployError {
       cause: this.cause,
       rollback,
       missingExternalSchema: this.missingExternalSchema,
+      target: this.target,
+    });
+  }
+
+  /** The same failure on `target`, whose timeouts a timeout's next step quotes. */
+  onTarget(target: TargetTimeoutSettings): SqlFileFailedError {
+    return new SqlFileFailedError(this, {
+      cause: this.cause,
+      rollback: this.rollback,
+      missingExternalSchema: this.missingExternalSchema,
+      target,
     });
   }
 
@@ -391,6 +408,7 @@ export class SqlFileFailedError extends SuperDeployError {
           cause: this.cause,
           rollback: this.rollback,
           missingExternalSchema: schema,
+          target: this.target,
         });
   }
 }
@@ -424,6 +442,7 @@ function sentence(text: string): string {
 function nextStep(
   failure: SqlFileFailure,
   rollback: DeploymentRollback | undefined,
+  target: TargetTimeoutSettings | undefined,
 ): string | undefined {
   const { sqlState } = failure;
   const generated = generatedColumnBlocking(failure);
@@ -434,16 +453,13 @@ function nextStep(
   if (forced !== undefined) {
     return `Next: table "${forced}" has FORCE ROW LEVEL SECURITY on the target, so its policies apply to the deploy role and would hide rows from this migration: turn it off while deploying (ALTER TABLE ... NO FORCE ROW LEVEL SECURITY, then FORCE again afterwards), or move the work out of the migration.`;
   }
-  if (sqlState === "55P03") {
-    return `The target's lockTimeout (default ${durationText(targetDefaults.lockTimeoutMs)}) ran out waiting for a lock: retry once whatever held the lock has finished.`;
-  }
-  if (sqlState === "57014") {
-    const { statementTimeoutMs } = targetDefaults;
-    const statementDefault =
-      statementTimeoutMs === undefined
-        ? "none"
-        : durationText(statementTimeoutMs);
-    return `The target's statementTimeout (default ${statementDefault}) cancelled the statement: retry once whatever held it up has finished, or raise the setting.`;
+  const timeout =
+    target === undefined ? undefined : timeoutThatRanOut(target, sqlState);
+  if (timeout !== undefined) {
+    const setting = `T${timeout.setting.slice(1)}`;
+    return timeout.lock
+      ? `${setting} ran out waiting for a lock: retry once whatever held the lock has finished, or ${timeout.change}.`
+      : `${setting} cancelled the statement: retry once whatever held it up has finished, or ${timeout.change}.`;
   }
   if (
     rollback !== undefined &&
