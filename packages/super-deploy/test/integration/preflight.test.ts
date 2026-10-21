@@ -1,7 +1,7 @@
-// API seam: rehearsals create no roles, and the deploy pre-flight (declared
-// external schemas exist on the target, the deploy role owns the managed
-// schema and everything in it, the deploy role's privileges, recorded hashes
-// match the repo), which status reports too.
+// API seam: rehearsals create no roles, and the deploy pre-flight (the deploy
+// role owns the managed schema and everything in it, the deploy role's
+// privileges, recorded hashes match the repo; declared external schemas are
+// not checked), which status reports too.
 
 import {
   deploy,
@@ -87,34 +87,30 @@ async function tables(database: string): Promise<string[]> {
 }
 
 describe("deploy pre-flight", () => {
-  test("refuses when a declared external schema is missing on the target, until it exists", async () => {
-    const loader = roleName("loader");
+  test("a declared external schema the target lacks refuses nothing: deploy goes ahead and status lists no refusal", async () => {
     const { project, database } = await deployProject(
       server,
       { "customers.sql": customers },
-      { settings: `externalSchemas: [${JSON.stringify(loader)}],` },
+      { settings: 'externalSchemas: ["auth"],' },
     );
     await finalizeMigration(project, "add customers");
 
-    const refusal = await deploy(project, { target: "dev" }).catch(
-      (error: unknown) => error,
-    );
-
-    expect(refusal).toBeInstanceOf(PreflightFailedError);
-    expect(refusal).toMatchObject({
-      findings: { missingExternalSchemas: [loader] },
+    expect((await status(project, { target: "dev" })).preflight).toEqual({
+      historySchemaNotCreatable: undefined,
+      notOwned: [],
+      historyMismatches: [],
+      warnings: [],
     });
-    expect((refusal as Error).message).toContain(
-      `external schema "${loader}" does not exist`,
-    );
-    expect(await tables(database)).toEqual([]);
-    expect((await status(project, { target: "dev" })).preflight).toMatchObject({
-      missingExternalSchemas: [loader],
-    });
-
-    await server.query(`create schema ${loader}`, [], database);
     await deploy(project, { target: "dev" });
+
     expect(await tables(database)).toEqual(["customers"]);
+    expect(
+      await server.query(
+        "select to_regnamespace('auth') as auth",
+        [],
+        database,
+      ),
+    ).toEqual([{ auth: null }]);
   });
 
   test("a refusal for a recorded migration whose content changed says to restore its folder and put the change in a new migration", async () => {

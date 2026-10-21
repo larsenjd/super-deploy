@@ -108,16 +108,31 @@ describe("deploy and status", () => {
   });
 
   test("status lists what a deployment would refuse and exits 1, and deploy then fails with exit code 1", async () => {
-    const dir = await finalizedProject('externalSchemas: ["loader"],');
-    const preflightFailed = `Error: Target dev failed the deploy pre-flight checks: external schema "loader" does not exist (it is declared in externalSchemas)\n`;
+    const { config, database } = deployConfig(server, {
+      settings: 'managedSchema: "app",',
+    });
+    await server.query(`create database ${database}`);
+    await server.query("create schema app", [], database);
+    const dir = await createTestProject({
+      config,
+      files: {
+        "data-model/desired-schema/customers.sql":
+          "create table customers (id bigint primary key, name text not null);\n",
+      },
+    });
+    for (const args of [["draft", "--name", "add customers"], ["finalize"]]) {
+      expect((await runCli(args, { cwd: dir.root })).exitCode).toBe(0);
+    }
+    const refusal =
+      "schema app is owned by super_deploy, whose privileges the deploy role doesn't have (fix: ALTER SCHEMA app OWNER TO deployer)";
+    const preflightFailed = `Error: Target dev failed the deploy pre-flight checks: ${refusal}\n`;
 
     const report = await runCli(["status", "--target", "dev"], {
       cwd: dir.root,
     });
     expect(report).toMatchObject({
       exitCode: 1,
-      stdout:
-        'Target dev: 0 migrations recorded, 1 pending\nDeploy would refuse:\n  external schema "loader" does not exist (it is declared in externalSchemas)\nPending:\n  00001-add-customers\n',
+      stdout: `Target dev: 0 migrations recorded, 1 pending\nDeploy would refuse:\n  ${refusal}\nPending:\n  00001-add-customers\n`,
       stderr: preflightFailed,
     });
 

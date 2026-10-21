@@ -961,7 +961,6 @@ describe("status", () => {
       attempts: [],
       disposable: false,
       preflight: {
-        missingExternalSchemas: [],
         notOwned: [],
         historyMismatches: [],
         warnings: [],

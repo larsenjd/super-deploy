@@ -1,7 +1,8 @@
 // API seam for init: scaffolding a project from the bundled template. The
-// scaffolded config is used as is: its embedded-postgres server (in the
-// project's own .super-deploy/postgres) provides the rehearsal databases and
-// the dev target, started on a free port and stopped by project.close().
+// scaffolded config is used as is: two embedded-postgres servers in the
+// project's own .super-deploy folder, one for the dev target on the port
+// init wrote into the config and one for the rehearsal databases on a free
+// port, both stopped by project.close().
 import { existsSync } from "node:fs";
 import {
   mkdir,
@@ -13,6 +14,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import pg from "pg";
 import {
   deploy,
   draft,
@@ -28,6 +30,25 @@ import { describe, expect, onTestFinished, test, vi } from "vitest";
 const libraryFolder = join(import.meta.dirname, "..", "..")
   .split(sep)
   .join("/");
+
+/** The port of `dev`'s server in the config of the project in `root`. */
+async function devPort(root: string): Promise<number> {
+  const config = await readFile(join(root, "super-deploy.config.ts"), "utf8");
+  const ports = [...config.matchAll(/^\s*port: (\d+),$/gm)];
+  expect(ports).toHaveLength(1);
+  return Number(ports[0]?.[1]);
+}
+
+/** Runs `sql` on the server at `url` and returns its rows. */
+async function queryAt(url: string, sql: string): Promise<unknown[]> {
+  const client = new pg.Client({ connectionString: url });
+  await client.connect();
+  try {
+    return (await client.query(sql)).rows;
+  } finally {
+    await client.end();
+  }
+}
 
 /** An empty directory named `name`, deleted when the test finishes. */
 async function emptyDirectory(name = "my-shop"): Promise<string> {
@@ -105,10 +126,58 @@ create function customer_count() returns bigint
       } finally {
         await session?.close();
       }
+
+      // The URL README.md gives for dev, on the port in the config.
+      const port = await devPort(root);
+      expect(
+        await queryAt(
+          `postgres://deployer:deployer@127.0.0.1:${port}/dev`,
+          "select count(*)::int as customers from customers",
+        ),
+      ).toEqual([{ customers: 0 }]);
     } finally {
       await project.close();
     }
-    expect(existsSync(join(root, ".super-deploy", "postgres"))).toBe(true);
+    expect(existsSync(join(root, ".super-deploy", "dev"))).toBe(true);
+    expect(existsSync(join(root, ".super-deploy", "rehearsal"))).toBe(true);
+  });
+
+  test("rehearsals create their databases on a server of their own, never on dev's", async () => {
+    const root = await emptyDirectory();
+    await init({ directory: root });
+    const project = await loadProject({ cwd: root });
+    try {
+      // Starts dev's server.
+      await (await project.config.targets.dev?.adapter.connect())?.close();
+      const throwaway = await project.config.rehearsal.createDatabase({
+        encoding: "UTF8",
+        locale: "C",
+        collationProvider: "libc",
+      });
+      try {
+        const databases =
+          "select datname from pg_database where not datistemplate order by 1";
+        const session = await throwaway.connect();
+        try {
+          expect((await session.query(databases)).rows).toContainEqual({
+            datname: throwaway.name,
+          });
+        } finally {
+          await session.close();
+        }
+        const port = await devPort(root);
+        expect(
+          await queryAt(
+            `postgres://super_deploy:super_deploy@127.0.0.1:${port}/postgres`,
+            databases,
+          ),
+        ).not.toContainEqual({ datname: throwaway.name });
+      } finally {
+        await throwaway.drop();
+      }
+    } finally {
+      await project.close();
+    }
   });
 
   test("the project is named after its folder and depends on this library, not the workspace", async () => {

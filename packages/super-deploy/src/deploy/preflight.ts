@@ -1,7 +1,6 @@
 // The deploy pre-flight: read-only checks on the target, after the lock and
 // before any rehearsal, that catch what would otherwise fail mid-transaction
 // or weaken safety (spec "Deployment engine"):
-//   - every declared external schema exists
 //   - the deploy role can create the history schema, if the target has none
 //     yet: it needs CREATE on the database. `withLockedTarget` and
 //     `init --adopt` refuse up front with HistorySchemaNotCreatableError
@@ -17,6 +16,10 @@
 // or Recovery that the repo lacks or has differently is restored from version
 // control (see `restore`). deploy, status and mark all show these messages.
 // `status` runs the same checks and reports them.
+//
+// Declared external schemas are not checked: setting them up on each target
+// is the DBA's job, and a routine reading a missing one fails only when it
+// runs (ticket 06).
 
 import type { Session } from "../adapters/types.ts";
 import { SuperDeployError } from "../errors.ts";
@@ -67,8 +70,6 @@ export interface HistoryMismatch {
 
 /** What the pre-flight found on a target. */
 export interface PreflightFindings {
-  /** Declared external schemas the target lacks, in config order. Refuses a deployment. */
-  readonly missingExternalSchemas: readonly string[];
   /**
    * The target has no history schema and the deploy role can't create it.
    * Undefined when it has one or can create it. Refuses a deployment.
@@ -119,11 +120,6 @@ export async function preflightChecks(
   input: PreflightInput,
 ): Promise<PreflightFindings> {
   return {
-    missingExternalSchemas: await missing(
-      session,
-      "SELECT nspname AS name FROM pg_catalog.pg_namespace WHERE nspname = ANY($1::text[])",
-      project.config.externalSchemas,
-    ),
     historySchemaNotCreatable: await historySchemaNotCreatable(
       session,
       project.config.historySchema,
@@ -140,15 +136,10 @@ export async function preflightChecks(
 
 /**
  * Each reason the findings refuse a deployment, as a line for people:
- * missing external schemas, the history schema, ownership, then history
- * mismatches. Empty when they don't refuse (warnings never do).
+ * the history schema, ownership, then history mismatches. Empty when they don't refuse (warnings never do).
  */
 export function preflightRefusals(findings: PreflightFindings): string[] {
   return [
-    ...findings.missingExternalSchemas.map(
-      (schema) =>
-        `external schema "${schema}" does not exist (it is declared in externalSchemas)`,
-    ),
     ...(findings.historySchemaNotCreatable === undefined
       ? []
       : [historySchemaNotCreatableMessage(findings.historySchemaNotCreatable)]),
@@ -368,20 +359,6 @@ export function describeHeldDraft(
   return `draft ${draft.name} (deployed by attempt #${draft.attemptId} ${where}, ${draft.seedData ? "with" : "without"} seed data), not a finalized migration: reset it with ${reset}`;
 }
 
-/** The names in `wanted` that `sql` (selecting `name` for `$1`) doesn't return, in order. */
-async function missing(
-  session: Session,
-  sql: string,
-  wanted: readonly string[],
-): Promise<string[]> {
-  if (wanted.length === 0) {
-    return [];
-  }
-  const { rows } = await session.query<{ name: string }>(sql, [wanted]);
-  const found = new Set(rows.map((row) => row.name));
-  return wanted.filter((name) => !found.has(name));
-}
-
 /**
  * Warnings for the session's login role and, when an adapter switched role,
  * the current role: superuser, or a member of a predefined role that reaches
@@ -422,9 +399,8 @@ async function deployRoleWarnings(
 }
 
 /**
- * The deploy pre-flight refused the target: a declared external schema is
- * missing, the deploy role can't create the history schema or doesn't own
- * the managed schema or something in it, or its recorded history doesn't
+ * The deploy pre-flight refused the target: the deploy role can't create
+ * the history schema or doesn't own the managed schema or something in it, or its recorded history doesn't
  * match the repo. Nothing was rehearsed or changed; the attempt is logged as
  * failed. The CLI's `status` also throws it, after its report, to exit 1.
  */

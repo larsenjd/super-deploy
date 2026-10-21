@@ -18,13 +18,17 @@ hook lets you commit a draft in progress; CI should refuse it until it is
 finalized (see
 [The files of a draft and a migration](#the-files-of-a-draft-and-a-migration)).
 
-Nothing else is needed: `super-deploy.config.ts` runs a private PostgreSQL 18
-server in `.super-deploy/postgres` (gitignored). It provides the throwaway
-databases that rehearsals use and the local `dev` target, and starts on a free
-port whenever a command needs it. `dev` is deployed as the role `deployer`,
-which owns the `dev` database and isn't a superuser, like a real target's
-deploy role (see [Permissions](#permissions)); the server's superuser
-`super_deploy` only sets the server up and runs the rehearsals.
+Nothing else is needed: `super-deploy.config.ts` runs two private
+PostgreSQL 18 servers in `.super-deploy` (gitignored), each started whenever
+a command needs it. The one in `.super-deploy/dev` holds the local `dev`
+target, on a fixed port so you can connect to it (see
+[Connecting to dev](#connecting-to-dev)). The one in
+`.super-deploy/rehearsal` provides the throwaway databases that rehearsals
+use, on a free port, so `dev` is a database on a server of its own like a
+real target. `dev` is deployed as the role `deployer`, which owns the `dev`
+database and isn't a superuser, like a real target's deploy role (see
+[Permissions](#permissions)); each server's superuser `super_deploy` only
+sets the server up and runs the rehearsals.
 
 1. Describe the schema you want as `CREATE` statements in `.sql` files under
    `data-model/desired-schema/` (any file names and folders). See
@@ -41,6 +45,41 @@ Run `pnpm exec super-deploy` with no arguments for an interactive menu, or
 `pnpm exec super-deploy --help` for every command. To deploy to a real
 database (QA, production), add it as a target: see
 [Adding a real target](#adding-a-real-target).
+
+## Connecting to dev
+
+`dev` is the database `dev` on the server in `.super-deploy/dev`, which
+listens on `127.0.0.1` at the `port` set for `devServer` in
+`super-deploy.config.ts` (`init` wrote one that was free at the time). With
+`port: 54329`:
+
+- `postgres://deployer:deployer@127.0.0.1:54329/dev` is the deploy role,
+  which owns the database and everything deployments create in it. Point
+  your application at it locally, or look at what a deployment did.
+- `postgres://super_deploy:super_deploy@127.0.0.1:54329/dev` is the server's
+  superuser, for what a DBA sets up on a real target outside super-deploy
+  (see
+  [What each target needs set up outside super-deploy](#what-each-target-needs-set-up-outside-super-deploy)):
+  your application's roles, external schemas, and the grants on them. Don't
+  create anything in the managed schema with it: deployments refuse objects
+  the deploy role doesn't own.
+
+The `dev` database exists once a command has used `dev`, such as the first
+`deploy --target dev`. The server listens on `127.0.0.1` only, so these
+passwords never leave your machine. If another program already listens on
+the port, every command that uses `dev` fails naming the port: stop that
+program or set another `port`.
+
+The server runs only while something uses it: a command that needs `dev`
+starts it, and stops it when the command ends. To keep it running while you
+connect, run this in the project folder and leave it running; Ctrl+C stops
+it:
+
+```sh
+node --input-type=module -e 'const { devServer } = await import("./super-deploy.config.ts"); await devServer.start(); console.log("dev is running: Ctrl+C stops it")'
+```
+
+Commands you run meanwhile use the running server and leave it running.
 
 ## What the desired schema supports
 
@@ -172,8 +211,8 @@ settings; super-deploy refuses any other.
 
 - `postgresVersion`: required, and must be `18`.
 - `rehearsal`: required. Provides the throwaway databases rehearsals use.
-  The generated config uses its private embedded server
-  (`postgres.rehearsal`). `postgresRehearsal({ env: "REHEARSAL_DATABASE_URL" })`,
+  The generated config uses a private embedded server of its own
+  (`rehearsalServer.rehearsal`). `postgresRehearsal({ env: "REHEARSAL_DATABASE_URL" })`,
   imported from `super-deploy`, uses an existing PostgreSQL 18 server
   instead; its login needs `CREATEDB`.
 - `targets`: the named targets, such as `dev`, `qa` and `prod` (see
@@ -188,8 +227,9 @@ settings; super-deploy refuses any other.
   `managedSchema`.
 - `externalSchemas`: schemas outside the managed schema that PL/pgSQL
   routines in the desired schema may refer to, such as `["auth"]`.
-  super-deploy neither creates them nor reproduces them in rehearsals: each
-  must already exist on every target (see "Permissions"). Default none.
+  super-deploy neither creates them, nor reproduces them in rehearsals, nor
+  checks that a target has them: setting them up is the DBA's job (see
+  "Permissions"). Default none.
 - `directory`: the folder holding `desired-schema/`, `draft/` and
   `migrations/`, relative to the config file and inside the project.
   Default `data-model`.
@@ -202,7 +242,7 @@ and none may be a system schema (`pg_...`, `information_schema`).
 Each entry in `targets` is one target:
 
 - `adapter`: required. How to connect to the target:
-  `postgres.target("<database>")` for a database on the private embedded
+  `devServer.target("<database>")` for a database on the private embedded
   server (created on first use, owned by and deployed as the role
   `deployer`), or `postgresTarget(...)` for an existing server (see
   [Adding a real target](#adding-a-real-target)).
@@ -243,7 +283,7 @@ import { defineConfig, postgresTarget } from "super-deploy";
 export default defineConfig({
   // ...
   targets: {
-    dev: { adapter: postgres.target("dev") },
+    dev: { adapter: devServer.target("dev") },
     qa: { adapter: postgresTarget({ env: "QA_DATABASE_URL" }) },
     prod: {
       adapter: postgresTarget({ env: "PROD_DATABASE_URL" }),
@@ -378,9 +418,11 @@ default privileges as they are.
     no hand-made policies. The deployment rolls back and PostgreSQL's error
     names the policy: drop the policy, deploy, then create it again.
 - **External schemas** (`externalSchemas` in `super-deploy.config.ts`, see
-  [Project settings](#project-settings)), which
-  must exist on every target (`deploy` refuses otherwise), and grants on them
-  and their objects. Routines run as their caller, so it's the application's
+  [Project settings](#project-settings)), and grants on them and their
+  objects. super-deploy doesn't check them: `deploy` goes ahead on a target
+  without them, and a routine that reads a missing one fails only when it
+  runs. On `dev`, create them as the superuser (see
+  [Connecting to dev](#connecting-to-dev)). Routines run as their caller, so it's the application's
   roles that need these grants (and the deploy role too, if a migration's
   scripts fire a trigger that uses them). For example, a
   PL/pgSQL function `app_writer` calls that reads `auth.users` needs:
