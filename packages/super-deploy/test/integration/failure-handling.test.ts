@@ -11,7 +11,11 @@ import {
   TargetLockedError,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { deployProject, finalizeMigration } from "../support/deploy.ts";
+import {
+  deployProject,
+  finalizeMigration,
+  testSession,
+} from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
 let server: TestServer;
@@ -416,6 +420,132 @@ describe("a deployment failing with an error that has no message of its own", ()
         outcome: "failed",
         error: "connect ECONNREFUSED ::1:5432; ECONNRESET",
       },
+    ]);
+  });
+});
+
+/**
+ * A `dev` adapter that, on closing each session, reads the settings a server
+ * ends a silent client's session by into `globalThis.targetSettings`.
+ */
+const settingsAdapter = `{
+  async connect() {
+    const session = await real.connect();
+    return {
+      ...session,
+      async close() {
+        const { rows } = await session.query(
+          \`select current_setting('idle_in_transaction_session_timeout') as idle,
+                  current_setting('tcp_keepalives_idle') as "keepalivesIdle",
+                  current_setting('tcp_keepalives_interval') as "keepalivesInterval",
+                  current_setting('tcp_keepalives_count') as "keepalivesCount"\`,
+        );
+        (globalThis.targetSettings ??= []).push(rows[0]);
+        await session.close();
+      },
+    };
+  },
+}`;
+
+/**
+ * A `dev` adapter whose sessions end a transaction left idle after 1 s rather
+ * than a minute, and whose deploy transaction hangs before its second
+ * statement while `globalThis.hangDeploy` is set (it is called with a release
+ * function), as a client that stopped responding would.
+ */
+const hangingAdapter = `{
+  async connect() {
+    const session = await real.connect();
+    let deploying = false;
+    let statements = 0;
+    return {
+      ...session,
+      async query(sql, values) {
+        const result = await session.query(sql, values);
+        if (sql.includes("idle_in_transaction_session_timeout")) {
+          await session.query("SET idle_in_transaction_session_timeout TO '1s'");
+        }
+        return result;
+      },
+      async execute(sql) {
+        deploying ||= sql.includes("lock_timeout") && !sql.includes("READ ONLY");
+        if (deploying && ++statements === 3 && globalThis.hangDeploy !== undefined) {
+          const hang = globalThis.hangDeploy;
+          globalThis.hangDeploy = undefined;
+          await new Promise((release) => hang(release));
+        }
+        return session.execute(sql);
+      },
+    };
+  },
+}`;
+
+describe("a target session whose client stops responding", () => {
+  test("sets the timeouts that end it: idle in a transaction for a minute, TCP keepalives after about a minute", async () => {
+    const { project } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { adapter: settingsAdapter },
+    );
+    await finalizeMigration(project, "add customers");
+    Object.assign(globalThis, { targetSettings: [] });
+
+    await deploy(project, { target: "dev" });
+
+    const seen = (globalThis as { targetSettings?: unknown[] }).targetSettings;
+    expect(seen).toHaveLength(2);
+    for (const settings of seen ?? []) {
+      expect(settings).toEqual({
+        idle: "1min",
+        keepalivesIdle: "30",
+        keepalivesInterval: "10",
+        keepalivesCount: "3",
+      });
+    }
+  });
+
+  test("is ended by the server once its deploy transaction sits idle, releasing its locks", async () => {
+    const { dir, project, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { adapter: hangingAdapter },
+    );
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      `${customers}\ncreate index customers_name on customers (name);\n`,
+    );
+    await finalizeMigration(project, "index names");
+    let release = () => {};
+    const hung = new Promise<void>((resolve) => {
+      Object.assign(globalThis, {
+        hangDeploy: (resume: () => void) => {
+          release = resume;
+          resolve();
+        },
+      });
+    });
+    const deployment = deploy(project, { target: "dev" }).catch(
+      (e: unknown) => e,
+    );
+    const holder = await testSession(server, database);
+    try {
+      await hung;
+
+      // The deploy's session holds customers' lock until the server ends it.
+      await holder.execute("SET lock_timeout TO '10s'");
+      await holder.execute("BEGIN");
+      await holder.execute("LOCK TABLE customers IN ACCESS EXCLUSIVE MODE");
+      await holder.execute("ROLLBACK");
+      expect(await advisoryLocks(database)).toBe(0);
+    } finally {
+      release();
+      await holder.close();
+    }
+    expect(await deployment).toBeInstanceOf(Error);
+    expect((await status(project, { target: "dev" })).pending).toEqual([
+      expect.objectContaining({ number: 2 }),
     ]);
   });
 });

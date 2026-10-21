@@ -293,13 +293,22 @@ super-deploy's reads of the target's schema (its drift check, and
 number of milliseconds (`500`) or a string with the unit `ms`, `s`, `min` or
 `h`: `"500ms"`, `"5s"`, `"2min"`, `"1h"`.
 
-If the CLI dies during a deployment (killed, or its machine lost), the
-server rolls the deployment back once it notices the connection is gone.
-super-deploy has the server check every 5 seconds while a statement runs
-(PostgreSQL's `client_connection_check_interval`; a server on Windows can't,
-and runs the statement to its end). Until then the target stays locked:
-`deploy` and `status` name the holding attempt, its server process, and the
-statement it is running and since when. If you know that command is dead,
+If the CLI dies or hangs during a deployment (killed, frozen, or its machine
+or network lost), the server rolls the deployment back once it ends the
+session, and super-deploy sets each target session up so that comes soon:
+
+- a statement whose client is gone is ended within seconds: the server
+  checks every 5 seconds while a statement runs (PostgreSQL's
+  `client_connection_check_interval`; a server on Windows can't, and runs
+  the statement to its end);
+- a session left idle in its transaction is ended after a minute
+  (`idle_in_transaction_session_timeout`);
+- a vanished machine is detected within about a minute, even between
+  statements (`tcp_keepalives_idle` and friends; not over a Unix socket).
+
+A server that refuses one of these settings runs without it. Until the
+session ends the target stays locked: `deploy` and `status` name the holding
+attempt, its server process, and the statement it is running and since when. If you know that command is dead,
 `select pg_terminate_backend(<server process>)` ends its session, which rolls
 the deployment back and releases the lock. Cancelling only its statement
 (`pg_cancel_backend`) isn't enough: the lock belongs to the session.
