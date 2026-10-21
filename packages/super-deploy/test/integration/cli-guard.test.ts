@@ -5,7 +5,7 @@ import { userInfo } from "node:os";
 import { deploy, draft, finalize, loadProject } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
-import { deployConfig } from "../support/deploy.ts";
+import { asDeployRole, deployConfig } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject } from "../support/project.ts";
 import { keys, showCursor, spawnTerminal } from "../support/terminal.ts";
@@ -150,14 +150,14 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
 
   test("disposable --set yes says how many tables the managed schema holds and about how many rows, and what the flag allows", async () => {
     const { dir, database } = await deployedProject();
-    await server.query(
+    await asDeployRole(
+      server,
+      database,
       `insert into customers select n, 'customer ' || n from generate_series(1, 1000) n;
        create table notes (id bigint);
        insert into notes values (1), (2);
        analyze customers;
        analyze notes;`,
-      [],
-      database,
     );
 
     const terminal = spawnTerminal(
@@ -168,7 +168,34 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
     const shown = await terminal.waitFor("Type YES");
     expect(shown).toContain("Schema public holds 2 tables, about 1,002 rows");
     expect(shown).toContain(
-      "deploy-draft will then be allowed to deploy a draft to it, and rebuild to wipe it",
+      "deploy-draft will then be allowed to deploy a draft and its seed data to it, and rebuild to wipe it",
+    );
+    terminal.type(keys.ctrlC);
+    expect(await terminal.exited).toBe(1);
+  });
+
+  test("disposable --set yes counts a partitioned table once, with its partitions' rows", async () => {
+    const { dir, database } = await deployedProject();
+    await asDeployRole(
+      server,
+      database,
+      `create table events (id bigint, at date) partition by range (at);
+       create table events_2025 partition of events
+         for values from ('2025-01-01') to ('2026-01-01');
+       create table events_2026 partition of events
+         for values from ('2026-01-01') to ('2027-01-01');
+       insert into events select n, date '2025-06-01' + n * 30 from generate_series(1, 10) n;
+       analyze customers;
+       analyze events;`,
+    );
+
+    const terminal = spawnTerminal(
+      ["disposable", "--target", "dev", "--set", "yes"],
+      { cwd: dir.root },
+    );
+
+    expect(await terminal.waitFor("Type YES")).toContain(
+      "Schema public holds 2 tables, about 10 rows",
     );
     terminal.type(keys.ctrlC);
     expect(await terminal.exited).toBe(1);
@@ -176,10 +203,10 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
 
   test("disposable --set yes counts the rows of a table not yet analyzed, and says when the managed schema holds no tables", async () => {
     const { dir, database } = await deployedProject();
-    await server.query(
-      "insert into customers select n, 'customer ' || n from generate_series(1, 500) n",
-      [],
+    await asDeployRole(
+      server,
       database,
+      "insert into customers select n, 'customer ' || n from generate_series(1, 500) n",
     );
     // Until autovacuum analyzes it, the table's row estimate is the
     // statistics' live-row count, which its inserting session reports when

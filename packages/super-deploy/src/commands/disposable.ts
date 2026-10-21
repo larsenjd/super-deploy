@@ -8,7 +8,8 @@
 // from an empty one before YES. The rows are PostgreSQL's estimate, not a
 // count(*): `reltuples`, or for a table never analyzed or vacuumed
 // (reltuples -1) the statistics' live-row count, so a freshly loaded table
-// doesn't look empty.
+// doesn't look empty. A partitioned table counts as one table, holding its
+// partitions' rows: the partitions are counted for their rows only.
 import type { Session } from "../adapters/types.ts";
 import { historyTable } from "../deploy/history.ts";
 import { runGuarded } from "../guard/guard.ts";
@@ -64,7 +65,7 @@ export async function disposable(
         details: options.set
           ? [
               await describeContents(session, managedSchema),
-              "deploy-draft will then be allowed to deploy a draft to it, and rebuild to wipe it",
+              "deploy-draft will then be allowed to deploy a draft and its seed data to it, and rebuild to wipe it",
             ]
           : ["deploy-draft and rebuild will then refuse it"],
         plan: undefined,
@@ -91,7 +92,7 @@ async function describeContents(
   schema: string,
 ): Promise<string> {
   const { rows } = await session.query<{ tables: number; rows: number }>(
-    `SELECT count(*)::int AS tables,
+    `SELECT (count(*) FILTER (WHERE NOT c.relispartition))::int AS tables,
             coalesce(sum(CASE WHEN c.relkind <> 'r' THEN 0
                               WHEN c.reltuples >= 0 THEN c.reltuples
                               ELSE pg_catalog.pg_stat_get_live_tuples(c.oid) END), 0)::float8 AS rows

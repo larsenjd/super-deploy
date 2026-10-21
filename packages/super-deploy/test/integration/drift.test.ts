@@ -10,6 +10,7 @@ import {
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
+  asDeployRole,
   deployProject,
   finalizeMigration,
   testSession,
@@ -47,12 +48,12 @@ describe("status", () => {
 
   test("names every object changed by hand: extra, missing and changed", async () => {
     const { project, database } = await deployedProject();
-    await server.query(
+    await asDeployRole(
+      server,
+      database,
       `alter table customers add column note text;
        alter table customers alter column name type varchar(100);
        create table audit (id bigint primary key, at timestamptz);`,
-      [],
-      database,
     );
 
     const { drift } = await status(project, { target: "dev" });
@@ -85,10 +86,10 @@ describe("status", () => {
 
   test("names objects with their schema, quoting a name once where it needs quotes", async () => {
     const { project, database } = await deployedProject();
-    await server.query(
-      `create table "Audit Log" (id bigint, "Noted At" timestamptz)`,
-      [],
+    await asDeployRole(
+      server,
       database,
+      `create table "Audit Log" (id bigint, "Noted At" timestamptz)`,
     );
 
     const { drift } = await status(project, { target: "dev" });
@@ -108,7 +109,7 @@ create index orders_customer_idx on orders (customer_id);
     );
     await finalizeMigration(project, "add orders");
     await deploy(project, { target: "dev" });
-    await server.query("drop index orders_customer_idx", [], database);
+    await asDeployRole(server, database, "drop index orders_customer_idx");
 
     const { drift } = await status(project, { target: "dev" });
 
@@ -129,14 +130,14 @@ create index orders_customer_idx on orders (customer_id);
   test("counts every other kind of object a schema can hold, but not grants", async () => {
     const { project, database } = await deployedProject();
     const reader = `drift_reader_${database}`;
-    await server.query(
-      `create role ${reader} nologin;
-       grant select on customers to ${reader};
+    await server.query(`create role ${reader} nologin`);
+    await asDeployRole(
+      server,
+      database,
+      `grant select on customers to ${reader};
        create rule customers_no_delete as on delete to customers do instead nothing;
        create statistics customers_stats on id, name from customers;
        create aggregate total (bigint) (sfunc = int8pl, stype = bigint);`,
-      [],
-      database,
     );
 
     const { drift } = await status(project, { target: "dev" });
@@ -164,6 +165,7 @@ create index orders_customer_idx on orders (customer_id);
   test("ignores column order and ownership", async () => {
     const { project, database } = await deployedProject();
     const owner = `drift_owner_${database}`;
+    // As the superuser: handing a table to another role is the point here.
     await server.query(
       `create role ${owner} nologin;
        alter table customers drop column name;
@@ -184,19 +186,19 @@ create index orders_customer_idx on orders (customer_id);
     await deploy(project, { target: "dev" });
 
     // Re-create the column: it is now the third attribute, after a dropped one.
-    await server.query(
+    await asDeployRole(
+      server,
+      database,
       `alter table customers drop column name;
        alter table customers add column name text not null;
        comment on column customers.name is 'Full name';`,
-      [],
-      database,
     );
     expect((await status(project, { target: "dev" })).drift).toEqual([]);
 
-    await server.query(
-      "comment on column customers.name is 'Display name'",
-      [],
+    await asDeployRole(
+      server,
       database,
+      "comment on column customers.name is 'Display name'",
     );
     expect((await status(project, { target: "dev" })).drift).toEqual([
       {
@@ -224,20 +226,20 @@ create index orders_customer_idx on orders (customer_id);
     await deploy(project, { target: "dev" });
 
     // Drop and re-add the last attribute: the order stays (width, height).
-    await server.query(
+    await asDeployRole(
+      server,
+      database,
       `alter type size drop attribute height;
        alter type size add attribute height integer;`,
-      [],
-      database,
     );
     expect((await status(project, { target: "dev" })).drift).toEqual([]);
 
     // Drop and re-add the first: the order becomes (height, width).
-    await server.query(
+    await asDeployRole(
+      server,
+      database,
       `alter type size drop attribute width;
        alter type size add attribute width integer;`,
-      [],
-      database,
     );
     const { drift } = await status(project, { target: "dev" });
 
@@ -262,10 +264,10 @@ describe("deploy", () => {
       `${customers}create index customers_name_idx on customers (name);\n`,
     );
     await finalizeMigration(project, "index customer names");
-    await server.query(
-      "create index customers_name_idx on customers (name)",
-      [],
+    await asDeployRole(
+      server,
       database,
+      "create index customers_name_idx on customers (name)",
     );
 
     const error = await deploy(project, { target: "dev" }).catch(
@@ -306,7 +308,7 @@ describe("deploy", () => {
 
   test("refuses a drifted target with nothing pending", async () => {
     const { project, database } = await deployedProject();
-    await server.query("drop table customers", [], database);
+    await asDeployRole(server, database, "drop table customers");
 
     const error = await deploy(project, { target: "dev" }).catch(
       (e: unknown) => e,
