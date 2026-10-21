@@ -651,9 +651,18 @@ Ctrl+C (SIGINT), SIGTERM, or closing the terminal (SIGHUP) stops the
 running command. It cleans up first, then exits 130, 143 or 129: a
 deployment in progress rolls back and its attempt is recorded as abandoned,
 throwaway databases are dropped, and the embedded servers the command
-started are stopped. It prints one line when the interruption arrives.
-Once the command has finished, an interruption while it stops its servers
-doesn't change its exit code: a deployment that committed still exits 0.
+started are stopped. It prints one line when the interruption arrives. A
+command that changes a target (`deploy`, `deploy-draft`, `rebuild`,
+`mark`, `disposable`, `init --adopt`) prints one more once it has cleaned
+up, saying what happened to the target:
+
+- `The deployment rolled back: target qa is unchanged, still at migration 00009-add-tier.`
+- `The deployment had already finished: the interruption came too late to stop it on target qa.`
+  when the interruption came after its COMMIT. It still exits 130, 143 or
+  129, and `status --target qa` shows the attempt succeeded.
+
+An interruption after the command has finished, while it stops its
+servers, doesn't change its exit code: a deployment that committed exits 0.
 
 Interrupting again while it cleans up exits at once, leaving whatever
 wasn't cleaned up yet (the next command takes over a server left running).

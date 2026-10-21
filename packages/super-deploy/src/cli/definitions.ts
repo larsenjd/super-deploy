@@ -164,6 +164,12 @@ interface CommandBase {
   readonly group: CommandGroup;
   readonly summary: string;
   readonly options: readonly OptionDefinition[];
+  /**
+   * For a command that changes a target: the option naming it, and what the
+   * change is called (`deployment`). After an interruption the CLI then says
+   * what happened to the target (run.ts).
+   */
+  readonly changesTarget?: { readonly option: string; readonly noun: string };
 }
 
 /** A command on the project found from the working directory (most commands). */
@@ -258,6 +264,7 @@ const initCommand: DirectoryCommandDefinition = {
   summary:
     "Create a project here, or adopt a database into an initialised project with no migrations yet",
   needsProject: false,
+  changesTarget: { option: "adopt", noun: "adoption" },
   options: [
     {
       name: "adopt",
@@ -706,6 +713,7 @@ const deployCommand: CommandDefinition = {
   summary:
     "Rehearse every pending migration, then apply them all to the target in one transaction",
   options: [targetOption],
+  changesTarget: { option: "target", noun: "deployment" },
   async run(project, values, context) {
     const result = await deploy(project, {
       target: String(values.target),
@@ -834,6 +842,7 @@ const markCommand: CommandDefinition = {
   summary:
     "Record the target's next pending migration as deployed after fixing the target by hand, if it matches a replica exactly; asks you to type YES",
   options: [targetOption],
+  changesTarget: { option: "target", noun: "mark" },
   async run(project, values, context) {
     try {
       const result = await mark(project, { target: String(values.target) });
@@ -854,6 +863,7 @@ const disposableCommand: CommandDefinition = {
   group: "Disposable",
   summary:
     "Flag the target as disposable (or not) in its own history schema; asks you to type YES",
+  changesTarget: { option: "target", noun: "flag change" },
   options: [
     targetOption,
     {
@@ -910,6 +920,7 @@ const deployDraftCommand: CommandDefinition = {
   group: "Disposable",
   summary:
     "Try the unfinalized draft on a disposable target, in one transaction; asks you to type YES",
+  changesTarget: { option: "target", noun: "draft's deployment" },
   options: [
     targetOption,
     {
@@ -957,6 +968,7 @@ const rebuildCommand: CommandDefinition = {
   group: "Disposable",
   summary:
     "Wipe a disposable target and replay migrations 1 to N, without seed data; asks you to type YES",
+  changesTarget: { option: "target", noun: "rebuild" },
   options: [
     targetOption,
     {

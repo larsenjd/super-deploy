@@ -291,6 +291,9 @@ describe.skipIf(process.platform === "win32").each([
 
       expect(await terminal.exited).toBe(exitCode);
       expect(await serverRunning(dataDir)).toBe(false);
+      expect(terminal.screen).toContain(
+        "Target dev is unchanged: the interruption came before the flag change started.",
+      );
     });
   },
 );

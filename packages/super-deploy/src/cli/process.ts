@@ -15,10 +15,12 @@
 // loop drains before the command ends.
 //
 // Once a command's outcome is settled (`commandSettled`: its function
-// returned or threw), an interruption while the CLI closes the project
-// (stopping embedded servers) keeps that command's exit code, and its notice
-// says the command had finished (ticket 144): a deploy that committed must not
-// look failed to `deploy && ...` or CI.
+// returned or threw), a signal while the CLI closes the project (stopping
+// embedded servers) keeps that command's exit code, and its notice says the
+// command had finished (ticket 144): a deploy that committed must not look
+// failed to `deploy && ...` or CI. Closed output still exits 141: its writes
+// fail asynchronously, often after the command has returned, and the output
+// was cut short.
 
 const signalExitCodes = {
   SIGHUP: 129,
@@ -47,6 +49,8 @@ export interface ProcessInterruptions {
    * finished.
    */
   readonly exitCode: number | undefined;
+  /** True once stdout or stderr has closed: say nothing more. */
+  readonly outputClosed: boolean;
   /**
    * Called once a command's outcome is settled, and with undefined when the
    * next command (in the menu) starts.
@@ -59,6 +63,7 @@ export function watchInterruptions(): ProcessInterruptions {
   let exitCode: number | undefined;
   let first: { name: string; at: number } | undefined;
   let settled: SettledCommand | undefined;
+  let outputClosed = false;
 
   const notice = (text: string) => {
     const lead = process.stderr.isTTY ? "\n" : "";
@@ -70,7 +75,7 @@ export function watchInterruptions(): ProcessInterruptions {
   };
 
   const interrupt = (code: number, reason: string) => {
-    exitCode = settled?.exitCode ?? code;
+    exitCode = code;
     process.exitCode = exitCode;
     controller.abort(new Error(reason));
   };
@@ -91,13 +96,14 @@ export function watchInterruptions(): ProcessInterruptions {
           ? `Interrupted by ${name}: cleaning up before exiting (interrupt again to exit at once)`
           : `Interrupted by ${name} after ${settled.command} finished: closing up before exiting (interrupt again to exit at once)`,
       );
-      interrupt(code, name);
+      interrupt(settled?.exitCode ?? code, name);
     });
   }
 
   // Writing to a closed pipe fails with EPIPE (Node ignores SIGPIPE itself).
   for (const stream of [process.stdout, process.stderr]) {
     stream.on("error", () => {
+      outputClosed = true;
       if (exitCode === undefined) {
         interrupt(closedOutputExitCode, "closed output");
       }
@@ -108,6 +114,9 @@ export function watchInterruptions(): ProcessInterruptions {
     signal: controller.signal,
     get exitCode() {
       return exitCode;
+    },
+    get outputClosed() {
+      return outputClosed;
     },
     commandSettled(command) {
       settled = command;
