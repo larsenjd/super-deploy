@@ -40,7 +40,7 @@ describe("init --adopt", () => {
     expect(result).toEqual({
       exitCode: 0,
       stdout:
-        "Wrote desired-schema/tables.sql\nAdopted target prod: migration 00001-adopt in migrations/00001-adopt, recorded on it as marked (attempt #1)\n",
+        "Wrote desired-schema/tables.sql\nAdopted target prod: 1 object from schema public, as migration 00001-adopt in migrations/00001-adopt, recorded on it as marked (attempt #1)\n",
       stderr: "",
     });
     const status = await runCli(["status", "--target", "prod"], {
@@ -49,6 +49,24 @@ describe("init --adopt", () => {
     expect(status.stdout).toContain(
       "Target prod: 1 migration recorded, 0 pending\n",
     );
+  });
+
+  test("adopting an empty managed schema warns on stderr, naming the schemas that hold objects", async () => {
+    const dir = await projectAdopting(
+      "create schema shop; create table shop.t (id bigint primary key);",
+    );
+
+    const result = await runCli(["init", "--adopt", "prod"], {
+      cwd: dir.root,
+    });
+
+    expect(result).toEqual({
+      exitCode: 0,
+      stdout:
+        "Adopted target prod: 0 objects from schema public, as migration 00001-adopt in data-model/migrations/00001-adopt, recorded on it as marked (attempt #1)\n",
+      stderr:
+        "warning: Adopted 0 objects from schema public; schema shop holds 1 table: is managedSchema right?\n",
+    });
   });
 
   test("says how many grants and policies it left on the target as they are", async () => {

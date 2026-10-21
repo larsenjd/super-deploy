@@ -129,6 +129,9 @@ describe("adopt", () => {
         "data-model/desired-schema/comments.sql",
       ]);
       expect(result.leftOnTarget).toEqual({ grants: 1, policies: 0 });
+      // Two tables, a view and a function: indexes and identity sequences go with their table.
+      expect(result.objects).toBe(4);
+      expect(result.warning).toBeUndefined();
       const written = await readdir(dir.path("data-model/desired-schema"));
       expect(written.filter((file) => file.endsWith(".sql")).sort()).toEqual(
         result.files.map((file) => file.split("/").at(-1)).sort(),
@@ -1219,6 +1222,51 @@ describe("adopt", () => {
         prod,
       ),
     ).toEqual([]);
+  });
+
+  test("adopting an empty managed schema warns it adopted nothing, naming the other schemas that hold objects", async () => {
+    const prod = await server.createDatabase(`
+      create schema app;
+      create table app.customers (id bigint primary key);
+      create table app.orders (id bigint primary key);
+      create view app.order_ids as select id from app.orders;
+      create schema reports;
+      create function reports.answer() returns int language sql as $$ select 42 $$;
+      create schema empty;
+    `);
+    const { project } = await deployProject(
+      server,
+      {},
+      { otherTargets: `prod: { adapter: ${asSuperuser(prod)} },` },
+    );
+    try {
+      const result = await adopt(project, { target: "prod" });
+
+      expect(result.migration.folder).toBe("00001-adopt");
+      expect(result.objects).toBe(0);
+      expect(result.warning).toBe(
+        "Adopted 0 objects from schema public; schema app holds 2 tables, 1 view; schema reports holds 1 function: is managedSchema right?",
+      );
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("adopting an empty managed schema in an otherwise empty database warns only that it adopted nothing", async () => {
+    const prod = await server.createDatabase();
+    const { project } = await deployProject(
+      server,
+      {},
+      { otherTargets: `prod: { adapter: ${asSuperuser(prod)} },` },
+    );
+    try {
+      const result = await adopt(project, { target: "prod" });
+
+      expect(result.objects).toBe(0);
+      expect(result.warning).toBe("Adopted 0 objects from schema public");
+    } finally {
+      await project.close();
+    }
   });
 
   test("removes everything it wrote when the target no longer matches at marking time", async () => {

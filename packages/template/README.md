@@ -353,7 +353,10 @@ before any draft or migration exists), and set `managedSchema` if its schema
 isn't `public` (see [Project settings](#project-settings)). Then run
 `pnpm exec super-deploy init --adopt <target>`. Its managed schema becomes the
 desired schema and migration `00001-adopt`, which is recorded on that target
-as already deployed. If the target has no schema of that name (usually a
+as already deployed, and it says how many objects (tables, views, sequences,
+routines and types) it adopted. An empty managed schema is adopted too, with
+a warning that names the target's other schemas holding objects, in case
+`managedSchema` was forgotten. If the target has no schema of that name (usually a
 typo in `managedSchema`), adoption refuses and writes nothing, listing the
 schemas the target has. `managedSchema` must be lowercase: a schema whose
 name isn't, such as `"MyApp"`, has to be renamed on the target before it is

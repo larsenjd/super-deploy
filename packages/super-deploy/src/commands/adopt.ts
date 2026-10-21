@@ -9,8 +9,9 @@
 // and no desired-schema SQL files. The target must record no migrations and
 // have the managed schema (a missing one is almost always a mistyped
 // managedSchema: the refusal lists the target's schemas, and the rename one
-// needs whose name isn't lowercase; an existing empty one is adopted), and
-// its deploy role must
+// needs whose name isn't lowercase; an existing empty one is adopted, with a
+// warning naming the other schemas that hold objects, in case managedSchema
+// was forgotten), and its deploy role must
 // own that schema and everything in it (deploy/ownership.ts) and be able to
 // create the history schema if the target has none (deploy/preflight.ts),
 // all checked before anything is rehearsed.
@@ -63,7 +64,7 @@ import {
   CommitOutcomeUnknownError,
   withLockedTarget,
 } from "../deploy/engine.ts";
-import { readRecordedMigrations, schemaExists } from "../deploy/history.ts";
+import { readRecordedMigrations } from "../deploy/history.ts";
 import { markNextPending, readMarkableMigrations } from "../deploy/mark.ts";
 import { requireOwnership } from "../deploy/ownership.ts";
 import { requireHistorySchemaCreatable } from "../deploy/preflight.ts";
@@ -165,6 +166,18 @@ export interface AdoptResult {
    * outside super-deploy (ADR-0006).
    */
   readonly leftOnTarget: LeftOnTarget;
+  /**
+   * How many objects of the managed schema it adopted: tables, views,
+   * sequences, routines and types (not what goes with them, such as indexes
+   * and constraints).
+   */
+  readonly objects: number;
+  /**
+   * When it adopted no objects: `Adopted 0 objects from schema public`,
+   * naming the target's other schemas that hold objects, if any (a
+   * forgotten managedSchema).
+   */
+  readonly warning: string | undefined;
 }
 
 export interface LeftOnTarget {
@@ -234,6 +247,8 @@ export async function adopt(
       files: written.map((path) => projectRelative(project.root, path)),
       overrides: finalized.metadata.overrides,
       leftOnTarget: read.leftOnTarget,
+      objects: read.objects,
+      warning: read.warning,
     };
   } catch (error) {
     if (!(error instanceof CommitOutcomeUnknownError)) {
@@ -290,6 +305,8 @@ async function readTarget(
   files: AdoptedFile[];
   candidates: OverrideCandidate[];
   leftOnTarget: LeftOnTarget;
+  objects: number;
+  warning: string | undefined;
 }> {
   const { config } = project;
   const context: RuleContext = {
@@ -307,12 +324,13 @@ async function readTarget(
         `it already records ${plural(recorded.length, "migration")} in its history schema "${config.historySchema}"`,
       ]);
     }
-    if (!(await schemaExists(session, config.managedSchema))) {
+    const schemas = await userSchemas(session, config.historySchema);
+    const managed = schemas.find(
+      (schema) => schema.name === config.managedSchema,
+    );
+    if (managed === undefined) {
       throw new AdoptConflictError(target.name, [
-        missingManagedSchema(
-          config.managedSchema,
-          await userSchemas(session, config.historySchema),
-        ),
+        missingManagedSchema(config.managedSchema, schemas),
       ]);
     }
     // Later migrations alter what is adopted: the deploy role must own it.
@@ -424,23 +442,42 @@ async function readTarget(
         needed,
       );
     }
+    const objects = objectCount(managed);
     return {
       files,
       candidates,
       leftOnTarget: await countLeftOnTarget(session, config.managedSchema),
+      objects,
+      warning:
+        objects === 0
+          ? emptyManagedSchemaWarning(
+              config.managedSchema,
+              schemas.filter((schema) => schema !== managed),
+            )
+          : undefined,
     };
   } finally {
     await session.close().catch(() => {});
   }
 }
 
-/** A schema on the target that isn't PostgreSQL's own or the history schema. */
+/**
+ * A schema on the target that isn't PostgreSQL's own or the history schema,
+ * with how many objects of each kind it holds. Objects that go with another
+ * one aren't counted (a table's indexes, constraints and identity or serial
+ * sequence, a table's row type, array types), nor extension members.
+ */
 interface UserSchema {
   /** As in the catalog, e.g. `MyApp`. */
   readonly name: string;
   /** Quoted where SQL needs it, e.g. `"MyApp"`, `shop`. */
   readonly quoted: string;
+  /** Tables (partitioned and foreign ones too), views, sequences, routines and types. */
+  readonly counts: Readonly<Record<ObjectKind, number>>;
 }
+
+const objectKinds = ["table", "view", "sequence", "function", "type"] as const;
+type ObjectKind = (typeof objectKinds)[number];
 
 /**
  * The target's schemas, sorted, leaving out `pg_*` (the catalog, TOAST and
@@ -450,14 +487,79 @@ async function userSchemas(
   session: Session,
   historySchema: string,
 ): Promise<UserSchema[]> {
-  const { rows } = await session.query<UserSchema>(
-    `SELECT nspname AS name, pg_catalog.quote_ident(nspname) AS quoted
-       FROM pg_catalog.pg_namespace
-      WHERE pg_catalog.left(nspname, 3) <> 'pg_' AND nspname <> 'information_schema' AND nspname <> $1
-      ORDER BY nspname COLLATE "C"`,
+  const { rows } = await session.query<{
+    name: string;
+    quoted: string;
+    kind: ObjectKind | null;
+    count: number;
+  }>(
+    `WITH n AS (
+       SELECT oid, nspname FROM pg_catalog.pg_namespace
+        WHERE pg_catalog.left(nspname, 3) <> 'pg_' AND nspname <> 'information_schema' AND nspname <> $1),
+     objects AS (
+       SELECT 'pg_class'::pg_catalog.regclass AS class, c.oid, c.relnamespace AS schema,
+              CASE WHEN c.relkind IN ('v', 'm') THEN 'view' WHEN c.relkind = 'S' THEN 'sequence' ELSE 'table' END AS kind
+         FROM pg_catalog.pg_class c WHERE c.relkind IN ('r', 'p', 'f', 'v', 'm', 'S')
+       UNION ALL
+       SELECT 'pg_proc'::pg_catalog.regclass, p.oid, p.pronamespace, 'function' FROM pg_catalog.pg_proc p
+       UNION ALL
+       SELECT 'pg_type'::pg_catalog.regclass, t.oid, t.typnamespace, 'type'
+         FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_class r ON r.oid = t.typrelid
+        WHERE t.typtype IN ('d', 'e', 'r', 'm') OR r.relkind = 'c'),
+     counted AS (
+       SELECT o.schema, o.kind, count(*)::int AS count FROM objects o
+        WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_depend d
+                           WHERE d.classid = o.class AND d.objid = o.oid AND d.deptype IN ('a', 'e', 'i'))
+        GROUP BY o.schema, o.kind)
+     SELECT n.nspname AS name, pg_catalog.quote_ident(n.nspname) AS quoted, counted.kind, coalesce(counted.count, 0) AS count
+       FROM n LEFT JOIN counted ON counted.schema = n.oid
+      ORDER BY n.nspname COLLATE "C"`,
     [historySchema],
   );
-  return rows;
+  const schemas = new Map<
+    string,
+    { name: string; quoted: string; counts: Record<ObjectKind, number> }
+  >();
+  for (const { name, quoted, kind, count } of rows) {
+    let schema = schemas.get(name);
+    if (schema === undefined) {
+      const counts = { table: 0, view: 0, sequence: 0, function: 0, type: 0 };
+      schema = { name, quoted, counts };
+      schemas.set(name, schema);
+    }
+    if (kind !== null) {
+      schema.counts[kind] = count;
+    }
+  }
+  return [...schemas.values()];
+}
+
+/** How many objects the schema holds, of every kind. */
+function objectCount(schema: UserSchema): number {
+  return objectKinds.reduce((sum, kind) => sum + schema.counts[kind], 0);
+}
+
+/**
+ * The warning for adopting an empty managed schema: it adopted nothing,
+ * and which other schemas hold objects (a forgotten managedSchema).
+ */
+function emptyManagedSchemaWarning(
+  managedSchema: string,
+  others: readonly UserSchema[],
+): string {
+  const holding = others
+    .filter((schema) => objectCount(schema) > 0)
+    .map(
+      (schema) =>
+        `schema ${schema.quoted} holds ${objectKinds
+          .filter((kind) => schema.counts[kind] > 0)
+          .map((kind) => plural(schema.counts[kind], kind))
+          .join(", ")}`,
+    );
+  const adopted = `Adopted 0 objects from schema ${managedSchema}`;
+  return holding.length === 0
+    ? adopted
+    : `${adopted}; ${holding.join("; ")}: is managedSchema right?`;
 }
 
 /**
