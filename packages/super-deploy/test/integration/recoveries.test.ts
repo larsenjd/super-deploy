@@ -98,9 +98,17 @@ async function listFiles(folder: string): Promise<string[]> {
     .sort();
 }
 
+/** A SQL file's lines that aren't comments or blank: its statements. */
+function statementsOf(sql: string): string[] {
+  return sql
+    .split("\n")
+    .filter((line) => line.trim() !== "" && !line.startsWith("--"));
+}
+
 describe("recovery", () => {
   test("creates a Recovery draft carrying the migration's schema change unchanged", async () => {
     const { dir, project } = await failedMigration();
+    const original = await dir.read(`${migration2}/schema-change.sql`);
 
     const result = await recovery(project, { migration: 2 });
 
@@ -109,9 +117,11 @@ describe("recovery", () => {
       folder: "00002-require-email",
       recovery: 1,
     });
-    expect(await dir.read("data-model/draft/schema-change.sql")).toBe(
-      await dir.read(`${migration2}/schema-change.sql`),
-    );
+    const copy = await dir.read("data-model/draft/schema-change.sql");
+    expect(statementsOf(copy)).toEqual(statementsOf(original));
+    expect(copy).toContain("00002-require-email");
+    expect(copy).not.toContain("run draft again");
+    expect(await dir.read(`${migration2}/schema-change.sql`)).toBe(original);
     expect(JSON.parse(await dir.read("data-model/draft/draft.json"))).toEqual({
       name: "require-email",
       recoveryOf: 2,
@@ -244,6 +254,13 @@ describe("finalizing a Recovery", () => {
     await expect(finalize(project)).rejects.toThrow(
       RecoverySchemaChangeEditedError,
     );
+
+    // A verbatim copy, as Recovery drafts made by older versions hold, is still the migration's.
+    await dir.write(
+      "data-model/draft/schema-change.sql",
+      await dir.read(`${migration2}/schema-change.sql`),
+    );
+    await expect(rehearse(project)).resolves.toMatchObject({ recoveryOf: 2 });
   });
 });
 
@@ -388,6 +405,9 @@ describe("unfinalize with Recoveries", () => {
       recoveryOf: 2,
     });
     expect(await dir.read("data-model/draft/pre-migration.sql")).toBe(backfill);
+    expect(await dir.read("data-model/draft/schema-change.sql")).not.toContain(
+      "run draft again",
+    );
 
     await finalize(project);
     expect(await dir.read("data-model/migrations/index.json")).toBe(

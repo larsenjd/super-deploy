@@ -1,7 +1,7 @@
 // `recovery --migration N`: start a Recovery of migration N, for targets that
 // haven't run it yet (typically because it failed on their data). The
 // Recovery draft carries N's schema change unchanged (it is never
-// regenerated) and starts from the scripts and seed data of N's newest
+// regenerated; only its header comment says so, store/draft.ts) and starts from the scripts and seed data of N's newest
 // variant (its newest Recovery, else the original), for the developer to
 // change. `finalize` freezes it as N's next Recovery once its rehearsal
 // proves it ends in the same structure as the original.
@@ -10,13 +10,15 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
-import { writeDraftMetadata } from "../store/draft.ts";
+import {
+  writeDraftMetadata,
+  writeRecoverySchemaChange,
+} from "../store/draft.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
   exists,
   recoveryFileNames,
-  schemaChangeFileName,
   UnknownMigrationError,
 } from "../store/migrations.ts";
 import { draftName } from "./discard-draft.ts";
@@ -64,14 +66,14 @@ export async function recovery(
   const source = newest?.path ?? migration.path;
 
   await mkdir(paths.draft, { recursive: true });
-  const files: string[] = [];
+  await writeRecoverySchemaChange(paths, migration);
+  const files = [projectRelative(root, paths.draftSchemaChange)];
   const copy = async (from: string, name: string) => {
     const target = join(paths.draft, name);
     // Byte for byte, but writable (the draft is for editing).
     await writeFile(target, await readFile(from));
     files.push(projectRelative(root, target));
   };
-  await copy(join(migration.path, schemaChangeFileName), schemaChangeFileName);
   for (const name of recoveryFileNames) {
     if (await exists(join(source, name))) {
       await copy(join(source, name), name);
@@ -131,7 +133,7 @@ export class RecoverySchemaChangeEditedError extends SuperDeployError {
 
   constructor(file: string, migration: string) {
     super(
-      `${file} must stay an exact copy of ${migration}'s schema change: a Recovery replaces only the scripts and seed data`,
+      `${file} must stay ${migration}'s schema change, unedited: a Recovery replaces only the scripts and seed data`,
     );
     this.file = file;
   }
