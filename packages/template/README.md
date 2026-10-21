@@ -196,8 +196,27 @@ super-deploy (see [Permissions](#permissions)).
 - **One managed schema**: no `CREATE SCHEMA`. super-deploy creates the
   managed schema (`managedSchema`, see [Project settings](#project-settings))
   itself. Write object names unqualified (or qualified with the managed
-  schema). Statements may refer only to the managed schema and
-  `pg_catalog`; PL/pgSQL bodies may also refer to `externalSchemas`.
+  schema), except in routine bodies (next rule). Statements may refer only
+  to the managed schema and `pg_catalog`; PL/pgSQL bodies may also refer to
+  `externalSchemas`.
+- **Routine bodies run with the caller's search path**: PostgreSQL resolves
+  the names in a function's or procedure's string body (`as $$ ... $$`, in
+  `sql` or `plpgsql`) each time it runs, with the `search_path` of whoever
+  calls it. Rehearsals and deployments put the managed schema on it, so
+  they pass; but unless the managed schema is `public`, your application's
+  roles don't have it on theirs, and every call fails with `relation
+  "orders" does not exist`. With `managedSchema: "app"`, write such a
+  body one of three ways:
+  - qualify the names: `select count(*) from app.orders`;
+  - give the routine `set search_path = app, pg_catalog`;
+  - for `language sql`, write the body as `begin atomic ... end;`, whose
+    names PostgreSQL binds once, at `CREATE`.
+
+  `draft`, `finalize` and `validate` warn about a routine whose string body
+  names something the desired schema creates without a schema and that has
+  no `SET search_path`, so `validate --strict` fails on it. With
+  `managedSchema: "public"`, which every default search path includes, they
+  don't. SQL built for `EXECUTE` isn't checked.
 - **Only `ALTER TABLE ... ADD CONSTRAINT`** among `ALTER` statements:
   declare columns and everything else in `CREATE TABLE`, written out (not
   copied with `LIKE`).
@@ -353,8 +372,15 @@ before any draft or migration exists), and set `managedSchema` if its schema
 isn't `public` (see [Project settings](#project-settings)). Then run
 `pnpm exec super-deploy init --adopt <target>`. Its managed schema becomes the
 desired schema and migration `00001-adopt`, which is recorded on that target
-as already deployed. If the target has no schema of that name (usually a
-typo in `managedSchema`), adoption refuses and writes nothing. If the
+as already deployed, and it says how many objects (tables, views, sequences,
+routines and types) it adopted. An empty managed schema is adopted too, with
+a warning that names the target's other schemas holding objects, in case
+`managedSchema` was forgotten. If the target has no schema of that name (usually a
+typo in `managedSchema`), adoption refuses and writes nothing, listing the
+schemas the target has. `managedSchema` must be lowercase: a schema whose
+name isn't, such as `"MyApp"`, has to be renamed on the target before it is
+adopted (`ALTER SCHEMA "MyApp" RENAME TO myapp`), and the application's
+`search_path` and schema-qualified names changed with it. If the
 database holds anything super-deploy doesn't support (see
 [What the desired schema supports](#what-the-desired-schema-supports)),
 nothing is written and every such object is listed: that includes a
@@ -394,6 +420,26 @@ example) adoption refuses them, listed apart from anything it doesn't
 support, saying to run it in a terminal. `finalize` and `validate` show these
 overrides like any other.
 
+### Starting an adoption over
+
+An adoption that went wrong (the wrong `managedSchema` or target, a target
+that needed changing first) can be started over, but only while the target
+records nothing but the adoption: `status --target <target>` shows
+`1 migration recorded`, `00001-adopt`, marked. Adopting again is refused
+until then, and both refusals point here.
+
+1. On the target, as the deploy role (it created the history schema, so it
+   owns it): `drop schema deployment_history cascade` (or your
+   `historySchema`). This also deletes the target's attempt log and its
+   disposable flag.
+2. In the project, delete `data-model/migrations/` and the `.sql` files
+   adoption wrote in `data-model/desired-schema/`.
+3. Fix what was wrong, then run `pnpm exec super-deploy init --adopt <target>`
+   again.
+
+Never do this on a target that has deployed migrations since it was
+adopted: its history is what every later deployment relies on.
+
 ## Permissions
 
 super-deploy knows about one role: the deploy role, which it connects to a
@@ -410,8 +456,14 @@ No privileges. The desired schema, and every file a deployment runs
 revokes, `ALTER DEFAULT PRIVILEGES`, roles and role membership, `OWNER TO`,
 `REASSIGN OWNED`, `DROP OWNED`, policies, turning row-level security on or
 off (`ALTER TABLE ... ENABLE ROW LEVEL SECURITY` and the like) and
-`SECURITY DEFINER` routines. No override marker gets past these refusals. Every routine runs as
-the role that calls it (`SECURITY INVOKER`, PostgreSQL's default).
+`SECURITY DEFINER` routines, including inside a function's or procedure's
+body. No override marker gets past these refusals, though an overridden
+`EXECUTE` runs SQL they never see (see
+[Overriding a refusal](#overriding-a-refusal)). Every routine runs as
+the role that calls it (`SECURITY INVOKER`, PostgreSQL's default). Each
+refusal says what to do instead: run grants, policies and `ALTER DEFAULT
+PRIVILEGES` on each target as the deploy role, and create roles there (see
+[What each target needs set up outside super-deploy](#what-each-target-needs-set-up-outside-super-deploy)).
 
 super-deploy never compares, creates, revokes or resets the grants, default
 privileges, policies and row-level security on a target. They are not drift,
@@ -430,7 +482,9 @@ default privileges as they are.
   statements that fix them as a script to run as a superuser (it can be
   pasted into `psql` as it is); `status` lists them under "Deploy would
   refuse". For `public`, which `pg_database_owner` owns, deploy as the
-  database's owner. The deploy role also needs `CREATE` on the database for
+  database's owner: the refusal's fix for it is `ALTER DATABASE <database>
+  OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`.
+  The deploy role also needs `CREATE` on the database for
   the first deployment, which creates the history schema (and the managed
   schema, if the target lacks it).
 - **The application's roles**, their role membership and their database
@@ -495,6 +549,11 @@ the deployment's one transaction:
 2. `schema-change.sql` (generated by `draft`): takes the schema from the
    previous migration to the desired schema. Never edit it: change the
    desired schema (or the pre-migration script) and run `draft` again.
+   `draft` runs it once after the migrations, seed data and pre-migration
+   script, and warns when PostgreSQL refuses it or it doesn't produce the
+   desired schema, naming the cause: such a change has to be made by hand
+   in the pre-migration script (for example
+   [Reordering a composite type's attributes](#reordering-a-composite-types-attributes)).
 3. `post-migration.sql` (optional, hand-written): runs after the schema
    change, and may only change data, such as backfilling a new column.
 
@@ -539,7 +598,7 @@ override marker on its own line, directly before the statement:
 create function load_staging(source text) returns void
 language plpgsql as $$
 begin
-  execute format('insert into staging select * from %I', source);
+  execute format('insert into app.staging select * from %I', source);
 end
 $$;
 ```
@@ -555,6 +614,9 @@ $$;
   breaks any other rule (transaction control, privileges, unsupported
   objects, ...) doesn't get it past them, and a marker before a statement
   that breaks no rule is refused as unused.
+- An overridden `EXECUTE` runs SQL the rules never see, privilege
+  statements included: a trigger fired by a deployment's script runs it as
+  the deploy role. Reviewers must read what it builds.
 - Every override is recorded with its file, line, object and reason:
   `finalize` lists them and writes them to the migration's `metadata.json`,
   and `validate` lists them, so reviewers see each exception.
@@ -569,6 +631,44 @@ NOT NULL, rename its constraint too: PostgreSQL 18 names NOT NULL constraints
 (`t_old_not_null`) and a column rename keeps the old name, so the rehearsal
 would refuse the draft. For example,
 `alter table t rename constraint t_old_not_null to t_new_not_null`.
+
+## Reordering a composite type's attributes
+
+`draft` can't reorder a composite type's attributes, or add one anywhere
+but at the end: it generates nothing for them, and warns. Make the change in
+`data-model/draft/pre-migration.sql`: create the type in its new order,
+convert every column that uses it, drop the old type and rename the new
+one. Then run `draft` again. For example, to swap `money_amount`'s two
+attributes:
+
+```sql
+create type money_amount_new as (amount numeric(12,2), currency char(3));
+alter table orders alter column price type money_amount_new
+  using case when price is null then null
+    else row((price).amount, (price).currency)::money_amount_new end;
+drop type money_amount;
+alter type money_amount_new rename to money_amount;
+```
+
+Dropping the old type is destructive, so `finalize` asks you to acknowledge
+it.
+
+## Changing the type of a column a generated column uses
+
+PostgreSQL refuses to change the type of a column that a stored generated
+column uses, and `draft` generates the type change without touching the
+generated column, so `draft` warns and the rehearsal fails with
+`cannot alter type of a column used by a generated column`. Drop the
+generated column in `data-model/draft/pre-migration.sql` and run `draft`
+again: the schema change then changes the type and adds the generated
+column back, which computes it again for every row. For example, for
+`total numeric generated always as (price * qty) stored`:
+
+```sql
+alter table a drop column total;
+```
+
+Dropping a column is destructive, so `finalize` asks you to acknowledge it.
 
 ## Seed data
 
@@ -703,7 +803,9 @@ draft-finalize-deploy path:
   config change can make production disposable. Before you type `YES` to
   mark it disposable, it shows how many tables the managed schema holds
   and about how many rows (PostgreSQL's estimate), so a database full of
-  real data stands out.
+  real data stands out. Marking a target that holds a deployed draft not
+  disposable warns that `deploy` refuses it until `rebuild` resets it, which
+  then needs it flagged disposable again; `status` and `deploy` say so too.
 - **`deploy-draft --target X`** tries the current, unfinalized draft on a
   disposable target, so its scripts meet the target's data before you
   finalize. The target must have no pending migrations (a Recovery draft of
@@ -715,7 +817,9 @@ draft-finalize-deploy path:
   `deploy-draft` refuse it, and `status` doesn't check it for drift, until
   `rebuild` resets it.
 - **`rebuild --target X --to N`** resets a disposable target to migration
-  N, in one transaction. It drops everything in the managed schema, with
+  N, in one transaction. N may be 0: it then replays no migrations, which
+  resets a target holding a draft deployed before any migration (a first
+  draft, or a Recovery draft of migration 1) so you can try it again. It drops everything in the managed schema, with
   `CASCADE`. The confirmation lists what in the managed schema no recorded
   migration created (what `status` reports as only on the target, from a
   throwaway replica of the recorded migrations), up to 10 objects. Objects
@@ -729,9 +833,11 @@ draft-finalize-deploy path:
   extension installed in another schema, naming each object and its owner. The managed schema itself stays, with its owner, grants and
   default privileges. Then it deletes the target's record of migrations and of any
   deployed draft, and runs migrations 1 to N as a deployment does, each as
-  its newest Recovery if it has one. It never loads seed data, and keeps
+  its newest Recovery if it has one; the confirmation and the result name
+  it, as in `00002-require-city (Recovery 1)`. It never loads seed data, and keeps
   the attempt log and the disposable flag. In the menu, `--to` is a list
-  with the newest migration preselected.
+  with the newest migration preselected and "no migrations" (0) below
+  migration 1.
 - **`mark --target X`** records the target's next pending migration as
   deployed, without running it. Use it when someone has already made that
   migration's changes on the target by hand. It works on any target, but

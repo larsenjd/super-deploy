@@ -16,6 +16,7 @@ import type {
   DestructiveStatement,
   LockWarning,
   Override,
+  UnqualifiedNameWarning,
 } from "../sql-analysis/index.ts";
 import {
   draftMetadataFileName,
@@ -97,6 +98,12 @@ export interface FinalizeResult {
   readonly destructive: readonly DestructiveStatement[];
   /** Statements that rewrite or scan an existing table while holding its lock (project-relative paths in the new migration folder). */
   readonly warnings: readonly LockWarning[];
+  /**
+   * Desired-schema routines whose bodies name its objects without a schema,
+   * which fail for callers without the managed schema on their search_path.
+   * Advisory; empty when none.
+   */
+  readonly unqualifiedNames: readonly UnqualifiedNameWarning[];
 }
 
 /**
@@ -193,6 +200,7 @@ export async function finalize(
     recovery: migration === undefined ? undefined : target.number,
     destructive: destructive.map(finalized),
     warnings: warnings.map(finalized),
+    unqualifiedNames: rehearsed.unqualifiedNames,
   };
 }
 

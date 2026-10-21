@@ -186,7 +186,7 @@ async function askOption(
       const migrations = [
         ...(await option.migrations(needed(project, option))),
       ].sort((a, b) => b.number - a.number);
-      if (migrations.length === 0) {
+      if (migrations.length === 0 && option.zero === undefined) {
         if (!option.required) {
           // Nothing to choose: the option is simply not given.
           return undefined;
@@ -207,6 +207,9 @@ async function askOption(
                 value: String(migration.number),
                 label: migrationFolderName(migration.number, migration.name),
               })),
+              ...(option.zero === undefined
+                ? []
+                : [{ value: "0", label: option.zero }]),
             ],
           }),
         ),

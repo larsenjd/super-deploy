@@ -35,6 +35,7 @@ import {
   type DeployedDraft,
   type RecordedMigration,
   readDeployedDraft,
+  readTargetSettings,
 } from "./history.ts";
 import {
   type NotOwnedObject,
@@ -130,6 +131,12 @@ export async function preflightChecks(
       input.migrations,
       input.recorded,
       await readDeployedDraft(session, project.config.historySchema),
+      {
+        name: input.targetName,
+        disposable: (
+          await readTargetSettings(session, project.config.historySchema)
+        ).disposable,
+      },
     ),
     warnings: await deployRoleWarnings(session, input.targetName),
   };
@@ -211,6 +218,7 @@ export function historyMismatches(
   migrations: readonly FinalizedMigration[],
   recorded: readonly RecordedMigration[],
   draft: DeployedDraft | undefined,
+  holder: DraftHolder,
 ): HistoryMismatch[] {
   const repo = new Map(migrations.map((m) => [m.number, m]));
   const recordedNumbers = new Set(recorded.map((r) => r.number));
@@ -272,7 +280,7 @@ export function historyMismatches(
     }
   }
   if (draft !== undefined) {
-    mismatches.push(draftMismatch(draft, recorded));
+    mismatches.push(draftMismatch(draft, recorded, holder));
   }
   return mismatches.sort((a, b) => a.number - b.number);
 }
@@ -316,11 +324,12 @@ function earlierChange(
 function draftMismatch(
   draft: DeployedDraft,
   recorded: readonly RecordedMigration[],
+  holder: DraftHolder,
 ): HistoryMismatch {
   return {
     number: (draft.baseMigration ?? 0) + 1,
     reason: "draft",
-    message: `the target holds ${describeHeldDraft(draft, recorded)}`,
+    message: `the target holds ${describeHeldDraft(draft, recorded, holder)}`,
   };
 }
 
@@ -340,24 +349,36 @@ export function onlyHeldDraft(
 }
 
 /**
+ * The target a deployed draft is on, as the way out names it: rebuild, the
+ * only way to clear the draft, runs only on a disposable target.
+ */
+export interface DraftHolder {
+  readonly name: string;
+  readonly disposable: boolean;
+}
+
+/**
  * The draft a target holds, for a message whose subject is the target:
  * "draft <name> (deployed by attempt #N on top of <migration>, with(out)
- * seed data), not a finalized migration: reset it with rebuild --to <N>".
+ * seed data), not a finalized migration: reset it with rebuild --to <N>",
+ * and on a target no longer disposable "flag it disposable again (disposable
+ * --target X --set yes), then reset it with ..." (QA 167).
  */
 export function describeHeldDraft(
   draft: DeployedDraft,
   recorded: readonly RecordedMigration[],
+  holder: DraftHolder,
 ): string {
   const base = recorded.find((entry) => entry.number === draft.baseMigration);
   const where =
     base === undefined
       ? "before any migration"
       : `on top of ${migrationFolderName(base.number, base.name)}`;
-  const reset =
-    draft.baseMigration === undefined
-      ? "rebuild --to N"
-      : `rebuild --to ${draft.baseMigration}`;
-  return `draft ${draft.name} (deployed by attempt #${draft.attemptId} ${where}, ${draft.seedData ? "with" : "without"} seed data), not a finalized migration: reset it with ${reset}`;
+  const reset = `rebuild --to ${draft.baseMigration ?? 0}`;
+  const flag = holder.disposable
+    ? ""
+    : `flag it disposable again (disposable --target ${holder.name} --set yes), then `;
+  return `draft ${draft.name} (deployed by attempt #${draft.attemptId} ${where}, ${draft.seedData ? "with" : "without"} seed data), not a finalized migration: ${flag}reset it with ${reset}`;
 }
 
 /**

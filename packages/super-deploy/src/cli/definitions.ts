@@ -4,7 +4,7 @@
 // define it here and append it to `commands`.
 import { join } from "node:path";
 import { adopt, overrideListing } from "../commands/adopt.ts";
-import { type DeployedMigration, deploy } from "../commands/deploy.ts";
+import { deploy, describeMigration } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
 import { disposable } from "../commands/disposable.ts";
@@ -42,7 +42,7 @@ import {
   DestructiveNotAcknowledgedError,
   OverwriteNotAcknowledgedError,
 } from "../questions.ts";
-import type { LockWarning, Override } from "../sql-analysis/index.ts";
+import type { Override } from "../sql-analysis/index.ts";
 import { readDraft, type UnknownDraftFileOptions } from "../store/draft.ts";
 import type { ValidationProblem } from "../store/integrity.ts";
 import {
@@ -101,6 +101,11 @@ export interface MigrationChoice {
 export interface MigrationOption extends OptionBase {
   readonly kind: "migration";
   migrations(project: Project): Promise<readonly MigrationChoice[]>;
+  /**
+   * When set, 0 (no migrations) is a valid value too, and the menu offers it
+   * below migration 1 with this label. Only rebuild's `--to` takes it.
+   */
+  readonly zero?: string;
 }
 
 /** One of `choices`. */
@@ -297,8 +302,11 @@ const initCommand: DirectoryCommandDefinition = {
           );
         }
         context.result(
-          `Adopted target ${result.target}: migration ${result.migration.folder} in ${context.displayPath(result.migration.path)}, recorded on it as marked (attempt #${result.attemptId})`,
+          `Adopted target ${result.target}: ${plural(result.objects, "object")} from schema ${project.config.managedSchema}, as migration ${result.migration.folder} in ${context.displayPath(result.migration.path)}, recorded on it as marked (attempt #${result.attemptId})`,
         );
+        if (result.warning !== undefined) {
+          context.warn(`warning: ${result.warning}`);
+        }
         const { grants, policies } = result.leftOnTarget;
         if (grants + policies > 0) {
           context.result(
@@ -375,9 +383,18 @@ const draftCommand: CommandDefinition = {
         : `Regenerated draft ${result.name}`;
     context.result(`${what}: ${count} in ${where}`);
     reportWarnings(
-      result.toCover.map((item) => item.message),
+      [
+        ...result.toCover.map((item) => item.message),
+        ...located(result.unqualifiedNames),
+      ],
       context,
     );
+    for (const shortfall of result.shortfalls) {
+      context.warn(`warning: ${shortfall.message}`);
+      for (const difference of shortfall.differences) {
+        context.warn(`  ${difference}`);
+      }
+    }
   },
 };
 
@@ -389,7 +406,7 @@ const rehearseCommand: CommandDefinition = {
   options: [],
   async run(project, _values, context) {
     const result = await rehearse(project, warnUnknownFiles(context));
-    reportWarnings(lockWarnings(result.warnings), context);
+    reportWarnings(located(result.warnings), context);
     for (const statement of result.destructive) {
       context.warn(
         `destructive: ${statement.file}:${statement.line}: ${statement.message} (finalize needs it acknowledged)`,
@@ -413,8 +430,10 @@ function reportWarnings(
   }
 }
 
-/** Each statement that rewrites or scans an existing table, as a warning message. */
-function lockWarnings(warnings: readonly LockWarning[]): string[] {
+/** Warnings about a place in a file, each as `<file>:<line>: <message>`. */
+function located(
+  warnings: readonly { file: string; line: number; message: string }[],
+): string[] {
   return warnings.map(
     (warning) => `${warning.file}:${warning.line}: ${warning.message}`,
   );
@@ -455,7 +474,10 @@ const finalizeCommand: CommandDefinition = {
     if (result === undefined) {
       return;
     }
-    reportWarnings(lockWarnings(result.warnings), context);
+    reportWarnings(
+      [...located(result.warnings), ...located(result.unqualifiedNames)],
+      context,
+    );
     context.result(
       result.recovery === undefined
         ? `Finalized migration ${result.folder} in ${context.displayPath(result.path)}`
@@ -962,9 +984,10 @@ const rebuildCommand: CommandDefinition = {
     {
       name: "to",
       kind: "migration",
-      description: "The last migration to replay",
+      description: "The last migration to replay, or 0 for none",
       required: true,
       migrations: indexedMigrations,
+      zero: "(none: no migrations)",
     },
   ],
   async run(project, values, context) {
@@ -973,17 +996,12 @@ const rebuildCommand: CommandDefinition = {
       to: Number(values.to),
     });
     context.result(
-      `Rebuilt ${result.target} with ${plural(result.deployed.length, "migration")}: ${result.deployed.map((m) => m.folder).join(", ")}`,
+      result.deployed.length === 0
+        ? `Rebuilt ${result.target} with no migrations`
+        : `Rebuilt ${result.target} with ${plural(result.deployed.length, "migration")}: ${result.deployed.map(describeMigration).join(", ")}`,
     );
   },
 };
-
-/** `00004-add-country`, or `00004-add-country (Recovery 1)` when it runs, or ran, as Recovery 1. */
-function describeMigration(migration: DeployedMigration): string {
-  return migration.recovery === undefined
-    ? migration.folder
-    : `${migration.folder} (Recovery ${migration.recovery})`;
-}
 
 /**
  * One line of `status`'s "Recent attempts". A deploy that succeeded with no

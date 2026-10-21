@@ -224,7 +224,7 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 - Metadata: tool, differ and parser versions; rehearsal server version; destructive acknowledgement with its statements; overrides with reasons and object identities. No timestamps or usernames.
 
 **Authoring commands** (Q16, Q25, Q27)
-- `draft`: load the desired schema into one throwaway database; replay migrations, the draft's seed data and its pre-migration script into another; diff the second to the first; write the schema change; report what scripts must cover. Recovery drafts never regenerate the schema change.
+- `draft`: load the desired schema into one throwaway database; replay migrations, the draft's seed data and its pre-migration script into another; diff the second to the first; write the schema change; report what scripts must cover. It then checks its output: it runs the schema change once on that starting point and compares the result with the desired schema as a rehearsal does, warning (and still writing the draft) when PostgreSQL refuses it or it doesn't produce the desired schema, naming the cause (QA 102). Recovery drafts never regenerate the schema change.
 - `rehearse`, `finalize`, `unfinalize`, `restore-schema`, `discard-draft`, `validate [--strict]` as described in the user stories.
 
 **Recoveries** (Q10, Q13): replace pre-migration script, post-migration script and seed data, never the schema change. Newest Recovery wins for targets that haven't recorded the migration. Rehearsal proves the original and every Recovery end in identical structure.

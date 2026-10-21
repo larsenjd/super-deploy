@@ -6,14 +6,32 @@
 // so each expression is parsed again with the SQL parser. Declared external
 // schemas are allowed here and only here.
 //
-// LANGUAGE sql string bodies bind at CREATE like the rest of the statement:
-// they get the same denylist and schema checks.
+// LANGUAGE sql string bodies get the same denylist and schema checks.
+// PostgreSQL validates them at CREATE, but like PL/pgSQL bodies it resolves
+// their names again at each call, with the caller's search_path.
+//
+// That makes a body that names a managed-schema object without a schema
+// fail for every caller whose search_path lacks the managed schema, though
+// rehearsals and deployments (which pin search_path to it) pass: with a
+// managed schema other than `public`, that is every caller by default.
+// `unqualifiedNameWarnings` warns about such routines (QA 180: the
+// maintainer chose a warning over a refusal); `public` is on every default
+// search_path, so it gets none. A `SET search_path` option or a `BEGIN
+// ATOMIC` body (bound at CREATE) avoids it.
+//
+// Every statement in either kind of body gets the privilege refusals
+// (privileges.ts) on its own line, as it would at top level: a body runs as
+// whoever calls it, and a trigger fired by a deployment's script runs it as
+// the deploy role.
 //
 // Both use the *Sync parsers, so they run only after parseSqlFile has loaded
 // the WASM module (checkRules always parses the file first).
 import { parsePlPgSQLSync, parseSync } from "libpg-query";
+import { listed } from "../errors.ts";
 import { denylistFindings } from "./denylist.ts";
-import type { ParsedStatement } from "./parse.ts";
+import { lineAtByte, type ParsedStatement } from "./parse.ts";
+import { privilegeRefusal } from "./privileges.ts";
+import { statementFacts, unqualifiedReferences } from "./references.ts";
 import type { RuleContext, RuleFinding } from "./rule-types.ts";
 import {
   qualifiedReferences,
@@ -140,6 +158,7 @@ function plpgsqlNodeFindings(
       return [];
     }
     return [
+      ...privilegeFindings(tree, () => line),
       ...denylistFindings(tree, line),
       ...notifyFindings(tree, line),
       ...referenceFindings(
@@ -170,6 +189,30 @@ function parseEmbedded(query: string, parseMode: number): unknown {
     // PostgreSQL itself refuses an unparseable body at CREATE.
     return undefined;
   }
+}
+
+/**
+ * The privilege refusal of each statement in a parsed body, on the line
+ * `lineOf` gives for the statement's byte offset in the parsed text.
+ */
+function privilegeFindings(
+  tree: unknown,
+  lineOf: (location: number) => number,
+): RuleFinding[] {
+  const statements =
+    (tree as { stmts?: { stmt?: Json; stmt_location?: number }[] }).stmts ?? [];
+  return statements.flatMap(({ stmt, stmt_location }) => {
+    const refusal =
+      stmt === undefined
+        ? undefined
+        : privilegeRefusal({
+            nodeType: Object.keys(stmt)[0] ?? "",
+            node: stmt as unknown as ParsedStatement["node"],
+          });
+    return refusal === undefined
+      ? []
+      : [{ ...refusal, line: lineOf(stmt_location ?? 0) }];
+  });
 }
 
 function notifyFindings(tree: unknown, line: number): RuleFinding[] {
@@ -230,7 +273,12 @@ export function sqlBodyFindings(
     return [];
   }
   const line = bodyFirstLine(statement, body);
+  const bytes = Buffer.from(text, "utf8");
   return unique([
+    ...privilegeFindings(
+      tree,
+      (location) => line + lineAtByte(bytes, location) - 1,
+    ),
     ...denylistFindings(tree, line),
     ...referenceFindings(
       qualifiedReferences(tree),
@@ -315,4 +363,112 @@ export function externalSchemasBoundAtCreate(
   return [...new Set(schemas)].filter((schema) =>
     externalSchemas.includes(schema),
   );
+}
+
+/** A desired-schema routine whose body names managed-schema objects unqualified. */
+export interface UnqualifiedNameWarning {
+  /** Project-relative path of the desired-schema file. */
+  readonly file: string;
+  /** The line of its CREATE statement. */
+  readonly line: number;
+  /** As ordering names it, e.g. `function order_count(int8)`. */
+  readonly routine: string;
+  /** The objects of the desired schema its body names without a schema. */
+  readonly names: readonly string[];
+  readonly message: string;
+}
+
+/**
+ * The desired schema's routines with a string body that names one of its
+ * objects without a schema and no `SET search_path`; none when the managed
+ * schema is `public`.
+ */
+export function unqualifiedNameWarnings(
+  statements: readonly ParsedStatement[],
+  managedSchema: string,
+): UnqualifiedNameWarning[] {
+  if (managedSchema === "public") {
+    return [];
+  }
+  const facts = statements.map((statement) => ({
+    statement,
+    facts: statementFacts(statement.node, managedSchema),
+  }));
+  const provided = new Set(facts.flatMap(({ facts }) => facts?.provides ?? []));
+  return facts.flatMap(({ statement, facts }) => {
+    const routine = unwrap(statement.node, "CreateFunctionStmt");
+    if (routine === undefined || facts === undefined) {
+      return [];
+    }
+    const options = defElems(routine.options);
+    const setsSearchPath = options.some(
+      ({ name, arg }) =>
+        name === "set" &&
+        unwrap(arg, "VariableSetStmt")?.name === "search_path",
+    );
+    const language = defElemString(
+      options.find((option) => option.name === "language")?.arg,
+    )?.toLowerCase();
+    if (setsSearchPath || routine.sql_body !== undefined) {
+      return [];
+    }
+    const trees =
+      language === "plpgsql"
+        ? plpgsqlTrees(statement)
+        : language === "sql"
+          ? sqlBodyTrees(options.find((option) => option.name === "as")?.arg)
+          : [];
+    const names = [
+      ...new Set(
+        trees
+          .flatMap(unqualifiedReferences)
+          .filter(({ key }) => provided.has(key))
+          .map(({ name }) => name),
+      ),
+    ];
+    if (names.length === 0) {
+      return [];
+    }
+    const qualify = `qualify ${names.length === 1 ? "it" : "them"} (${managedSchema}.${names[0]})`;
+    const setSearchPath = `add SET search_path = ${managedSchema}, pg_catalog to the ${facts.kind}`;
+    const fixes =
+      language === "sql"
+        ? `${qualify}, ${setSearchPath}, or write the body as BEGIN ATOMIC`
+        : `${qualify} or ${setSearchPath}`;
+    return [
+      {
+        file: statement.file,
+        line: statement.line,
+        routine: facts.identity,
+        names,
+        message: `${facts.identity} names ${listed(names)} without a schema in its body, which PostgreSQL resolves with the caller's search_path when it runs, and a search_path without ${managedSchema} (the default) makes every call fail: ${fixes}`,
+      },
+    ];
+  });
+}
+
+/** The parsed SQL of each expression and statement in a PL/pgSQL body. */
+function plpgsqlTrees(statement: ParsedStatement): unknown[] {
+  const trees: unknown[] = [];
+  try {
+    walk(parsePlPgSQLSync(statement.text), (object) => {
+      const expression = object.PLpgSQL_expr;
+      if (isObject(expression) && typeof expression.query === "string") {
+        trees.push(
+          parseEmbedded(expression.query, Number(expression.parseMode ?? 0)),
+        );
+      }
+    });
+  } catch {
+    // The rules report body syntax errors.
+  }
+  return trees.filter((tree) => tree !== undefined);
+}
+
+function sqlBodyTrees(body: unknown): unknown[] {
+  try {
+    return [parseSync(defElemString(body) ?? "")];
+  } catch {
+    return [];
+  }
 }

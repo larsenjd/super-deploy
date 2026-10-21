@@ -1,6 +1,7 @@
 // CLI seam for `init --adopt <target>`: it runs in the project found from the
 // working directory, prints what it wrote, and lists what V1 doesn't support
 // on stderr when it refuses. In a terminal it asks for override reasons.
+import { rm } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import {
@@ -45,7 +46,7 @@ describe("init --adopt", () => {
     expect(result).toEqual({
       exitCode: 0,
       stdout:
-        "Wrote desired-schema/tables.sql\nAdopted target prod: migration 00001-adopt in migrations/00001-adopt, recorded on it as marked (attempt #1)\n",
+        "Wrote desired-schema/tables.sql\nAdopted target prod: 1 object from schema public, as migration 00001-adopt in migrations/00001-adopt, recorded on it as marked (attempt #1)\n",
       stderr: "",
     });
     const status = await runCli(["status", "--target", "prod"], {
@@ -54,6 +55,24 @@ describe("init --adopt", () => {
     expect(status.stdout).toContain(
       "Target prod: 1 migration recorded, 0 pending\n",
     );
+  });
+
+  test("adopting an empty managed schema warns on stderr, naming the schemas that hold objects", async () => {
+    const dir = await projectAdopting(
+      "create schema shop; create table shop.t (id bigint primary key);",
+    );
+
+    const result = await runCli(["init", "--adopt", "prod"], {
+      cwd: dir.root,
+    });
+
+    expect(result).toEqual({
+      exitCode: 0,
+      stdout:
+        "Adopted target prod: 0 objects from schema public, as migration 00001-adopt in data-model/migrations/00001-adopt, recorded on it as marked (attempt #1)\n",
+      stderr:
+        "warning: Adopted 0 objects from schema public; schema shop holds 1 table: is managedSchema right?\n",
+    });
   });
 
   test("says how many grants and policies it left on the target as they are", async () => {
@@ -113,7 +132,7 @@ describe("init --adopt", () => {
       exitCode: 1,
       stdout: "",
       stderr:
-        'Error: Cannot adopt target prod: its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts). Nothing was written\n',
+        'Error: Cannot adopt target prod: its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts); the target has schemas app, public. Nothing was written\n',
     });
   });
 
@@ -168,6 +187,39 @@ describe("init --adopt", () => {
     expect(
       await runCli(["init", "--adopt", "prod"], { cwd: dir.root }),
     ).toMatchObject({ exitCode: 0 });
+  });
+
+  test("adopting again points both refusals to starting the adoption over, which lets it adopt again", async () => {
+    const prod = await server.createDatabase(
+      "create table customers (id bigint primary key);",
+    );
+    const dir = await createTestProject({
+      config: deployConfig(server, {
+        otherTargets: `prod: { adapter: ${asSuperuser(prod)} },`,
+      }).config,
+    });
+    const adopt = () => runCli(["init", "--adopt", "prod"], { cwd: dir.root });
+    expect((await adopt()).exitCode).toBe(0);
+    const startOver =
+      'to start the adoption over, see "Starting an adoption over" in README.md';
+
+    expect(await adopt()).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: `Error: Cannot adopt target prod: the project already has migrations in data-model/migrations (${startOver}); the desired schema already has data-model/desired-schema/tables.sql. Nothing was written\n`,
+    });
+
+    // The README's steps: the project side, then the target's history schema.
+    await rm(dir.path("data-model/migrations"), { recursive: true });
+    await rm(dir.path("data-model/desired-schema/tables.sql"));
+    expect(await adopt()).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: `Error: Cannot adopt target prod: it already records 1 migration in its history schema "deployment_history", only its adoption (${startOver}). Nothing was written\n`,
+    });
+
+    await server.query("drop schema deployment_history cascade", [], prod);
+    expect((await adopt()).exitCode).toBe(0);
   });
 
   test("an unknown target is a usage error (exit 2)", async () => {

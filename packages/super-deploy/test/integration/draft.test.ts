@@ -8,6 +8,7 @@ import {
   UnsupportedServerError,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { finalizeMigration } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject, embeddedConfig } from "../support/project.ts";
 
@@ -40,6 +41,7 @@ describe("draft", () => {
     const result = await draft(project, { name: "Add customers" });
 
     expect(result.name).toBe("add-customers");
+    expect(result.shortfalls).toEqual([]);
     const schemaChange = await dir.read("data-model/draft/schema-change.sql");
     const database = await server.createDatabase(schemaChange);
     const columns = await server.query(
@@ -91,6 +93,60 @@ describe("draft", () => {
       draft(project, { name: "Add customers!" }),
     ).rejects.toBeInstanceOf(InvalidDraftNameError);
     expect(dir.exists("data-model/draft")).toBe(false);
+  });
+
+  test("warns when its schema change can't reorder a composite type's attributes, and still writes the draft", async () => {
+    // pg-delta doesn't diff composite attribute order, so the swap generates
+    // nothing (research §8): draft's own check of its output finds it.
+    const money = (
+      attributes: string,
+    ) => `create type money_amount as (${attributes});
+
+create table orders (
+  id bigint primary key,
+  price money_amount
+);
+`;
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: {
+        "data-model/desired-schema/orders.sql": money(
+          "currency char(3), amount numeric(12,2)",
+        ),
+      },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    await finalizeMigration(project, "Add orders");
+    await dir.write(
+      "data-model/desired-schema/orders.sql",
+      money("amount numeric(12,2), currency char(3)"),
+    );
+
+    const result = await draft(project, { name: "Reorder money" });
+
+    expect(result.statements).toEqual([]);
+    expect(result.shortfalls).toEqual([
+      {
+        kind: "differs",
+        message:
+          "The generated schema change doesn't reorder composite type money_amount's attributes: pg-delta can't express it; drop and recreate the type in the pre-migration script (see the README, \"Reordering a composite type's attributes\")",
+        differences: [
+          expect.stringMatching(
+            /^catalog: from the migrations: column: money_amount\.amount .* position=2$/,
+          ),
+          expect.stringMatching(
+            /^catalog: from the migrations: column: money_amount\.currency .* position=1$/,
+          ),
+          expect.stringMatching(
+            /^catalog: from the desired schema: column: money_amount\.amount .* position=1$/,
+          ),
+          expect.stringMatching(
+            /^catalog: from the desired schema: column: money_amount\.currency .* position=2$/,
+          ),
+        ],
+      },
+    ]);
+    expect(await dir.read("data-model/draft/schema-change.sql")).toBeDefined();
   });
 
   test("refuses statements the desired schema doesn't allow, naming file and line", async () => {

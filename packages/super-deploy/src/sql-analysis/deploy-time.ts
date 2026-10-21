@@ -262,6 +262,15 @@ const transactionEffects: Record<string, string> = {
 };
 
 /** Statement types PostgreSQL refuses inside a transaction block (hazards §1). */
+/**
+ * SET and RESET of these switch the role the deployment runs as: refused for
+ * that, not for the session settings super-deploy pins.
+ */
+const roleSwitches: Record<string, string> = {
+  role: "ROLE",
+  session_authorization: "SESSION AUTHORIZATION",
+};
+
 const notInTransaction = new Set([
   "CreatedbStmt",
   "DropdbStmt",
@@ -409,9 +418,20 @@ function classify(statement: ParsedStatement): Classification {
         "SET TRANSACTION would alter the deploy transaction; super-deploy runs every pending migration in one transaction",
       );
     }
+    const reset = body.kind === "VAR_RESET" || body.kind === "VAR_RESET_ALL";
+    const verb = reset ? "RESET" : body.is_local === true ? "SET LOCAL" : "SET";
+    const roleSwitch = roleSwitches[variable];
+    if (roleSwitch !== undefined) {
+      return refuse(
+        "escapes-transaction",
+        `${verb} ${roleSwitch} is not allowed: a deployment runs everything as the deploy role, and roles and privileges are set up on targets outside super-deploy`,
+      );
+    }
     return refuse(
       "escapes-transaction",
-      `${body.kind === "VAR_RESET" || body.kind === "VAR_RESET_ALL" ? "RESET" : "SET"} is not allowed: super-deploy pins the session settings, and a plain SET outlives the transaction`,
+      verb === "SET LOCAL"
+        ? "SET LOCAL is not allowed: super-deploy pins the session settings for every migration in the deployment's one transaction, and SET LOCAL would change them for the rest of it"
+        : `${verb} is not allowed: super-deploy pins the session settings, and a plain SET outlives the transaction`,
     );
   }
   if (type === "ConstraintsSetStmt") {

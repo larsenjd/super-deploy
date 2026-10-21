@@ -267,6 +267,111 @@ insert into staging (id, name) select id, name from customers;
     ]);
   });
 
+  test("the README's recipe reorders a composite type's attributes in the pre-migration script, keeping the data", async () => {
+    const money = (
+      attributes: string,
+    ) => `create type money_amount as (${attributes});
+
+create table orders (
+  id bigint primary key,
+  price money_amount
+);
+`;
+    const { dir, project, database } = await deployProject(server, {
+      "orders.sql": money("currency char(3), amount numeric(12,2)"),
+    });
+    await draft(project, { name: "add orders" });
+    await finalize(project);
+    await deploy(project, { target: "dev" });
+    await server.query(
+      "insert into orders (id, price) values (1, row('EUR', 12.5)), (2, null)",
+      [],
+      database,
+    );
+    await dir.write(
+      "data-model/desired-schema/orders.sql",
+      money("amount numeric(12,2), currency char(3)"),
+    );
+    await dir.write(
+      "data-model/draft/pre-migration.sql",
+      `create type money_amount_new as (amount numeric(12,2), currency char(3));
+alter table orders alter column price type money_amount_new
+  using case when price is null then null
+    else row((price).amount, (price).currency)::money_amount_new end;
+drop type money_amount;
+alter type money_amount_new rename to money_amount;
+`,
+    );
+
+    const drafted = await draft(project, { name: "reorder money" });
+    await finalize(project, { acknowledgeDestructive: true });
+    await deploy(project, { target: "dev" });
+
+    expect(drafted.shortfalls).toEqual([]);
+    expect(
+      await server.query(
+        "select id, (price).amount::text as amount, (price).currency, price::text as price from orders order by id",
+        [],
+        database,
+      ),
+    ).toEqual([
+      { id: "1", amount: "12.50", currency: "EUR", price: "(12.50,EUR)" },
+      { id: "2", amount: null, currency: null, price: null },
+    ]);
+  });
+
+  test("retyping a column a generated column uses: draft and the rehearsal name the pre-migration fix, which deploys with the generated column recomputed", async () => {
+    const table = (price: string) => `create table a (
+  id bigint primary key,
+  price ${price} not null,
+  qty integer not null,
+  total numeric generated always as (price * qty) stored
+);
+`;
+    const { dir, project, database } = await deployProject(server, {
+      "a.sql": table("numeric(10,2)"),
+    });
+    await draft(project, { name: "add a" });
+    await finalize(project);
+    await deploy(project, { target: "dev" });
+    await server.query(
+      "insert into a (id, price, qty) values (1, 2.50, 3)",
+      [],
+      database,
+    );
+    await dir.write("data-model/desired-schema/a.sql", table("numeric(6,1)"));
+    const fix =
+      'drop generated column "total" in the pre-migration script and run draft again: the schema change then changes the type of "price" and adds "total" back (see the README, "Changing the type of a column a generated column uses")';
+
+    // pg-delta retypes the column with the generated column still there,
+    // which PostgreSQL refuses (research §8).
+    const drafted = await draft(project, { name: "narrow price" });
+
+    expect(drafted.shortfalls).toEqual([
+      {
+        kind: "fails",
+        message: expect.stringContaining(fix),
+        differences: [],
+      },
+    ]);
+    const refused = await rehearse(project).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(SqlFileFailedError);
+    expect((refused as SqlFileFailedError).message).toContain(fix);
+
+    await dir.write(
+      "data-model/draft/pre-migration.sql",
+      "alter table a drop column total;\n",
+    );
+    const fixed = await draft(project);
+    await finalize(project, { acknowledgeDestructive: true });
+    await deploy(project, { target: "dev" });
+
+    expect(fixed.shortfalls).toEqual([]);
+    expect(
+      await server.query("select price, total from a", [], database),
+    ).toEqual([{ price: "2.5", total: "7.5" }]);
+  });
+
   test("draft reports what the scripts still need to cover, counting the rows the rehearsal data has", async () => {
     const { dir, project } = await deployProject(server, {
       "customers.sql": `create table customers (

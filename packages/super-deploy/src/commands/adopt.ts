@@ -8,7 +8,10 @@
 // super-deploy.config.ts) and still empty: no finalized migrations, no draft
 // and no desired-schema SQL files. The target must record no migrations and
 // have the managed schema (a missing one is almost always a mistyped
-// managedSchema; an existing empty one is adopted). Its deploy role must
+// managedSchema: the refusal lists the target's schemas, and the rename one
+// needs whose name isn't lowercase; an existing empty one is adopted, with a
+// warning naming the other schemas that hold objects, in case managedSchema
+// was forgotten). Its deploy role must
 // own that schema and everything in it (deploy/ownership.ts) and be able to
 // create the history schema if the target has none (deploy/preflight.ts):
 // both are refused in step 2's one refusal, with everything unsupported, so
@@ -66,6 +69,11 @@
 // If steps 3-4 fail, every file adoption wrote is removed again, so the
 // project is as it was; except when the target's COMMIT outcome is unknown
 // (the record may be there: the next status or deploy settles it).
+//
+// Undoing a successful adoption is documented, not a command: the README's
+// "Starting an adoption over". The refusals point there when what is in the
+// way is an earlier adoption: the project's migration 1 is 00001-adopt, or
+// the target records only migration 1, marked, named adopt.
 
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -75,7 +83,7 @@ import {
   CommitOutcomeUnknownError,
   withLockedTarget,
 } from "../deploy/engine.ts";
-import { readRecordedMigrations, schemaExists } from "../deploy/history.ts";
+import { readRecordedMigrations } from "../deploy/history.ts";
 import { markNextPending, readMarkableMigrations } from "../deploy/mark.ts";
 import {
   fixScript,
@@ -140,6 +148,7 @@ import {
   indexFileName,
   listFiles,
   makeWritable,
+  migrationFolderName,
   readIndex,
 } from "../store/migrations.ts";
 import {
@@ -160,6 +169,15 @@ import { finalize } from "./finalize.ts";
 
 /** The draft name, so migration 1 is `00001-adopt`. */
 const migrationName = "adopt";
+const adoptedFolder = migrationFolderName(1, migrationName);
+
+/**
+ * Where a refusal points when what is in the way looks like an earlier
+ * adoption: the README section on undoing one, valid only while the target
+ * records nothing but its adoption.
+ */
+const startOver =
+  'to start the adoption over, see "Starting an adoption over" in README.md';
 
 export interface AdoptOptions {
   /** The target's name in config. */
@@ -194,6 +212,18 @@ export interface AdoptResult {
    * outside super-deploy (ADR-0006).
    */
   readonly leftOnTarget: LeftOnTarget;
+  /**
+   * How many objects of the managed schema it adopted: tables, views,
+   * sequences, routines and types (not what goes with them, such as indexes
+   * and constraints).
+   */
+  readonly objects: number;
+  /**
+   * When it adopted no objects: `Adopted 0 objects from schema public`,
+   * naming the target's other schemas that hold objects, if any (a
+   * forgotten managedSchema).
+   */
+  readonly warning: string | undefined;
 }
 
 export interface LeftOnTarget {
@@ -262,6 +292,8 @@ export async function adopt(
       files: written.map((path) => projectRelative(project.root, path)),
       overrides: finalized.metadata.overrides,
       leftOnTarget: read.leftOnTarget,
+      objects: read.objects,
+      warning: read.warning,
     };
   } catch (error) {
     if (!(error instanceof CommitOutcomeUnknownError)) {
@@ -282,8 +314,9 @@ async function requireEmptyProject(
     (path) => path !== indexFileName,
   );
   if (!index.ok || index.entries.length > 0 || migrationFiles.length > 0) {
+    const adopted = index.ok && index.entries[0]?.folder === adoptedFolder;
     reasons.push(
-      `the project already has migrations in ${projectRelative(root, paths.migrations)}`,
+      `the project already has migrations in ${projectRelative(root, paths.migrations)}${adopted ? ` (${startOver})` : ""}`,
     );
   }
   if (await exists(paths.draft)) {
@@ -319,6 +352,8 @@ async function readTarget(
   files: AdoptedFile[];
   candidates: OverrideCandidate[];
   leftOnTarget: LeftOnTarget;
+  objects: number;
+  warning: string | undefined;
 }> {
   const { config } = project;
   const context: RuleContext = {
@@ -332,13 +367,23 @@ async function readTarget(
       config.historySchema,
     );
     if (recorded.length > 0) {
+      const [first] = recorded;
+      const onlyAdoption =
+        recorded.length === 1 &&
+        first?.recordedHow === "marked" &&
+        first.number === 1 &&
+        first.name === migrationName;
       throw new AdoptConflictError(target.name, [
-        `it already records ${plural(recorded.length, "migration")} in its history schema "${config.historySchema}"`,
+        `it already records ${plural(recorded.length, "migration")} in its history schema "${config.historySchema}"${onlyAdoption ? `, only its adoption (${startOver})` : ""}`,
       ]);
     }
-    if (!(await schemaExists(session, config.managedSchema))) {
+    const schemas = await userSchemas(session, config.historySchema);
+    const managed = schemas.find(
+      (schema) => schema.name === config.managedSchema,
+    );
+    if (managed === undefined) {
       throw new AdoptConflictError(target.name, [
-        `its managed schema "${config.managedSchema}" does not exist (check managedSchema in super-deploy.config.ts)`,
+        missingManagedSchema(config.managedSchema, schemas),
       ]);
     }
     // Later migrations alter what is adopted: the deploy role must own it.
@@ -486,10 +531,19 @@ async function readTarget(
     if (!withOverrides && candidates.length > 0) {
       throw new AdoptUnsupportedError(target.name, { objects: [] }, overrides);
     }
+    const objects = objectCount(managed);
     return {
       files,
       candidates,
       leftOnTarget: await countLeftOnTarget(session, config.managedSchema),
+      objects,
+      warning:
+        objects === 0
+          ? emptyManagedSchemaWarning(
+              config.managedSchema,
+              schemas.filter((schema) => schema !== managed),
+            )
+          : undefined,
     };
   } finally {
     await session.close().catch(() => {});
@@ -517,6 +571,135 @@ async function ownedIfSupported(
   return notOwned
     .filter((_, index) => !refused.has(names[index] ?? ""))
     .map((item) => item.notOwned);
+}
+
+/**
+ * A schema on the target that isn't PostgreSQL's own or the history schema,
+ * with how many objects of each kind it holds. Objects that go with another
+ * one aren't counted (a table's indexes, constraints and identity or serial
+ * sequence, a table's row type, array types), nor extension members.
+ */
+interface UserSchema {
+  /** As in the catalog, e.g. `MyApp`. */
+  readonly name: string;
+  /** Quoted where SQL needs it, e.g. `"MyApp"`, `shop`. */
+  readonly quoted: string;
+  /** Tables (partitioned and foreign ones too), views, sequences, routines and types. */
+  readonly counts: Readonly<Record<ObjectKind, number>>;
+}
+
+const objectKinds = ["table", "view", "sequence", "function", "type"] as const;
+type ObjectKind = (typeof objectKinds)[number];
+
+/**
+ * The target's schemas, sorted, leaving out `pg_*` (the catalog, TOAST and
+ * temporary schemas), `information_schema` and the history schema.
+ */
+async function userSchemas(
+  session: Session,
+  historySchema: string,
+): Promise<UserSchema[]> {
+  const { rows } = await session.query<{
+    name: string;
+    quoted: string;
+    kind: ObjectKind | null;
+    count: number;
+  }>(
+    `WITH n AS (
+       SELECT oid, nspname FROM pg_catalog.pg_namespace
+        WHERE pg_catalog.left(nspname, 3) <> 'pg_' AND nspname <> 'information_schema' AND nspname <> $1),
+     objects AS (
+       SELECT 'pg_class'::pg_catalog.regclass AS class, c.oid, c.relnamespace AS schema,
+              CASE WHEN c.relkind IN ('v', 'm') THEN 'view' WHEN c.relkind = 'S' THEN 'sequence' ELSE 'table' END AS kind
+         FROM pg_catalog.pg_class c WHERE c.relkind IN ('r', 'p', 'f', 'v', 'm', 'S')
+       UNION ALL
+       SELECT 'pg_proc'::pg_catalog.regclass, p.oid, p.pronamespace, 'function' FROM pg_catalog.pg_proc p
+       UNION ALL
+       SELECT 'pg_type'::pg_catalog.regclass, t.oid, t.typnamespace, 'type'
+         FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_class r ON r.oid = t.typrelid
+        WHERE t.typtype IN ('d', 'e', 'r', 'm') OR r.relkind = 'c'),
+     counted AS (
+       SELECT o.schema, o.kind, count(*)::int AS count FROM objects o
+        WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_depend d
+                           WHERE d.classid = o.class AND d.objid = o.oid AND d.deptype IN ('a', 'e', 'i'))
+        GROUP BY o.schema, o.kind)
+     SELECT n.nspname AS name, pg_catalog.quote_ident(n.nspname) AS quoted, counted.kind, coalesce(counted.count, 0) AS count
+       FROM n LEFT JOIN counted ON counted.schema = n.oid
+      ORDER BY n.nspname COLLATE "C"`,
+    [historySchema],
+  );
+  const schemas = new Map<
+    string,
+    { name: string; quoted: string; counts: Record<ObjectKind, number> }
+  >();
+  for (const { name, quoted, kind, count } of rows) {
+    let schema = schemas.get(name);
+    if (schema === undefined) {
+      const counts = { table: 0, view: 0, sequence: 0, function: 0, type: 0 };
+      schema = { name, quoted, counts };
+      schemas.set(name, schema);
+    }
+    if (kind !== null) {
+      schema.counts[kind] = count;
+    }
+  }
+  return [...schemas.values()];
+}
+
+/** How many objects the schema holds, of every kind. */
+function objectCount(schema: UserSchema): number {
+  return objectKinds.reduce((sum, kind) => sum + schema.counts[kind], 0);
+}
+
+/**
+ * The warning for adopting an empty managed schema: it adopted nothing,
+ * and which other schemas hold objects (a forgotten managedSchema).
+ */
+function emptyManagedSchemaWarning(
+  managedSchema: string,
+  others: readonly UserSchema[],
+): string {
+  const holding = others
+    .filter((schema) => objectCount(schema) > 0)
+    .map(
+      (schema) =>
+        `schema ${schema.quoted} holds ${objectKinds
+          .filter((kind) => schema.counts[kind] > 0)
+          .map((kind) => plural(schema.counts[kind], kind))
+          .join(", ")}`,
+    );
+  const adopted = `Adopted 0 objects from schema ${managedSchema}`;
+  return holding.length === 0
+    ? adopted
+    : `${adopted}; ${holding.join("; ")}: is managedSchema right?`;
+}
+
+/**
+ * Why a missing managed schema is refused: the schemas the target has, and
+ * for one that differs only in case (managedSchema is lowercase), the rename.
+ */
+function missingManagedSchema(
+  managedSchema: string,
+  schemas: readonly UserSchema[],
+): string {
+  const has =
+    schemas.length === 0
+      ? "the target has no schemas besides the system ones"
+      : `the target has ${schemas.length === 1 ? "schema" : "schemas"} ${schemas.map((schema) => schema.quoted).join(", ")}`;
+  const otherCase = schemas.find(
+    (schema) => schema.name.toLowerCase() === managedSchema,
+  );
+  const rename =
+    otherCase === undefined
+      ? []
+      : [
+          `managedSchema must be lowercase: rename schema ${otherCase.quoted} first (ALTER SCHEMA ${otherCase.quoted} RENAME TO ${managedSchema}), and the application's references to it`,
+        ];
+  return [
+    `its managed schema "${managedSchema}" does not exist (check managedSchema in super-deploy.config.ts)`,
+    has,
+    ...rename,
+  ].join("; ");
 }
 
 /**
