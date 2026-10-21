@@ -49,6 +49,13 @@ export interface ResolvedTarget {
   readonly connectTimeoutMs: number;
 }
 
+/** A target's timeouts when its config sets none; no statement timeout by default. */
+export const targetDefaults = {
+  lockTimeoutMs: 5000,
+  statementTimeoutMs: undefined,
+  connectTimeoutMs: 10_000,
+} as const satisfies Omit<ResolvedTarget, "name" | "adapter">;
+
 /** A validated configuration with every default applied. */
 export interface ResolvedConfig {
   readonly postgresVersion: 18;
@@ -173,13 +180,14 @@ export function resolveConfig(raw: unknown): ResolvedConfig {
         name,
         adapter: value.adapter as DeploymentAdapter,
         lockTimeoutMs:
-          duration(value.lockTimeout, `${path}.lockTimeout`) ?? 5000,
-        statementTimeoutMs: duration(
-          value.statementTimeout,
-          `${path}.statementTimeout`,
-        ),
+          duration(value.lockTimeout, `${path}.lockTimeout`) ??
+          targetDefaults.lockTimeoutMs,
+        statementTimeoutMs:
+          duration(value.statementTimeout, `${path}.statementTimeout`) ??
+          targetDefaults.statementTimeoutMs,
         connectTimeoutMs:
-          duration(value.connectTimeout, `${path}.connectTimeout`) ?? 10_000,
+          duration(value.connectTimeout, `${path}.connectTimeout`) ??
+          targetDefaults.connectTimeoutMs,
       };
     }
   }

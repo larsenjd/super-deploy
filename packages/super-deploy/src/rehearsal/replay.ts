@@ -8,6 +8,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
+import { durationText, targetDefaults } from "../config/config.ts";
 import { errorReason, SuperDeployError } from "../errors.ts";
 import { parseSqlFile } from "../sql-analysis/parse.ts";
 import { decodeHashedText } from "../store/hashing.ts";
@@ -339,10 +340,15 @@ function nextStep(
   rollback: DeploymentRollback | undefined,
 ): string | undefined {
   if (sqlState === "55P03") {
-    return "The target's lockTimeout (default 5s) ran out waiting for a lock: retry once whatever held the lock has finished.";
+    return `The target's lockTimeout (default ${durationText(targetDefaults.lockTimeoutMs)}) ran out waiting for a lock: retry once whatever held the lock has finished.`;
   }
   if (sqlState === "57014") {
-    return "The target's statementTimeout (default none) cancelled the statement: retry once whatever held it up has finished, or raise the setting.";
+    const { statementTimeoutMs } = targetDefaults;
+    const statementDefault =
+      statementTimeoutMs === undefined
+        ? "none"
+        : durationText(statementTimeoutMs);
+    return `The target's statementTimeout (default ${statementDefault}) cancelled the statement: retry once whatever held it up has finished, or raise the setting.`;
   }
   if (
     rollback !== undefined &&
