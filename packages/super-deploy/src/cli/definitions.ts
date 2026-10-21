@@ -757,7 +757,10 @@ const statusCommand: CommandDefinition = {
     }
     if (report.drift !== undefined && report.drift.length > 0) {
       // Exit 1, so a scheduled status alerts on drift.
-      throw new DriftError(report.target, report.drift);
+      throw new DriftError(report.target, report.drift, {
+        command: "status",
+        pending: report.pending.length,
+      });
     }
   },
 };

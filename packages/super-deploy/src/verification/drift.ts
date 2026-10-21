@@ -134,10 +134,23 @@ export function listedDrift(objects: readonly DriftedObject[]): string {
   return listed(objects.map((o) => `${o.object} (${o.change})`));
 }
 
+/** What a {@link DriftError}'s message depends on besides the drift. */
+export interface DriftContext {
+  /** The command that found the drift: `status` doesn't point to itself. */
+  readonly command: "deploy" | "status";
+  /** How many migrations are pending on the target. */
+  readonly pending: number;
+}
+
 /**
  * The target's managed schema differs from what its recorded migrations
  * produce on a replica (column order and ownership aside). Deployments
  * refuse until the target matches again; `status` lists the objects.
+ *
+ * With migrations pending, the message points to `mark`: drift is often a
+ * hotfix applied by hand that the next pending migration catches up with.
+ * Whether it is exactly that migration isn't checked here (it would take a
+ * second replica); `mark` checks it.
  */
 export class DriftError extends SuperDeployError {
   readonly code = "target-drifted";
@@ -145,9 +158,21 @@ export class DriftError extends SuperDeployError {
   /** Sorted by object; never empty. */
   readonly objects: readonly DriftedObject[];
 
-  constructor(target: string, objects: readonly DriftedObject[]) {
+  constructor(
+    target: string,
+    objects: readonly DriftedObject[],
+    context: DriftContext,
+  ) {
+    const differences =
+      context.command === "status"
+        ? ""
+        : ` (status --target ${target} lists the differences)`;
+    const mark =
+      context.pending === 0
+        ? ""
+        : `. If its changes are those of the next pending migration applied by hand, mark --target ${target} records that migration as deployed`;
     super(
-      `Target ${target} has drifted from its recorded migrations: ${listedDrift(objects)}. Deployments refuse until it matches them again (status --target ${target} lists the differences)`,
+      `Target ${target} has drifted from its recorded migrations: ${listedDrift(objects)}. Deployments refuse until it matches them again${differences}${mark}`,
     );
     this.target = target;
     this.objects = objects;
