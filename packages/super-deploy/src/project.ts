@@ -135,8 +135,13 @@ function syntaxErrorLine(
 
 /** The super-deploy.config.ts in `start` or its nearest parent, if any. */
 export function findConfig(start: string): string | undefined {
+  return findUpward(start, configFileName);
+}
+
+/** The path of the file or folder `name` in `start` or its nearest parent, if any. */
+export function findUpward(start: string, name: string): string | undefined {
   for (let dir = start; ; dir = dirname(dir)) {
-    const candidate = join(dir, configFileName);
+    const candidate = join(dir, name);
     if (existsSync(candidate)) {
       return candidate;
     }

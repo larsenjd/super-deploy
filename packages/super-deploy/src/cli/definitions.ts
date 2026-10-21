@@ -2,8 +2,7 @@
 // flags, parse.ts) and the interactive menu (menu.ts). Each command's `run`
 // calls the exported API function and prints its result. To add a command,
 // define it here and append it to `commands`.
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { adopt } from "../commands/adopt.ts";
 import { type DeployedMigration, deploy } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
@@ -25,7 +24,7 @@ import { describeLockHolder, lockHolderName } from "../deploy/lock.ts";
 import { MarkMismatchError } from "../deploy/mark.ts";
 import { preflightRefusals } from "../deploy/preflight.ts";
 import { plural } from "../errors.ts";
-import type { Project } from "../project.ts";
+import { findUpward, type Project } from "../project.ts";
 import type {
   AskOverrideReason,
   Confirm,
@@ -212,14 +211,7 @@ export function needsProject(
 
 /** True if `directory` or a folder above it has a `.git` (a folder, or a file in linked worktrees). */
 function insideGitWorkTree(directory: string): boolean {
-  for (let folder = directory; ; folder = dirname(folder)) {
-    if (existsSync(join(folder, ".git"))) {
-      return true;
-    }
-    if (dirname(folder) === folder) {
-      return false;
-    }
-  }
+  return findUpward(directory, ".git") !== undefined;
 }
 
 /** A command refused to go ahead (exit 1). */
