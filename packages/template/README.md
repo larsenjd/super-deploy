@@ -21,7 +21,9 @@ databases that rehearsals use and the local `dev` target, and starts on a free
 port whenever a command needs it.
 
 1. Describe the schema you want as `CREATE` statements in `.sql` files under
-   `data-model/desired-schema/` (any file names and folders).
+   `data-model/desired-schema/` (any file names and folders). See
+   [What the desired schema supports](#what-the-desired-schema-supports)
+   for what they may create.
 2. `pnpm exec super-deploy draft --name "add customers"` generates the draft's
    schema change in `data-model/draft/`.
 3. `pnpm exec super-deploy finalize` rehearses the draft and freezes it as the
@@ -33,6 +35,123 @@ Run `pnpm exec super-deploy` with no arguments for an interactive menu, or
 `pnpm exec super-deploy --help` for every command. To deploy to a real
 database (QA, production), add it as a target: see
 [Adding a real target](#adding-a-real-target).
+
+## What the desired schema supports
+
+The desired schema may hold only the statements below; super-deploy refuses
+everything else. `draft`, `rehearse`, `finalize` and `validate` list every
+refused statement on a line of its own, as `<file>:<line>: <reason> [<rule>]`.
+Messages that say something "is not supported in V1" mean super-deploy's
+first version: these may be supported later, but none is yet.
+
+### Supported
+
+- Tables: identity columns, defaults, stored generated columns, collations,
+  and primary key, unique, check, foreign key, exclusion and NOT NULL
+  constraints, deferrable or not.
+- `ALTER TABLE ... ADD CONSTRAINT`, one constraint per statement, such as a
+  foreign key between tables defined in different files.
+- Indexes: unique, partial and expression indexes, with any index method
+  and storage parameters.
+- Views (with the options `security_invoker`, `security_barrier` and
+  `check_option`) and materialized views.
+- Functions and procedures in `sql` or `plpgsql`, and triggers.
+- Domains and composite types.
+- `COMMENT ON` the objects above.
+- `CREATE EXTENSION plpgsql`, which is installed in every database anyway.
+
+### Refused
+
+Each of these is refused as `[unsupported-object]`. The most common first:
+
+- **Enums** (`CREATE TYPE ... AS ENUM`): use a lookup table with a foreign
+  key, or a CHECK constraint. A value added to an enum can't be used until
+  its transaction commits, and a deployment runs every pending migration in
+  one transaction.
+- **Extensions other than `plpgsql`**, including `pgcrypto`, `citext`,
+  `pg_trgm`, `uuid-ossp`, `btree_gist`, PostGIS and pgvector. An
+  extension's install script is code the rules can't check, some escape the
+  transaction, and rehearsals would need the same extensions as every
+  target. For UUIDs, PostgreSQL 18 has `gen_random_uuid()` and `uuidv7()`
+  built in.
+- **Standalone sequences** (`CREATE SEQUENCE`) and **`serial` columns**
+  (`serial`, `bigserial`, `smallserial`, `serial4`, `serial8`, `serial2`):
+  use an identity column, `bigint generated always as identity`.
+- **Partitioned tables** (`PARTITION BY`, and partitions, `PARTITION OF`):
+  attaching and detaching partitions takes heavy locks, and recurring
+  partition maintenance doesn't fit a declarative schema.
+
+Other object types:
+
+- rules (`CREATE RULE`) and event triggers;
+- foreign tables and foreign data wrappers (with their servers and user
+  mappings);
+- publications and subscriptions;
+- custom casts, operators, operator classes, operator families,
+  aggregates, collations, conversions, transforms and access methods;
+- text-search configurations (and their dictionaries, parsers and
+  templates);
+- range types, and base types (use a domain or a composite type instead);
+- procedural languages, and functions in any language but `sql` and
+  `plpgsql`;
+- `CREATE STATISTICS`.
+
+Table, view and routine features:
+
+- table inheritance (`INHERITS`) and typed tables (`CREATE TABLE ... OF
+  type`);
+- temporary tables and temporary views;
+- `NOT ENFORCED` constraints, and constraint triggers;
+- virtual generated columns: add `STORED` (in PostgreSQL 18 a generated
+  column without `STORED` is virtual);
+- routine options other than `LANGUAGE`, volatility, `STRICT`,
+  `LEAKPROOF`, `PARALLEL`, `COST`, `ROWS` and `SET` (such as `WINDOW` and
+  `SUPPORT`);
+- view options other than the three above.
+
+Physical storage settings:
+
+- unlogged tables;
+- tablespaces, on tables, indexes and constraints;
+- table and materialized view storage parameters (`WITH (fillfactor =
+  ...)`) and table access methods (`USING heap`);
+- column `STORAGE` and `COMPRESSION` settings.
+
+Grants, roles, ownership, policies, row-level security and `SECURITY
+DEFINER` are refused too: they are set up on each target outside
+super-deploy (see [Permissions](#permissions)).
+
+### Rules for writing it
+
+- **Name every index and constraint**: `create index customers_email_idx on
+  customers (email)`, `constraint orders_total_check check (total >= 0)`.
+  Primary keys and NOT NULL constraints are the exceptions: PostgreSQL names
+  them from the table and column alone (`orders_pkey`,
+  `orders_total_not_null`). For anything else it picks a name that isn't
+  taken yet (`orders_total_check1`), so the name could depend on the order
+  the files load in, and differ between rehearsals and targets. Unnamed
+  ones are refused as `[unnamed-index]` and `[unnamed-constraint]`.
+- **Define each object exactly once**: no `IF NOT EXISTS`, `OR REPLACE` or
+  `ALTER TABLE IF EXISTS`, so no definition can silently replace or skip
+  another depending on load order.
+- **One managed schema**: no `CREATE SCHEMA`. super-deploy creates the
+  managed schema (`managedSchema`, see [Project settings](#project-settings))
+  itself. Write object names unqualified (or qualified with the managed
+  schema). Statements may refer only to the managed schema and
+  `pg_catalog`; PL/pgSQL bodies may also refer to `externalSchemas`.
+- **Only `ALTER TABLE ... ADD CONSTRAINT`** among `ALTER` statements:
+  declare columns and everything else in `CREATE TABLE`, written out (not
+  copied with `LIKE`).
+- **No data or session statements**: no `INSERT`, `UPDATE`, `DELETE`, `DO`
+  or `SET`. Data changes go in a draft's scripts (see
+  [The files of a draft and a migration](#the-files-of-a-draft-and-a-migration)).
+- **No `CREATE INDEX CONCURRENTLY`**: it can't run inside the deployment's
+  transaction.
+- **No dynamic SQL or transaction-escaping built-ins** without a reason:
+  `EXECUTE` in a PL/pgSQL body, and built-ins whose effects escape the
+  transaction (such as `pg_notify`), are refused unless an override marker,
+  `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>` on the line before the
+  statement, says why. No marker gets past any other refusal.
 
 ## Configuration
 
@@ -140,9 +259,11 @@ isn't `public` (see [Project settings](#project-settings)). Then run
 desired schema and migration `00001-adopt`, which is recorded on that target
 as already deployed. If the target has no schema of that name (usually a
 typo in `managedSchema`), adoption refuses and writes nothing. If the
-database holds anything super-deploy doesn't support, nothing is written and
-every such object is listed: that includes a `SECURITY DEFINER` routine and
-objects owned by another role (see "Permissions"). Grants, policies and row-level security on the target stay
+database holds anything super-deploy doesn't support (see
+[What the desired schema supports](#what-the-desired-schema-supports)),
+nothing is written and every such object is listed: that includes a
+`SECURITY DEFINER` routine and objects owned by another role (see
+"Permissions"). Grants, policies and row-level security on the target stay
 as they are, left out of the desired schema; adoption says how many grants
 and policies it left.
 
