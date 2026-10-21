@@ -17,6 +17,9 @@ If you install before `git init`, run `pnpm install` again afterwards. The
 hook lets you commit a draft in progress; CI should refuse it until it is
 finalized (see
 [The files of a draft and a migration](#the-files-of-a-draft-and-a-migration)).
+This works when the project is the root of its Git repository; inside a
+larger one, see
+[A project inside another Git repository](#a-project-inside-another-git-repository).
 
 Nothing else is needed: `super-deploy.config.ts` runs two private
 PostgreSQL 18 servers in `.super-deploy` (gitignored), each started whenever
@@ -48,6 +51,29 @@ database (QA, production), add it as a target: see
 before finalizing it (`deploy-draft`), or reset `dev` to a migration
 (`rebuild`), flag `dev` disposable first: see
 [Disposable targets and the guarded commands](#disposable-targets-and-the-guarded-commands).
+
+### A project inside another Git repository
+
+`init` makes a project in a folder of its own, often a new subfolder of an
+application's repository (`init` tells you when it is one). Husky installs
+the hook only when the project's folder is the repository's root, so here
+`pnpm install` installs none, and the hook has to run the project's
+`precommit` from the repository's root. Say the project is in `db/`:
+
+- With Husky, from the project: change `prepare` in `package.json` to
+  `"cd .. && husky db/.husky"` (one `..` per folder level), and start
+  `.husky/pre-commit` with `cd db`:
+
+  ```sh
+  cd db
+  pnpm precommit
+  ```
+
+  `pnpm install` then sets the repository's hooks to `db/.husky`.
+- If the repository already has a hook setup of its own (Husky, lefthook, a
+  `core.hooksPath`), don't install a second one: Git runs only one. Add the
+  line `pnpm --dir db precommit` to its pre-commit hook instead, and delete
+  the project's `prepare` script and `.husky` folder.
 
 ## Connecting to dev
 
@@ -1047,11 +1073,15 @@ recorded**, even only `dev`. That target records the migration's name and
 hashes, so once the migration is gone or finalized differently, `deploy`
 refuses the target (for example
 `the target records migration 00008-tweaks with content hash ..., but the repo's is ...`).
-To change something a target has run, finalize a new migration, or a
-Recovery for the targets that haven't run it. If you already unfinalized
-one, restore its original folder and `data-model/migrations/index.json`
-from Git, then run `pnpm exec super-deploy validate` to make the restored
-files read-only again.
+`unfinalize` can't see targets, so it warns about this before it moves a
+migration, in its question when it asks one. To change something a target
+has run, finalize a new migration, or a Recovery for the targets that
+haven't run it. If you already unfinalized one, `finalize` the draft
+unchanged: it reproduces the migration byte for byte (`status` suggests
+this while the draft is that migration). Or restore its original folder and
+`data-model/migrations/index.json` from Git, then run
+`pnpm exec super-deploy validate` to make the restored files read-only
+again.
 
 If a finalized migration (or Recovery) was edited, had a file added, or had
 its `desired-schema/` snapshot changed, `validate`, `status` and `deploy`

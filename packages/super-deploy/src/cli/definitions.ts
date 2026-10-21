@@ -2,7 +2,7 @@
 // flags, parse.ts) and the interactive menu (menu.ts). Each command's `run`
 // calls the exported API function and prints its result. To add a command,
 // define it here and append it to `commands`.
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   adopt,
   type LeftOnTarget,
@@ -249,9 +249,14 @@ export function needsProject(
   );
 }
 
-/** True if `directory` or a folder above it has a `.git` (a folder, or a file in linked worktrees). */
-function insideGitWorkTree(directory: string): boolean {
-  return findUpward(directory, ".git") !== undefined;
+/**
+ * The root of the Git work tree holding `directory`: the nearest folder,
+ * `directory` or above, with a `.git` (a folder, or a file in linked
+ * worktrees and submodules). Undefined outside one.
+ */
+function gitWorkTreeRoot(directory: string): string | undefined {
+  const git = findUpward(directory, ".git");
+  return git === undefined ? undefined : dirname(git);
 }
 
 /** A command refused to go ahead (exit 1). */
@@ -304,13 +309,20 @@ const initCommand: DirectoryCommandDefinition = {
     // displayPath would show as ".".
     context.result(`Initialised a super-deploy project in ${result.root}`);
     // Git before pnpm install, as the template README says: Husky installs
-    // the pre-commit hook only into an existing repo.
-    const install = insideGitWorkTree(result.root)
-      ? "pnpm install"
-      : "git init, then pnpm install";
+    // the pre-commit hook only into an existing repo, and only when the
+    // project is its root (`.git` in the project's folder). In a subfolder
+    // of a repo the hook is the repo's to set up: the README says how.
+    const repository = gitWorkTreeRoot(result.root);
+    const install =
+      repository === undefined ? "git init, then pnpm install" : "pnpm install";
     context.result(
       `Next: ${install}, add CREATE statements under data-model/desired-schema/, then run draft`,
     );
+    if (repository !== undefined && repository !== result.root) {
+      context.result(
+        `The project is inside the Git repository at ${repository}, so pnpm install won't install the pre-commit hook: see "A project inside another Git repository" in README.md`,
+      );
+    }
   },
   projectMode: {
     option: "adopt",
@@ -724,6 +736,7 @@ const unfinalizeCommand: CommandDefinition = {
     const result = await unlessDeclined(context, () =>
       unfinalize(project, {
         ...overwriteOptions(values, context),
+        onWarning: (warning) => context.warn(`warning: ${warning}`),
         ...(typeof recoveryOf === "string"
           ? { recoveryOf: Number(recoveryOf) }
           : {}),
@@ -738,9 +751,6 @@ const unfinalizeCommand: CommandDefinition = {
         : `Moved Recovery ${result.recovery} of migration ${result.folder} back into a Recovery draft in ${context.displayPath(result.draftPath)}`,
     );
     reportRestore(project, result, context);
-    if (result.warning !== undefined) {
-      context.warn(`warning: ${result.warning}`);
-    }
   },
 };
 

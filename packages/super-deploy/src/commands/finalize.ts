@@ -2,9 +2,17 @@
 // migration: the draft's files, metadata and a desired-schema snapshot,
 // read-only, hashed and chained in the index. A Recovery draft becomes its
 // migration's next Recovery (store/migrations.ts) instead.
+//
+// Nothing locks the project's files between commands, so another command
+// (discard-draft, draft, a second finalize) can change the draft while the
+// rehearsal runs. finalize reads the draft once, before the rehearsal, and
+// freezes exactly those files; just before writing it reads the draft again
+// and refuses (DraftChangedError) if anything differs. The staging folder is
+// created exclusively, so of two finalize writing the same migration one
+// refuses (MigrationNotWrittenError) and never touches the other's files.
 
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { differ } from "../differ/index.ts";
 import { plural, SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
@@ -38,6 +46,7 @@ import {
   maxMigrationNumber,
   metadataFileName,
   migrationFolderName,
+  orIfMissing,
   type RecoveryIndexEntry,
   readHashedFiles,
   readIndex,
@@ -129,6 +138,7 @@ export async function finalize(
   options: FinalizeOptions = {},
 ): Promise<FinalizeResult> {
   const { root, paths } = project;
+  const draftFiles = await readHashedFiles(root, paths.draft);
   const rehearsed = await rehearseCurrentDraft(project, "finalize", {
     onUnknownFile: options.onUnknownFile,
     async beforeRehearsal(draft, analysis) {
@@ -174,7 +184,7 @@ export async function finalize(
     ...(handEdit === undefined ? {} : { schemaChangeEditedByHand: true }),
   };
   const files: HashedFile[] = [
-    ...(await readHashedFiles(root, paths.draft, target.fromDraft)),
+    ...draftFiles.filter((file) => target.fromDraft(file.path)),
     ...rehearsed.desiredSchema.map((file) => ({
       path: `${snapshotFolderName}/${file.path}`,
       text: file.text,
@@ -191,17 +201,15 @@ export async function finalize(
     chainHash: chainHash(target.previousChainHash, contentHash),
   };
 
-  // Written under a temporary name, then renamed, so a half-written folder
-  // never looks like a migration or Recovery (validate reports a leftover one).
-  const staging = join(dirname(path), `.finalizing-${target.folder}`);
-  await rm(staging, { recursive: true, force: true });
-  for (const file of files) {
-    const written = join(staging, file.path);
-    await mkdir(dirname(written), { recursive: true });
-    await writeFile(written, file.text);
+  // Gone, even mid-deletion, is no files.
+  const draftNow = await orIfMissing(
+    () => readHashedFiles(root, paths.draft),
+    [],
+  );
+  if (!sameFiles(draftFiles, draftNow)) {
+    throw new DraftChangedError(projectRelative(root, paths.draft));
   }
-  await makeReadOnly(staging);
-  await rename(staging, path);
+  await writeFinalizedFolder(root, path, files);
 
   const index = await readIndex(paths);
   await writeIndex(paths, target.indexed(index.ok ? index.entries : [], entry));
@@ -221,6 +229,51 @@ export async function finalize(
     handEdited: handEdit?.file,
     unqualifiedNames: rehearsed.unqualifiedNames,
   };
+}
+
+/** True if both list the same paths, in the same order, with the same text. */
+function sameFiles(
+  a: readonly HashedFile[],
+  b: readonly HashedFile[],
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every((file, i) => file.path === b[i]?.path && file.text === b[i]?.text)
+  );
+}
+
+/**
+ * Writes `files` as the read-only folder `path`: under a temporary name,
+ * created exclusively, then renamed, so a half-written folder never looks
+ * like a migration or Recovery (validate reports a leftover one). On
+ * failure the temporary folder is removed (unless another finalize owns
+ * it) and MigrationNotWrittenError is thrown.
+ */
+async function writeFinalizedFolder(
+  root: string,
+  path: string,
+  files: readonly HashedFile[],
+): Promise<void> {
+  const staging = join(dirname(path), `.finalizing-${basename(path)}`);
+  const shown = projectRelative(root, path);
+  await mkdir(dirname(staging), { recursive: true });
+  try {
+    await mkdir(staging);
+  } catch (error) {
+    throw new MigrationNotWrittenError(shown, { cause: error });
+  }
+  try {
+    for (const file of files) {
+      const written = join(staging, file.path);
+      await mkdir(dirname(written), { recursive: true });
+      await writeFile(written, file.text);
+    }
+    await makeReadOnly(staging);
+    await rename(staging, path);
+  } catch (error) {
+    await rm(staging, { recursive: true, force: true });
+    throw new MigrationNotWrittenError(shown, { cause: error });
+  }
 }
 
 /** Where a rehearsed draft is frozen, and how it is hashed and indexed. */
@@ -306,5 +359,46 @@ export class MigrationLimitError extends SuperDeployError {
   constructor(limit: number) {
     super(`Migration numbers stop at ${limit}`);
     this.limit = limit;
+  }
+}
+
+/**
+ * The draft changed (was discarded, regenerated or finalized by another
+ * command) while finalize rehearsed it; nothing was finalized.
+ */
+export class DraftChangedError extends SuperDeployError {
+  readonly code = "draft-changed";
+  /** Project-relative path of the draft folder. */
+  readonly draft: string;
+
+  constructor(draft: string) {
+    super(
+      `The draft (${draft}) changed while finalize was running, so nothing was finalized: run finalize again`,
+    );
+    this.draft = draft;
+  }
+}
+
+/**
+ * finalize could not write the new migration (or Recovery) folder, e.g.
+ * because another finalize wrote it at the same time; nothing was finalized.
+ * `cause` is the file system's error.
+ */
+export class MigrationNotWrittenError extends SuperDeployError {
+  readonly code = "migration-not-written";
+  /** Project-relative path of the folder finalize was writing. */
+  readonly folder: string;
+
+  constructor(folder: string, options: { cause: unknown }) {
+    const code = (options.cause as NodeJS.ErrnoException).code;
+    const reason =
+      code === "EEXIST" || code === "ENOTEMPTY"
+        ? "it exists already, or another finalize is writing it"
+        : `the file system refused (${code ?? String(options.cause)})`;
+    super(
+      `Could not write ${folder}: ${reason}. Nothing was finalized`,
+      options,
+    );
+    this.folder = folder;
   }
 }

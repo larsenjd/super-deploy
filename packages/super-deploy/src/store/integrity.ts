@@ -1,5 +1,6 @@
 // The integrity check of the finalized migrations and their Recoveries:
-// index, folder names, numbering, content hashes and the hash chains. `validate` reports its
+// index, folder names, numbering, content hashes, the hash chains and each
+// migration's schema-change.sql. `validate` reports its
 // findings; every command that builds on the migrations (draft, rehearse,
 // finalize) refuses to run while it finds errors.
 
@@ -13,6 +14,7 @@ import {
 } from "./hashing.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";
 import {
+  exists,
   type FinalizedMigration,
   type FinalizedRecovery,
   type IndexEntry,
@@ -24,6 +26,7 @@ import {
   readHashedFiles,
   readIndex,
   recoveriesFolderName,
+  schemaChangeFileName,
 } from "./migrations.ts";
 
 export interface IntegrityReport {
@@ -147,6 +150,15 @@ export async function checkMigrations(
           await readHashedFiles(root, path, (file) => !isRecoveryPath(file)),
         ) === entry.contentHash,
     );
+    // Every migration has a schema change, even an empty one: finalize
+    // always writes it. A Recovery never holds one (it is its migration's).
+    if (!(await exists(join(path, schemaChangeFileName)))) {
+      problem(
+        "schema-change-missing",
+        `${display(path)} has no ${schemaChangeFileName}; every migration has one, as finalize writes it`,
+        display(path),
+      );
+    }
     recoveries.push(
       ...(await checkRecoveries(root, entry, path, indexPath, problem)),
     );
@@ -311,7 +323,8 @@ export interface ValidationProblem {
    * Stable identifier: `index-invalid`, `invalid-folder-name`,
    * `unexpected-entry`, `migration-missing`, `migration-unindexed`,
    * `migration-renamed`, `numbering-gap`, `invalid-encoding`,
-   * `content-hash-mismatch`, `chain-hash-mismatch`, `sql-rule-violation`,
+   * `content-hash-mismatch`, `chain-hash-mismatch`, `schema-change-missing`,
+   * `sql-rule-violation`,
    * `recovery-schema-change-edited`, `unknown-migration` (errors);
    * `unfinalized-draft`, `unknown-draft-file`, `undrafted-changes`,
    * `unqualified-routine-names` (warnings); `hand-edited-schema-change`

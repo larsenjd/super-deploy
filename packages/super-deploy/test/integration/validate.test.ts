@@ -1,4 +1,6 @@
-import { chmod, rename, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { join, relative, sep } from "node:path";
 import {
   draft,
   finalize,
@@ -8,7 +10,11 @@ import {
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
-import { createTestProject, embeddedConfig } from "../support/project.ts";
+import {
+  createTestProject,
+  embeddedConfig,
+  type TestProject,
+} from "../support/project.ts";
 
 let server: TestServer;
 beforeAll(async () => {
@@ -40,6 +46,40 @@ async function finalizedProject() {
     await dir.write(relative, edit(await dir.read(relative)));
   };
   return { dir, project, tamper };
+}
+
+/**
+ * Rewrites index.json so migration `name`, the first, matches its folder's
+ * files again, by the hash format documented in src/store/hashing.ts.
+ */
+async function rehashMigration(dir: TestProject, name: string) {
+  const sha256 = (text: string) =>
+    createHash("sha256").update(text, "utf8").digest("hex");
+  const migration = dir.path(`data-model/migrations/${name}`);
+  const files = (
+    await readdir(migration, { recursive: true, withFileTypes: true })
+  )
+    .filter((entry) => entry.isFile())
+    .map((entry) =>
+      relative(migration, join(entry.parentPath, entry.name))
+        .split(sep)
+        .join("/"),
+    )
+    .sort();
+  let manifest = `super-deploy migration 1\nfolder ${JSON.stringify(name)}\n`;
+  for (const file of files) {
+    const text = await readFile(join(migration, file), "utf8");
+    manifest += `file ${JSON.stringify(file)} ${sha256(text)}\n`;
+  }
+  const contentHash = sha256(manifest);
+  const indexPath = "data-model/migrations/index.json";
+  const index = JSON.parse(await dir.read(indexPath));
+  index.migrations[0] = {
+    ...index.migrations[0],
+    contentHash,
+    chainHash: sha256(contentHash),
+  };
+  await dir.write(indexPath, JSON.stringify(index));
 }
 
 async function validationError(
@@ -148,6 +188,24 @@ describe("validate", () => {
 
     expect(error.problems).toMatchObject([
       { severity: "error", code: "chain-hash-mismatch" },
+    ]);
+  });
+
+  test("fails when a migration has no schema-change.sql, even with its index entry rehashed to match", async () => {
+    const { dir, project } = await finalizedProject();
+    await chmod(dir.path(folder), 0o755);
+    await rm(dir.path(`${folder}/schema-change.sql`));
+    await rehashMigration(dir, "00001-add-customers");
+
+    const error = await validationError(project);
+
+    expect(error.problems).toEqual([
+      {
+        severity: "error",
+        code: "schema-change-missing",
+        message: `${folder} has no schema-change.sql; every migration has one, as finalize writes it`,
+        path: folder,
+      },
     ]);
   });
 

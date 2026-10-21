@@ -5,6 +5,8 @@
 
 import {
   deploy,
+  discardDraft,
+  draft,
   ForeignHistorySchemaError,
   finalize,
   HistorySchemaNotCreatableError,
@@ -251,7 +253,7 @@ describe("deploy pre-flight", () => {
           {
             number: 2,
             reason: "not-in-repo",
-            message: `the target records migration 00002-add-orders, which the repo doesn't have: restore 00002-add-orders (and index.json) from version control (${keepRecorded})`,
+            message: `the target records migration 00002-add-orders, which the repo doesn't have: finalize draft add-orders unchanged to put it back (unfinalize moved that migration into it), or restore 00002-add-orders (and index.json) from version control (${keepRecorded})`,
           },
         ],
       },
@@ -271,6 +273,34 @@ describe("deploy pre-flight", () => {
         reason: "not-recorded",
         message:
           "the target doesn't record migration 00001-add-customers, but records the later migration 2",
+      },
+    ]);
+  });
+  test("suggests finalizing the draft unchanged only while it is the recorded migration unfinalize moved back", async () => {
+    const { project } = await deployProject(server, {
+      "customers.sql": customers,
+    });
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    await unfinalize(project, { acknowledgeOverwrite: true });
+    const mismatches = async () =>
+      (await status(project, { target: "dev" })).preflight.historyMismatches;
+
+    expect(await mismatches()).toEqual([
+      {
+        number: 1,
+        reason: "not-in-repo",
+        message: `the target records migration 00001-add-customers, which the repo doesn't have: finalize draft add-customers unchanged to put it back (unfinalize moved that migration into it), or restore 00001-add-customers (and index.json) from version control (${keepRecorded})`,
+      },
+    ]);
+
+    await discardDraft(project, { acknowledgeOverwrite: true });
+    await draft(project, { name: "add clients" });
+    expect(await mismatches()).toEqual([
+      {
+        number: 1,
+        reason: "not-in-repo",
+        message: `the target records migration 00001-add-customers, which the repo doesn't have: restore 00001-add-customers (and index.json) from version control (${keepRecorded})`,
       },
     ]);
   });

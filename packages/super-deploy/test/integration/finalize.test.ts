@@ -2,16 +2,32 @@ import { chmod, readdir, readFile, stat } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import {
+  DraftChangedError,
+  discardDraft,
   draft,
   finalize,
   InvalidEncodingError,
   loadProject,
   MigrationIntegrityError,
   rehearse,
+  SuperDeployError,
+  validate,
 } from "super-deploy";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  onTestFinished,
+  test,
+} from "vitest";
+import { deployProject } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
-import { createTestProject, embeddedConfig } from "../support/project.ts";
+import {
+  createTestProject,
+  embeddedConfig,
+  type TestProject,
+} from "../support/project.ts";
 
 let server: TestServer;
 beforeAll(async () => {
@@ -261,5 +277,122 @@ describe("a schema change edited by hand", () => {
         "data-model/migrations/00001-add-customers/schema-change.sql",
       ),
     ).toContain("CREATE INDEX customers_name_idx");
+  });
+});
+
+describe("the draft changing while finalize runs", () => {
+  /**
+   * A project whose rehearsal adapter, before each throwaway database, awaits
+   * `globalThis.duringFinalizeRehearsal`.
+   */
+  async function interruptibleProject() {
+    const { dir, project } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      {
+        rehearsal: `{
+  async createDatabase(request) {
+    await globalThis.duringFinalizeRehearsal?.();
+    return postgres.rehearsal.createDatabase(request);
+  },
+}`,
+      },
+    );
+    await draft(project, { name: "Add customers" });
+    return { dir, project };
+  }
+
+  /** Runs `change` before the next throwaway database (or every one, with `{ every: true }`). */
+  function duringRehearsal(
+    change: () => Promise<unknown>,
+    { every = false } = {},
+  ): void {
+    const hook = async () => {
+      if (!every) {
+        Object.assign(globalThis, { duringFinalizeRehearsal: undefined });
+      }
+      await change();
+    };
+    Object.assign(globalThis, { duringFinalizeRehearsal: hook });
+    onTestFinished(() => {
+      Object.assign(globalThis, { duringFinalizeRehearsal: undefined });
+    });
+  }
+
+  /** What the migrations folder holds, sorted (none when it doesn't exist). */
+  async function migrationsFolder(dir: TestProject): Promise<string[]> {
+    return dir.exists("data-model/migrations")
+      ? (await readdir(dir.path("data-model/migrations"))).sort()
+      : [];
+  }
+
+  async function expectNothingFinalized(dir: TestProject) {
+    expect(await migrationsFolder(dir)).toEqual([]);
+  }
+
+  test("refuses with DraftChangedError, writing nothing, when the draft is discarded during the rehearsal", async () => {
+    const { dir, project } = await interruptibleProject();
+    duringRehearsal(() =>
+      discardDraft(project, { acknowledgeOverwrite: true }),
+    );
+
+    const error = await finalize(project).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(DraftChangedError);
+    expect(error).toMatchObject({ code: "draft-changed" });
+    await expectNothingFinalized(dir);
+  });
+
+  test("refuses with DraftChangedError, writing nothing, when the schema change is edited during the rehearsal", async () => {
+    const { dir, project } = await interruptibleProject();
+    duringRehearsal(async () =>
+      dir.write(
+        "data-model/draft/schema-change.sql",
+        `${await dir.read("data-model/draft/schema-change.sql")}\n-- edited\n`,
+      ),
+    );
+
+    await expect(finalize(project)).rejects.toBeInstanceOf(DraftChangedError);
+    await expectNothingFinalized(dir);
+    expect(dir.exists("data-model/draft/schema-change.sql")).toBe(true);
+  });
+
+  test("of two finalize at once, one finalizes and the other refuses with a typed error, leaving no staging folder", async () => {
+    const { dir, project } = await interruptibleProject();
+    const other = await loadProject({ cwd: dir.root });
+    onTestFinished(() => other.close());
+    // Both rehearsals wait for each other, so both finalize the same draft.
+    let arrived = 0;
+    let bothArrived: () => void = () => {};
+    const together = new Promise<void>((resolve) => {
+      bothArrived = resolve;
+    });
+    const meet = async () => {
+      arrived += 1;
+      if (arrived === 2) {
+        bothArrived();
+      }
+      await together;
+    };
+    duringRehearsal(meet, { every: true });
+    const results = await Promise.allSettled([
+      finalize(project),
+      finalize(other),
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual([
+      "fulfilled",
+      "rejected",
+    ]);
+    const failure = results.find((result) => result.status === "rejected");
+    expect(failure?.reason).toBeInstanceOf(SuperDeployError);
+    expect(await migrationsFolder(dir)).toEqual([
+      "00001-add-customers",
+      "index.json",
+    ]);
+    await expect(validate(project, { strict: true })).resolves.toMatchObject({
+      migrations: 1,
+      problems: [],
+    });
   });
 });

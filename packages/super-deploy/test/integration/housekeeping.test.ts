@@ -246,8 +246,21 @@ describe("unfinalize", () => {
     const schemaChange = await dir.read(`${folder}/schema-change.sql`);
     await rm(dir.path(customersFile));
 
-    const result = await unfinalize(project, { acknowledgeOverwrite: true });
+    const warnings: { warning: string; moved: boolean }[] = [];
 
+    const result = await unfinalize(project, {
+      acknowledgeOverwrite: true,
+      onWarning: (warning) =>
+        warnings.push({ warning, moved: !dir.exists(folder) }),
+    });
+
+    expect(warnings).toEqual([
+      {
+        warning:
+          "If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)",
+        moved: false,
+      },
+    ]);
     expect(result).toEqual({
       number: 1,
       name: "add-customers",
@@ -256,8 +269,6 @@ describe("unfinalize", () => {
       restored: [customersFile],
       deleted: [],
       discardedDraft: undefined,
-      warning:
-        "If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)",
     });
     expect(dir.exists(folder)).toBe(false);
     expect(
@@ -354,7 +365,7 @@ describe("unfinalize", () => {
         kind: "acknowledge-overwrite",
         command: "unfinalize",
         message:
-          "Move migration 00001-add-customers back into the draft and restore its desired-schema snapshot, discarding draft add-orders and 1 changed file?",
+          "If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target). Move migration 00001-add-customers back into the draft and restore its desired-schema snapshot, discarding draft add-orders and 1 changed file?",
         paths: ["data-model/draft", "data-model/desired-schema/orders.sql"],
       },
     ]);

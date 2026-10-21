@@ -21,7 +21,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, onTestFinished, test } from "vitest";
-import { runCli } from "../support/cli.ts";
+import { cliPath, runCli } from "../support/cli.ts";
 
 const packageDir = join(import.meta.dirname, "..", "..");
 const templateDir = join(packageDir, "..", "template");
@@ -184,18 +184,103 @@ describe("init", () => {
     },
   );
 
-  test("in a Git repo already, the next steps start with pnpm install", async () => {
+  test("at the root of a Git repo already, the next steps start with pnpm install", async () => {
     const root = await emptyDirectory();
     expect(
-      spawnSync("git", ["init", "--quiet"], {
-        cwd: dirname(root),
-        env: gitEnv(),
-      }).status,
+      spawnSync("git", ["init", "--quiet"], { cwd: root, env: gitEnv() })
+        .status,
     ).toBe(0);
     const initialised = await runCli(["init"], { cwd: root });
     expect(initialised).toMatchObject({ exitCode: 0, stderr: "" });
-    expect(initialised.stdout.split("\n")[1]).toMatch(/^Next: pnpm install\b/);
+    expect(initialised.stdout.split("\n").slice(1)).toEqual([
+      expect.stringMatching(/^Next: pnpm install\b/),
+      "",
+    ]);
   });
+
+  test("in a subfolder of a Git repo, the next steps say pnpm install won't install the hook, naming the repo's root", async () => {
+    const root = await emptyDirectory();
+    const repo = dirname(root);
+    expect(
+      spawnSync("git", ["init", "--quiet"], { cwd: repo, env: gitEnv() })
+        .status,
+    ).toBe(0);
+    const initialised = await runCli(["init"], { cwd: root });
+    expect(initialised).toMatchObject({ exitCode: 0, stderr: "" });
+    const [, next, hook] = initialised.stdout.split("\n");
+    expect(next).toMatch(/^Next: pnpm install\b/);
+    expect(hook).toContain(
+      `inside the Git repository at ${realpathSync(repo)}, so pnpm install won't install the pre-commit hook`,
+    );
+    expect(hook).toContain("A project inside another Git repository");
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "in a subfolder of a Git repo, the README's recipe makes a commit with a refused statement fail",
+    async () => {
+      const root = await emptyDirectory();
+      const repo = dirname(root);
+      expect(await runCli(["init"], { cwd: root })).toMatchObject({
+        exitCode: 0,
+      });
+      await linkDependencies(root);
+      // A stand-in pnpm whose precommit is the template's validate step, so
+      // the commit fails only if the hook ran it in the project's folder.
+      const bin = join(repo, "bin");
+      await mkdir(bin);
+      await writeFile(
+        join(bin, "pnpm"),
+        `#!/bin/sh\n[ "$1" = precommit ] || exit 1\nexec "${process.execPath}" "${cliPath}" validate --strict --allow-draft\n`,
+        { mode: 0o755 },
+      );
+      const env: NodeJS.ProcessEnv = {
+        ...gitEnv(),
+        PATH: `${bin}:${process.env.PATH}`,
+      };
+      const git = (args: readonly string[]) =>
+        spawnSync("git", args, { cwd: repo, encoding: "utf8", env });
+      expect(git(["init", "--quiet"]).status).toBe(0);
+
+      // The README's recipe, with the project in the folder `shop`.
+      const manifest = JSON.parse(
+        await readFile(join(root, "package.json"), "utf8"),
+      );
+      manifest.scripts.prepare = "cd .. && husky shop/.husky";
+      await writeFile(
+        join(root, "package.json"),
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      );
+      await writeFile(
+        join(root, ".husky", "pre-commit"),
+        "cd shop\npnpm precommit\n",
+      );
+      // What `pnpm install` runs: the prepare script, from the repo's root.
+      const husky = spawnSync(
+        process.execPath,
+        [join(root, "node_modules", "husky", "bin.js"), "shop/.husky"],
+        { cwd: repo, encoding: "utf8", env },
+      );
+      expect(husky.status).toBe(0);
+
+      await writeFile(
+        join(root, "data-model", "desired-schema", "t.sql"),
+        "create table t (id int primary key, x serial);\n",
+      );
+      expect(git(["add", "-A"]).status).toBe(0);
+      const commit = git([
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "test",
+      ]);
+      expect(commit.status).not.toBe(0);
+      expect(commit.stderr).toContain("t.sql");
+    },
+  );
 
   test("refuses to overwrite existing files (exit 1)", async () => {
     const root = await emptyDirectory();
@@ -203,7 +288,7 @@ describe("init", () => {
     const result = await runCli(["init"], { cwd: root });
     expect(result).toMatchObject({ exitCode: 1, stdout: "" });
     expect(result.stderr).toMatch(
-      /^Error: Cannot initialise a project in \S*shop: it already has package\.json\n$/,
+      /^Error: Cannot initialise a project in \S*shop: it already has package\.json\b.*\bempty folder\b.*\n$/,
     );
   });
 
