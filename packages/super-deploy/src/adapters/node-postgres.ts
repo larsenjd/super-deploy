@@ -31,6 +31,12 @@
 // resolved (a relative path is read from the working directory). Under
 // `sslmode=disable` libpq reads none of them, so clientConfig blanks them
 // (appended empty, they win over the URL's own) and the check skips them.
+//
+// node-postgres reads any `sslmode` it doesn't know (a typo, `DISABLE`,
+// libpq's `allow`) as verify-full, so the check refuses what libpq would:
+// anything but the six sslModes, case-sensitive. `allow` reaches
+// node-postgres as `disable`: libpq's `allow` tries without TLS first and
+// upgrades only when the server insists, which node-postgres can't do.
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
@@ -126,6 +132,7 @@ export type ConnectionStringProblem =
   | { kind: "variable-empty"; variable: string }
   | { kind: "not-postgres-url" }
   | { kind: "verify-ca-without-root-cert" }
+  | { kind: "invalid-sslmode"; value: string }
   | {
       kind: "unreadable-file";
       parameter: FileParameter;
@@ -180,6 +187,8 @@ function connectionStringMessage(
       return `${subject}'s connection string is not a PostgreSQL URL (postgres://user:password@host:port/database)`;
     case "verify-ca-without-root-cert":
       return `${subject}'s connection string has sslmode=verify-ca without sslrootcert: verify-ca checks the server's certificate against the CA certificate in the file sslrootcert names (for a server with a public CA, use sslmode=verify-full)`;
+    case "invalid-sslmode":
+      return `${subject}'s connection string has sslmode=${problem.value}, which isn't one of ${sslModes.join(", ")}`;
     case "unreadable-file":
       return problem.path === problem.resolvedPath
         ? `${subject}: ${problem.parameter} file ${problem.path} can't be read: ${problem.reason}`
@@ -250,8 +259,12 @@ function urlProblem(value: string): ConnectionStringProblem | undefined {
   if (!/^postgres(ql)?:\/\//i.test(value)) {
     return { kind: "not-postgres-url" };
   }
+  const sslMode = lastParameter(value, "sslmode");
+  if (sslMode !== undefined && !sslModes.includes(sslMode)) {
+    return { kind: "invalid-sslmode", value: sslMode };
+  }
   if (
-    lastParameter(value, "sslmode") === "verify-ca" &&
+    sslMode === "verify-ca" &&
     lastParameter(value, "sslrootcert") === undefined
   ) {
     return { kind: "verify-ca-without-root-cert" };
@@ -264,9 +277,20 @@ function lastParameter(url: string, name: string): string | undefined {
   return URL.parse(url)?.searchParams.getAll(name).at(-1);
 }
 
-/** Whether node-postgres connects without TLS, and so reads no files (see the header). */
+/** The `sslmode` values libpq accepts. */
+const sslModes: readonly string[] = [
+  "disable",
+  "allow",
+  "prefer",
+  "require",
+  "verify-ca",
+  "verify-full",
+];
+
+/** Whether the connection is made without TLS, and so reads no files (see the header). */
 function unencrypted(connectionString: string): boolean {
-  return lastParameter(connectionString, "sslmode") === "disable";
+  const sslMode = lastParameter(connectionString, "sslmode");
+  return sslMode === "disable" || sslMode === "allow";
 }
 
 const fileParameters: readonly FileParameter[] = [
@@ -326,11 +350,11 @@ function clientConfig(connectionString: string): pg.ClientConfig {
   const end = fragment === -1 ? connectionString.length : fragment;
   const base = connectionString.slice(0, end);
   const separator = base.includes("?") ? "&" : "?";
-  const noFiles = unencrypted(connectionString)
-    ? fileParameters.map((parameter) => `&${parameter}=`).join("")
+  const withoutTls = unencrypted(connectionString)
+    ? `${fileParameters.map((parameter) => `&${parameter}=`).join("")}&sslmode=disable`
     : "";
   return parseIntoClientConfig(
-    `${base}${separator}uselibpqcompat=true${noFiles}${connectionString.slice(end)}`,
+    `${base}${separator}uselibpqcompat=true${withoutTls}${connectionString.slice(end)}`,
   );
 }
 

@@ -142,3 +142,18 @@ test("sslmode=disable ignores an unreadable sslrootcert, as libpq does", async (
     encrypted(`${url}?sslmode=disable&sslrootcert=/nonexistent.pem`),
   ).resolves.toBe(false);
 });
+
+test.each(["bogus", "DISABLE", "verify_full"])(
+  "sslmode=%s is refused before connecting, naming the valid values",
+  async (mode) => {
+    const error = await refusal(`${url}?sslmode=${mode}`);
+
+    expect(error.message).toBe(
+      `The deployment adapter's connection string has sslmode=${mode}, which isn't one of disable, allow, prefer, require, verify-ca, verify-full`,
+    );
+  },
+);
+
+test("sslmode=allow connects without encrypting", async () => {
+  await expect(encrypted(`${url}?sslmode=allow`)).resolves.toBe(false);
+});

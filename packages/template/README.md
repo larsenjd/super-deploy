@@ -325,7 +325,8 @@ password in it.
 **TLS.** Set `sslmode` in the connection string. super-deploy reads it as
 `psql` and libpq do:
 
-- no `sslmode`, or `disable`: not encrypted.
+- no `sslmode`, `disable` or `allow`: not encrypted. Unlike `psql`, `allow`
+  never upgrades to an encrypted connection.
 - `require` (or `prefer`): encrypted, but the server's certificate isn't
   checked, so it doesn't stop a server impersonating yours. Unlike `psql`,
   `prefer` never falls back to an unencrypted connection.
@@ -335,6 +336,9 @@ password in it.
 - `verify-full`: as `verify-ca`, and the certificate must also name the host
   in the connection string. Without `sslrootcert` it trusts the public CAs
   that Node.js ships with.
+
+Any other `sslmode` is refused, as libpq refuses it (the values are
+case-sensitive).
 
 For a server with a private CA, such as a managed database's own, download
 the CA certificate and use `verify-full` with `sslrootcert`:
