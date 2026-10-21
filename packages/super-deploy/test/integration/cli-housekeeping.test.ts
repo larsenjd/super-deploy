@@ -134,7 +134,7 @@ describe("restore-schema", () => {
 });
 
 const unfinalizeWarning =
-  "If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)";
+  "If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged, with the same super-deploy and rehearsal server versions, to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)";
 
 describe.skipIf(process.platform === "win32")(
   "unfinalize in a terminal",
@@ -182,7 +182,7 @@ describe("unfinalize", () => {
       stdout:
         "Moved migration 00001-add-customers back into draft add-customers in data-model/draft\n",
       stderr:
-        "warning: If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)\n",
+        "warning: If migration 00001-add-customers was deployed anywhere, don't change it: finalize it again unchanged, with the same super-deploy and rehearsal server versions, to put it back, then make the change in a new migration (or in a Recovery, if it failed on a target)\n",
     });
   });
 

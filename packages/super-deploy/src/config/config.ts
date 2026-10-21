@@ -45,6 +45,8 @@ export interface ResolvedTarget {
   readonly name: string;
   readonly adapter: DeploymentAdapter;
   readonly lockTimeoutMs: number;
+  /** Whether the config sets lockTimeout; false when it is the default. */
+  readonly lockTimeoutSet: boolean;
   readonly statementTimeoutMs: number | undefined;
   readonly connectTimeoutMs: number;
 }
@@ -54,7 +56,10 @@ export const targetDefaults = {
   lockTimeoutMs: 5000,
   statementTimeoutMs: undefined,
   connectTimeoutMs: 10_000,
-} as const satisfies Omit<ResolvedTarget, "name" | "adapter">;
+} as const satisfies Omit<
+  ResolvedTarget,
+  "name" | "adapter" | "lockTimeoutSet"
+>;
 
 /** A validated configuration with every default applied. */
 export interface ResolvedConfig {
@@ -182,6 +187,7 @@ export function resolveConfig(raw: unknown): ResolvedConfig {
         lockTimeoutMs:
           duration(value.lockTimeout, `${path}.lockTimeout`) ??
           targetDefaults.lockTimeoutMs,
+        lockTimeoutSet: value.lockTimeout !== undefined,
         statementTimeoutMs:
           duration(value.statementTimeout, `${path}.statementTimeout`) ??
           targetDefaults.statementTimeoutMs,

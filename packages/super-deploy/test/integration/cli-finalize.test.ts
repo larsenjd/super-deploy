@@ -113,7 +113,7 @@ describe("validate", () => {
     expect(strict.stdout).toBe("");
     expect(strict.stderr.trimEnd().split("\n")).toEqual([
       "warning: Draft add-customers is not finalized yet",
-      "Error: Validation failed with 1 warning (--strict) (listed above)",
+      "Error: Validation failed with 1 warning (--strict fails on warnings), listed above",
     ]);
   });
 
@@ -166,7 +166,7 @@ describe("validate", () => {
     const dir = await draftedProject();
     await dir.write("data-model/draft/post-migrate.sql", "select 1/0;\n");
     const warning =
-      "warning: data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)";
+      /^warning: data-model\/draft\/post-migrate\.sql is not one of a draft's files, so it will not run \(.*\)$/m;
     const run = (...args: string[]) => runCli(args, { cwd: dir.root });
 
     const validated = await run("validate", "--strict", "--allow-draft");
@@ -175,9 +175,12 @@ describe("validate", () => {
     const finalized = await run("finalize");
 
     expect(validated.exitCode).toBe(1);
-    expect(validated.stderr).toContain(`${warning}\n`);
+    expect(validated.stderr).toMatch(warning);
     for (const result of [drafted, rehearsed, finalized]) {
-      expect(result).toMatchObject({ exitCode: 0, stderr: `${warning}\n` });
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.trimEnd().split("\n")).toEqual([
+        expect.stringMatching(warning),
+      ]);
     }
   });
 
@@ -190,7 +193,7 @@ describe("validate", () => {
       "update customers set name = name;\n",
     );
     const warning =
-      "warning: data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)";
+      /^warning: data-model\/draft\/post-migrate\.sql is not one of a draft's files, so it will not run \(/;
     const run = (...args: string[]) => runCli(args, { cwd: dir.root });
 
     for (const command of ["draft", "rehearse", "finalize"]) {
@@ -198,7 +201,7 @@ describe("validate", () => {
 
       expect(result.exitCode).toBe(1);
       const lines = result.stderr.trimEnd().split("\n");
-      expect(lines[0]).toBe(warning);
+      expect(lines[0]).toMatch(warning);
       expect(lines.at(-1)).toMatch(/^Error: .*"customers" does not exist/);
     }
   });
@@ -244,7 +247,7 @@ describe("validate", () => {
       expect.stringMatching(
         /^error: data-model\/migrations\/00001-add-customers was changed after it was finalized .*: restore it from Git \(`git checkout HEAD -- data-model\/migrations\/00001-add-customers`/,
       ),
-      "Error: Validation failed with 1 error (listed above)",
+      "Error: Validation failed with 1 error, listed above",
     ]);
   });
 });

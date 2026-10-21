@@ -4,6 +4,7 @@
 // The library validates what adapters return (e.g. it refuses a server that
 // isn't PostgreSQL 18), so adapters stay thin.
 
+import { isAbsolute, relative, sep } from "node:path";
 import { SuperDeployError } from "../errors.ts";
 export interface QueryResult<Row = Record<string, unknown>> {
   rows: Row[];
@@ -95,6 +96,18 @@ export interface RehearsalAdapter {
  * An adapter failed to provide a database or connection. A subclass may
  * narrow `code` to one of its own (ConnectionStringError).
  */
+/**
+ * `path` as an adapter's message shows it: relative to the working directory
+ * when it is inside it (a command runs in its project's folder, so that is
+ * project-relative, as the CLI shows paths), absolute otherwise.
+ */
+export function shownPath(path: string): string {
+  const inside = relative(process.cwd(), path);
+  return inside === "" || inside.startsWith("..") || isAbsolute(inside)
+    ? path
+    : inside.split(sep).join("/");
+}
+
 export class AdapterError extends SuperDeployError {
   readonly code: "adapter-failed" | "connection-string-invalid" =
     "adapter-failed";

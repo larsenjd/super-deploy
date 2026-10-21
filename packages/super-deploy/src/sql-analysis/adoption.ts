@@ -39,6 +39,7 @@ import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 import { statementFacts } from "./references.ts";
 import { externalSchemasBoundAtCreate } from "./routine-bodies.ts";
 import type { RuleContext } from "./rule-types.ts";
+import { quoteIdentifier } from "./statement-names.ts";
 import {
   alterTableCommands,
   defElems,
@@ -358,7 +359,7 @@ export function adoptedObjectReference(
 /** `names` (schema-qualified or not) as a quoted name in `schema` by default. */
 function qualified(schema: string, names: readonly string[]): string {
   const parts = names.length === 1 ? [schema, ...names] : names;
-  return parts.map((part) => `"${part.replaceAll('"', '""')}"`).join(".");
+  return parts.map(quoteIdentifier).join(".");
 }
 
 /**

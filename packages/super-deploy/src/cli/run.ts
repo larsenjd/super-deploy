@@ -10,17 +10,16 @@
 // finished, unknown), unless the output was closed.
 import { relative } from "node:path";
 import { AdoptUnsupportedError } from "../commands/adopt.ts";
-import { ValidationFailedError } from "../commands/validate.ts";
 import { CommitOutcomeUnknownError } from "../deploy/engine.ts";
 import { NotOwnedError } from "../deploy/ownership.ts";
 import {
   PreflightFailedError,
   preflightRefusals,
 } from "../deploy/preflight.ts";
+import { commandNoun, rolledBackSentence } from "../deploy/rollback.ts";
 import { errorReason } from "../errors.ts";
 import { InterruptedError, settleCleanups } from "../interruption.ts";
 import type { Project } from "../project.ts";
-import { unchangedTarget } from "../rehearsal/replay.ts";
 import { RehearsalMismatchError } from "../rehearsal/same-structure.ts";
 import {
   describeViolation,
@@ -144,14 +143,13 @@ function interruptedOutcome(
   if (target === undefined || typeof name !== "string") {
     return undefined;
   }
-  const { noun } = target;
+  const noun = commandNoun(target.command);
   if (failed === undefined) {
     return `The ${noun} had already finished: the interruption came too late to stop it on target ${name}.`;
   }
   const { error } = failed;
   if (error instanceof InterruptedError && error.rollback !== undefined) {
-    const { rollback } = error;
-    return `The ${noun} rolled back: ${unchangedTarget(rollback.target, rollback.lastRecorded)}.`;
+    return rolledBackSentence(error.rollback);
   }
   if (error instanceof CommitOutcomeUnknownError) {
     return `Whether the ${noun} committed on target ${name} is unknown: the next status or deploy settles it.`;
@@ -178,8 +176,8 @@ function commandContext(io: CliIo): CommandContext {
  * One `Error:` line; with `debug`, every stack trace and cause too. An error
  * listing several rule violations or rehearsal differences, or adoption's
  * refusal, prints each item on a line of its own first, and a summary that
- * names none of them as its `Error:` line. `validate`'s failure is that
- * summary alone: the command has listed its problems.
+ * names none of them as its `Error:` line. An error whose items the command
+ * has printed already (`alreadyListed`) is its summary alone.
  */
 export function describeError(error: unknown, debug: boolean): string {
   const listing = listedDetails(error);
@@ -206,13 +204,17 @@ export function describeError(error: unknown, debug: boolean): string {
  * The lines an error lists and the summary after them, when it lists more
  * than one (adoption's refusal: always, for the reasons; a refusal for
  * objects the deploy role doesn't own: always, for the fixes as a script).
- * An error a command already reported (`ReportedError`) is its message alone.
+ * An error a command has listed already is its summary alone.
  */
 function listedDetails(
   error: unknown,
 ): { details: readonly string[]; summary: string } | undefined {
-  if (error instanceof ReportedError) {
-    return undefined;
+  const listed =
+    typeof error === "object" && error !== null
+      ? listedByCommand.get(error)
+      : undefined;
+  if (listed !== undefined) {
+    return { details: [], summary: listed };
   }
   if (
     error instanceof AdoptUnsupportedError ||
@@ -226,10 +228,6 @@ function listedDetails(
       preflightRefusals(error.findings).length > 1)
   ) {
     return { details: error.details, summary: error.summary };
-  }
-  if (error instanceof ValidationFailedError) {
-    // The validate command has listed every problem already.
-    return { details: [], summary: error.summary };
   }
   if (error instanceof SqlRuleViolationError && error.violations.length > 1) {
     return {
@@ -255,13 +253,18 @@ export function indentContinuation(text: string, indent: string): string {
   return text.trimEnd().split("\n").join(`\n${indent}`);
 }
 
+const listedByCommand = new WeakMap<object, string>();
+
 /**
- * An error whose items the command has printed already, as `status` prints
- * what deploy would refuse: the CLI prints only its one-line message.
+ * `error`, marked as one whose items the command has printed already, as
+ * `status` prints what deploy would refuse and `validate` its problems: the
+ * CLI then prints only `summary` as its `Error:` line. The error itself, its
+ * class and code, is unchanged.
  */
-export class ReportedError extends Error {
-  constructor(reported: Error) {
-    super(reported.message, { cause: reported });
-    this.name = reported.name;
-  }
+export function alreadyListed<E extends Error>(
+  error: E,
+  summary: string = error.message,
+): E {
+  listedByCommand.set(error, summary);
+  return error;
 }

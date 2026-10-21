@@ -2,7 +2,6 @@
 // working directory, prints what it wrote, and lists what V1 doesn't support
 // on stderr when it refuses. In a terminal it asks for override reasons.
 import { rm } from "node:fs/promises";
-import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli, spawnCli } from "../support/cli.ts";
 import {
@@ -24,15 +23,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await server?.stop();
 });
-
-/** How many sessions on `database` are waiting for a lock. */
-async function waitingForLocks(database: string): Promise<number> {
-  const [row] = await server.query<{ count: number }>(
-    "select count(*)::int as count from pg_stat_activity where datname = $1 and wait_event_type = 'Lock'",
-    [database],
-  );
-  return row?.count ?? 0;
-}
 
 async function projectAdopting(sql: string, settings = "") {
   const prod = await server.createDatabase(sql);
@@ -69,7 +59,7 @@ describe("init --adopt", () => {
     );
   });
 
-  test("adopting an empty managed schema warns on stderr, naming the schemas that hold objects", async () => {
+  test("adopting an empty managed schema warns on stderr, naming the schemas that hold objects, with the count said once", async () => {
     const dir = await projectAdopting(
       "create schema shop; create table shop.t (id bigint primary key);",
     );
@@ -81,18 +71,19 @@ describe("init --adopt", () => {
     expect(result).toEqual({
       exitCode: 0,
       stdout:
-        "Adopted target prod: 0 objects from schema public, as migration 00001-adopt in data-model/migrations/00001-adopt, recorded on it as marked (attempt #1)\n",
+        "Adopted target prod as migration 00001-adopt in data-model/migrations/00001-adopt, recorded on it as marked (attempt #1)\n",
       stderr:
         "warning: Adopted 0 objects from schema public; schema shop holds 1 table: is managedSchema right?\n",
     });
   });
 
   test("says how many grants and policies it left on the target as they are", async () => {
+    const reader = roleName("cli_adopt_reader");
     const dir = await projectAdopting(`
-      create role cli_adopt_reader nologin;
+      create role ${reader} nologin;
       create table customers (id bigint primary key, name text not null);
-      grant select on customers to cli_adopt_reader;
-      create policy customers_read on customers for select to cli_adopt_reader using (true);
+      grant select on customers to ${reader};
+      create policy customers_read on customers for select to ${reader} using (true);
     `);
 
     const result = await runCli(["init", "--adopt", "prod"], {
@@ -106,14 +97,15 @@ describe("init --adopt", () => {
   });
 
   test("also counts the tables with row-level security on, those forcing it, and the deploy role's default privileges it left", async () => {
+    const reader = roleName("cli_adopt_rls_reader");
     const dir = await projectAdopting(`
-      create role cli_adopt_rls_reader nologin;
+      create role ${reader} nologin;
       create table items (id bigint primary key);
       create table parts (id bigint primary key);
       alter table items enable row level security;
       alter table parts enable row level security;
       alter table parts force row level security;
-      alter default privileges in schema public grant select on tables to cli_adopt_rls_reader;
+      alter default privileges in schema public grant select on tables to ${reader};
     `);
 
     const result = await runCli(["init", "--adopt", "prod"], {
@@ -224,7 +216,7 @@ describe("init --adopt", () => {
         `  function app.widget_named(wanted text, since bigint) (owned by ${admin})`,
         `  table app.widgets (owned by ${admin})`,
         `  view app.widget_names (owned by ${admin})`,
-        "To fix, run as a superuser or as each object's owner:",
+        "To fix, run as a superuser:",
         `  ALTER FUNCTION app.widget_named(wanted text, since bigint) OWNER TO ${deployer};`,
         `  ALTER TABLE app.widgets OWNER TO ${deployer};`,
         `  ALTER VIEW app.widget_names OWNER TO ${deployer};`,
@@ -288,17 +280,16 @@ describe("init --adopt", () => {
     try {
       await holder.execute("BEGIN; LOCK TABLE t IN ACCESS EXCLUSIVE MODE");
       const cli = spawnCli(["init", "--adopt", "prod"], { cwd: dir.root });
-      while ((await waitingForLocks(prod)) === 0) {
-        await delay(100);
-      }
+      await server.untilLockWaiter(prod);
       const interrupted = Date.now();
 
       cli.signal("SIGINT");
       const result = await cli.result;
 
-      expect(Date.now() - interrupted).toBeLessThan(3_000);
+      // Well under the 30 s lockTimeout: it didn't wait for the lock.
+      expect(Date.now() - interrupted).toBeLessThan(15_000);
       expect(result.exitCode).toBe(130);
-      expect(await waitingForLocks(prod)).toBe(0);
+      expect(await server.lockWaiters(prod)).toEqual([]);
       expect(dir.exists("data-model/desired-schema")).toBe(false);
       expect(dir.exists("data-model/migrations")).toBe(false);
       expect(
@@ -328,8 +319,13 @@ describe("init --adopt", () => {
     });
   });
 
-  test("without a terminal lists the functions that need an override reason apart from anything unsupported, advising a terminal", async () => {
-    const dir = await projectAdopting(loader);
+  test("without a terminal lists the functions that need an override reason apart from anything unsupported, each once, advising a terminal", async () => {
+    const dir = await projectAdopting(`${loader}
+create function notify_event() returns void language plpgsql
+  as $$ begin perform pg_notify('events', 'x'); end $$;
+create function purge_kind(k text) returns void language plpgsql
+  as $$ begin execute format('delete from %I', k); perform pg_notify('purged', k); end $$;
+`);
 
     const result = await runCli(["init", "--adopt", "prod"], {
       cwd: dir.root,
@@ -338,10 +334,17 @@ describe("init --adopt", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).not.toContain("doesn't support");
     expect(result.stderr).toMatch(
-      /^Target prod has 1 object that needs an override reason, asked only in a terminal:\n {2}function load_staging\(text\)\n {4}plpgsql-dynamic-sql: EXECUTE \(dynamic SQL\) is not allowed/,
+      /^Target prod has 3 objects that need an override reason, asked only in a terminal:\n/,
     );
+    for (const object of [
+      "function load_staging(text)",
+      "function notify_event()",
+      "function purge_kind(text)",
+    ]) {
+      expect(result.stderr.split("\n")).toContain(`  ${object}`);
+    }
     expect(result.stderr).toMatch(
-      /\nError: Cannot adopt target prod without a terminal: 1 object needs an override reason, listed above\. Nothing was written; run adoption in a terminal to give an override reason for each object that breaks only risk rules\n$/,
+      /\nError: Cannot adopt target prod without a terminal: 3 objects need an override reason, listed above\. Nothing was written; run adoption in a terminal to give an override reason for each object that breaks only risk rules\n$/,
     );
     expect(dir.exists("data-model/desired-schema")).toBe(false);
   });

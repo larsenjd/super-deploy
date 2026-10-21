@@ -8,6 +8,7 @@ import {
   RehearsalMismatchError,
   rehearse,
   SqlFileFailedError,
+  SqlRuleViolationError,
   unfinalize,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -160,13 +161,9 @@ describe("rehearse", () => {
     );
   });
 
-  test("a draft written before the schema-change hash existed counts as not edited by hand", async () => {
+  test("a failing rehearsal of a draft written before the generated copy of its schema change existed counts it as not edited by hand", async () => {
     const { dir, project } = await draftedProject();
-    const metadata = "data-model/draft/draft.json";
-    const { schemaChangeHash: _, ...older } = JSON.parse(
-      await dir.read(metadata),
-    );
-    await dir.write(metadata, JSON.stringify(older));
+    await rm(dir.path("data-model/draft/schema-change.generated.sql"));
     const file = "data-model/draft/schema-change.sql";
     await dir.write(
       file,
@@ -395,6 +392,40 @@ create trigger notes_stamp_trg before insert on notes for each row execute funct
       "external schema",
     );
   });
+
+  test.each([
+    ["without", ""],
+    ["even with", "-- OVERRIDE SUPER-DEPLOY REFUSAL: stamps new customers\n"],
+  ])(
+    "a pre-migration script whose trigger function grants in its body is refused, %s an override marker",
+    async (_, marker) => {
+      const { dir, project } = await draftedProject();
+      await dir.write(
+        "data-model/draft/pre-migration.sql",
+        `${marker}create function sneaky() returns trigger language plpgsql as $$
+begin
+  grant select on customers to public;
+  return new;
+end $$;
+create trigger customers_sneaky before insert on customers for each row execute function sneaky();
+insert into customers (id, name) values (1, 'x');
+drop trigger customers_sneaky on customers;
+drop function sneaky();
+`,
+      );
+
+      const error = await rehearse(project).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(SqlRuleViolationError);
+      expect((error as SqlRuleViolationError).violations).toContainEqual(
+        expect.objectContaining({
+          file: "data-model/draft/pre-migration.sql",
+          rule: "unsupported-object",
+          message: expect.stringContaining("GRANT"),
+        }),
+      );
+    },
+  );
 
   test("needs a draft", async () => {
     const dir = await createTestProject({

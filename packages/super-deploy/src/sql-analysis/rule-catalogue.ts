@@ -61,7 +61,7 @@ const definitions = {
   ],
   "escapes-transaction": [
     "transaction",
-    "The statement's effects are not undone by a rollback or outlive the transaction",
+    "The statement escapes the deploy transaction: a rollback doesn't undo it, it outlives the transaction, or it changes what super-deploy pins for the whole deployment",
   ],
   "temp-table-without-on-commit-drop": [
     "transaction",

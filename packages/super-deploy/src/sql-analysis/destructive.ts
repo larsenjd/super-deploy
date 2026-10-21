@@ -18,11 +18,14 @@
 // generated `USING col::newtype` is an explicit cast (QA 09).
 //
 // A column dropped and then added again with the same name and type is
-// pg-delta changing its collation or generation expression (it can't alter
-// either in place; research §8, QA 103). The drop stays destructive, and its
-// reason says so, with the statement that changes the column in place
-// (`columnReplacement`, `replacedColumnReason`; the draft's script coverage
-// words its warning alike).
+// pg-delta changing its collation or generation expression, or making a
+// generated column plain (it can't alter these in place; research §8, QA
+// 103). The drop stays destructive, and its reason says so, with the
+// statement that changes the column in place (`columnReplacement`,
+// `replacedColumnReason`; the draft's script coverage words its warning
+// alike): SET EXPRESSION when both are generated, DROP EXPRESSION when only
+// the dropped one was, the type with its collation when neither was. A plain
+// column made generated has no in-place statement: a real drop and add.
 //
 // Warnings: statements that rewrite or fully scan an existing table while
 // holding its lock until the deployment commits. Tables created in the same
@@ -115,8 +118,24 @@ export interface LockWarning {
   readonly message: string;
 }
 
-/** Column types by table (or composite type) and column name, unqualified. */
-export type ColumnTypes = ReadonlyMap<string, ReadonlyMap<string, TypeName>>;
+/**
+ * Column definitions by table (or composite type) and column name,
+ * unqualified: the type, and whether the column is generated.
+ */
+export type ColumnTypes = ReadonlyMap<string, ReadonlyMap<string, ColumnDef>>;
+
+/** What a column was when it was dropped: its type, and whether it was generated. */
+export interface DroppedColumn {
+  readonly typeName: TypeName | undefined;
+  readonly generated: boolean;
+}
+
+/** The column's GENERATED ALWAYS AS (...) constraint, if it has one. */
+function generation(column: ColumnDef): Constraint | undefined {
+  return (column.constraints ?? [])
+    .map((item) => unwrap<Constraint>(item, "Constraint"))
+    .find((constraint) => constraint?.contype === "CONSTR_GENERATED");
+}
 
 /** Column types defined by CREATE TABLE and CREATE TYPE ... AS statements, e.g. a desired schema. */
 export function columnTypesOf(
@@ -133,8 +152,8 @@ interface Drop {
   /** Reworded when the column dropped is added again (`replacedColumnReason`). */
   found: DestructiveStatement;
   readonly key: string;
-  /** For a dropped column: its type when dropped, if known. */
-  readonly columnType?: TypeName | undefined;
+  /** For a dropped column: what it was when dropped, if known. */
+  readonly column?: DroppedColumn | undefined;
   /** Holds no data, so creating it again later in the migration loses nothing. */
   readonly recreatable: boolean;
   /** Created again, or part of a table the migration drops later. */
@@ -159,7 +178,7 @@ const recreatableKinds = new Set([
  * rules have looked at them.
  */
 export class ChangeTracker {
-  readonly columns = new Map<string, Map<string, TypeName>>();
+  readonly columns = new Map<string, Map<string, ColumnDef>>();
   readonly #managedSchema: string;
   /** Keys of the objects this migration has created so far. */
   readonly #created = new Set<string>();
@@ -226,7 +245,7 @@ export class ChangeTracker {
           drop.key === `column:${table}.${column.colname}`,
       );
       const replacement = columnReplacement(
-        dropped?.columnType,
+        dropped?.column,
         statement,
         column,
         this.#managedSchema,
@@ -273,11 +292,17 @@ export class ChangeTracker {
       key: string,
       message: string,
       cascade: boolean,
-      columnType?: TypeName,
+      column?: ColumnDef,
     ) => {
       const objectKind = key.slice(0, key.indexOf(":"));
       drops.push({
-        columnType: cascade ? undefined : columnType,
+        column:
+          cascade || column === undefined
+            ? undefined
+            : {
+                typeName: column.typeName,
+                generated: generation(column) !== undefined,
+              },
         found: {
           file: statement.file,
           line: statement.line,
@@ -565,7 +590,7 @@ export class ChangeTracker {
     statement: string,
   ): string | undefined {
     const target = unwrap(cmd.def, "ColumnDef") as ColumnDef | undefined;
-    const current = this.columns.get(table)?.get(column);
+    const current = this.columns.get(table)?.get(column)?.typeName;
     if (target?.typeName === undefined) {
       return undefined;
     }
@@ -602,11 +627,11 @@ export class ChangeTracker {
       if (table === undefined) {
         return;
       }
-      const columns = new Map<string, TypeName>();
+      const columns = new Map<string, ColumnDef>();
       for (const element of Array.isArray(elements) ? elements : []) {
         const column = unwrap(element, "ColumnDef") as ColumnDef | undefined;
         if (column?.colname !== undefined && column.typeName !== undefined) {
-          columns.set(column.colname, column.typeName);
+          columns.set(column.colname, column);
         }
       }
       this.columns.set(table, columns);
@@ -619,15 +644,32 @@ export class ChangeTracker {
       const columns = table === undefined ? undefined : this.columns.get(table);
       for (const cmd of alterTableCommands(body)) {
         const column = unwrap(cmd.def, "ColumnDef") as ColumnDef | undefined;
+        const current = columns?.get(cmd.name ?? "");
         if (cmd.subtype === "AT_AddColumn" && column?.colname !== undefined) {
           if (column.typeName !== undefined) {
-            columns?.set(column.colname, column.typeName);
+            columns?.set(column.colname, column);
           }
         } else if (
           cmd.subtype === "AT_AlterColumnType" &&
-          column?.typeName !== undefined
+          column?.typeName !== undefined &&
+          current !== undefined
         ) {
-          columns?.set(cmd.name ?? "", column.typeName);
+          columns?.set(cmd.name ?? "", {
+            ...current,
+            typeName: column.typeName,
+          });
+        } else if (
+          cmd.subtype === "AT_DropExpression" &&
+          current !== undefined
+        ) {
+          columns?.set(cmd.name ?? "", {
+            ...current,
+            constraints: (current.constraints ?? []).filter(
+              (item) =>
+                unwrap<Constraint>(item, "Constraint")?.contype !==
+                "CONSTR_GENERATED",
+            ),
+          });
         } else if (cmd.subtype === "AT_DropColumn") {
           columns?.delete(cmd.name ?? "");
         }
@@ -1163,8 +1205,11 @@ export function narrowingReason(subject: string, narrowing: Narrowing): string {
 
 /** What re-adding a dropped column changes, and the statement changing it in place. */
 export interface ColumnReplacement {
-  readonly change: "collation" | "generation expression";
-  /** `ALTER TABLE ... ALTER COLUMN ... TYPE ... COLLATE ...` or `... SET EXPRESSION AS (...)`. */
+  readonly change: "collation" | "generation expression" | "generation";
+  /**
+   * `ALTER TABLE ... ALTER COLUMN ... TYPE ... COLLATE ...`, `... SET
+   * EXPRESSION AS (...)` or `... DROP EXPRESSION`.
+   */
   readonly inPlace: string;
 }
 
@@ -1186,14 +1231,15 @@ const afterType = new Set([
 
 /**
  * For `column`, added by `statement` (an ALTER TABLE ... ADD COLUMN) after
- * the same column, of type `dropped`, was dropped: what pg-delta replaced
- * it to change, and the statement that makes that change in place, cut
- * from the statement's own text. A generated column's expression, else its
- * collation (`"default"` when it names none). Undefined when the type
- * differs or isn't known (a real drop and add), or the text can't be cut.
+ * the same column, `dropped`, was dropped: what pg-delta replaced it to
+ * change, and the statement that makes that change in place, cut from the
+ * statement's own text. Both generated: the expression; only the dropped
+ * one: no longer generated; neither: the collation (`"default"` when it
+ * names none). Undefined when the type differs or isn't known, or a plain
+ * column becomes generated (a real drop and add), or the text can't be cut.
  */
 export function columnReplacement(
-  dropped: TypeName | undefined,
+  dropped: DroppedColumn | undefined,
   statement: ParsedStatement,
   column: ColumnDef,
   managedSchema: string,
@@ -1203,10 +1249,12 @@ export function columnReplacement(
     const shown = typeDisplay(type);
     return shown.startsWith(prefix) ? shown.slice(prefix.length) : shown;
   };
+  const generated = generation(column);
   if (
-    dropped === undefined ||
+    dropped?.typeName === undefined ||
     column.typeName === undefined ||
-    typeName(dropped) !== typeName(column.typeName)
+    typeName(dropped.typeName) !== typeName(column.typeName) ||
+    (generated !== undefined && !dropped.generated)
   ) {
     return undefined;
   }
@@ -1229,9 +1277,9 @@ export function columnReplacement(
     return undefined;
   }
   const alter = `${head}${name.text}`;
-  const generated = (column.constraints ?? [])
-    .map((item) => unwrap<Constraint>(item, "Constraint"))
-    .find((constraint) => constraint?.contype === "CONSTR_GENERATED");
+  if (dropped.generated && generated === undefined) {
+    return { change: "generation", inPlace: `${alter} DROP EXPRESSION` };
+  }
   if (generated !== undefined) {
     const from = tokenAt(generated.location);
     const open = tokens.findIndex(
@@ -1292,11 +1340,14 @@ export function replacedColumnReason(
   replacement: ColumnReplacement,
   detail = "",
 ): string {
-  const replaced = `${subject} is dropped and re-added to change its ${replacement.change}${detail}`;
+  const replaced =
+    replacement.change === "generation"
+      ? `${subject} is dropped and re-added to stop generating it${detail}`
+      : `${subject} is dropped and re-added to change its ${replacement.change}${detail}`;
   const inPlace = `change it in place in the pre-migration script: ${replacement.inPlace}`;
-  return replacement.change === "collation"
-    ? `${replaced}: its values are lost. To keep them, ${inPlace}`
-    : `${replaced}: its values are computed again, but it moves to the end of the table and finalize needs the drop acknowledged. To avoid both, ${inPlace}`;
+  return replacement.change === "generation expression"
+    ? `${replaced}: its values are computed again, but it moves to the end of the table and finalize needs the drop acknowledged. To avoid both, ${inPlace}`
+    : `${replaced}: its values are lost. To keep them, ${inPlace}`;
 }
 
 /** USING keeps the values when it is absent, the column itself, or a cast of it. */

@@ -27,6 +27,7 @@ import {
   finalizeMigration,
   roleName,
   testSession,
+  whileLocked,
 } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
@@ -86,16 +87,10 @@ async function adoptingWhileLocked(sql: string) {
       otherTargets: `prod: { adapter: postgres.target(${JSON.stringify(prod)}), lockTimeout: "200ms" },`,
     },
   );
-  const holder = await testSession(server, prod);
-  try {
-    await holder.execute("BEGIN; LOCK TABLE t IN ACCESS EXCLUSIVE MODE");
-    const error = await adopt(deployed.project, { target: "prod" }).catch(
-      (e: unknown) => e,
-    );
-    return { ...deployed, prod, error };
-  } finally {
-    await holder.close();
-  }
+  const error = await whileLocked(server, prod, "t", "ACCESS EXCLUSIVE", () =>
+    adopt(deployed.project, { target: "prod" }).catch((e: unknown) => e),
+  );
+  return { ...deployed, prod, error };
 }
 
 /**
@@ -1176,6 +1171,38 @@ describe("adopt", () => {
     }
   });
 
+  test("refuses a target whose empty history schema another role owns, with its ALTER SCHEMA among the fixes' script", async () => {
+    const deployer = roleName("adopt_deployer");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create schema app authorization ${deployer};
+      create schema audit;
+    `);
+    const { project } = await deployProject(
+      server,
+      {},
+      {
+        settings: 'managedSchema: "app", historySchema: "audit",',
+        preamble: asDeployerPreamble(prod, deployer),
+        otherTargets: "prod: { adapter: asDeployer },",
+      },
+    );
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const { details } = error as AdoptUnsupportedError;
+      const script = details.slice(
+        details.indexOf("To fix, run as a superuser:"),
+      );
+      expect(script).toContain(`  ALTER SCHEMA audit OWNER TO ${deployer};`);
+    } finally {
+      await project.close();
+    }
+  });
+
   test("refuses once for everything: objects owned by another role, CREATE on the database and what V1 doesn't support, listing an object that is both only as unsupported", async () => {
     const deployer = roleName("adopt_deployer");
     const other = roleName("adopt_other");
@@ -1713,6 +1740,40 @@ describe("adopt", () => {
 
       expect((await adopt(project, { target: "prod" })).objects).toBe(1);
     } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses with the same typed error when its first read, of the history table, waits longer than the target's lockTimeout", async () => {
+    const prod = await server.createDatabase();
+    await asDeployRole(server, prod, "create table t (id bigint primary key)");
+    const target = `prod: { adapter: postgres.target(${JSON.stringify(prod)}), lockTimeout: "200ms" },`;
+    const adopted = await deployProject(server, {}, { otherTargets: target });
+    try {
+      await adopt(adopted.project, { target: "prod" });
+    } finally {
+      await adopted.project.close();
+    }
+    const { project } = await deployProject(
+      server,
+      {},
+      { otherTargets: target },
+    );
+    const holder = await testSession(server, prod);
+    try {
+      await holder.execute(
+        "BEGIN; LOCK TABLE deployment_history.migrations IN ACCESS EXCLUSIVE MODE",
+      );
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(TargetTimeoutError);
+      expect((error as TargetTimeoutError).message).toContain(
+        "lockTimeout (200ms)",
+      );
+    } finally {
+      await holder.close();
       await project.close();
     }
   });

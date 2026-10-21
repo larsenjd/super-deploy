@@ -54,14 +54,15 @@
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { SuperDeployError, sessionEnding } from "../errors.ts";
-import { InterruptedError, type InterruptedRollback } from "../interruption.ts";
+import { InterruptedError } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { type ReplayUnit, runUnit } from "../rehearsal/replay.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
-import { migrationFolderName } from "../store/migrations.ts";
+import { quoteIdentifier } from "../sql-analysis/index.ts";
 import {
   type Attempt,
   type AttemptCommand,
+  type AttemptStart,
   openAttempt,
   settleAttempts,
 } from "./attempts.ts";
@@ -69,13 +70,13 @@ import {
   type AttemptOutcome,
   ensureHistorySchema,
   type MigrationVariantIdentity,
-  quoteIdentifier,
   readRecordedMigrations,
   recordMigration,
 } from "./history.ts";
 import { interruptibleSession } from "./interruptible-session.ts";
 import { acquireTargetLock, type TargetLock } from "./lock.ts";
 import { requireHistorySchemaUsable } from "./preflight.ts";
+import { recordedPosition, type TargetRollback } from "./rollback.ts";
 import {
   markRolledBack,
   targetFailure,
@@ -121,17 +122,17 @@ export async function withLockedTarget<T>(
   try {
     const log = tracedSession(await connectTarget(target, signal));
     try {
-      await requireHistorySchemaUsable(log, target.name, historySchema);
-      await ensureHistorySchema(log, historySchema);
-      await settleAttempts(log, historySchema);
-      const { rows } = await commandSession.query<{ pid: number }>(
-        "SELECT pg_backend_pid() AS pid",
-      );
-      const backendPid = rows[0]?.pid;
-      const attempt = await openAttempt(log, historySchema, {
-        ...command,
-        target: target.name,
-        backendPid,
+      // A session that ends or times out before the attempt opens is
+      // reported as the target's too (nothing has changed yet).
+      const { attempt, backendPid } = await openLockedAttempt(
+        log,
+        commandSession,
+        historySchema,
+        { ...command, target: target.name },
+      ).catch(async (error: unknown) => {
+        throw await targetFailure(error, target, () =>
+          rolledBack(log, historySchema, command, target),
+        );
       });
       const { session, settle } = interruptibleSession(
         commandSession,
@@ -163,12 +164,11 @@ export async function withLockedTarget<T>(
                   error instanceof InterruptedError
                     ? error.cause
                     : (signal?.reason ?? error),
-                rollback: await rolledBack(log, historySchema, target.name),
+                rollback: await rolledBack(log, historySchema, command, target),
               })
-            : await targetFailure(error, target, async () => ({
-                noun: rolledBackNoun(command.command),
-                recorded: await rolledBack(log, historySchema, target.name),
-              }));
+            : await targetFailure(error, target, () =>
+                rolledBack(log, historySchema, command, target),
+              );
         await attempt
           .end(
             outcome,
@@ -191,42 +191,45 @@ export async function withLockedTarget<T>(
 }
 
 /**
- * What an abandoned attempt left the target at: its deploy transaction rolled
- * back (a COMMIT already sent finishes first, and then the attempt
- * succeeds), so the target still records what it did before. Undefined if
- * that can't be read.
+ * Before withLockedTarget's body: the history schema checked and created,
+ * earlier attempts settled, and this one opened on `log`, recording the
+ * command session's server process (the lock holder).
+ */
+async function openLockedAttempt(
+  log: Session,
+  commandSession: Session,
+  historySchema: string,
+  start: Omit<AttemptStart, "backendPid">,
+): Promise<{ attempt: Attempt; backendPid: number | undefined }> {
+  await requireHistorySchemaUsable(log, start.target, historySchema);
+  await ensureHistorySchema(log, historySchema);
+  await settleAttempts(log, historySchema);
+  const { rows } = await commandSession.query<{ pid: number }>(
+    "SELECT pg_backend_pid() AS pid",
+  );
+  const backendPid = rows[0]?.pid;
+  return {
+    attempt: await openAttempt(log, historySchema, { ...start, backendPid }),
+    backendPid,
+  };
+}
+
+/**
+ * What a command whose transaction rolled back left the target at: it still
+ * records what it did before (a COMMIT already sent finishes first, and then
+ * the attempt succeeds). Its position is unknown if that can't be read.
  */
 async function rolledBack(
   log: Session,
   historySchema: string,
-  target: string,
-): Promise<InterruptedRollback | undefined> {
-  try {
-    const last = (await readRecordedMigrations(log, historySchema)).at(-1);
-    return {
-      target,
-      lastRecorded:
-        last === undefined
-          ? undefined
-          : migrationFolderName(last.number, last.name),
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-/** What a command's rolled-back transaction is called, e.g. `deployment`. */
-function rolledBackNoun(command: string): string {
-  switch (command) {
-    case "deploy":
-      return "deployment";
-    case "deploy-draft":
-      return "draft's deployment";
-    case "init --adopt":
-      return "adoption";
-    default:
-      return command;
-  }
+  command: AttemptCommand,
+  target: ResolvedTarget,
+): Promise<TargetRollback> {
+  const recorded = await readRecordedMigrations(log, historySchema).then(
+    recordedPosition,
+    () => undefined,
+  );
+  return { command: command.command, target: target.name, recorded };
 }
 
 /** What an abandoned attempt records as its error, e.g. `Interrupted (SIGINT)`. */

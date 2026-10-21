@@ -9,6 +9,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedConfig } from "../config/config.ts";
+import { rolledBackSentence, type TargetRollback } from "../deploy/rollback.ts";
 import {
   isTimeoutState,
   type TargetTimeoutSettings,
@@ -292,51 +293,21 @@ export interface SqlFileFailure extends PostgresRefusal {
 }
 
 /**
- * A command's transaction on a target rolled back because a file failed: what
- * the error then says about the target, and the next step it suggests.
+ * A command's transaction on a target rolled back because a file failed, with
+ * what the next step for a data error needs: the finalized migration whose
+ * file failed (deploy), whether the draft's seed data ran first
+ * (deploy-draft, `--with-seed`).
  */
-export type TargetRollback =
-  | DeploymentRollback
-  | DraftDeploymentRollback
-  | RebuildRollback;
-
-/** A deployment's transaction rolled back. */
-export interface DeploymentRollback {
-  readonly command: "deploy";
-  readonly target: string;
-  /** Folder of the newest migration the target records, e.g. `00003-add-email`; undefined when it records none. */
-  readonly lastRecorded: string | undefined;
-  /** Number of the finalized migration whose file failed. */
-  readonly migration: number;
-}
-
-/** deploy-draft's transaction rolled back: the target holds no draft. */
-export interface DraftDeploymentRollback {
-  readonly command: "deploy-draft";
-  readonly target: string;
-  /** Folder of the newest migration the target records; undefined when it records none. */
-  readonly lastRecorded: string | undefined;
-  /** Whether the draft's seed data ran first (`--with-seed`). */
-  readonly seedData: boolean;
-}
-
-/** rebuild's transaction rolled back: nothing was wiped. */
-export interface RebuildRollback {
-  readonly command: "rebuild";
-  readonly target: string;
-}
-
-/**
- * E.g. `target qa is unchanged, still at migration 00009-add-tier`, or `...,
- * with no migration recorded`: how a rolled-back deployment's target is
- * described, here and by the CLI after an interruption.
- */
-export function unchangedTarget(
-  target: string,
-  lastRecorded: string | undefined,
-): string {
-  return `target ${target} is unchanged, ${lastRecorded === undefined ? "with no migration recorded" : `still at migration ${lastRecorded}`}`;
-}
+export type FileRollback =
+  | (TargetRollback & {
+      readonly command: "deploy";
+      readonly migration: number;
+    })
+  | (TargetRollback & {
+      readonly command: "deploy-draft";
+      readonly seedData: boolean;
+    })
+  | (TargetRollback & { readonly command: "rebuild" });
 
 /**
  * PostgreSQL refused a deploy-time SQL file, in a rehearsal or a deployment.
@@ -364,7 +335,7 @@ export class SqlFileFailedError extends SuperDeployError {
   readonly hint: string | undefined;
   readonly sqlState: string | undefined;
   /** Set when a command's transaction on a target rolled back. */
-  readonly rollback: TargetRollback | undefined;
+  readonly rollback: FileRollback | undefined;
   /** The declared external schema a rehearsal failed for lack of. */
   private readonly missingExternalSchema: string | undefined;
   /** The target the file failed on, for its timeouts. */
@@ -373,7 +344,7 @@ export class SqlFileFailedError extends SuperDeployError {
   constructor(
     failure: SqlFileFailure,
     options?: ErrorOptions & {
-      rollback?: TargetRollback | undefined;
+      rollback?: FileRollback | undefined;
       missingExternalSchema?: string | undefined;
       target?: TargetTimeoutSettings | undefined;
     },
@@ -414,23 +385,13 @@ export class SqlFileFailedError extends SuperDeployError {
   }
 
   /** The same failure, reported by the command whose transaction rolled back. */
-  rolledBack(rollback: TargetRollback): SqlFileFailedError {
-    return new SqlFileFailedError(this, {
-      cause: this.cause,
-      rollback,
-      missingExternalSchema: this.missingExternalSchema,
-      target: this.target,
-    });
+  rolledBack(rollback: FileRollback): SqlFileFailedError {
+    return this.with({ rollback });
   }
 
   /** The same failure on `target`, whose timeouts a timeout's next step quotes. */
   onTarget(target: TargetTimeoutSettings): SqlFileFailedError {
-    return new SqlFileFailedError(this, {
-      cause: this.cause,
-      rollback: this.rollback,
-      missingExternalSchema: this.missingExternalSchema,
-      target,
-    });
+    return this.with({ target });
   }
 
   /**
@@ -442,12 +403,22 @@ export class SqlFileFailedError extends SuperDeployError {
     const schema = externalSchemaNamed(this, externalSchemas);
     return schema === undefined
       ? this
-      : new SqlFileFailedError(this, {
-          cause: this.cause,
-          rollback: this.rollback,
-          missingExternalSchema: schema,
-          target: this.target,
-        });
+      : this.with({ missingExternalSchema: schema });
+  }
+
+  /** The same failure with `changes` to what the message adds. */
+  private with(changes: {
+    rollback?: FileRollback;
+    missingExternalSchema?: string;
+    target?: TargetTimeoutSettings;
+  }): SqlFileFailedError {
+    return new SqlFileFailedError(this, {
+      cause: this.cause,
+      rollback: this.rollback,
+      missingExternalSchema: this.missingExternalSchema,
+      target: this.target,
+      ...changes,
+    });
   }
 }
 
@@ -473,31 +444,19 @@ function externalSchemaNamed(
   );
 }
 
-/** E.g. `The deployment rolled back: target qa is unchanged, still at migration 00003-add-email.` */
-function rolledBackSentence(rollback: TargetRollback): string {
-  switch (rollback.command) {
-    case "deploy":
-      return `The deployment rolled back: ${unchangedTarget(rollback.target, rollback.lastRecorded)}.`;
-    case "deploy-draft":
-      return `The draft's deployment rolled back: ${unchangedTarget(rollback.target, rollback.lastRecorded)} (no draft deployed).`;
-    case "rebuild":
-      return `The rebuild rolled back: target ${rollback.target} is unchanged.`;
-  }
-}
-
 function sentence(text: string): string {
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
 function nextStep(
   failure: SqlFileFailure,
-  rollback: TargetRollback | undefined,
+  rollback: FileRollback | undefined,
   target: TargetTimeoutSettings | undefined,
 ): string | undefined {
   const { sqlState } = failure;
   const generated = generatedColumnBlocking(failure);
   if (generated !== undefined) {
-    return `Next: drop generated column "${generated.generated}" in the pre-migration script and run draft again: the schema change then changes the type of "${generated.column}" and adds "${generated.generated}" back (see the README, "Changing the type of a column a generated column uses").`;
+    return `Next: drop generated column "${generated.generated}" in the pre-migration script and run draft again: the schema change then changes the type of "${generated.column}" and adds "${generated.generated}" back (or retype both in the pre-migration script; see the README, "Changing the type of a column a generated column uses").`;
   }
   const forced = forcedRowSecurityTable(failure);
   if (forced !== undefined) {
@@ -523,9 +482,7 @@ function nextStep(
  * migration; the draft itself for deploy-draft (it isn't finalized). None
  * for rebuild (it replays what other targets ran) or a rehearsal.
  */
-function dataErrorStep(
-  rollback: TargetRollback | undefined,
-): string | undefined {
+function dataErrorStep(rollback: FileRollback | undefined): string | undefined {
   switch (rollback?.command) {
     case "deploy":
       return `Next: super-deploy recovery --migration ${rollback.migration}, with seed data that reproduces the problem rows in the rehearsal.`;
@@ -539,7 +496,11 @@ function dataErrorStep(
 /**
  * The columns in PostgreSQL's refusal to change the type of a column a
  * stored generated column uses (pg-delta's type change leaves the generated
- * column in place: research §8), read from its DETAIL.
+ * column in place: research §8), read from its DETAIL. That is PostgreSQL's
+ * English text: on a server whose lc_messages is another language the
+ * failure is reported all the same, without this next step. The SQLSTATE
+ * alone (0A000) would match other unsupported features too, and nothing
+ * else in the error names the generated column.
  */
 function generatedColumnBlocking(
   failure: SqlFileFailure,

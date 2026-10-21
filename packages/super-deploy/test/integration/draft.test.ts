@@ -146,7 +146,7 @@ create table orders (
         ],
       },
     ]);
-    expect(await dir.read("data-model/draft/schema-change.sql")).toBeDefined();
+    expect(dir.exists("data-model/draft/schema-change.sql")).toBe(true);
   });
 
   test("refuses statements the desired schema doesn't allow, naming file and line", async () => {
@@ -202,6 +202,30 @@ create table orders (
         file: "data-model/desired-schema/customers.sql",
         line: 6,
         rule: "syntax-error",
+      },
+    ]);
+  });
+
+  test("names an extension's type in another schema that a column uses, such as public.citext", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(server, 'managedSchema: "app",'),
+      files: {
+        "data-model/desired-schema/users.sql":
+          "create table users (id bigint primary key, email public.citext not null);\n",
+      },
+    });
+    const project = await loadProject({ cwd: dir.root });
+
+    const error = await draft(project, { name: "add users" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(SqlRuleViolationError);
+    expect((error as SqlRuleViolationError).violations).toMatchObject([
+      {
+        file: "data-model/desired-schema/users.sql",
+        rule: "undeclared-schema",
+        message: expect.stringContaining("public.citext"),
       },
     ]);
   });

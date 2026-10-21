@@ -124,7 +124,7 @@ export async function status(
       targetName: target.name,
       migrations,
       recorded,
-      pending,
+      units: pending.map(({ unit }) => unit),
     });
     const holder = await lockHolder(session, schema);
     const lockedBy = holder.pid === undefined ? undefined : holder;

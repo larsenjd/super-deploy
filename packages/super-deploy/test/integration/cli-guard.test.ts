@@ -6,7 +6,12 @@ import { deploy, draft, finalize, loadProject } from "super-deploy";
 import { embeddedPostgres } from "super-deploy/embedded-postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
-import { asDeployRole, deployConfig } from "../support/deploy.ts";
+import {
+  asDeployRole,
+  attemptLog,
+  deployConfig,
+  embeddedDeployRole,
+} from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject } from "../support/project.ts";
 import { keys, showCursor, spawnTerminal } from "../support/terminal.ts";
@@ -108,7 +113,7 @@ async function localhostUrl(database: string): Promise<string> {
   try {
     const url = new URL(await client.connectionString(database));
     url.hostname = "localhost";
-    url.username = "deployer";
+    url.username = embeddedDeployRole;
     url.password = "deployer";
     return url.href;
   } finally {
@@ -137,28 +142,36 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
     expect(shown).toMatch(
       /Host: +localhost:(\d+) \((?:127\.0\.0\.1|\[::1\]):\1\)/,
     );
-    expect(shown).not.toContain("deployer");
+    expect(shown).not.toContain(embeddedDeployRole);
     terminal.type(keys.ctrlC);
     expect(await terminal.exited).toBe(1);
   });
 
-  test("the Host line shows only the server's address for an adapter that doesn't say where it connects", async () => {
-    const { dir } = await deployedProject({
-      otherTargets:
-        "qa: { adapter: { connect: (options) => real.connect(options) } },",
-    });
+  test.each([
+    ["doesn't say where it connects", ""],
+    [
+      "fails to say where it connects",
+      'host: () => { throw new Error("no host"); },',
+    ],
+  ])(
+    "the Host line shows only the server's address for an adapter that %s",
+    async (_, host) => {
+      const { dir } = await deployedProject({
+        otherTargets: `qa: { adapter: { connect: (options) => real.connect(options), ${host} } },`,
+      });
 
-    const terminal = spawnTerminal(
-      ["disposable", "--target", "qa", "--set", "yes"],
-      { cwd: dir.root },
-    );
+      const terminal = spawnTerminal(
+        ["disposable", "--target", "qa", "--set", "yes"],
+        { cwd: dir.root },
+      );
 
-    expect(await terminal.waitFor("Type YES")).toMatch(
-      /Host: +127\.0\.0\.1:\d+ +│/,
-    );
-    terminal.type(keys.ctrlC);
-    expect(await terminal.exited).toBe(1);
-  });
+      expect(await terminal.waitFor("Type YES")).toMatch(
+        /Host: +127\.0\.0\.1:\d+ +│/,
+      );
+      terminal.type(keys.ctrlC);
+      expect(await terminal.exited).toBe(1);
+    },
+  );
 
   test("disposable shows the action and the target's details, and sets the flag once YES is typed, recording a manual attempt", async () => {
     const { dir, database } = await deployedProject();
@@ -467,13 +480,7 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
       "Error: Target dev changed while disposable waited for YES",
     );
     expect(await terminal.exited).toBe(1);
-    expect(
-      await server.query(
-        "select command, outcome from deployment_history.attempts order by id",
-        [],
-        database,
-      ),
-    ).toEqual([
+    expect(await attemptLog(server, database)).toMatchObject([
       { command: "deploy", outcome: "succeeded" },
       { command: "disposable", outcome: "failed" },
     ]);
@@ -498,7 +505,7 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
       expect(await terminal.exited).toBe(1);
       expect(terminal.screen).not.toContain("Type YES");
     });
-    expect(await attemptOutcomes(database)).toEqual([
+    expect(await attemptLog(server, database)).toMatchObject([
       { command: "deploy", outcome: "succeeded" },
     ]);
   });
@@ -519,7 +526,7 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
       );
       expect(await terminal.exited).toBe(1);
     });
-    expect(await attemptOutcomes(database)).toEqual([
+    expect(await attemptLog(server, database)).toMatchObject([
       { command: "deploy", outcome: "succeeded" },
       { command: "disposable", outcome: "failed" },
     ]);
@@ -561,14 +568,6 @@ async function whileDeploying(
   } finally {
     await project.close();
   }
-}
-
-async function attemptOutcomes(database: string) {
-  return server.query(
-    "select command, outcome from deployment_history.attempts order by id",
-    [],
-    database,
-  );
 }
 
 describe.skipIf(process.platform === "win32")("from the menu", () => {

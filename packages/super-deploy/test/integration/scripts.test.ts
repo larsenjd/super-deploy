@@ -341,7 +341,7 @@ alter type money_amount_new rename to money_amount;
     );
     await dir.write("data-model/desired-schema/a.sql", table("numeric(6,1)"));
     const fix =
-      'drop generated column "total" in the pre-migration script and run draft again: the schema change then changes the type of "price" and adds "total" back (see the README, "Changing the type of a column a generated column uses")';
+      'drop generated column "total" in the pre-migration script and run draft again: the schema change then changes the type of "price" and adds "total" back (or retype both in the pre-migration script; see the README, "Changing the type of a column a generated column uses")';
 
     // pg-delta retypes the column with the generated column still there,
     // which PostgreSQL refuses (research §8).
@@ -685,7 +685,7 @@ alter table customers alter column phone set not null;
         column: "total",
         rows: 2,
         message:
-          "orders.total narrows from numeric(10,2) to numeric(4,1): values are rounded to 1 decimal place on every target, without an error, and values too large for numeric(4,1) make the deployment fail (1 value in the rehearsal data is rounded; 1 is too large for numeric(4,1) and makes the rehearsal fail): change or move them in the pre-migration script",
+          "orders.total narrows from numeric(10,2) to numeric(4,1): values are rounded to 1 decimal place on every target, without an error, and values too large for numeric(4,1) make the deployment fail (1 value in the rehearsal data is rounded; 1 is too large for numeric(4,1) and makes the rehearsal fail): shorten or move them in the pre-migration script",
       }),
     ]);
   });
@@ -760,8 +760,9 @@ alter table customers alter column phone set not null;
     const unknownFiles = [
       {
         file: "data-model/draft/post-migrate.sql",
-        message:
-          "data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)",
+        message: expect.stringContaining(
+          "data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run",
+        ),
       },
     ];
 

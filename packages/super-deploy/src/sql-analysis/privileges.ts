@@ -26,7 +26,7 @@ const readme = '(see the README, "Permissions")';
 
 // Each reason says why, then what to do instead and where it's documented.
 const reasons = {
-  privileges: `${privileges}; remove it and run it on each target instead ${readme}`,
+  privileges: `${privileges}; remove it from the file and run it on each target instead ${readme}`,
   defaultPrivileges: `${privileges}; run it on each target as the deploy role, where it grants what every deployment creates ${readme}`,
   roles: `roles, like privileges and row-level security, are ${outside}; create and grant roles on each target instead ${readme}`,
   ownership: `the deploy role owns everything in the managed schema, and ${privileges}; remove it: the deploy role owns everything it creates ${readme}`,

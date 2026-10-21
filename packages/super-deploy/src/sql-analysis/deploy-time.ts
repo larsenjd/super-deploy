@@ -261,7 +261,6 @@ const transactionEffects: Record<string, string> = {
   TRANS_STMT_ROLLBACK_PREPARED: "cannot run inside a transaction block",
 };
 
-/** Statement types PostgreSQL refuses inside a transaction block (hazards §1). */
 /**
  * SET and RESET of these switch the role the deployment runs as: refused for
  * that, not for the session settings super-deploy pins.
@@ -271,6 +270,7 @@ const roleSwitches: Record<string, string> = {
   session_authorization: "SESSION AUTHORIZATION",
 };
 
+/** Statement types PostgreSQL refuses inside a transaction block (hazards §1). */
 const notInTransaction = new Set([
   "CreatedbStmt",
   "DropdbStmt",
@@ -424,7 +424,7 @@ function classify(statement: ParsedStatement): Classification {
     if (roleSwitch !== undefined) {
       return refuse(
         "escapes-transaction",
-        `${verb} ${roleSwitch} is not allowed: a deployment runs everything as the deploy role, and roles and privileges are set up on targets outside super-deploy`,
+        `${verb} ${roleSwitch} is not allowed: a deployment runs everything as the deploy role, and roles and privileges are set up on targets outside super-deploy; remove it from the file, and run what needs another role on each target instead (see the README, "Permissions")`,
       );
     }
     return refuse(

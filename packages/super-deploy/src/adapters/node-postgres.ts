@@ -37,13 +37,20 @@
 // anything but the six sslModes, case-sensitive. `allow` reaches
 // node-postgres as `disable`: libpq's `allow` tries without TLS first and
 // upgrades only when the server insists, which node-postgres can't do.
+//
+// A server that ends a session between statements (the idle-in-transaction
+// timeout, pg_terminate_backend on an idle session) sends its error while
+// no query waits for it: node-postgres emits it on the client and fails the
+// next query with a generic "Client has encountered a connection error",
+// which has no SQLSTATE. A session throws the server's own error instead, so
+// the report says why (deploy/session-ended.ts).
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import pg from "pg";
 import { parseIntoClientConfig } from "pg-connection-string";
 import { durationText } from "../config/config.ts";
-import { errorReason } from "../errors.ts";
+import { errorReason, sqlStateOf } from "../errors.ts";
 import { hostAndPort } from "./ports.ts";
 import type {
   ConnectOptions,
@@ -389,14 +396,18 @@ export async function connectSession(
     database === undefined ? config : { ...config, database },
   );
   // Idle clients are killed server-side by DROP DATABASE ... WITH (FORCE) or a
-  // server stop; without a listener that would crash the process.
-  client.on("error", () => {});
+  // server stop; without a listener that would crash the process. The first
+  // such error says why the session ended (see the header).
+  let ended: unknown;
+  client.on("error", (error) => {
+    ended ??= error;
+  });
   if (options === undefined) {
     await client.connect();
   } else {
     await connectWithin(client, configuredHost(config), options);
   }
-  return sessionOver(client);
+  return sessionOver(client, () => ended);
 }
 
 /** The host and port node-postgres connects to with `config`, defaulted as it does. */
@@ -458,19 +469,34 @@ async function withSession<T>(
   }
 }
 
-function sessionOver(client: pg.Client): Session {
+function sessionOver(client: pg.Client, ended: () => unknown): Session {
+  // The server's own error for a session it ended between statements, in
+  // place of node-postgres's generic one (see the header).
+  const run = async <T>(call: () => Promise<T>): Promise<T> => {
+    try {
+      return await call();
+    } catch (error) {
+      const why = ended();
+      throw sqlStateOf(error) === undefined && sqlStateOf(why) !== undefined
+        ? why
+        : error;
+    }
+  };
   return {
     async query<Row>(sql: string, values?: readonly unknown[]) {
-      const result =
+      const result = await run(() =>
         values === undefined
-          ? await client.query(sql)
-          : await client.query(sql, [...values]);
+          ? client.query(sql)
+          : client.query(sql, [...values]),
+      );
       return { rows: result.rows as Row[] };
     },
     async execute(sql) {
       // Without parameters node-postgres uses the simple protocol: one round
       // trip, one result per statement (a bare object for a single statement).
-      const result: pg.QueryResult | pg.QueryResult[] = await client.query(sql);
+      const result: pg.QueryResult | pg.QueryResult[] = await run(() =>
+        client.query(sql),
+      );
       const results = Array.isArray(result) ? result : [result];
       return results.map((one): QueryResult => ({ rows: one.rows }));
     },

@@ -69,7 +69,10 @@ the hook only when the project's folder is the repository's root, so here
   pnpm precommit
   ```
 
-  `pnpm install` then sets the repository's hooks to `db/.husky`.
+  `pnpm install` then sets the repository's hooks to `db/.husky`. Both
+  paths are the project's path from the repository's root, where Git runs
+  hooks: for a project in `apps/db`, `"cd ../.. && husky apps/db/.husky"`
+  and `cd apps/db`.
 - If the repository already has a hook setup of its own (Husky, lefthook, a
   `core.hooksPath`), don't install a second one: Git runs only one. Add the
   line `pnpm --dir db precommit` to its pre-commit hook instead, and delete
@@ -102,11 +105,11 @@ program or set another `port`.
 The server runs only while something uses it: the first command that needs
 `dev` starts it, commands run at the same time share it, and it stops when
 the last of them ends. A command that was killed outright (`kill -9`, a
-crash, or interrupted twice: see
-[Interrupting a command](#interrupting-a-command)) can leave it running; the next command that uses `dev` takes it over
-and stops it when it ends. To keep it running while you connect, run this
-in the project folder and leave it running; Ctrl+C stops it, unless a
-command is still using it:
+crash, or interrupted twice: see [Interrupting a
+command](#interrupting-a-command)) can leave it running; the next command
+that uses `dev` takes it over and stops it when it ends. To keep it running
+while you connect, run this in the project folder and leave it running;
+Ctrl+C stops it, unless a command is still using it:
 
 ```sh
 node --input-type=module -e 'const { devServer } = await import("./super-deploy.config.ts"); await devServer.start(); console.log("dev is running: Ctrl+C stops it"); const wait = setInterval(() => {}, 60_000); process.once("SIGINT", async () => { clearInterval(wait); await devServer.stop(); })'
@@ -120,7 +123,7 @@ role doesn't own, so `deploy --target dev` and `status --target dev` refuse
 them. `dev` is local, so it is safe to delete and rebuild: with no command
 running, delete the `.super-deploy` folder and run `deploy --target dev`
 again, which rebuilds it from your migrations (as `deployer`). Data you
-added to `dev` by hand is lost with it, and so is its disposable flag (see
+added to `dev` by hand is lost with it (for its disposable flag, see
 [Disposable targets and the guarded commands](#disposable-targets-and-the-guarded-commands)).
 
 `.super-deploy/rehearsal` holds only the throwaway databases rehearsals
@@ -156,7 +159,7 @@ first version: these may be supported later, but none is yet.
 - Views (with the options `security_invoker`, `security_barrier` and
   `check_option`) and materialized views. A view over a table with
   hand-made policies needs `security_invoker` (see
-  [Permissions](#what-each-target-needs-set-up-outside-super-deploy)).
+  [Permissions](#permissions)).
 - Functions and procedures in `sql` or `plpgsql`, and triggers.
 - Domains and composite types.
 - `COMMENT ON` the objects above, except on a view's or materialized
@@ -311,8 +314,8 @@ settings; super-deploy refuses any other.
   routines in the desired schema may refer to, such as `["auth"]`.
   super-deploy neither creates them, nor reproduces them in rehearsals, nor
   checks that a target has them: setting them up is the DBA's job (see
-  "Permissions", which also says why a migration's scripts can't run
-  anything that reads them). Default none.
+  [Permissions](#permissions), which also says why a migration's scripts
+  can't run anything that reads them). Default none.
 - `directory`: the folder holding `desired-schema/`, `draft/` and
   `migrations/`, relative to the config file and inside the project.
   Default `data-model`.
@@ -360,10 +363,11 @@ session, and super-deploy sets each target session up so that comes soon:
 
 A server that refuses one of these settings runs without it. Until the
 session ends the target stays locked: `deploy` and `status` name the holding
-attempt, its server process, and the statement it is running and since when. If you know that command is dead,
-`select pg_terminate_backend(<server process>)` ends its session, which rolls
-the deployment back and releases the lock. Cancelling only its statement
-(`pg_cancel_backend`) isn't enough: the lock belongs to the session.
+attempt, its server process, and the statement it is running and since when.
+If you know that command is dead, `select pg_terminate_backend(<server
+process>)` ends its session, which rolls the deployment back and releases
+the lock. Cancelling only its statement (`pg_cancel_backend`) isn't enough:
+the lock belongs to the session.
 
 A deployment that waits for a lock another session holds on a table (a
 long transaction, a `VACUUM FULL`) shows in `status` as `waiting for a lock
@@ -436,7 +440,7 @@ A relative `sslrootcert` is read from the directory the command runs in.
 
 **The deploy role is the user in the connection string**: `deploy_role` in
 the example above. super-deploy runs everything on the target as that user,
-and "Permissions" says what it needs.
+and [Permissions](#permissions) says what it needs.
 
 ## Adopting an existing database
 
@@ -449,9 +453,11 @@ desired schema and migration `00001-adopt`, which is recorded on that target
 as already deployed, and it says how many objects (tables, views, sequences,
 routines and types) it adopted. An empty managed schema is adopted too, with
 a warning that names the target's other schemas holding objects, in case
-`managedSchema` was forgotten. If the target has no schema of that name (usually a
-typo in `managedSchema`), adoption refuses and writes nothing, listing the
-schemas the target has. `managedSchema` must be lowercase: a schema whose
+`managedSchema` was forgotten. If the target has no schema of that name
+(usually a typo in `managedSchema`), adoption refuses and writes nothing,
+listing the schemas the target has. That refusal comes on its own, before
+the list below: without the schema there is no ownership to check and
+nothing to adopt. `managedSchema` must be lowercase: a schema whose
 name isn't, such as `"MyApp"`, has to be renamed on the target before it is
 adopted (`ALTER SCHEMA "MyApp" RENAME TO myapp`), and the application's
 `search_path` and schema-qualified names changed with it. If the
@@ -459,21 +465,24 @@ database holds anything super-deploy doesn't support (see
 [What the desired schema supports](#what-the-desired-schema-supports)),
 nothing is written and every such object is listed: that includes a
 `SECURITY DEFINER` routine, objects owned by another role (see
-"Permissions"), and views, foreign keys, `LANGUAGE sql` functions and the
-like that reference an external schema (only PL/pgSQL bodies may). The
-same list says whether the deploy role lacks `CREATE` on the database, and
-ends with the `ALTER ... OWNER TO` and `GRANT` statements that fix the
-ownership and `CREATE`, as a script to run as a superuser (an object that
-must be changed anyway isn't among them). The refusal ends with what to do:
+[Permissions](#permissions)), and definitions that reference an external
+schema (below). The same list says whether the deploy role lacks `CREATE`
+on the database, and whether a schema with the history schema's name
+exists that super-deploy didn't make, and ends with the
+`ALTER ... OWNER TO` and `GRANT` statements that fix the ownership and
+`CREATE` (and the `ALTER SCHEMA ... OWNER TO` for such a schema that is
+empty), as a script to run as a superuser (an object that must be changed
+anyway isn't among them). The refusal ends with what to do:
 change the target, run those fixes, declare a schema a PL/pgSQL body
 references in `externalSchemas`, or run adoption in a terminal to give
 override reasons (below). Each object is named as PostgreSQL names it
 (`table app.users`), with the references or settings refused.
 
-Columns, defaults, views and other definitions that use another schema's
-types or functions (typically an extension installed in `public`, such as
-`citext` or `pgcrypto`) are refused, and declaring that schema in
-`externalSchemas` doesn't help: only PL/pgSQL bodies may reference it.
+Columns, defaults, views, foreign keys, `LANGUAGE sql` functions and other
+definitions that use another schema's types or functions (typically an
+extension installed in `public`, such as `citext` or `pgcrypto`) are
+refused, and declaring that schema in `externalSchemas` doesn't help: only
+PL/pgSQL bodies may reference it.
 Change them on the target first, for example to `text` with a `CHECK`
 constraint instead of `citext`, and to the built-in `gen_random_uuid()`
 instead of pgcrypto's functions. Grants,
@@ -539,8 +548,10 @@ body. No override marker gets past these refusals, though an overridden
 [Overriding a refusal](#overriding-a-refusal)). Every routine runs as
 the role that calls it (`SECURITY INVOKER`, PostgreSQL's default). Each
 refusal says what to do instead: run grants, policies and `ALTER DEFAULT
-PRIVILEGES` on each target as the deploy role, and create roles there (see
-[What each target needs set up outside super-deploy](#what-each-target-needs-set-up-outside-super-deploy)).
+PRIVILEGES` on each target as the deploy role, and create roles there. It
+points to [Permissions](#permissions), this section, whose
+[What each target needs set up outside super-deploy](#what-each-target-needs-set-up-outside-super-deploy)
+says how.
 
 super-deploy never compares, creates, revokes or resets the grants, default
 privileges, policies and row-level security on a target. They are not drift,
@@ -552,23 +563,24 @@ default privileges as they are.
 ### What each target needs set up outside super-deploy
 
 - **The deploy role.** It must own the managed schema and everything in it,
-  or be a member of the role that owns them (one granted `WITH INHERIT FALSE`
-  doesn't count). `deploy`, `deploy-draft`, `mark` and `init --adopt`
+  or be a member of the role that owns them (one granted `WITH INHERIT
+  FALSE` doesn't count). `deploy`, `deploy-draft`, `mark` and `init --adopt`
   refuse a target where something in the managed schema is owned by another
   role, listing each object with its owner, then the `ALTER ... OWNER TO`
   statements that fix them as a script to run as a superuser (it can be
   pasted into `psql` as it is); `status` lists them under "Deploy would
   refuse". `rebuild` refuses a target whose managed schema itself is owned
   by another role, since `deploy` would refuse the result (what is in the
-  schema it drops and creates again, owned by the deploy role). For `public`, which `pg_database_owner` owns, deploy as the
-  database's owner: the refusal's fix for it is `ALTER DATABASE <database>
-  OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`.
-  The deploy role also needs `CREATE` on the database for
-  the first deployment, which creates the history schema (and the managed
-  schema, if the target lacks it). Instead, a DBA may create both schemas
-  beforehand, owned by the deploy role, e.g. `create schema
-  deployment_history authorization deploy_role`: the first deployment (or
-  adoption) creates its tables in the empty history schema.
+  schema it drops and creates again, owned by the deploy role). For
+  `public`, which `pg_database_owner` owns, deploy as the database's owner:
+  the refusal's fix for it is `ALTER DATABASE <database> OWNER TO <deploy
+  role>`, which leaves `public` with `pg_database_owner`. The deploy role
+  also needs `CREATE` on the database for the first deployment, which
+  creates the history schema (and the managed schema, if the target lacks
+  it). Instead, a DBA may create both schemas beforehand, owned by the
+  deploy role, e.g. `create schema deployment_history authorization
+  deploy_role`: the first deployment (or adoption) creates its tables in the
+  empty history schema.
 - **The application's roles**, their role membership and their database
   privileges: `CONNECT` (and `TEMPORARY`, if needed). super-deploy never
   creates or drops roles, apart from `deployer` on its private embedded
@@ -626,7 +638,10 @@ default privileges as they are.
     policies or row-level security its default privileges won't give back,
     e.g. `warning: view app.order_totals is recreated by 00007-wider-total:
     its grants of SELECT to app_report will be lost (default privileges
-    don't restore them)`. The deployment still goes ahead.
+    don't restore them)`. The deployment still goes ahead. The warning
+    names only objects a statement drops by name: what a hand-written
+    `DROP ... CASCADE` takes with it (a view over a dropped table) loses its
+    privileges unwarned.
   - A migration that changes the type of, or drops, a column a hand-made
     policy uses fails at deploy: PostgreSQL refuses while the policy depends
     on the column. Rehearsals can't catch it, because their databases have
@@ -667,10 +682,10 @@ default privileges as they are.
   [Project settings](#project-settings)), and grants on them and their
   objects. super-deploy doesn't check them: `deploy` goes ahead on a target
   without them, and a routine that reads a missing one fails only when it
-  runs. On `dev`, create them as the superuser (see
-  [Connecting to dev](#connecting-to-dev)). Routines run as their caller, so it's the application's
-  roles that need these grants. For example, a
-  PL/pgSQL function `app_writer` calls that reads `auth.users` needs:
+  runs. On `dev`, create them as the superuser (see [Connecting to
+  dev](#connecting-to-dev)). Routines run as their caller, so it's the
+  application's roles that need these grants. For example, a PL/pgSQL
+  function `app_writer` calls that reads `auth.users` needs:
 
   ```sql
   grant usage on schema auth to app_writer;
@@ -808,8 +823,9 @@ column order, while `dev`, rehearsals and every target built from
 `00001-adopt` can have such columns at the end of their tables.
 
 A table's column order is never compared: rehearsals, drift and `mark`
-ignore it, so nothing refuses or warns about it. What depends on it is SQL that uses
-columns by position. A draft's scripts and seed data refuse it: `INSERT`
+ignore it, so no check compares targets' column orders. What depends on it
+is SQL that uses columns by position, and a draft's scripts and seed data
+refuse that SQL: `INSERT`
 without a column list, `SELECT *`, `ORDER BY` or `GROUP BY` by position,
 `NATURAL JOIN` and whole-row references. Write your application's SQL the
 same way, naming its columns.
@@ -849,6 +865,10 @@ column back, which computes it again for every row. For example, for
 ```sql
 alter table a drop column total;
 ```
+
+Or retype both in the pre-migration script: drop the generated column,
+change the type, and add the generated column back there, so the schema
+change has nothing left to do for them.
 
 Dropping a column is destructive, so `finalize` asks you to acknowledge it.
 
@@ -1026,12 +1046,15 @@ command that changes a target (`deploy`, `deploy-draft`, `rebuild`,
 up, saying what happened to the target:
 
 - `The deployment rolled back: target qa is unchanged, still at migration 00009-add-tier.`
-- `The deployment had already finished: the interruption came too late to stop it on target qa.`
-  when the interruption came after its COMMIT. It still exits 130, 143 or
-  129, and `status --target qa` shows the attempt succeeded.
+- `The deployment had already finished: the interruption came too late to
+  stop it on target qa.` when the interruption came after its COMMIT but
+  while the command was still running. It still exits 130, 143 or 129,
+  and `status --target qa` shows the attempt succeeded.
 
-An interruption after the command has finished, while it stops its
-servers, doesn't change its exit code: a deployment that committed exits 0.
+Once the command has finished (it has printed its result or its error),
+an interruption while it stops its servers doesn't change its exit code:
+0 after success, 1 after a failure. Its notice says the command had
+finished.
 
 **In CI or under a supervisor** (a CI runner cancelling a step, `docker
 stop`, systemd), run the binary directly, as
@@ -1071,16 +1094,17 @@ restored. Without a terminal it refuses, naming those paths, unless you pass
 **Never `unfinalize` a migration (or Recovery) that any target has
 recorded**, even only `dev`. That target records the migration's name and
 hashes, so once the migration is gone or finalized differently, `deploy`
-refuses the target (for example
-`the target records migration 00008-tweaks with content hash ..., but the repo's is ...`).
-`unfinalize` can't see targets, so it warns about this before it moves a
-migration, in its question when it asks one. To change something a target
-has run, finalize a new migration, or a Recovery for the targets that
-haven't run it. If you already unfinalized one, `finalize` the draft
-unchanged: it reproduces the migration byte for byte (`status` suggests
-this while the draft is that migration). Or restore its original folder and
-`data-model/migrations/index.json` from Git, then run
-`pnpm exec super-deploy validate` to make the restored files read-only
+refuses the target (for example `the target records migration 00008-tweaks
+with content hash ..., but the repo's is ...`). `unfinalize` can't see
+targets, so it warns about this before it moves a migration, in its question
+when it asks one. To change something a target has run, finalize a new
+migration, or a Recovery for the targets that haven't run it. If you already
+unfinalized one, `finalize` the draft unchanged, with the same super-deploy
+version and rehearsal server version: it then reproduces the migration byte
+for byte (its `metadata.json` records those versions, and is hashed with the
+rest; `status` suggests this while the draft is that migration). Or restore
+its original folder and `data-model/migrations/index.json` from Git, then
+run `pnpm exec super-deploy validate` to make the restored files read-only
 again.
 
 If a finalized migration (or Recovery) was edited, had a file added, or had
@@ -1139,31 +1163,32 @@ path:
   it holds the draft, not a migration: `deploy`, `mark` and another
   `deploy-draft` refuse it, and `status` doesn't check it for drift, until
   `rebuild` resets it.
-- **`rebuild --target X --to N`** resets a disposable target to migration
-  N, in one transaction. N may be 0: it then replays no migrations, which
+- **`rebuild --target X --to N`** resets a disposable target to migration N,
+  in one transaction. N may be 0: it then replays no migrations, which
   resets a target holding a draft deployed before any migration (a first
-  draft, or a Recovery draft of migration 1) so you can try it again. It drops everything in the managed schema, with
-  `CASCADE`. The confirmation lists what in the managed schema no recorded
-  migration created (what `status` reports as only on the target, from a
-  throwaway replica of the recorded migrations), up to 10 objects. Objects
-  in other schemas that depend on the managed schema are dropped too:
-  a view on a managed table, a foreign key to one, a column of a managed
-  type, a table inheriting from a managed table or typed with a managed
-  composite type (those two with their data). The confirmation lists each of them under "Also
-  drops, outside schema ...", and if that list changes while it waits for
-  `YES`, rebuild refuses without changing anything. It refuses before
-  asking when the managed schema holds something the deploy role can't
-  drop, such as an extension a superuser installed or a member of an
-  extension installed in another schema, naming each object and its owner.
-  PostgreSQL can't give an extension another owner, so have its owner or a
-  superuser drop it (`DROP EXTENSION ... CASCADE`). The managed schema itself stays, with its owner, grants and
-  default privileges. Then it deletes the target's record of migrations and of any
-  deployed draft, and runs migrations 1 to N as a deployment does, each as
-  its newest Recovery if it has one; the confirmation and the result name
-  it, as in `00002-require-city (Recovery 1)`. It never loads seed data, and keeps
-  the attempt log and the disposable flag. In the menu, `--to` is a list
-  with the newest migration preselected and "no migrations" (0) below
-  migration 1.
+  draft, or a Recovery draft of migration 1) so you can try it again. It
+  drops everything in the managed schema, with `CASCADE`. The confirmation
+  lists what in the managed schema no recorded migration created (what
+  `status` reports as only on the target, from a throwaway replica of the
+  recorded migrations), up to 10 objects. Objects in other schemas that
+  depend on the managed schema are dropped too: a view on a managed table, a
+  foreign key to one, a column of a managed type, a table inheriting from a
+  managed table or typed with a managed composite type (those two with their
+  data). The confirmation lists each of them under "Also drops, outside
+  schema ...", and if that list changes while it waits for `YES`, rebuild
+  refuses without changing anything. It refuses before asking when the
+  managed schema holds something the deploy role can't drop, such as an
+  extension a superuser installed or a member of an extension installed in
+  another schema, naming each object and its owner. PostgreSQL can't give an
+  extension another owner, so have its owner or a superuser drop it (`DROP
+  EXTENSION ... CASCADE`). The managed schema itself stays, with its owner,
+  grants and default privileges. Then it deletes the target's record of
+  migrations and of any deployed draft, and runs migrations 1 to N as a
+  deployment does, each as its newest Recovery if it has one; the
+  confirmation and the result name it, as in `00002-require-city (Recovery
+  1)`. It never loads seed data, and keeps the attempt log and the
+  disposable flag. In the menu, `--to` is a list with the newest migration
+  preselected and "no migrations" (0) below migration 1.
 - **`mark --target X`** records the target's next pending migration as
   deployed, without running it. Use it when someone has already made that
   migration's changes on the target by hand. It works on any target, but
@@ -1179,8 +1204,8 @@ path:
 All four need a person at a terminal. Each shows the target's name, host,
 database and last recorded migration, and goes ahead only when you type
 `YES` exactly. The host is the one in the connection string, followed by the
-address the server reports when that differs, e.g.
-`db.prod.internal:5432 (10.0.4.7:5432)`. They refuse in CI (when the `CI` environment variable is set
-to anything but `false` or `0`) and without a terminal, and no flag skips
-the question. While another command holds the target, they refuse before
-asking, naming it as `deploy` does.
+address the server reports when that differs, e.g. `db.prod.internal:5432
+(10.0.4.7:5432)`. They refuse in CI (when the `CI` environment variable is
+set to anything but `false` or `0`) and without a terminal, and no flag
+skips the question. While another command holds the target, they refuse
+before asking, naming it as `deploy` does.

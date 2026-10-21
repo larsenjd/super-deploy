@@ -25,7 +25,7 @@
 // on the hashes, which catch any edit.
 
 import { join, posix } from "node:path";
-import { SuperDeployError } from "../errors.ts";
+import { joined, plural, SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { readSeededUnit, seededFiles } from "../rehearsal/seed-data.ts";
 import {
@@ -45,7 +45,10 @@ import {
   readDraft,
   unknownDraftFiles,
 } from "../store/draft.ts";
-import { handEditReportFileName } from "../store/hand-edit.ts";
+import {
+  handEditReportFileName,
+  migrationEditedByHand,
+} from "../store/hand-edit.ts";
 import { desiredSchemaHash, InvalidEncodingError } from "../store/hashing.ts";
 import {
   checkMigrations,
@@ -55,7 +58,6 @@ import {
 } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
-  exists,
   makeReadOnly,
   schemaChangeFileName,
   snapshotFolderName,
@@ -110,7 +112,7 @@ export async function validate(
   const display = (absolute: string) => projectRelative(root, absolute);
   for (const migration of integrity.migrations) {
     const report = join(migration.path, handEditReportFileName);
-    if (await exists(report)) {
+    if (await migrationEditedByHand(migration.path)) {
       problems.push({
         severity: "notice",
         code: "hand-edited-schema-change",
@@ -423,17 +425,14 @@ export class ValidationFailedError extends SuperDeployError {
   ) {
     const errors = failing.filter((p) => p.severity === "error").length;
     const warnings = failing.length - errors;
-    const counts = [
-      errors > 0 ? `${errors} error${errors === 1 ? "" : "s"}` : "",
-      warnings > 0
-        ? `${warnings} warning${warnings === 1 ? "" : "s"}${strict ? " (--strict)" : ""}`
-        : "",
-    ]
-      .filter((part) => part !== "")
-      .join(", ");
+    // Warnings fail only under --strict.
+    const counts = `${joined([
+      ...(errors > 0 ? [plural(errors, "error")] : []),
+      ...(warnings > 0 ? [plural(warnings, "warning")] : []),
+    ])}${warnings > 0 ? " (--strict fails on warnings)" : ""}`;
     super(`Validation failed with ${counts}: ${summarise(failing)}`);
     this.problems = problems;
     this.strict = strict;
-    this.summary = `Validation failed with ${counts} (listed above)`;
+    this.summary = `Validation failed with ${counts}, listed above`;
   }
 }

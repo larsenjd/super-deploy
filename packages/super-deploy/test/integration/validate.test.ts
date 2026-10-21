@@ -50,7 +50,10 @@ async function finalizedProject() {
 
 /**
  * Rewrites index.json so migration `name`, the first, matches its folder's
- * files again, by the hash format documented in src/store/hashing.ts.
+ * files again, by the hash format documented in src/store/hashing.ts. It is
+ * written out here rather than imported: tests reach only the public API,
+ * which deliberately has no way to re-hash a finalized migration (that is
+ * the tampering validate exists to catch). Change it with hashing.ts.
  */
 async function rehashMigration(dir: TestProject, name: string) {
   const sha256 = (text: string) =>
@@ -108,7 +111,11 @@ describe("validate", () => {
   const changedAfterFinalizing = {
     severity: "error",
     code: "content-hash-mismatch",
-    message: `${folder} was changed after it was finalized (its content hash does not match data-model/migrations/index.json): restore it from Git (\`git checkout HEAD -- ${folder}\`, and delete any file added to it), then run validate, which makes it read-only again. To change what a finalized migration does, finalize a new migration, or a Recovery for the targets where it failed`,
+    message: expect.stringMatching(
+      new RegExp(
+        `^${folder} was changed after it was finalized .*git checkout HEAD -- ${folder}`,
+      ),
+    ),
     path: folder,
   };
 
@@ -253,7 +260,7 @@ describe("validate warnings", () => {
     });
     const error = await validationError(project, { strict: true });
     expect(error.problems).toEqual([unfinalized]);
-    expect(error.message).toContain("1 warning (--strict)");
+    expect(error.message).toContain("1 warning (--strict fails on warnings)");
   });
 
   test("warn about desired-schema changes made after the draft was generated", async () => {
@@ -326,8 +333,9 @@ describe("validate warnings", () => {
     const unknown = {
       severity: "warning",
       code: "unknown-draft-file",
-      message:
-        "data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)",
+      message: expect.stringContaining(
+        "data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run",
+      ),
       path: "data-model/draft/post-migrate.sql",
     };
 
@@ -351,8 +359,8 @@ describe("validate warnings", () => {
       allowDraft: true,
     });
 
-    expect(error.message).toBe(
-      "Validation failed with 1 warning (--strict): data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)",
+    expect(error.message).toMatch(
+      /^Validation failed with 1 warning \(--strict fails on warnings\): data-model\/draft\/post-migrate\.sql is not one of a draft's files/,
     );
     expect(error.problems.map((problem) => problem.code)).toEqual([
       "unfinalized-draft",

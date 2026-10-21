@@ -24,7 +24,9 @@
 // or Recovery that the repo lacks or has differently is restored from version
 // control (see `restore`). When the migration the repo lacks is the project's
 // draft (the next number, same name: unfinalize moved it back), finalizing
-// the draft unchanged puts it back, and the message says so first (QA 107).
+// the draft unchanged puts it back, and the message says so first (QA 107):
+// with the same super-deploy and rehearsal server versions, which the
+// migration's hashed metadata.json records.
 // deploy, status and mark all show these messages.
 // `status` runs the same checks and reports them.
 //
@@ -33,7 +35,7 @@
 // runs (ticket 06).
 
 import type { Session } from "../adapters/types.ts";
-import { plural, SuperDeployError } from "../errors.ts";
+import { listed, plural, SuperDeployError } from "../errors.ts";
 import { configFileName, type Project } from "../project.ts";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
 import { InvalidDraftError, readDraft } from "../store/draft.ts";
@@ -107,7 +109,7 @@ export interface PreflightFindings {
   readonly historyMismatches: readonly HistoryMismatch[];
   /**
    * Why the deploy role is more privileged than a deployment needs, then
-   * each object the pending units drop and create again whose hand-made
+   * each object the deployment's units drop and create again whose hand-made
    * grants, revokes or policies on the target will be lost. Never refuses.
    */
   readonly warnings: readonly string[];
@@ -160,7 +162,7 @@ export interface PreflightInput {
    * What the deployment would run, in order: each pending migration's
    * variant, or a draft (and its seed data).
    */
-  readonly pending: readonly { readonly unit: ReplayUnit }[];
+  readonly units: readonly ReplayUnit[];
 }
 
 /** Runs every check on `session` (read-only queries, no transaction). */
@@ -183,12 +185,11 @@ export async function preflightChecks(
       input.migrations,
       input.recorded,
       await readDeployedDraft(session, project.config.historySchema),
-      {
-        name: input.targetName,
-        disposable: (
-          await readTargetSettings(session, project.config.historySchema)
-        ).disposable,
-      },
+      await draftHolder(
+        session,
+        project.config.historySchema,
+        input.targetName,
+      ),
       await migrationDraftName(project),
     ),
     warnings: [
@@ -196,7 +197,7 @@ export async function preflightChecks(
       ...(await recreatedPrivilegeWarnings(
         session,
         project.config.managedSchema,
-        input.pending.map(({ unit }) => unit),
+        input.units,
       )),
     ],
   };
@@ -255,9 +256,6 @@ export function historySchemaNotCreatableMessage(
   return `the deploy role ${finding.role} needs CREATE on database ${finding.database} to create the history schema "${finding.historySchema}" (fix: ${finding.fix})`;
 }
 
-/** How many of a foreign history schema's objects its message names. */
-const objectsNamed = 5;
-
 /**
  * The schema named `historySchema`, if super-deploy didn't make it and
  * can't use it: it doesn't hold the history tables, and it holds something
@@ -308,13 +306,10 @@ export function foreignHistorySchemaMessage(
   finding: ForeignHistorySchema,
 ): string {
   const { objects } = finding;
-  const named = objects.slice(0, objectsNamed).join(", ");
   const what =
     objects.length === 0
       ? `it is empty, but owned by ${finding.owner}, whose privileges the deploy role ${finding.role} doesn't have`
-      : objects.length > objectsNamed
-        ? `it holds ${objects.length} objects, among them ${named}`
-        : `it holds ${named}`;
+      : `it holds ${listed(objects)}`;
   const fix = finding.fix === undefined ? "" : `run ${finding.fix}, `;
   return `the history schema "${finding.historySchema}" exists but super-deploy didn't make it: ${what} (${fix}drop it, or set historySchema in ${configFileName} to a schema the target doesn't have)`;
 }
@@ -395,7 +390,7 @@ export function historyMismatches(
       const inDraft =
         entry.number === migrations.length + 1 && entry.name === draftName;
       const refinalize = inDraft
-        ? `finalize draft ${draftName} unchanged to put it back (unfinalize moved that migration into it), or `
+        ? `finalize draft ${draftName} unchanged, with the same super-deploy and rehearsal server versions, to put it back (unfinalize moved that migration into it), or `
         : "";
       mismatches.push({
         number: entry.number,
@@ -515,6 +510,18 @@ export function onlyHeldDraft(
 export interface DraftHolder {
   readonly name: string;
   readonly disposable: boolean;
+}
+
+/** Target `name` as a DraftHolder, its disposable flag read on `session`. */
+export async function draftHolder(
+  session: Session,
+  historySchema: string,
+  name: string,
+): Promise<DraftHolder> {
+  return {
+    name,
+    disposable: (await readTargetSettings(session, historySchema)).disposable,
+  };
 }
 
 /**

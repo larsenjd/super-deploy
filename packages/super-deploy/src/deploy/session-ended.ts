@@ -6,9 +6,10 @@
 //
 // Which errors count:
 // - `sessionEnding` (errors.ts): SQLSTATE 57P01-57P05 and 25P03 are the
-//   server ending the session; class 08, or an error with no SQLSTATE at all
-//   (node-postgres reports a dropped connection so), is a lost connection.
-//   Either way nothing the session had not committed survives. The
+//   server ending the session; class 08, a socket error (ECONNRESET, EPIPE)
+//   or node-postgres's own error for a dropped connection is a lost one.
+//   Either way nothing the session had not committed survives. Any other
+//   error without a SQLSTATE (a custom adapter's) is neither. The
 //   deploy-time SQL runner (rehearsal/replay.ts) passes these on unwrapped,
 //   since they are no refusal of the file, and a lost COMMIT is told apart
 //   by them (deploy/engine.ts, CommitOutcomeUnknownError).
@@ -37,8 +38,8 @@ import {
   sessionEnding,
   sqlStateOf,
 } from "../errors.ts";
-import type { InterruptedRollback } from "../interruption.ts";
-import { SqlFileFailedError, unchangedTarget } from "../rehearsal/replay.ts";
+import { SqlFileFailedError } from "../rehearsal/replay.ts";
+import { rolledBackSentence, type TargetRollback } from "./rollback.ts";
 import {
   isTimeoutState,
   type TargetTimeoutSettings,
@@ -87,14 +88,6 @@ export function markRolledBack(error: unknown): void {
   }
 }
 
-/** What a rolled-back command did not change, for TargetSessionEndedError. */
-export interface SessionRollback {
-  /** What rolled back, e.g. `deployment`. */
-  readonly noun: string;
-  /** What the target records; undefined when it couldn't be read. */
-  readonly recorded: InterruptedRollback | undefined;
-}
-
 /**
  * The error a command under the target lock reports for `error`: a traced
  * session ending as TargetSessionEndedError, a traced timeout as
@@ -106,7 +99,7 @@ export interface SessionRollback {
 export async function targetFailure(
   error: unknown,
   target: ResolvedTarget,
-  rollback: () => Promise<SessionRollback>,
+  rollback: () => Promise<TargetRollback>,
 ): Promise<unknown> {
   if (error instanceof SqlFileFailedError) {
     return error.onTarget(target);
@@ -140,28 +133,30 @@ export class TargetSessionEndedError extends SuperDeployError {
   readonly target: string;
   readonly ending: SessionEnding;
   /** Set when the session ended inside a transaction, which rolled back. */
-  readonly rollback: SessionRollback | undefined;
+  readonly rollback: TargetRollback | undefined;
 
   constructor(
     target: string,
     ending: SessionEnding,
-    options: ErrorOptions & { rollback?: SessionRollback | undefined },
+    options: ErrorOptions & { rollback?: TargetRollback | undefined },
   ) {
     const { rollback } = options;
     const reason = errorReason(options.cause);
     super(
       [
-        ending === "ended"
-          ? `The server ended the session on target ${target} (${reason}).`
-          : `The connection to target ${target} was lost (${reason}).`,
+        {
+          ended: `The server ended the session on target ${target} (${reason}).`,
+          idle: `The server ended the session on target ${target}: its transaction sat idle for over a minute, so super-deploy had stopped responding (${reason}).`,
+          lost: `The connection to target ${target} was lost (${reason}).`,
+        }[ending],
         rollback === undefined
           ? `Nothing changed on target ${target}.`
-          : `The ${rollback.noun} rolled back: ${
-              rollback.recorded === undefined
-                ? `target ${target} is unchanged`
-                : unchangedTarget(target, rollback.recorded.lastRecorded)
-            }.`,
-        `Next: retry once target ${target} is reachable${ending === "ended" ? "; if its session was ended on purpose, find out why first" : ""}.`,
+          : rolledBackSentence(rollback),
+        {
+          ended: `Next: retry once target ${target} is reachable; if its session was ended on purpose, find out why first.`,
+          idle: `Next: retry, keeping the machine running super-deploy awake and its network up until the command finishes.`,
+          lost: `Next: retry once target ${target} is reachable.`,
+        }[ending],
       ].join(" "),
       options,
     );

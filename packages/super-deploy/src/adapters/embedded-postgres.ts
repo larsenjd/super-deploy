@@ -66,7 +66,7 @@ import {
   withLeaseLock,
 } from "./server-lease.ts";
 import type { DeploymentAdapter, RehearsalAdapter } from "./types.ts";
-import { AdapterError } from "./types.ts";
+import { AdapterError, shownPath } from "./types.ts";
 
 export interface EmbeddedPostgresOptions {
   /**
@@ -198,7 +198,7 @@ export function embeddedPostgres(
     for (let attempt = 1; ; attempt++) {
       if (options.port !== undefined && (await portInUse(options.port))) {
         throw new AdapterError(
-          `Embedded PostgreSQL can't start in ${dataDir}: port ${options.port} on ${host} is in use by another program. Stop that program, or set another \`port\` in embeddedPostgres({ ... }) in super-deploy.config.ts`,
+          `Embedded PostgreSQL can't start in ${shownPath(dataDir)}: port ${options.port} on ${host} is in use by another program. Stop that program, or set another \`port\` in embeddedPostgres({ ... }) in super-deploy.config.ts`,
         );
       }
       const candidate = options.port ?? (await freePort());

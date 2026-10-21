@@ -147,7 +147,7 @@ export async function deployDraft(
         targetName: target,
         migrations,
         recorded: view.recorded,
-        pending: units.map((unit) => ({ unit })),
+        units,
       });
       if (refusesDeployment(findings)) {
         throw new PreflightFailedError(target, findings);
@@ -238,7 +238,7 @@ export async function deployDraft(
           ? error.rolledBack({
               command: "deploy-draft",
               target: target.name,
-              lastRecorded: plan.baseFolder,
+              recorded: { lastRecorded: plan.baseFolder },
               seedData: plan.seedData,
             })
           : error;

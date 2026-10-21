@@ -39,10 +39,23 @@ export function plural(
   return `${count} ${count === 1 ? noun : nouns}`;
 }
 
-/** Up to five items, then how many more. */
-export function listed(objects: readonly string[]): string {
-  const shown = objects.slice(0, 5).join(", ");
+/**
+ * Up to five items, `separator`-separated, then how many more: `a, b, c, d,
+ * e and 2 more`. `; ` separates items that may hold commas themselves.
+ */
+export function listed(
+  objects: readonly string[],
+  separator: ", " | "; " = ", ",
+): string {
+  const shown = objects.slice(0, 5).join(separator);
   return objects.length > 5 ? `${shown} and ${objects.length - 5} more` : shown;
+}
+
+/** Every part, the last joined with "and": `a`, `a and b`, `a, b and c`. */
+export function joined(parts: readonly string[]): string {
+  return parts.length <= 1
+    ? (parts[0] ?? "")
+    : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
 /**
@@ -86,26 +99,67 @@ export function sqlStateOf(error: unknown): string | undefined {
     : undefined;
 }
 
-/** How a session ended: by the server, or by losing the connection. */
-export type SessionEnding = "ended" | "lost";
+/**
+ * How a session ended: by the server, by the server because its transaction
+ * sat idle too long (`idle`: the idle-in-transaction timeout every target
+ * session sets, deploy/target.ts), or by losing the connection.
+ */
+export type SessionEnding = "ended" | "idle" | "lost";
+
+/** Node's codes for a socket that failed or closed under a connection. */
+const socketFailures = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ECONNABORTED",
+  "EPIPE",
+  "ETIMEDOUT",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENETDOWN",
+  "ENOTCONN",
+]);
+
+/**
+ * node-postgres's errors, which carry no code, for a connection that is gone
+ * (pg/lib/client.js): it ended under a query, or a query was sent after.
+ */
+const pgConnectionGone =
+  /^(?:Connection terminated(?: unexpectedly)?|Client has encountered a connection error and is not queryable|Client was closed and is not queryable)$/;
 
 /**
  * Whether a statement's error says its session is gone, and how: `ended` by
  * the server (SQLSTATE 57P01-57P05, such as `pg_terminate_backend` or a
- * shutdown, and 25P03, the idle-in-transaction timeout), or `lost` (class 08,
- * or no SQLSTATE at all: node-postgres reports a dropped connection without
- * one). Undefined when the server refused the statement and the session
- * lives on, and for the library's own errors (e.g. InterruptedError).
+ * shutdown), `idle` (25P03, the idle-in-transaction timeout), or `lost` (class
+ * 08, a socket error such as ECONNRESET, or node-postgres's own error for a
+ * dropped connection, which has no code). Undefined when the server refused
+ * the statement and the session lives on, for any other error without a
+ * SQLSTATE (e.g. a custom adapter's), and for the library's own errors (e.g.
+ * InterruptedError).
  */
 export function sessionEnding(error: unknown): SessionEnding | undefined {
   if (error instanceof SuperDeployError) {
     return undefined;
   }
   const sqlState = sqlStateOf(error);
-  if (sqlState === undefined || sqlState.startsWith("08")) {
+  if (sqlState === undefined) {
+    return connectionGone(error) ? "lost" : undefined;
+  }
+  if (sqlState.startsWith("08")) {
     return "lost";
   }
-  return sqlState.startsWith("57P") || sqlState === "25P03"
-    ? "ended"
-    : undefined;
+  if (sqlState === "25P03") {
+    return "idle";
+  }
+  return sqlState.startsWith("57P") ? "ended" : undefined;
+}
+
+function connectionGone(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const { code } = error as { code?: unknown };
+  return (
+    (typeof code === "string" && socketFailures.has(code)) ||
+    pgConnectionGone.test(error.message)
+  );
 }

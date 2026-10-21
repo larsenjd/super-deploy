@@ -461,6 +461,36 @@ ALTER TABLE "public"."a" ADD COLUMN "total" numeric GENERATED ALWAYS AS (((price
     ]);
   });
 
+  test("a generated column made plain names DROP EXPRESSION, which keeps its values", async () => {
+    expect(
+      await messages(`ALTER TABLE "public"."a" DROP COLUMN "total";
+ALTER TABLE "public"."a" ADD COLUMN "total" numeric;
+`),
+    ).toEqual([
+      {
+        kind: "drop-column",
+        line: 1,
+        message:
+          'public.a.total is dropped and re-added to stop generating it: its values are lost. To keep them, change it in place in the pre-migration script: ALTER TABLE "public"."a" ALTER COLUMN "total" DROP EXPRESSION',
+      },
+    ]);
+  });
+
+  test("a plain column made generated keeps the plain message: nothing changes it in place", async () => {
+    expect(
+      await messages(`ALTER TABLE "public"."customers" DROP COLUMN "note";
+ALTER TABLE "public"."customers" ADD COLUMN "note" text GENERATED ALWAYS AS (nickname) STORED;
+`),
+    ).toEqual([
+      {
+        kind: "drop-column",
+        line: 1,
+        message:
+          "ALTER TABLE public.customers DROP COLUMN note drops the column and its data",
+      },
+    ]);
+  });
+
   test("dropping one column and adding another, or the same name with another type, keeps the plain message", async () => {
     expect(
       await messages(`ALTER TABLE "public"."customers" DROP COLUMN "note";

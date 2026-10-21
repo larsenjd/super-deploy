@@ -288,6 +288,25 @@ export default defineConfig({
 });
 `;
 
+  test("names a damaged server folder relative to the project", async () => {
+    const dir = await createTestProject({
+      config: ownServerConfig,
+      files: {
+        "data-model/desired-schema/customers.sql": customers,
+        ".super-deploy/postgres/postgresql.conf": "# kept\n",
+      },
+    });
+
+    const result = await runCli(["draft", "--name", "add customers"], {
+      cwd: dir.root,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(
+      /^Error: \.super-deploy\/postgres is not a complete PostgreSQL data folder \(it has no PG_VERSION\): /,
+    );
+  });
+
   test("starts its own server for a command and stops it afterwards", async () => {
     const dir = await createTestProject({
       config: ownServerConfig,

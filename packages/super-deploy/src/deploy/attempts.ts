@@ -8,11 +8,11 @@ import { errorReason } from "../errors.ts";
 import { SqlFileFailedError } from "../rehearsal/replay.ts";
 import { toolVersion } from "../version.ts";
 import { type AttemptOutcome, historyTable } from "./history.ts";
+import type { TargetCommand } from "./rollback.ts";
 
 /** What an attempt records about the command that opens it. */
 export interface AttemptCommand {
-  /** e.g. `deploy`. */
-  readonly command: string;
+  readonly command: TargetCommand;
   /** For `disposable`: the value it sets the flag to. */
   readonly disposableSet?: boolean;
 }

@@ -14,10 +14,12 @@ import {
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
-  type DeployConfigOptions,
+  attemptLog,
+  columnPending,
   deployProject,
   finalizeMigration,
   testSession,
+  whileLocked,
 } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
@@ -83,14 +85,6 @@ function loseCommit(when: "before" | "after" | "linger"): void {
   Object.assign(globalThis, { loseCommit: when });
 }
 
-async function attempts(database: string) {
-  return server.query<{ id: string; outcome: string; error: string | null }>(
-    "select id, outcome, error from deployment_history.attempts order by id",
-    [],
-    database,
-  );
-}
-
 describe("a connection lost during COMMIT", () => {
   test("records the attempt as unknown, and the next status settles it as succeeded when its migrations are recorded", async () => {
     const { project, database } = await deployProject(
@@ -109,7 +103,7 @@ describe("a connection lost during COMMIT", () => {
     expect((error as Error).message).toContain(
       "Connection terminated unexpectedly",
     );
-    const [lost] = await attempts(database);
+    const [lost] = await attemptLog(server, database);
     expect(lost).toMatchObject({ outcome: "unknown" });
 
     const report = await status(project, { target: "dev" });
@@ -137,14 +131,14 @@ describe("a connection lost during COMMIT", () => {
     await expect(deploy(project, { target: "dev" })).rejects.toBeInstanceOf(
       CommitOutcomeUnknownError,
     );
-    expect(await attempts(database)).toEqual([
+    expect(await attemptLog(server, database)).toEqual([
       expect.objectContaining({ outcome: "unknown" }),
     ]);
 
     const result = await deploy(project, { target: "dev" });
 
     expect(result.deployed.map((m) => m.number)).toEqual([1]);
-    expect(await attempts(database)).toEqual([
+    expect(await attemptLog(server, database)).toEqual([
       expect.objectContaining({
         outcome: "failed",
         error: expect.stringContaining(
@@ -152,7 +146,8 @@ describe("a connection lost during COMMIT", () => {
         ),
       }),
       {
-        id: String(result.attemptId),
+        id: result.attemptId,
+        command: "deploy",
         outcome: "succeeded",
         error: null,
       },
@@ -187,7 +182,7 @@ describe("a connection lost during COMMIT", () => {
     const report = await status(project, { target: "dev" });
     expect(report.attempts.map((a) => a.outcome)).toEqual(["failed", "failed"]);
     expect(report.pending.map((m) => m.number)).toEqual([1]);
-    expect(await attempts(database)).toHaveLength(2);
+    expect(await attemptLog(server, database)).toHaveLength(2);
   });
 });
 
@@ -368,7 +363,7 @@ describe("an attempt its command could not end", () => {
     const result = await deploy(project, { target: "dev" });
 
     expect(result.deployed.map((m) => m.number)).toEqual([1]);
-    expect(await attempts(database)).toEqual([
+    expect(await attemptLog(server, database)).toEqual([
       expect.objectContaining({ outcome: "running" }),
     ]);
     const report = await status(project, { target: "dev" });
@@ -418,9 +413,10 @@ describe("a deployment failing with an error that has no message of its own", ()
       TargetSessionEndedError,
     );
 
-    expect(await attempts(database)).toEqual([
+    expect(await attemptLog(server, database)).toEqual([
       {
-        id: expect.any(String),
+        id: expect.any(Number),
+        command: "deploy",
         outcome: "failed",
         error: expect.stringContaining(
           "(connect ECONNREFUSED ::1:5432; ECONNRESET)",
@@ -549,79 +545,90 @@ describe("a target session whose client stops responding", () => {
       release();
       await holder.close();
     }
-    expect(await deployment).toBeInstanceOf(TargetSessionEndedError);
+    const error = await deployment;
+    expect(error).toBeInstanceOf(TargetSessionEndedError);
+    expect(error).toMatchObject({ ending: "idle" });
+    expect((error as TargetSessionEndedError).message).toContain(
+      "its transaction sat idle for over a minute, so super-deploy had stopped responding",
+    );
+    expect((error as TargetSessionEndedError).message).not.toContain(
+      "ended on purpose",
+    );
     expect((await status(project, { target: "dev" })).pending).toEqual([
       expect.objectContaining({ number: 2 }),
     ]);
   });
 });
 
-/** The server process of the session in `database` waiting for a lock. */
-async function waitingForLock(database: string): Promise<number> {
-  for (;;) {
-    const [row] = await server.query<{ pid: number }>(
-      "select pid from pg_stat_activity where datname = $1 and wait_event_type = 'Lock'",
-      [database],
-    );
-    if (row !== undefined) {
-      return row.pid;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-}
-
 /**
  * Migration 1 (customers) deployed to `dev`, and migration 2 (a column on
  * customers, which takes ACCESS EXCLUSIVE) finalized and pending.
  */
-async function columnPending(options: DeployConfigOptions = {}) {
-  const deployed = await deployProject(
-    server,
-    { "customers.sql": customers },
-    options,
-  );
-  await finalizeMigration(deployed.project, "add customers");
-  await deploy(deployed.project, { target: "dev" });
-  await deployed.dir.write(
-    "data-model/desired-schema/customers.sql",
-    customers.replace("name text not null", "name text not null,\n  note text"),
-  );
-  await finalizeMigration(deployed.project, "add note");
-  return deployed;
-}
 
-/** Holds `mode` on customers in `database` while `during` runs. */
-async function holdingCustomers<T>(
-  database: string,
+/**
+ * Deploys migration 2 of `columnPending` while customers is held in `mode`,
+ * and ends the deployment's session that waits for it from the server.
+ */
+async function terminatedWhileLocked(
   mode: "ACCESS SHARE" | "ACCESS EXCLUSIVE",
-  during: () => Promise<T>,
-): Promise<T> {
-  const holder = await testSession(server, database);
-  try {
-    await holder.execute("BEGIN");
-    await holder.execute(`LOCK TABLE customers IN ${mode} MODE`);
-    return await during();
-  } finally {
-    await holder.execute("ROLLBACK").catch(() => {});
-    await holder.close();
-  }
+) {
+  const { project, database } = await columnPending(server, {
+    target: 'lockTimeout: "30s",',
+  });
+  const error = await whileLocked(server, database, "customers", mode, () => {
+    const deployment = deploy(project, { target: "dev" }).catch(
+      (e: unknown) => e,
+    );
+    return server
+      .untilLockWaiter(database)
+      .then(([pid]) => server.query("select pg_terminate_backend($1)", [pid]))
+      .then(() => deployment);
+  });
+  return { database, error };
 }
 
 describe("a target session that ends before the command finishes", () => {
-  test("ended by the server inside the deploy transaction: the deployment rolled back, and the target is still at its last migration", async () => {
-    const { project, database } = await columnPending({
-      target: 'lockTimeout: "30s",',
-    });
-
-    const error = await holdingCustomers(database, "ACCESS SHARE", async () => {
-      const deployment = deploy(project, { target: "dev" }).catch(
+  test("lost while the attempt opens, before anything changed: reported as the target's, nothing changed", async () => {
+    const { project } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      {
+        // Fault injection: the connection drops as the attempt is recorded.
+        adapter: `{
+  async connect() {
+    const session = await real.connect();
+    return {
+      ...session,
+      async query(sql, values) {
+        if (globalThis.loseAttemptOpen === true && sql.startsWith("INSERT INTO") && sql.includes("attempts")) {
+          throw new Error("Connection terminated unexpectedly");
+        }
+        return session.query(sql, values);
+      },
+    };
+  },
+}`,
+      },
+    );
+    await finalizeMigration(project, "add customers");
+    Object.assign(globalThis, { loseAttemptOpen: true });
+    try {
+      const error = await deploy(project, { target: "dev" }).catch(
         (e: unknown) => e,
       );
-      await server.query("select pg_terminate_backend($1)", [
-        await waitingForLock(database),
-      ]);
-      return deployment;
-    });
+
+      expect(error).toBeInstanceOf(TargetSessionEndedError);
+      expect(error).toMatchObject({ ending: "lost", rollback: undefined });
+      expect((error as TargetSessionEndedError).message).toContain(
+        "Nothing changed on target dev.",
+      );
+    } finally {
+      Object.assign(globalThis, { loseAttemptOpen: undefined });
+    }
+  });
+
+  test("ended by the server inside the deploy transaction: the deployment rolled back, and the target is still at its last migration", async () => {
+    const { database, error } = await terminatedWhileLocked("ACCESS SHARE");
 
     expect(error).toBeInstanceOf(TargetSessionEndedError);
     const { message } = error as TargetSessionEndedError;
@@ -633,49 +640,37 @@ describe("a target session that ends before the command finishes", () => {
     );
     expect(message).toContain("Next: retry once target dev is reachable");
     expect(message).not.toContain("PostgreSQL refused it");
-    expect((await attempts(database)).at(-1)).toMatchObject({
+    expect((await attemptLog(server, database)).at(-1)).toMatchObject({
       outcome: "failed",
       error: message,
     });
   });
 
   test("ended by the server during the drift check: nothing changed", async () => {
-    const { project, database } = await columnPending({
-      target: 'lockTimeout: "30s",',
-    });
-
-    const error = await holdingCustomers(
-      database,
-      "ACCESS EXCLUSIVE",
-      async () => {
-        const deployment = deploy(project, { target: "dev" }).catch(
-          (e: unknown) => e,
-        );
-        await server.query("select pg_terminate_backend($1)", [
-          await waitingForLock(database),
-        ]);
-        return deployment;
-      },
-    );
+    const { database, error } = await terminatedWhileLocked("ACCESS EXCLUSIVE");
 
     expect(error).toBeInstanceOf(TargetSessionEndedError);
     const { message } = error as TargetSessionEndedError;
     expect(message).toContain("The server ended the session on target dev");
     expect(message).toContain("Nothing changed on target dev.");
     expect(message).not.toContain("rolled back");
-    expect((await attempts(database)).at(-1)).toMatchObject({
+    expect((await attemptLog(server, database)).at(-1)).toMatchObject({
       outcome: "failed",
       error: message,
     });
   });
 
   test("a lock timeout during the drift check names the target's lockTimeout: nothing changed", async () => {
-    const { project, database } = await columnPending({
+    const { project, database } = await columnPending(server, {
       target: 'lockTimeout: "200ms",',
     });
 
-    const error = await holdingCustomers(database, "ACCESS EXCLUSIVE", () =>
-      deploy(project, { target: "dev" }).catch((e: unknown) => e),
+    const error = await whileLocked(
+      server,
+      database,
+      "customers",
+      "ACCESS EXCLUSIVE",
+      () => deploy(project, { target: "dev" }).catch((e: unknown) => e),
     );
 
     expect(error).toBeInstanceOf(TargetTimeoutError);
@@ -687,7 +682,7 @@ describe("a target session that ends before the command finishes", () => {
   });
 
   test("a connection lost at the end of a migration isn't blamed on deferred constraints", async () => {
-    const { project, database } = await columnPending({
+    const { project, database } = await columnPending(server, {
       // Fault injection: the connection is lost when the migration ends.
       adapter: `{
   async connect() {
@@ -723,7 +718,7 @@ describe("a target session that ends before the command finishes", () => {
     expect((await status(project, { target: "dev" })).pending).toEqual([
       expect.objectContaining({ number: 2 }),
     ]);
-    expect((await attempts(database)).at(-1)).toMatchObject({
+    expect((await attemptLog(server, database)).at(-1)).toMatchObject({
       outcome: "failed",
     });
   });

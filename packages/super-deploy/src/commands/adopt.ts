@@ -105,7 +105,6 @@ import { markNextPending, readMarkableMigrations } from "../deploy/mark.ts";
 import {
   fixScript,
   type NotOwnedObject,
-  notOwnedFixer,
   notOwnedListing,
   notOwnedMessage,
   objectsNotOwnedAt,
@@ -129,7 +128,13 @@ import {
 } from "../deploy/target.ts";
 import { dependentsOutside } from "../deploy/wipe.ts";
 import { differ } from "../differ/index.ts";
-import { plural, SuperDeployError } from "../errors.ts";
+import {
+  joined,
+  listed,
+  plural,
+  SuperDeployError,
+  sqlStateOf,
+} from "../errors.ts";
 import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import type { AskOverrideReason } from "../questions.ts";
@@ -435,9 +440,9 @@ function timedOut(
   error: unknown,
 ): { readonly error: Error; readonly sqlState: TimeoutState } | undefined {
   for (let at = error; at instanceof Error; at = at.cause) {
-    const { code } = at as { code?: unknown };
-    if (isTimeoutState(code)) {
-      return { error: at, sqlState: code };
+    const sqlState = sqlStateOf(at);
+    if (isTimeoutState(sqlState)) {
+      return { error: at, sqlState };
     }
   }
   return undefined;
@@ -451,6 +456,14 @@ async function readTargetOn(
   { withOverrides, context }: { withOverrides: boolean; context: RuleContext },
 ): Promise<ReadTarget> {
   const { config } = project;
+  // Every read waits for locks (the history table a running deploy holds,
+  // definitions the differ reads behind table locks): never longer than
+  // the target allows.
+  await session.execute(
+    targetTimeouts(target)
+      .map((statement) => statement.replace(/^SET LOCAL /, "SET "))
+      .join(";\n"),
+  );
   const recorded = await readRecordedMigrations(session, config.historySchema);
   if (recorded.length > 0) {
     const [first] = recorded;
@@ -480,13 +493,6 @@ async function readTargetOn(
   const historySchema = await historySchemaNotCreatable(
     session,
     config.historySchema,
-  );
-  // The differ reads definitions that wait for table locks: never longer
-  // than the target allows.
-  await session.execute(
-    targetTimeouts(target)
-      .map((statement) => statement.replace(/^SET LOCAL /, "SET "))
-      .join(";\n"),
   );
   const request = await targetDatabaseRequest(session);
   const serials = await serialColumns(session, config.managedSchema);
@@ -559,7 +565,7 @@ async function readTargetOn(
     ),
   );
   const unsupported = await namedOnTarget(session, config.managedSchema, found);
-  const notOwnedSupported = await ownedIfSupported(
+  const notOwnedSupported = await notOwnedWorthFixing(
     session,
     notOwned,
     unsupported,
@@ -652,7 +658,7 @@ async function readTargetOn(
  * unsupported (named alike, as the catalog check names objects): nobody
  * should give the deploy role an object only to drop it.
  */
-async function ownedIfSupported(
+async function notOwnedWorthFixing(
   session: Session,
   notOwned: readonly { notOwned: NotOwnedObject; address: ObjectAddress }[],
   unsupported: readonly UnsupportedObject[],
@@ -1405,6 +1411,7 @@ export class AdoptUnsupportedError extends SuperDeployError {
     const { needed, askable } = overrides;
     const fixes = [
       ...notOwned.map(({ fix }) => fix),
+      ...(foreign?.fix === undefined ? [] : [foreign.fix]),
       ...(historySchema === undefined ? [] : [historySchema.fix]),
     ];
     const advice = adoptionAdvice(objects, {
@@ -1424,53 +1431,64 @@ export class AdoptUnsupportedError extends SuperDeployError {
             `Once nothing else is refused, adoption will ask an override reason for ${plural(needed.length, "object")} that ${needed.length === 1 ? "breaks" : "break"} only risk rules: ${needed.map((item) => item.object).join(", ")}`,
           ]
         : [];
-    const reasons = [
-      ...(objects.length === 0
-        ? []
-        : [`its managed schema has ${things}: ${shown(objects)}`]),
-      ...(notOwned.length === 0
-        ? []
-        : [
-            `the deploy role doesn't own everything in the managed schema: ${notOwned.map(notOwnedMessage).join("; ")}`,
+    // Each thing refused: in the message, in the summary's count, and as
+    // the lines the CLI lists. The fixes' script follows what they fix.
+    const found = [
+      objects.length > 0 && {
+        reason: `its managed schema has ${things}: ${listed(
+          objects.map(({ object }) => object),
+          "; ",
+        )}`,
+        count: `its managed schema has ${things}`,
+        details: [
+          `Target ${target} has ${things}:`,
+          ...objects.flatMap(({ object, rule, reason }) => [
+            `  ${object}`,
+            `    ${rule}: ${reason}`,
           ]),
-      ...(foreign === undefined ? [] : [foreignHistorySchemaMessage(foreign)]),
-      ...(historySchema === undefined
-        ? []
-        : [historySchemaNotCreatableMessage(historySchema)]),
-      ...(refusedNeeded.length === 0
-        ? []
-        : [
-            `${reasonsNeeded}, asked only in a terminal: ${refusedNeeded.map((item) => item.object).join(", ")}`,
-          ]),
-    ];
-    const counted = [
-      ...(objects.length === 0 ? [] : [`its managed schema has ${things}`]),
-      ...(notOwned.length === 0
-        ? []
-        : [
-            `the deploy role doesn't own ${plural(notOwned.length, "object")} in the managed schema`,
-          ]),
-      ...(foreign === undefined
-        ? []
-        : [
-            `its history schema "${foreign.historySchema}" isn't super-deploy's`,
-          ]),
-      ...(historySchema === undefined
-        ? []
-        : [
-            `${notOwned.length === 0 ? "the deploy role " : ""}lacks CREATE on the database`,
-          ]),
-      ...(refusedNeeded.length === 0 ? [] : [reasonsNeeded]),
+        ],
+      },
+      notOwned.length > 0 && {
+        reason: `the deploy role doesn't own everything in the managed schema: ${notOwned.map(notOwnedMessage).join("; ")}`,
+        count: `the deploy role doesn't own ${plural(notOwned.length, "object")} in the managed schema`,
+        details: notOwnedListing(target, notOwned),
+      },
+      foreign !== undefined && {
+        reason: foreignHistorySchemaMessage(foreign),
+        count: `its history schema "${foreign.historySchema}" isn't super-deploy's`,
+        details: [`Target ${target}: ${foreignHistorySchemaMessage(foreign)}`],
+      },
+      historySchema !== undefined && {
+        reason: historySchemaNotCreatableMessage(historySchema),
+        count: `${notOwned.length === 0 ? "the deploy role " : ""}lacks CREATE on the database`,
+        details: [
+          `The deploy role ${historySchema.role} needs CREATE on database ${historySchema.database} to create the history schema "${historySchema.historySchema}"`,
+        ],
+      },
+    ].filter((section) => section !== false);
+    const reasonsRefused = refusedNeeded.length > 0 && {
+      reason: `${reasonsNeeded}, asked only in a terminal: ${refusedNeeded.map((item) => item.object).join(", ")}`,
+      count: reasonsNeeded,
+      details: [
+        `Target ${target} has ${plural(needed.length, "object")} that need${s} an override reason, asked only in a terminal:`,
+        ...overrideListing(refusedNeeded),
+      ],
+    };
+    const refusedFor = [
+      ...found,
+      ...(reasonsRefused === false ? [] : [reasonsRefused]),
     ];
     // Refused for nothing but the override reasons: for want of a terminal.
     const refused =
-      counted.length === 1 && refusedNeeded.length > 0
+      found.length === 0 && reasonsRefused !== false
         ? `Cannot adopt target ${target} without a terminal`
         : `Cannot adopt target ${target}`;
     super(
-      [`${refused}: ${reasons.join("; ")}`, nothingWritten, ...later].join(
-        ". ",
-      ),
+      [
+        `${refused}: ${refusedFor.map(({ reason }) => reason).join("; ")}`,
+        nothingWritten,
+        ...later,
+      ].join(". "),
     );
     this.target = target;
     this.objects = objects;
@@ -1480,43 +1498,12 @@ export class AdoptUnsupportedError extends SuperDeployError {
     this.overridesNeeded = needed;
     this.advice = advice;
     this.details = [
-      ...(objects.length === 0
-        ? []
-        : [
-            `Target ${target} has ${things}:`,
-            ...objects.flatMap(({ object, rule, reason }) => [
-              `  ${object}`,
-              `    ${rule}: ${reason}`,
-            ]),
-          ]),
-      ...(notOwned.length === 0 ? [] : notOwnedListing(target, notOwned)),
-      ...(foreign === undefined
-        ? []
-        : [`Target ${target}: ${foreignHistorySchemaMessage(foreign)}`]),
-      ...(historySchema === undefined
-        ? []
-        : [
-            `The deploy role ${historySchema.role} needs CREATE on database ${historySchema.database} to create the history schema "${historySchema.historySchema}"`,
-          ]),
-      ...(fixes.length === 0
-        ? []
-        : fixScript(
-            historySchema === undefined
-              ? notOwnedFixer
-              : notOwned.length === 0
-                ? "a superuser or as the database's owner"
-                : "a superuser",
-            fixes,
-          )),
-      ...(refusedNeeded.length === 0
-        ? []
-        : [
-            `Target ${target} has ${plural(needed.length, "object")} that need${s} an override reason, asked only in a terminal:`,
-            ...overrideListing(refusedNeeded),
-          ]),
+      ...found.flatMap(({ details }) => details),
+      ...(fixes.length === 0 ? [] : fixScript(fixes)),
+      ...(reasonsRefused === false ? [] : reasonsRefused.details),
       ...later,
     ];
-    this.summary = `${refused}: ${listing(counted)}, listed above. ${nothingWritten}`;
+    this.summary = `${refused}: ${joined(refusedFor.map(({ count }) => count))}, listed above. ${nothingWritten}`;
   }
 }
 
@@ -1529,22 +1516,6 @@ export function overrideListing(needed: readonly OverrideNeeded[]): string[] {
     `  ${object}`,
     ...findings.map(({ rule, message }) => `    ${rule}: ${message}`),
   ]);
-}
-
-/** Up to five objects' names, `; `-separated, then how many more. */
-function shown(objects: readonly UnsupportedObject[]): string {
-  const more = objects.length > 5 ? `; and ${objects.length - 5} more` : "";
-  return `${objects
-    .slice(0, 5)
-    .map((o) => o.object)
-    .join("; ")}${more}`;
-}
-
-/** `a`, `a and b`, `a, b and c`. */
-function listing(parts: readonly string[]): string {
-  return parts.length <= 1
-    ? (parts[0] ?? "")
-    : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
 /**

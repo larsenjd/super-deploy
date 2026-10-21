@@ -167,8 +167,12 @@ export {
   HistorySchemaNotCreatableError,
   PreflightFailedError,
 } from "./deploy/preflight.ts";
+export type {
+  RecordedPosition,
+  TargetCommand,
+  TargetRollback,
+} from "./deploy/rollback.ts";
 export {
-  type SessionRollback,
   TargetSessionEndedError,
   TargetTimeoutError,
 } from "./deploy/session-ended.ts";
@@ -194,10 +198,7 @@ export {
   TargetChangedError,
   TerminalRequiredError,
 } from "./guard/guard.ts";
-export {
-  InterruptedError,
-  type InterruptedRollback,
-} from "./interruption.ts";
+export { InterruptedError } from "./interruption.ts";
 export {
   type LoadProjectOptions,
   loadProject,
@@ -221,12 +222,9 @@ export {
 } from "./questions.ts";
 export { OrderDependenceError } from "./rehearsal/order-independence.ts";
 export type {
-  DeploymentRollback,
-  DraftDeploymentRollback,
+  FileRollback,
   PostgresRefusal,
-  RebuildRollback,
   SqlFileFailure,
-  TargetRollback,
 } from "./rehearsal/replay.ts";
 export { SqlFileFailedError } from "./rehearsal/replay.ts";
 export { UnknownRecordedMigrationError } from "./rehearsal/replica.ts";

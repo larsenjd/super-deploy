@@ -17,6 +17,7 @@ import { runCli } from "../support/cli.ts";
 import {
   asDeployerPreamble,
   asDeployRole,
+  attemptLog,
   deployConfig,
   embeddedDeployRole,
   roleName,
@@ -230,17 +231,7 @@ unix("deploy-draft", () => {
       });
       await rebuilding.waitFor("Type YES");
       rebuilding.type(`YES${keys.enter}`);
-      await expect
-        .poll(
-          () =>
-            server.query(
-              `select pid from pg_stat_activity
-                where datname = $1 and state = 'active' and wait_event_type = 'Lock'`,
-              [database],
-            ),
-          { timeout: 10_000 },
-        )
-        .not.toEqual([]);
+      await server.untilLockWaiter(database);
 
       const terminal = spawnTerminal(["deploy-draft", "--target", "dev"], {
         cwd: dir.root,
@@ -254,13 +245,7 @@ unix("deploy-draft", () => {
       await blocker.close();
     }
     expect(await rebuilding?.exited).toBe(0);
-    expect(
-      await server.query(
-        "select command, outcome from deployment_history.attempts order by id",
-        [],
-        database,
-      ),
-    ).toEqual([
+    expect(await attemptLog(server, database)).toMatchObject([
       { command: "deploy", outcome: "succeeded" },
       { command: "rebuild", outcome: "succeeded" },
     ]);
@@ -524,13 +509,7 @@ unix("deploy-draft", () => {
       "Error: Target dev has pending migrations (00001-add-customers): deploy them first",
     );
     expect(await pending.exited).toBe(1);
-    expect(
-      await server.query(
-        "select command, outcome from deployment_history.attempts order by id",
-        [],
-        database,
-      ),
-    ).toEqual([
+    expect(await attemptLog(server, database)).toMatchObject([
       { command: "deploy", outcome: "succeeded" },
       { command: "deploy-draft", outcome: "succeeded" },
     ]);
@@ -622,6 +601,7 @@ unix("deploy-draft", () => {
     });
     expect(status.stdout).not.toContain("holds draft");
   });
+
   test("seed data that clashes with the target's rows rolls back too, pointing at the draft's scripts or its seed data", async () => {
     const { dir, database } = await deployedProject();
     await requireCityDraft(dir);
@@ -1260,7 +1240,7 @@ unix("rebuild", () => {
     ).toEqual([{ id: 1 }]);
   });
 
-  test("lists a table in another schema inheriting from a managed table, or typed with a managed composite type, as dropped with its data", async () => {
+  test("lists a table of any kind in another schema inheriting from a managed table, or typed with a managed composite type, as dropped with its data", async () => {
     const { dir, database } = await deployedProject();
     await server.query(
       `create type public.pair as (a int, b int);
@@ -1268,7 +1248,10 @@ unix("rebuild", () => {
        create table reporting.child (extra int) inherits (public.customers);
        insert into reporting.child (id, name, extra) values (999, 'child row', 1);
        create table reporting.typed of public.pair;
-       insert into reporting.typed values (1, 2);`,
+       insert into reporting.typed values (1, 2);
+       create extension postgres_fdw schema reporting;
+       create server reporting_loopback foreign data wrapper postgres_fdw;
+       create foreign table reporting.remote () inherits (public.customers) server reporting_loopback;`,
       [],
       database,
     );
@@ -1283,6 +1266,7 @@ unix("rebuild", () => {
         "Also drops, outside schema public:",
       ),
     ).toEqual([
+      "foreign table reporting.remote (with its data)",
       "table reporting.child (with its data)",
       "table reporting.typed (with its data)",
     ]);
@@ -1463,6 +1447,43 @@ unix("rebuild", () => {
     expect(terminal.screen).toContain("schema app (owned by super_deploy)");
     expect(await terminal.exited).toBe(1);
     expect(terminal.screen).not.toContain("su_owned");
+  });
+
+  test("refuses a managed schema the deploy role doesn't own and an extension it can't drop in one refusal, with the fix for each", async () => {
+    const { dir, database } = await appOwnedBySuperuser();
+    await server.query("create extension citext schema app", [], database);
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    const shown = await terminal.waitFor("(nothing changed)");
+    expect(shown).toContain("can't drop extension citext");
+    expect(shown).toContain("DROP EXTENSION citext CASCADE");
+    expect(shown).toContain(`ALTER SCHEMA app OWNER TO ${embeddedDeployRole}`);
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    await server.query("drop extension citext", [], database);
+  });
+
+  test("a table a superuser made in a managed schema the deploy role owns doesn't stop it: the wipe drops it", async () => {
+    const { dir, database } = await deployedAsDatabaseOwner();
+    await server.query("create table admin_notes (id int)", [], database);
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor("Type YES");
+    terminal.type(`YES${keys.enter}`);
+    expect(await terminal.exited).toBe(0);
+    expect(
+      await server.query(
+        "select to_regclass('admin_notes') as notes",
+        [],
+        database,
+      ),
+    ).toEqual([{ notes: null }]);
   });
 
   test("says it rolled back when PostgreSQL refuses a drop after YES", async () => {
@@ -1754,7 +1775,7 @@ unix("from the menu", () => {
     ).toEqual([{ name: "Ada" }]);
   });
 
-  test("rebuild offers no migrations below migration 1", async () => {
+  test('from the menu, rebuild offers "(none: no migrations)" below migration 1, and rebuilds with none', async () => {
     const { dir, database } = await deployedProject();
     const terminal = spawnTerminal([], { cwd: dir.root });
 

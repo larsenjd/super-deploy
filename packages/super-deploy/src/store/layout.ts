@@ -4,8 +4,7 @@
 //     desired-schema/            the desired schema: any *.sql files, any folders
 //     draft/                     the one draft (absent when there is none); any
 //                                other file in it is warned about (store/draft.ts)
-//       draft.json               { "name": "<kebab-case name>", "desiredSchemaHash": "<hex>",
-//                                  "schemaChangeHash": "<hex>" },
+//       draft.json               { "name": "<kebab-case name>", "desiredSchemaHash": "<hex>" },
 //                                or for a Recovery draft { "name": ..., "recoveryOf": N }
 //       seed-data.sql            optional: loaded before the pre-migration script, in the draft's own rehearsals only
 //       pre-migration.sql        optional, hand-written: runs before the schema change

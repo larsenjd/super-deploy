@@ -17,6 +17,7 @@ import {
   preflightChecks,
   refusesDeployment,
 } from "../deploy/preflight.ts";
+import { recordedPosition } from "../deploy/rollback.ts";
 import { targetDatabaseRequest } from "../deploy/target.ts";
 import type { Project } from "../project.ts";
 import { rehearseDeployment } from "../rehearsal/rehearse-deployment.ts";
@@ -30,10 +31,7 @@ import {
 import { analyseDesiredSchema } from "../sql-analysis/index.ts";
 import { readDesiredSchema } from "../store/desired-schema.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
-import {
-  migrationFolderName,
-  snapshotFolderName,
-} from "../store/migrations.ts";
+import { snapshotFolderName } from "../store/migrations.ts";
 
 export interface DeployOptions {
   /** The target's name in config. */
@@ -105,7 +103,7 @@ export async function deploy(
         targetName: target.name,
         migrations,
         recorded,
-        pending,
+        units: pending.map((migration) => migration.unit),
       });
       for (const warning of findings.warnings) {
         options.onWarning?.(warning);
@@ -164,14 +162,10 @@ export async function deploy(
         if (failed === undefined) {
           throw error;
         }
-        const last = recorded.at(-1);
         throw (error as SqlFileFailedError).rolledBack({
           command: "deploy",
           target: target.name,
-          lastRecorded:
-            last === undefined
-              ? undefined
-              : migrationFolderName(last.number, last.name),
+          recorded: recordedPosition(recorded),
           migration: failed.number,
         });
       }

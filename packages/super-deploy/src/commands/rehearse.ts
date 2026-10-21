@@ -39,11 +39,7 @@ import {
   draftSchemaChangeHandEdit,
   type SchemaChangeHandEdit,
 } from "../store/hand-edit.ts";
-import {
-  desiredSchemaHash,
-  fileHash,
-  type HashedFile,
-} from "../store/hashing.ts";
+import { desiredSchemaHash, type HashedFile } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
@@ -155,10 +151,13 @@ export async function rehearseCurrentDraft(
   // The draft's seed data loads just before its pre-migration script; the
   // finalized migrations' seed data is never loaded.
   units.push(...seededUnits(seeded));
+  // Edited by hand: the schema change differs from draft's generated copy
+  // (store/hand-edit.ts), for a failing rehearsal as for the warnings.
+  const handEdit = await draftSchemaChangeHandEdit(root, paths);
   const { serverVersion } = await rehearseDraft(project, statements, units, {
     desiredSchemaChanged:
       draft.desiredSchemaHash !== desiredSchemaHash(desiredSchema),
-    editedSchemaChange: editedSchemaChange(project, draft, seeded),
+    editedSchemaChange: handEdit?.file,
     preMigrationScript: hasPreMigrationScript(seeded),
   });
   return {
@@ -169,32 +168,9 @@ export async function rehearseCurrentDraft(
     serverVersion,
     overrides: analysis.overrides,
     analysis,
-    handEdit: await draftSchemaChangeHandEdit(root, paths),
+    handEdit,
     unqualifiedNames,
   };
-}
-
-/**
- * The draft's schema change's project-relative path if it is not the one
- * `draft` wrote (or is missing); undefined if it is, or draft.json has no
- * hash of it (a draft written before the hash existed).
- */
-function editedSchemaChange(
-  project: Project,
-  draft: DraftMetadata,
-  seeded: SeededUnit,
-): string | undefined {
-  if (draft.schemaChangeHash === undefined) {
-    return undefined;
-  }
-  const file = projectRelative(project.root, project.paths.draftSchemaChange);
-  const schemaChange = seeded.migration.files.find(
-    (candidate) => candidate.file === file,
-  );
-  return schemaChange !== undefined &&
-    fileHash(schemaChange.sql) === draft.schemaChangeHash
-    ? undefined
-    : file;
 }
 
 export interface CheckedDraft {

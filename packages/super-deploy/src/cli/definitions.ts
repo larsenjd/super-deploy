@@ -34,7 +34,8 @@ import {
   PreflightFailedError,
   preflightRefusals,
 } from "../deploy/preflight.ts";
-import { plural } from "../errors.ts";
+import type { TargetCommand } from "../deploy/rollback.ts";
+import { joined, plural } from "../errors.ts";
 import { findUpward, type Project } from "../project.ts";
 import type {
   AskOverrideReason,
@@ -60,7 +61,7 @@ import {
   type DriftedObject,
   driftLabel,
 } from "../verification/drift.ts";
-import { indentContinuation, ReportedError } from "./run.ts";
+import { alreadyListed, indentContinuation } from "./run.ts";
 
 export type CommandGroup =
   | "Start"
@@ -188,11 +189,14 @@ interface CommandBase {
   readonly summary: string;
   readonly options: readonly OptionDefinition[];
   /**
-   * For a command that changes a target: the option naming it, and what the
-   * change is called (`deployment`). After an interruption the CLI then says
-   * what happened to the target (run.ts).
+   * For a command that changes a target: the option naming it, and the
+   * command as its attempt records it. After an interruption the CLI then
+   * says what happened to the target (run.ts).
    */
-  readonly changesTarget?: { readonly option: string; readonly noun: string };
+  readonly changesTarget?: {
+    readonly option: string;
+    readonly command: TargetCommand;
+  };
 }
 
 /** A command on the project found from the working directory (most commands). */
@@ -292,7 +296,7 @@ const initCommand: DirectoryCommandDefinition = {
   summary:
     "Create a project here, or adopt a database into an initialised project with no migrations yet",
   needsProject: false,
-  changesTarget: { option: "adopt", noun: "adoption" },
+  changesTarget: { option: "adopt", command: "init --adopt" },
   options: [
     {
       name: "adopt",
@@ -337,8 +341,13 @@ const initCommand: DirectoryCommandDefinition = {
             `Wrote ${context.displayPath(join(project.root, file))}`,
           );
         }
+        // An empty schema's warning gives the count itself: said once.
+        const adopted =
+          result.warning === undefined
+            ? `: ${plural(result.objects, "object")} from schema ${project.config.managedSchema},`
+            : "";
         context.result(
-          `Adopted target ${result.target}: ${plural(result.objects, "object")} from schema ${project.config.managedSchema}, as migration ${result.migration.folder} in ${context.displayPath(result.migration.path)}, recorded on it as marked (attempt #${result.attemptId})`,
+          `Adopted target ${result.target}${adopted} as migration ${result.migration.folder} in ${context.displayPath(result.migration.path)}, recorded on it as marked (attempt #${result.attemptId})`,
         );
         if (result.warning !== undefined) {
           context.warn(`warning: ${result.warning}`);
@@ -403,7 +412,7 @@ function leftOnTarget(left: LeftOnTarget): string | undefined {
   if (Object.values(left).every((count) => count === 0)) {
     return undefined;
   }
-  return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+  return joined(parts);
 }
 
 /**
@@ -470,7 +479,7 @@ const draftCommand: CommandDefinition = {
     for (const shortfall of result.shortfalls) {
       context.warn(`warning: ${shortfall.message}`);
       for (const difference of shortfall.differences) {
-        context.warn(`  ${difference}`);
+        context.warn(`  ${indentContinuation(difference, "    ")}`);
       }
     }
   },
@@ -627,6 +636,7 @@ const validateCommand: CommandDefinition = {
     } catch (error) {
       if (error instanceof ValidationFailedError) {
         error.problems.forEach(report);
+        throw alreadyListed(error, error.summary);
       }
       throw error;
     }
@@ -814,7 +824,7 @@ const deployCommand: CommandDefinition = {
   summary:
     "Rehearse every pending migration, then apply them all to the target in one transaction",
   options: [targetOption],
-  changesTarget: { option: "target", noun: "deployment" },
+  changesTarget: { option: "target", command: "deploy" },
   async run(project, values, context) {
     const result = await deploy(project, {
       target: String(values.target),
@@ -905,12 +915,10 @@ const statusCommand: CommandDefinition = {
       throw report.driftNotChecked === "target-locked" &&
         report.lockedBy !== undefined
         ? new TargetLockedError(report.target, report.lockedBy)
-        : new ReportedError(new PreflightFailedError(report.target, preflight));
+        : alreadyListed(new PreflightFailedError(report.target, preflight));
     }
     if (refusals.length > 0) {
-      throw new ReportedError(
-        new PreflightFailedError(report.target, preflight),
-      );
+      throw alreadyListed(new PreflightFailedError(report.target, preflight));
     }
   },
 };
@@ -948,7 +956,7 @@ const markCommand: CommandDefinition = {
   summary:
     "Record the target's next pending migration as deployed after fixing the target by hand, if it matches a replica exactly; asks you to type YES",
   options: [targetOption],
-  changesTarget: { option: "target", noun: "mark" },
+  changesTarget: { option: "target", command: "mark" },
   async run(project, values, context) {
     try {
       const result = await mark(project, { target: String(values.target) });
@@ -969,7 +977,7 @@ const disposableCommand: CommandDefinition = {
   group: "Disposable",
   summary:
     "Flag the target as disposable (or not) in its own history schema; asks you to type YES",
-  changesTarget: { option: "target", noun: "flag change" },
+  changesTarget: { option: "target", command: "disposable" },
   options: [
     targetOption,
     {
@@ -1041,7 +1049,7 @@ const deployDraftCommand: CommandDefinition = {
   group: "Disposable",
   summary:
     "Try the unfinalized draft on a disposable target, in one transaction; asks you to type YES",
-  changesTarget: { option: "target", noun: "draft's deployment" },
+  changesTarget: { option: "target", command: "deploy-draft" },
   options: [
     targetOption,
     {
@@ -1089,7 +1097,7 @@ const rebuildCommand: CommandDefinition = {
   group: "Disposable",
   summary:
     "Wipe a disposable target and replay migrations 1 to N, without seed data; asks you to type YES",
-  changesTarget: { option: "target", noun: "rebuild" },
+  changesTarget: { option: "target", command: "rebuild" },
   options: [
     targetOption,
     {

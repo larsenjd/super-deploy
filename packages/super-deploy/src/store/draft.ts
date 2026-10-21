@@ -28,7 +28,7 @@ import { join } from "node:path";
 import { SuperDeployError } from "../errors.ts";
 import { isSqlFile } from "./desired-schema.ts";
 import { normaliseDraftName } from "./draft-name.ts";
-import { fileHash, normaliseLineEndings } from "./hashing.ts";
+import { normaliseLineEndings } from "./hashing.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";
 import {
   type FinalizedMigration,
@@ -155,8 +155,6 @@ export interface DraftMetadata {
   readonly name: string;
   /** store/hashing.ts desiredSchemaHash() of the desired schema `draft` last generated from. */
   readonly desiredSchemaHash?: string | undefined;
-  /** store/hashing.ts fileHash() of the schema-change.sql `draft` last wrote. */
-  readonly schemaChangeHash?: string | undefined;
   /** For a Recovery draft: the number of the migration it recovers. */
   readonly recoveryOf?: number | undefined;
 }
@@ -194,10 +192,6 @@ export async function readDraft(
     typeof parsed.desiredSchemaHash === "string"
       ? parsed.desiredSchemaHash
       : undefined;
-  const schemaChangeHash =
-    "schemaChangeHash" in parsed && typeof parsed.schemaChangeHash === "string"
-      ? parsed.schemaChangeHash
-      : undefined;
   const recoveryOf = "recoveryOf" in parsed ? parsed.recoveryOf : undefined;
   if (
     recoveryOf !== undefined &&
@@ -215,27 +209,22 @@ export async function readDraft(
   return {
     name: normaliseDraftName(parsed.name),
     desiredSchemaHash: hash,
-    schemaChangeHash,
     ...(recoveryOf === undefined ? {} : { recoveryOf }),
   };
 }
 
 /**
- * Writes draft.json, with the hash of the generated schema change
- * `generated`, a copy of it (generatedSchemaChangeFileName) and the schema
- * change `schemaChange`: `generated` itself unless it is restored with a
- * hand edit (unfinalize).
+ * Writes draft.json, a copy of the generated schema change `generated`
+ * (generatedSchemaChangeFileName) and the schema change `schemaChange`:
+ * `generated` itself unless it is restored with a hand edit (unfinalize).
  */
 export async function writeDraft(
   paths: ProjectPaths,
-  metadata: Omit<DraftMetadata, "schemaChangeHash">,
+  metadata: DraftMetadata,
   generated: string,
   schemaChange: string = generated,
 ): Promise<void> {
-  await writeDraftMetadata(paths, {
-    ...metadata,
-    schemaChangeHash: fileHash(generated),
-  });
+  await writeDraftMetadata(paths, metadata);
   await writeFile(join(paths.draft, generatedSchemaChangeFileName), generated);
   await writeFile(paths.draftSchemaChange, schemaChange);
 }
@@ -248,7 +237,7 @@ export async function writeDraftMetadata(
   await mkdir(paths.draft, { recursive: true });
   await writeFile(
     paths.draftMetadata,
-    `${JSON.stringify({ name: metadata.name, desiredSchemaHash: metadata.desiredSchemaHash, schemaChangeHash: metadata.schemaChangeHash, recoveryOf: metadata.recoveryOf }, null, 2)}\n`,
+    `${JSON.stringify({ name: metadata.name, desiredSchemaHash: metadata.desiredSchemaHash, recoveryOf: metadata.recoveryOf }, null, 2)}\n`,
   );
 }
 

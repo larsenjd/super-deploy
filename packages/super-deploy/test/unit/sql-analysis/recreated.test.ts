@@ -46,6 +46,36 @@ CREATE VIEW "app"."order_totals" AS SELECT 2;`,
     ]);
   });
 
+  test("a routine is recreated whatever its new arguments, and one dropped without its argument types is named without them", async () => {
+    expect(
+      await recreatedObjects(
+        [
+          unit(
+            "00002-retype",
+            `drop function order_count(int);
+create function order_count(text) returns int language sql as $$ select 1 $$;
+drop function customer_count;
+create function customer_count(since bigint) returns int language sql as $$ select 1 $$;`,
+          ),
+        ],
+        "app",
+      ),
+    ).toEqual([
+      {
+        family: "routine",
+        identity: '"app"."order_count"("pg_catalog"."int4")',
+        droppedBy: "00002-retype",
+        createdBy: "00002-retype",
+      },
+      {
+        family: "routine",
+        identity: '"app"."customer_count"',
+        droppedBy: "00002-retype",
+        createdBy: "00002-retype",
+      },
+    ]);
+  });
+
   test("an object dropped in one unit and created in a later one names both; a drop nothing creates again, another schema's objects and objects without privileges are left out", async () => {
     expect(
       await recreatedObjects(

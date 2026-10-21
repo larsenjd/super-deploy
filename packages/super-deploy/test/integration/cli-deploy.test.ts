@@ -146,7 +146,7 @@ describe("deploy and status", () => {
       stderr: [
         "The deploy role on target dev doesn't own 1 object in the managed schema:",
         "  schema app (owned by super_deploy)",
-        "To fix, run as a superuser or as each object's owner:",
+        "To fix, run as a superuser:",
         "  ALTER SCHEMA app OWNER TO deployer;",
         "Error: Target dev failed the deploy pre-flight checks (1 finding, listed above)",
         "",
@@ -202,6 +202,30 @@ describe("deploy and status", () => {
     expect(report.exitCode).toBe(1);
     expect(report.stdout).toContain(
       `Deploy would refuse:\n  the deploy role ${deployer} needs CREATE on database ${database} to create the history schema "deployment_history" (fix: GRANT CREATE ON DATABASE ${database} TO ${deployer})\n`,
+    );
+  });
+
+  test("status lists public, owned by pg_database_owner, with ALTER DATABASE as its fix under Deploy would refuse", async () => {
+    const deployer = roleName("deployer");
+    const database = targetDatabaseName();
+    await server.query(`create role ${deployer} login password 'deployer'`);
+    await server.query(`create database ${database}`);
+    await server.query(`grant create on database ${database} to ${deployer}`);
+    const dir = await createTestProject({
+      config: deployConfig(server, {
+        database,
+        preamble: asDeployerPreamble(database, deployer),
+        adapter: "asDeployer",
+      }).config,
+    });
+
+    const report = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+
+    expect(report.exitCode).toBe(1);
+    expect(report.stdout).toContain(
+      `Deploy would refuse:\n  schema public is owned by pg_database_owner (the owner of database ${database}, super_deploy), whose privileges the deploy role doesn't have (fix: ALTER DATABASE ${database} OWNER TO ${deployer})\n`,
     );
   });
 

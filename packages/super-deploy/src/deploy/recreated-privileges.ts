@@ -38,17 +38,17 @@ interface ObjectPrivileges {
 }
 
 /**
- * One warning per object the `pending` units drop and create again that has
+ * One warning per object `units` drop and create again that has
  * grants, revokes, policies or row-level security on the target that the
  * deploy role's default privileges won't give it back. Read-only.
  */
 export async function recreatedPrivilegeWarnings(
   session: Session,
   managedSchema: string,
-  pending: readonly ReplayUnit[],
+  units: readonly ReplayUnit[],
 ): Promise<string[]> {
   const recreated = await recreatedObjects(
-    pending.map((unit) => ({
+    units.map((unit) => ({
       label: unit.label,
       files: unit.files.map(({ file, sql }) => ({ path: file, text: sql })),
     })),
@@ -128,7 +128,7 @@ WITH wanted AS (
   SELECT w.ord, w.family,
          CASE w.family
            WHEN 'relation' THEN pg_catalog.to_regclass(w.identity)::oid
-           WHEN 'routine' THEN pg_catalog.to_regprocedure(w.identity)::oid
+           WHEN 'routine' THEN coalesce(pg_catalog.to_regprocedure(w.identity)::oid, pg_catalog.to_regproc(w.identity)::oid)
            ELSE pg_catalog.to_regtype(w.identity)::oid
          END AS oid
     FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS w(family, identity, ord)

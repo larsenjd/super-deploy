@@ -29,7 +29,7 @@ afterAll(async () => {
 // TEST_STALL=committed the deploy transaction's COMMIT succeeds, then the
 // marker is written and the deployment waits for SIGINT before going on. With
 // TEST_STALL=close, closing the project (after the command has finished)
-// writes the marker, then takes 2 s. `rehearsal` is the
+// writes the marker, then waits for SIGINT (at most 60 s). `rehearsal` is the
 // real rehearsal adapter's expression.
 const stalling = (rehearsal: string) => `
 import { writeFileSync } from "node:fs";
@@ -64,7 +64,13 @@ const stallingRehearsal = {
   async close() {
     if (stall === "close") {
       writeFileSync(process.env.TEST_MARKER, "");
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => {
+        const timeout = setTimeout(resolve, 60_000);
+        process.once("SIGINT", () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
     }
     await ${rehearsal}.close();
   },
