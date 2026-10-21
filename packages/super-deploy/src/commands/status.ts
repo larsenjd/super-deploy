@@ -6,7 +6,10 @@
 // left on the target, a history mismatch), and drift: the target's managed
 // schema compared with a replica of its recorded migrations, built on a
 // throwaway database matching its locale (the CLI exits 1 on drift). Drift is
-// not checked while the history mismatches, a deployed draft included.
+// not checked while the history mismatches, a deployed draft included, nor
+// while another command holds the target lock: a deploy transaction's locks
+// would block the catalog read until the lock timeout, so status names the
+// holder (`lockHolder`, as deploy's refusal does) and reports the rest.
 import { settleAttempts } from "../deploy/attempts.ts";
 import {
   type AttemptRecord,
@@ -18,6 +21,7 @@ import {
   readRecordedMigrations,
   readTargetSettings,
 } from "../deploy/history.ts";
+import { type LockHolder, lockHolder } from "../deploy/lock.ts";
 import { pendingMigrations } from "../deploy/pending.ts";
 import {
   type PreflightFindings,
@@ -68,10 +72,18 @@ export interface StatusReport {
    * How the target's managed schema differs from what its recorded
    * migrations produce (column order and ownership aside: ownership is
    * `preflight.notOwned`). Empty: no drift.
-   * Undefined when the recorded history doesn't match the project's
-   * migrations (`preflight.historyMismatches`), so no replica can be built.
+   * Undefined when not checked: see `driftNotChecked`.
    */
   readonly drift: readonly DriftedObject[] | undefined;
+  /**
+   * Why drift wasn't checked: `history-mismatch` when the recorded history
+   * doesn't match the project's migrations (`preflight.historyMismatches`),
+   * so no replica can be built; `target-locked` when another command holds
+   * the target lock (`lockedBy`). Undefined when drift was checked.
+   */
+  readonly driftNotChecked: "history-mismatch" | "target-locked" | undefined;
+  /** Who holds the target lock (a running deploy, mark, rebuild...), if anyone. */
+  readonly lockedBy: LockHolder | undefined;
 }
 
 export async function status(
@@ -96,8 +108,16 @@ export async function status(
       migrations,
       recorded,
     });
-    const drift =
+    const holder = await lockHolder(session, schema);
+    const lockedBy = holder.pid === undefined ? undefined : holder;
+    const driftNotChecked =
       preflight.historyMismatches.length > 0
+        ? "history-mismatch"
+        : lockedBy !== undefined
+          ? "target-locked"
+          : undefined;
+    const drift =
+      driftNotChecked !== undefined
         ? undefined
         : await withReplica(
             project,
@@ -126,6 +146,8 @@ export async function status(
       draft: await readDeployedDraft(session, schema),
       preflight,
       drift,
+      driftNotChecked,
+      lockedBy,
     };
   } finally {
     await session.close().catch(() => {});
