@@ -7,6 +7,7 @@ import {
   RehearsalMismatchError,
   rehearse,
   SqlFileFailedError,
+  unfinalize,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { finalizeMigration } from "../support/deploy.ts";
@@ -120,6 +121,24 @@ describe("rehearse", () => {
     expect(error).toBeInstanceOf(RehearsalMismatchError);
     expect((error as RehearsalMismatchError).subject).toBe(
       "The rehearsal does not match the desired schema: data-model/draft/schema-change.sql was edited by hand since draft generated it, and the edited schema change doesn't produce the desired schema (run draft again to regenerate it)",
+    );
+  });
+
+  test("a hand edit of the schema change after unfinalize is still named as one", async () => {
+    const { dir, project } = await draftedProject();
+    await finalize(project);
+    await unfinalize(project, { acknowledgeOverwrite: true });
+    const file = "data-model/draft/schema-change.sql";
+    await dir.write(
+      file,
+      `${await dir.read(file)}\ncreate index customers_name_idx on public.customers (name);\n`,
+    );
+
+    const error = await rehearse(project).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RehearsalMismatchError);
+    expect((error as RehearsalMismatchError).subject).toContain(
+      "data-model/draft/schema-change.sql was edited by hand since draft generated it",
     );
   });
 

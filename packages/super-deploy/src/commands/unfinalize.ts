@@ -26,7 +26,7 @@ import {
   writeDraftMetadata,
   writeRecoverySchemaChange,
 } from "../store/draft.ts";
-import { desiredSchemaHash } from "../store/hashing.ts";
+import { desiredSchemaHash, fileHash } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
@@ -40,6 +40,7 @@ import {
   readHashedFiles,
   readIndex,
   recoveriesFolderName,
+  schemaChangeFileName,
   snapshotFolderName,
   UnknownMigrationError,
   writeFiles,
@@ -133,9 +134,16 @@ export async function unfinalize(
 
   await rm(paths.draft, { recursive: true, force: true });
   await writeFiles(paths.draft, draftFiles);
+  // The schema change comes back as `draft` wrote it, so a later hand edit
+  // of it is told apart from one by the scripts (rehearse.ts).
+  const schemaChange = draftFiles.find(
+    (file) => file.path === schemaChangeFileName,
+  );
   await writeDraftMetadata(paths, {
     name: newest.name,
     desiredSchemaHash: desiredSchemaHash(snapshot),
+    schemaChangeHash:
+      schemaChange === undefined ? undefined : fileHash(schemaChange.text),
   });
   await restoreFromSnapshot(paths.desiredSchema, snapshot, pending.differences);
 
