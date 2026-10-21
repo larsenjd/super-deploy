@@ -5,7 +5,7 @@ super-deploy knows about one role, the deploy role, which owns the managed schem
 ## Consequences
 
 - `SECURITY DEFINER` is refused because, without `REVOKE EXECUTE ... FROM PUBLIC`, any role that can connect could call a function running with the deploy role's rights.
-- Since ownership is assumed rather than managed, `deploy`, `status`, `deploy-draft`, `adopt` and `mark` refuse a target where the managed schema or an object in it is owned by a role the deploy role is not a member of. Without that check, such a target fails at deploy with "must be owner" partway through.
+- Since ownership is assumed rather than managed, `deploy`, `status`, `deploy-draft`, `adopt` and `mark` refuse a target where the managed schema or an object in it is owned by a role the deploy role is not a member of. Without that check, such a target fails at deploy with "must be owner" partway through. `rebuild` refuses one where the managed schema itself is owned so: it drops and recreates what is in the schema, as the deploy role, but leaves the schema, so `deploy` would refuse the result.
 - A migration that drops and recreates an object loses the grants and policies made on it by hand, and super-deploy cannot notice.
 - A migration that changes the type of a column a hand-made policy uses, or drops that column, fails at deploy: PostgreSQL refuses while the policy depends on the column. Rehearsals cannot catch it, since their databases have no hand-made policies. The deploy transaction rolls back and PostgreSQL's error names the policy; the fix is to drop the policy, deploy, and create it again.
 - `rebuild` drops the managed schema's objects and leaves the schema's grants and default privileges as they are.

@@ -737,6 +737,7 @@ async function appOwnedBySuperuser() {
   const dir = await customersDeployed(config);
   await server.query(
     `update deployment_history.settings set disposable = true;
+     insert into app.customers (id, name) values (1, 'Ada');
      alter schema app owner to current_user;
      grant usage, create on schema app to ${embeddedDeployRole};`,
     [],
@@ -1269,7 +1270,28 @@ unix("rebuild", () => {
     );
   });
 
-  test("refuses, without asking, a table a superuser made in a managed schema the deploy role doesn't own, advising to change its owner", async () => {
+  test("refuses, without asking or recording an attempt, a managed schema the deploy role doesn't own, though it can create and drop everything in it", async () => {
+    const { dir, database } = await appOwnedBySuperuser();
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor(
+      `Error: rebuild can't run on target dev: schema app is owned by super_deploy, whose privileges the deploy role doesn't have (fix: ALTER SCHEMA app OWNER TO ${embeddedDeployRole}), so deploy would refuse the rebuilt target. Fix it, then run rebuild again (nothing changed)`,
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    expect(
+      await server.query(
+        "select (select count(*)::int from app.customers) as customers, (select array_agg(command order by id) from deployment_history.attempts) as attempts",
+        [],
+        database,
+      ),
+    ).toEqual([{ customers: 1, attempts: ["deploy"] }]);
+  });
+
+  test("names the managed schema's owner as the cause, not a table a superuser made in it", async () => {
     const { dir, database } = await appOwnedBySuperuser();
     await server.query("create table app.su_owned (id int)", [], database);
 
@@ -1278,10 +1300,10 @@ unix("rebuild", () => {
       { cwd: dir.root },
     );
     await terminal.waitFor(
-      "Error: rebuild can't wipe schema app on target dev: the deploy role can't drop table app.su_owned (owned by super_deploy). Drop it, change its owner to the deploy role, or ask its owner to, then run rebuild again (nothing changed)",
+      "Error: rebuild can't run on target dev: schema app is owned by super_deploy",
     );
     expect(await terminal.exited).toBe(1);
-    expect(terminal.screen).not.toContain("Type YES");
+    expect(terminal.screen).not.toContain("su_owned");
   });
 
   test("says it rolled back when PostgreSQL refuses a drop after YES", async () => {

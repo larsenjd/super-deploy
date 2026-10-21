@@ -6,6 +6,9 @@
 // before reading the target refuse a managed schema, or an object in it,
 // whose owner the deploy role doesn't have the privileges of. Without the
 // check such a target fails with "must be owner" partway through a deploy.
+// `rebuild` before asking checks the managed schema alone
+// (`requireManagedSchemaOwned`, QA 172): it drops what is in it, and what it
+// creates again is the deploy role's.
 //
 // "Has the privileges of" is `pg_has_role(current_user, owner, 'USAGE')`,
 // what PostgreSQL's own ownership checks use: a superuser, the owner itself,
@@ -248,9 +251,27 @@ export async function requireOwnership(
 }
 
 /**
- * `mark` or `init --adopt` refused: the managed schema, or an object in it,
- * belongs to a role the deploy role isn't a member of, so a later migration
- * would fail with "must be owner". Nothing was recorded or written.
+ * Throws NotOwnedError, for `rebuild`, if the deploy role doesn't own the
+ * managed schema itself. What is in it the wipe drops and the migrations
+ * create again, owned by the deploy role; the schema stays as it is, so
+ * `deploy` would refuse the rebuilt target.
+ */
+export async function requireManagedSchemaOwned(
+  session: Session,
+  target: string,
+  managedSchema: string,
+): Promise<void> {
+  const [first] = await objectsNotOwned(session, managedSchema);
+  if (first?.object.startsWith("schema ")) {
+    throw new NotOwnedError(target, [first], "rebuild");
+  }
+}
+
+/**
+ * `mark`, `init --adopt` or `rebuild` refused: the managed schema, or an
+ * object in it, belongs to a role the deploy role isn't a member of, so a
+ * later migration would fail with "must be owner". Nothing was recorded or
+ * written.
  */
 export class NotOwnedError extends SuperDeployError {
   readonly code = "not-owned";
@@ -258,9 +279,17 @@ export class NotOwnedError extends SuperDeployError {
   /** The managed schema first, then the objects; never empty. */
   readonly objects: readonly NotOwnedObject[];
 
-  constructor(target: string, objects: readonly NotOwnedObject[]) {
+  /** `rebuild` refuses over the managed schema alone, saying nothing changed. */
+  constructor(
+    target: string,
+    objects: readonly NotOwnedObject[],
+    command?: "rebuild",
+  ) {
+    const listed = objects.map(notOwnedMessage).join("; ");
     super(
-      `The deploy role on target ${target} doesn't own everything in the managed schema: ${objects.map(notOwnedMessage).join("; ")}`,
+      command === "rebuild"
+        ? `rebuild can't run on target ${target}: ${listed}, so deploy would refuse the rebuilt target. Fix it, then run rebuild again (nothing changed)`
+        : `The deploy role on target ${target} doesn't own everything in the managed schema: ${listed}`,
     );
     this.target = target;
     this.objects = objects;

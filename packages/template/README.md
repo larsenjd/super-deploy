@@ -465,7 +465,10 @@ default privileges as they are.
   doesn't count). `deploy`, `deploy-draft`, `mark` and `init --adopt`
   refuse a target where something in the managed schema is owned by another
   role, listing each object with the `ALTER ... OWNER TO` that fixes it;
-  `status` lists them under "Deploy would refuse". For `public`, which `pg_database_owner` owns, deploy as the
+  `status` lists them under "Deploy would refuse". `rebuild` refuses a
+  target whose managed schema itself is owned by another role, since
+  `deploy` would refuse the result (what is in the schema it drops and
+  creates again, owned by the deploy role). For `public`, which `pg_database_owner` owns, deploy as the
   database's owner: the refusal's fix for it is `ALTER DATABASE <database>
   OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`. The deploy role also needs `CREATE` on the database for
   the first deployment, which creates the history schema (and the managed
