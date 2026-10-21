@@ -674,6 +674,7 @@ async function twoMigrations() {
     "create view ada as select * from customers where id = 1",
     "create domain positive as int check (value > 0)",
     "create type mood as enum ('happy', 'sad')",
+    "create type pair as (a int, b int)",
     "create function twice(x int) returns int language sql return x * 2",
     "create sequence counter",
     // Privileges are target setup (ADR-0006): rebuild leaves them alone.
@@ -857,13 +858,13 @@ unix("rebuild", () => {
     );
     expect(extra).toBeGreaterThan(lines.indexOf("Seed data is never loaded"));
     expect(lines.slice(extra + 1, lines.indexOf("", extra))).toEqual([
-      // Domain positive's CHECK: PostgreSQL describes it without its domain.
-      "constraint positive_check",
+      // Domain positive with its CHECK, and composite type pair: one each.
+      "composite type public.pair",
+      "domain public.positive",
       "function public.twice(integer)",
       "sequence public.counter",
       "table public.scratch",
       "type public.mood",
-      "type public.positive",
       "view public.ada",
     ]);
     terminal.type(keys.ctrlC);

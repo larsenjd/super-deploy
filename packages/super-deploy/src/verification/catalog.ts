@@ -7,7 +7,8 @@
 // One query per object kind, each returning one text line per object with no
 // OIDs (names, pg_get_*def, format_type), plus the object it describes
 // so differences can name objects. The description (pg_describe_object, also
-// OID-free) is read last, with only pg_catalog on the search path, so names
+// OID-free, but naming domains and composite types as `objectName` says) is
+// read last, with only pg_catalog on the search path, so names
 // in the managed schema carry their schema (`index app.orders_idx`), quoted
 // once where they need quotes; the lines keep the pinned search path.
 // Column order (attnum) is never compared, except for composite types:
@@ -185,6 +186,22 @@ const bindingQueries: Readonly<Record<string, string>> = {
     where n.nspname = $1 and k.contype = 'f'`,
 };
 
+/**
+ * An object's name in drift, from the `described` query's address, `k` (its
+ * pg_constraint row) and `t` (its pg_type row): pg_describe_object's, except
+ * where that name hides what the object belongs to. A domain is `domain
+ * app.d` and its constraint `constraint c on domain app.d` (PostgreSQL says
+ * `type app.d` and `constraint c`), so an extra or missing domain folds its
+ * constraints in as a table does (drift.ts); a composite type's pg_type row
+ * takes its relation's name, `composite type app.pair`, so the type is one
+ * object, not also `type app.pair`.
+ */
+const objectName = `case
+  when k.contypid <> 0 then format('constraint %s on domain %s', k.conname, k.contypid::regtype)
+  when t.typtype = 'd' then format('domain %s', t.oid::regtype)
+  when t.typrelid <> 0 then pg_describe_object('pg_class'::regclass, t.typrelid, 0)
+  else pg_describe_object(class, obj, sub) end`;
+
 export interface CatalogFact {
   /** e.g. `relation`, `column`, `depends`. */
   readonly kind: string;
@@ -243,8 +260,10 @@ export async function catalogFacts(
       // out the schema of whatever the search path finds.
       await session.execute("SET LOCAL search_path TO pg_catalog");
       const described = await session.query<ObjectAddress & { object: string }>(
-        `select class::text as class, obj::text as obj, sub, pg_describe_object(class, obj, sub) as object
-         from unnest($1::oid[], $2::oid[], $3::int4[]) as address(class, obj, sub)`,
+        `select class::text as class, obj::text as obj, sub, ${objectName} as object
+         from unnest($1::oid[], $2::oid[], $3::int4[]) as address(class, obj, sub)
+         left join pg_constraint k on class = 'pg_constraint'::regclass and k.oid = obj
+         left join pg_type t on class = 'pg_type'::regclass and t.oid = obj`,
         addressColumns([...new Set(read.map(({ key }) => key))]),
       );
       for (const row of described.rows) {

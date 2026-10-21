@@ -36,7 +36,9 @@ export type DriftChange =
 export interface DriftedObject {
   /**
    * The object as PostgreSQL describes it, schema-qualified, e.g.
-   * `table app.audit`, `column note of table app.customers`.
+   * `table app.audit`, `column note of table app.customers`; a domain and
+   * its constraints as `domain app.email`, `constraint email_check on
+   * domain app.email` (verification/catalog.ts).
    */
   readonly object: string;
   readonly change: DriftChange;
@@ -134,8 +136,9 @@ export function driftedObjects(
   }));
 
   // A whole extra or missing table also differs in its columns and
-  // constraints ("column a of table t", "constraint c on table t"): report
-  // the table once.
+  // constraints ("column a of table t", "constraint c on table t"), a
+  // composite type in its attributes, a domain in its constraints
+  // ("constraint c on domain d"): report the whole once.
   const wholes = new Map(
     objects
       .filter((o) => o.change !== "changed")
