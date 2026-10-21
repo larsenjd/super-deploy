@@ -34,13 +34,14 @@ import {
 } from "../deploy/target.ts";
 import type { Project } from "../project.ts";
 import {
+  newestVariant,
   readMigrationsWithUnits,
   replicaUnits,
   withReplica,
 } from "../rehearsal/replica.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { type DriftedObject, driftBetween } from "../verification/drift.ts";
-import type { DeployedMigration } from "./deploy.ts";
+import { type DeployedMigration, deployedMigration } from "./deploy.ts";
 
 export interface StatusOptions {
   /** The target's name in config. */
@@ -132,11 +133,10 @@ export async function status(
       target: target.name,
       historySchemaExists: exists,
       recorded,
-      pending: pending.map(({ number, name, folder }) => ({
-        number,
-        name,
-        folder,
-      })),
+      // Each as the variant a deployment would run: its newest.
+      pending: pending.map((migration) =>
+        deployedMigration(migration, newestVariant(migration).recovery),
+      ),
       attempts: await readRecentAttempts(
         session,
         schema,

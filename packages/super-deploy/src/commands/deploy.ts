@@ -44,6 +44,19 @@ export interface DeployedMigration {
   readonly name: string;
   /** e.g. `00001-add-customers`. */
   readonly folder: string;
+  /** K when the migration runs, or ran, as its Recovery K; absent for its original scripts. */
+  readonly recovery?: number;
+}
+
+/** A result's entry for `migration` run as `recovery` (undefined: its original scripts). */
+export function deployedMigration(
+  migration: Pick<DeployedMigration, "number" | "name" | "folder">,
+  recovery: number | undefined,
+): DeployedMigration {
+  const { number, name, folder } = migration;
+  return recovery === undefined
+    ? { number, name, folder }
+    : { number, name, folder, recovery };
 }
 
 export interface DeployResult {
@@ -89,11 +102,9 @@ export async function deploy(
       const result = {
         target: target.name,
         attemptId: attempt.id,
-        deployed: pending.map(({ number, name, folder }) => ({
-          number,
-          name,
-          folder,
-        })),
+        deployed: pending.map((migration) =>
+          deployedMigration(migration, migration.recovery),
+        ),
       };
       await attempt.setRange(pending);
 

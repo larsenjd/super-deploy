@@ -348,7 +348,8 @@ in migration 8:
    own files and hashes don't change.
 6. The next `deploy` to a target that hasn't recorded migration 8 runs its
    newest Recovery in place of the original scripts, and records which one
-   it ran.
+   it ran. `status` and `deploy` show it next to the migration
+   (`00008-... (Recovery 1)`), and `status`'s recent attempts name it too.
 
 The schema change never changes: a Recovery always runs its migration's
 `schema-change.sql`, and `draft` refuses to regenerate it. Don't edit the
