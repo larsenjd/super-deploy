@@ -111,11 +111,16 @@ export async function status(
       await settleAttempts(session, schema);
     }
     const recorded = await readRecordedMigrations(session, schema);
-    const pending = pendingMigrations(withUnits, recorded);
+    // Each as the variant a deployment would run: its newest.
+    const pending = pendingMigrations(withUnits, recorded).map((migration) => ({
+      ...migration,
+      ...newestVariant(migration),
+    }));
     const preflight = await preflightChecks(session, project, {
       targetName: target.name,
       migrations,
       recorded,
+      pending,
     });
     const holder = await lockHolder(session, schema);
     const lockedBy = holder.pid === undefined ? undefined : holder;
@@ -142,9 +147,8 @@ export async function status(
       target: target.name,
       historySchemaExists: exists,
       recorded,
-      // Each as the variant a deployment would run: its newest.
       pending: pending.map((migration) =>
-        deployedMigration(migration, newestVariant(migration).recovery),
+        deployedMigration(migration, migration.recovery),
       ),
       attempts: await readRecentAttempts(
         session,
