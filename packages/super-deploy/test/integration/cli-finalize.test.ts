@@ -42,6 +42,23 @@ describe("rehearse and finalize", () => {
     });
   });
 
+  test("a rehearsal mismatch lists every difference, then a summary Error line, and exits 1", async () => {
+    const dir = await draftedProject();
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      customers.replace("not null", "not null, email text"),
+    );
+
+    const result = await runCli(["rehearse"], { cwd: dir.root });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.trimEnd().split("\n")).toEqual([
+      'pg-delta: ALTER TABLE "public"."customers" ADD COLUMN "email" text;',
+      expect.stringMatching(/^catalog: \+ column: customers\.email text /),
+      "Error: The rehearsal does not match the desired schema; run draft again (2 differences, listed above)",
+    ]);
+  });
+
   test("finalize prints the new migration's folder and exits 0", async () => {
     const dir = await draftedProject();
 

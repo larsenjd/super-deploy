@@ -48,6 +48,8 @@ export async function requireSameStructure(
 export class RehearsalMismatchError extends SuperDeployError {
   readonly code = "rehearsal-mismatch";
   readonly differences: readonly string[];
+  /** The message's opening, without the first difference (the CLI lists them all). */
+  readonly subject: string;
 
   /**
    * `subject` replaces the default opening ("The rehearsal does not match
@@ -57,12 +59,14 @@ export class RehearsalMismatchError extends SuperDeployError {
     differences: readonly string[],
     options: { subject?: string } = {},
   ) {
+    const subject =
+      options.subject ??
+      "The rehearsal does not match the desired schema; run draft again";
     const [first] = differences;
     const more =
       differences.length > 1 ? ` (and ${differences.length - 1} more)` : "";
-    super(
-      `${options.subject ?? "The rehearsal does not match the desired schema; run draft again"}. First difference: ${first ?? ""}${more}`,
-    );
+    super(`${subject}. First difference: ${first ?? ""}${more}`);
     this.differences = differences;
+    this.subject = subject;
   }
 }

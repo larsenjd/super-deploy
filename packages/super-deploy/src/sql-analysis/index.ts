@@ -116,4 +116,8 @@ export async function desiredSchemaAnalysis(
   }
   return { statements: ordering.statements, overrides };
 }
-export { type RuleViolation, SqlRuleViolationError } from "./rules.ts";
+export {
+  describeViolation,
+  type RuleViolation,
+  SqlRuleViolationError,
+} from "./rules.ts";
