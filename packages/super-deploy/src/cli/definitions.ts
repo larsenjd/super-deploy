@@ -308,8 +308,11 @@ const initCommand: DirectoryCommandDefinition = {
           );
         }
         context.result(
-          `Adopted target ${result.target}: migration ${result.migration.folder} in ${context.displayPath(result.migration.path)}, recorded on it as marked (attempt #${result.attemptId})`,
+          `Adopted target ${result.target}: ${plural(result.objects, "object")} from schema ${project.config.managedSchema}, as migration ${result.migration.folder} in ${context.displayPath(result.migration.path)}, recorded on it as marked (attempt #${result.attemptId})`,
         );
+        if (result.warning !== undefined) {
+          context.warn(`warning: ${result.warning}`);
+        }
         const { grants, policies } = result.leftOnTarget;
         if (grants + policies > 0) {
           context.result(

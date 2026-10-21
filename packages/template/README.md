@@ -373,8 +373,15 @@ before any draft or migration exists), and set `managedSchema` if its schema
 isn't `public` (see [Project settings](#project-settings)). Then run
 `pnpm exec super-deploy init --adopt <target>`. Its managed schema becomes the
 desired schema and migration `00001-adopt`, which is recorded on that target
-as already deployed. If the target has no schema of that name (usually a
-typo in `managedSchema`), adoption refuses and writes nothing. If the
+as already deployed, and it says how many objects (tables, views, sequences,
+routines and types) it adopted. An empty managed schema is adopted too, with
+a warning that names the target's other schemas holding objects, in case
+`managedSchema` was forgotten. If the target has no schema of that name (usually a
+typo in `managedSchema`), adoption refuses and writes nothing, listing the
+schemas the target has. `managedSchema` must be lowercase: a schema whose
+name isn't, such as `"MyApp"`, has to be renamed on the target before it is
+adopted (`ALTER SCHEMA "MyApp" RENAME TO myapp`), and the application's
+`search_path` and schema-qualified names changed with it. If the
 database holds anything super-deploy doesn't support (see
 [What the desired schema supports](#what-the-desired-schema-supports)),
 nothing is written and every such object is listed: that includes a
@@ -399,6 +406,26 @@ refusal names them, so you know which reasons it will ask for. An empty
 answer cancels the adoption, writing nothing. Without a terminal (in CI, for
 example) adoption refuses them, saying to run it in a terminal. `finalize` and `validate` show these
 overrides like any other.
+
+### Starting an adoption over
+
+An adoption that went wrong (the wrong `managedSchema` or target, a target
+that needed changing first) can be started over, but only while the target
+records nothing but the adoption: `status --target <target>` shows
+`1 migration recorded`, `00001-adopt`, marked. Adopting again is refused
+until then, and both refusals point here.
+
+1. On the target, as the deploy role (it created the history schema, so it
+   owns it): `drop schema deployment_history cascade` (or your
+   `historySchema`). This also deletes the target's attempt log and its
+   disposable flag.
+2. In the project, delete `data-model/migrations/` and the `.sql` files
+   adoption wrote in `data-model/desired-schema/`.
+3. Fix what was wrong, then run `pnpm exec super-deploy init --adopt <target>`
+   again.
+
+Never do this on a target that has deployed migrations since it was
+adopted: its history is what every later deployment relies on.
 
 ## Permissions
 
@@ -440,7 +467,8 @@ default privileges as they are.
   refuse a target where something in the managed schema is owned by another
   role, listing each object with the `ALTER ... OWNER TO` that fixes it;
   `status` lists them under "Deploy would refuse". For `public`, which `pg_database_owner` owns, deploy as the
-  database's owner. The deploy role also needs `CREATE` on the database for
+  database's owner: the refusal's fix for it is `ALTER DATABASE <database>
+  OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`. The deploy role also needs `CREATE` on the database for
   the first deployment, which creates the history schema (and the managed
   schema, if the target lacks it).
 - **The application's roles**, their role membership and their database
