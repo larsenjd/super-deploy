@@ -148,6 +148,77 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
     expect(status.stdout).toMatch(/^Target dev \(disposable\):/);
   });
 
+  test("disposable --set yes says how many tables the managed schema holds and about how many rows, and what the flag allows", async () => {
+    const { dir, database } = await deployedProject();
+    await server.query(
+      `insert into customers select n, 'customer ' || n from generate_series(1, 1000) n;
+       create table notes (id bigint);
+       insert into notes values (1), (2);
+       analyze customers;
+       analyze notes;`,
+      [],
+      database,
+    );
+
+    const terminal = spawnTerminal(
+      ["disposable", "--target", "dev", "--set", "yes"],
+      { cwd: dir.root },
+    );
+
+    const shown = await terminal.waitFor("Type YES");
+    expect(shown).toContain("Schema public holds 2 tables, about 1,002 rows");
+    expect(shown).toContain(
+      "deploy-draft will then be allowed to deploy a draft to it, and rebuild to wipe it",
+    );
+    terminal.type(keys.ctrlC);
+    expect(await terminal.exited).toBe(1);
+  });
+
+  test("disposable --set yes counts the rows of a table not yet analyzed, and says when the managed schema holds no tables", async () => {
+    const { dir, database } = await deployedProject();
+    await server.query(
+      "insert into customers select n, 'customer ' || n from generate_series(1, 500) n",
+      [],
+      database,
+    );
+    // Until autovacuum analyzes it, the table's row estimate is the
+    // statistics' live-row count, which its inserting session reports when
+    // it ends.
+    await expect
+      .poll(
+        async () =>
+          (
+            await server.query<{ rows: number }>(
+              "select pg_stat_get_live_tuples('customers'::regclass)::int as rows",
+              [],
+              database,
+            )
+          )[0]?.rows,
+      )
+      .toBe(500);
+
+    const counted = spawnTerminal(
+      ["disposable", "--target", "dev", "--set", "yes"],
+      { cwd: dir.root },
+    );
+    expect(await counted.waitFor("Type YES")).toContain(
+      "Schema public holds 1 table, about 500 rows",
+    );
+    counted.type(keys.ctrlC);
+    expect(await counted.exited).toBe(1);
+
+    const empty = await guardedProject();
+    const none = spawnTerminal(
+      ["disposable", "--target", "dev", "--set", "yes"],
+      { cwd: empty.dir.root },
+    );
+    expect(await none.waitFor("Type YES")).toContain(
+      "Schema public holds no tables",
+    );
+    none.type(keys.ctrlC);
+    expect(await none.exited).toBe(1);
+  });
+
   test("anything but YES typed exactly refuses: nothing changes and no attempt is recorded", async () => {
     const { dir, database } = await deployedProject();
 
