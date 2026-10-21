@@ -29,9 +29,20 @@ export interface Session {
   close(): Promise<void>;
 }
 
+/**
+ * What a target connection is asked to honour. The library always passes it;
+ * an adapter that ignores it connects as long as it takes, uninterrupted.
+ */
+export interface ConnectOptions {
+  /** Give up after this many milliseconds: the target's `connectTimeout`. */
+  readonly timeoutMs: number;
+  /** Abandon the connect when this aborts: the project's interruption signal. */
+  readonly signal?: AbortSignal | undefined;
+}
+
 /** Connects to one named target. Called only by commands that touch that target. */
 export interface DeploymentAdapter {
-  connect(): Promise<Session>;
+  connect(options?: ConnectOptions): Promise<Session>;
   /** Releases anything the adapter holds (pools, servers it started). */
   close?(): Promise<void>;
 }

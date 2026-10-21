@@ -207,4 +207,13 @@ describe("init", () => {
     const help = await runCli(["--help"], { cwd: await emptyDirectory() });
     expect(help.stdout).toMatch(/\nStart:\n {2}init {2,}\S/);
   });
+
+  test("--help describes --adopt for the command line", async () => {
+    const help = await runCli(["init", "--help"], {
+      cwd: await emptyDirectory(),
+    });
+    expect(help.stdout).toContain(
+      "Instead, in an initialised project with no migrations yet: turn this target's managed schema into the desired schema and migration 1, recorded on it as marked",
+    );
+  });
 });

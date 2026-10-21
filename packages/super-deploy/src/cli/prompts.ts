@@ -1,5 +1,6 @@
 // Terminal questions with @clack/prompts: the menu's command list, one
-// question per option kind, and yes/no confirmations (default no). Every
+// question per option kind (worded by the option's `question`, else its
+// `--help` description), and yes/no confirmations (default no). Every
 // prompt is cancelled by Escape or Ctrl+C (clack reads them in raw mode), by
 // Ctrl+D on an empty answer (`askUntilEndOfInput`) and by the interruption
 // signal.
@@ -164,7 +165,7 @@ async function askOption(
   option: OptionDefinition,
   project: Project | undefined,
 ): Promise<string | boolean | undefined | typeof cancelled> {
-  const message = option.description;
+  const message = menuQuestion(option);
   switch (option.kind) {
     case "target": {
       const names = Object.keys(needed(project, option).config.targets);
@@ -242,6 +243,10 @@ async function askOption(
   }
 }
 
+function menuQuestion(option: OptionDefinition): string {
+  return option.question ?? option.description;
+}
+
 /** Options of commands without a project must not need one (see DirectoryCommandDefinition). */
 function needed(
   project: Project | undefined,
@@ -303,7 +308,7 @@ async function askName(
         }
       },
       render() {
-        const title = `${styleText("gray", S_BAR)}\n${symbol(this.state)}  ${option.description}\n`;
+        const title = `${styleText("gray", S_BAR)}\n${symbol(this.state)}  ${menuQuestion(option)}\n`;
         const input = this.userInput;
         switch (this.state) {
           case "submit":

@@ -47,6 +47,7 @@ async function rehearseHistory(project: Project): Promise<string> {
       adapter: { connect: () => database.connect() },
       lockTimeoutMs: 5000,
       statementTimeoutMs: undefined,
+      connectTimeoutMs: 10_000,
     };
     // The project as loaded, with the throwaway database as its only target.
     const rehearsing: Project = {
