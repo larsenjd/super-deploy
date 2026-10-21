@@ -255,7 +255,7 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 - Option kinds: target (from config), migration number (searchable, newest first), choice, name (normalised), flag. The menu never sets acknowledgement flags; commands ask yes/no (default no) when it matters, and refuse without the flag when there's no terminal.
 - Unknown, repeated, missing or invalid options are usage errors and nothing runs.
 - Exit codes: 0 success; 1 failed or refused (and `status` unless the target is deployable with no drift: 1 on drift, on drift not checked, or on anything a deployment would refuse; pending migrations alone exit 0); 2 usage error; 130 SIGINT; 141 closed output; 143 SIGTERM.
-- Interruption: roll back, release the lock, mark the attempt abandoned, drop throwaway databases, print one notice; a second interrupt exits at once.
+- Interruption: roll back, release the lock, mark the attempt abandoned, drop throwaway databases, print one notice (none for closed output); a second interrupt exits at once.
 - Every command is also an exported function taking a loaded project, with flags as options, questions as callbacks, and typed errors. Guarded commands stay terminal-only.
 
 **Repo and tooling** (Q58–Q63)

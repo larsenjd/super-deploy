@@ -1,7 +1,8 @@
 // The CLI process's interruptions: signals and closed output. The first one
-// prints one notice and aborts `signal` (the running command then cleans up
-// and the CLI exits with the interruption's code); a second signal exits at
-// once. Exit codes: 129 SIGHUP, 130 SIGINT, 141 closed output, 143 SIGTERM,
+// aborts `signal` (the running command then cleans up and the CLI exits with
+// the interruption's code); a second signal exits at once. A signal prints one
+// notice; closed output (e.g. `| head`) prints none, as other CLIs stay quiet
+// there. Exit codes: 129 SIGHUP, 130 SIGINT, 141 closed output, 143 SIGTERM,
 // 149 SIGBREAK. The code is also set as `process.exitCode` at once, so the
 // process exits with it even if its event loop drains before the command ends.
 
@@ -34,10 +35,9 @@ export function watchInterruptions(): ProcessInterruptions {
     }
   };
 
-  const interrupt = (code: number, reason: string, text: string) => {
+  const interrupt = (code: number, reason: string) => {
     exitCode = code;
     process.exitCode = code;
-    notice(text);
     controller.abort(new Error(reason));
   };
 
@@ -46,11 +46,10 @@ export function watchInterruptions(): ProcessInterruptions {
       if (exitCode !== undefined) {
         process.exit(exitCode);
       }
-      interrupt(
-        code,
-        name,
+      notice(
         `Interrupted by ${name}: cleaning up before exiting (interrupt again to exit at once)`,
       );
+      interrupt(code, name);
     });
   }
 
@@ -58,11 +57,7 @@ export function watchInterruptions(): ProcessInterruptions {
   for (const stream of [process.stdout, process.stderr]) {
     stream.on("error", () => {
       if (exitCode === undefined) {
-        interrupt(
-          closedOutputExitCode,
-          "closed output",
-          "Output closed: cleaning up before exiting",
-        );
+        interrupt(closedOutputExitCode, "closed output");
       }
     });
   }
