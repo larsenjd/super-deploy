@@ -201,7 +201,7 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
     });
 
     await terminal.waitFor(
-      `Error: The deploy role on target dev doesn't own everything in the managed schema: table public.orders is owned by super_deploy, which the deploy role isn't a member of (fix: ${fix})`,
+      `Error: The deploy role on target dev doesn't own everything in the managed schema: table public.orders is owned by super_deploy, whose privileges the deploy role doesn't have (fix: ${fix})`,
     );
     expect(await terminal.exited).toBe(1);
     expect(terminal.screen).not.toContain("Type YES");
@@ -212,7 +212,7 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
       cwd: dir.root,
     });
     expect(status.stdout).toContain(
-      `Deploy would refuse:\n  table public.orders is owned by super_deploy, which the deploy role isn't a member of (fix: ${fix})\n`,
+      `Deploy would refuse:\n  table public.orders is owned by super_deploy, whose privileges the deploy role doesn't have (fix: ${fix})\n`,
     );
 
     await server.query(fix, [], database);

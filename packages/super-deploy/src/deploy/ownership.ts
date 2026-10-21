@@ -15,9 +15,10 @@
 // ALTER or DROP. A target without the managed schema yet has nothing to own.
 //
 // Objects that go with another one are left out, since they change owner with
-// it and can't be given away alone: a table's indexes, row type and owned
-// (identity or serial) sequences, a type's array and multirange, and an
-// extension's members. Each object comes with the ALTER ... OWNER TO that
+// it and can't be given away alone: a table's indexes (never listed), a serial
+// sequence (its `a` dependency on the table), anything with an internal (`i`)
+// dependency (identity sequences, row types, arrays, multiranges, a range's
+// constructors) and an extension's members (`e`). Each object comes with the ALTER ... OWNER TO that
 // gives it to the deploy role, its names quoted and schema-qualified.
 
 import type { Session } from "../adapters/types.ts";
@@ -34,10 +35,10 @@ export interface NotOwnedObject {
 }
 
 /**
- * Each object kind's catalog, with the ALTER keyword and its name. `s` is the
- * managed schema's pg_namespace row.
+ * Each object kind's catalog row (class, oid), its ALTER keyword and its
+ * quoted name. `s` is the managed schema's pg_namespace row, if it exists.
  */
-const ownedObjects = `
+const ownedObjectsQuery = `
   SELECT 'pg_namespace'::regclass AS class, s.oid, 'SCHEMA' AS kind, pg_catalog.quote_ident(s.nspname) AS name, s.nspowner AS owner
     FROM s
   UNION ALL
@@ -50,24 +51,23 @@ const ownedObjects = `
      AND NOT (c.relkind = 'S' AND EXISTS (
            SELECT FROM pg_catalog.pg_depend d
             WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid
-              AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a', 'i')))
+              AND d.refclassid = 'pg_class'::regclass AND d.deptype = 'a'))
   UNION ALL
   SELECT 'pg_proc'::regclass, p.oid,
          CASE p.prokind WHEN 'p' THEN 'PROCEDURE' WHEN 'a' THEN 'AGGREGATE' ELSE 'FUNCTION' END,
-         pg_catalog.format('%I.%I(%s)', s.nspname, p.proname, pg_catalog.pg_get_function_identity_arguments(p.oid)),
+         pg_catalog.format('%I.%I(%s)', s.nspname, p.proname,
+                           CASE WHEN p.prokind = 'a' AND p.pronargs = 0 THEN '*'
+                                ELSE pg_catalog.pg_get_function_identity_arguments(p.oid) END),
          p.proowner
     FROM pg_catalog.pg_proc p JOIN s ON s.oid = p.pronamespace
   UNION ALL
   SELECT 'pg_type'::regclass, t.oid, CASE t.typtype WHEN 'd' THEN 'DOMAIN' ELSE 'TYPE' END,
          pg_catalog.format('%I.%I', s.nspname, t.typname), t.typowner
     FROM pg_catalog.pg_type t JOIN s ON s.oid = t.typnamespace
-   WHERE t.typtype <> 'm'
-     AND NOT EXISTS (SELECT FROM pg_catalog.pg_type e WHERE e.typarray = t.oid)
-     AND NOT EXISTS (SELECT FROM pg_catalog.pg_class c WHERE c.reltype = t.oid AND c.relkind <> 'c')
   UNION ALL
   SELECT 'pg_operator'::regclass, o.oid, 'OPERATOR',
          pg_catalog.format('%I.%s(%s, %s)', s.nspname, o.oprname,
-                           coalesce(pg_catalog.format_type(o.oprleft, NULL), 'NONE'),
+                           CASE WHEN o.oprleft = 0 THEN 'NONE' ELSE pg_catalog.format_type(o.oprleft, NULL) END,
                            pg_catalog.format_type(o.oprright, NULL)),
          o.oprowner
     FROM pg_catalog.pg_operator o JOIN s ON s.oid = o.oprnamespace
@@ -110,13 +110,13 @@ export async function objectsNotOwned(
     deploy_role: string;
   }>(
     `WITH s AS (SELECT oid, nspname, nspowner FROM pg_catalog.pg_namespace WHERE nspname = $1),
-     owned AS (${ownedObjects})
+     owned AS (${ownedObjectsQuery})
      SELECT kind, name, pg_catalog.pg_get_userbyid(owner) AS owner,
             pg_catalog.quote_ident(current_user) AS deploy_role
        FROM owned
       WHERE NOT pg_catalog.pg_has_role(current_user, owner, 'USAGE')
         AND NOT EXISTS (SELECT FROM pg_catalog.pg_depend d
-                         WHERE d.classid = owned.class AND d.objid = owned.oid AND d.deptype = 'e')
+                         WHERE d.classid = owned.class AND d.objid = owned.oid AND d.deptype IN ('e', 'i'))
       ORDER BY kind <> 'SCHEMA', kind COLLATE "C", name COLLATE "C"`,
     [managedSchema],
   );
@@ -129,7 +129,7 @@ export async function objectsNotOwned(
 
 /** One object's line in a refusal: what it is, who owns it, and the fix. */
 export function notOwnedMessage(notOwned: NotOwnedObject): string {
-  return `${notOwned.object} is owned by ${notOwned.owner}, which the deploy role isn't a member of (fix: ${notOwned.fix})`;
+  return `${notOwned.object} is owned by ${notOwned.owner}, whose privileges the deploy role doesn't have (fix: ${notOwned.fix})`;
 }
 
 /**

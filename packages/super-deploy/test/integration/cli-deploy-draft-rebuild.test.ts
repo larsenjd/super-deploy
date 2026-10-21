@@ -280,7 +280,7 @@ unix("deploy-draft", () => {
     ]);
   });
 
-  test("refuses, without asking, a target where the deploy role doesn't own an object in the managed schema", async () => {
+  test("refuses, without asking, a target where the deploy role doesn't own an object in the managed schema, until it does", async () => {
     const deployer = roleName("deployer");
     const database = targetDatabaseName();
     await server.query(`create role ${deployer} login password 'deployer'`);
@@ -304,7 +304,7 @@ unix("deploy-draft", () => {
     });
 
     await terminal.waitFor(
-      `table public.customers is owned by super_deploy, which the deploy role isn't a member of (fix: ALTER TABLE public.customers OWNER TO ${deployer})`,
+      `table public.customers is owned by super_deploy, whose privileges the deploy role doesn't have (fix: ALTER TABLE public.customers OWNER TO ${deployer})`,
     );
     expect(await terminal.exited).toBe(1);
     expect(terminal.screen).not.toContain("Type YES");
@@ -315,6 +315,18 @@ unix("deploy-draft", () => {
         database,
       ),
     ).toEqual([{ is_nullable: "YES" }]);
+
+    await server.query(
+      `alter table customers owner to ${deployer}`,
+      [],
+      database,
+    );
+    const again = spawnTerminal(["deploy-draft", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    await again.waitFor("Type YES to deploy draft require-city to target dev");
+    again.type(`YES${keys.enter}`);
+    expect(await again.exited).toBe(0);
   });
 
   test("a failing draft rolls back entirely: the attempt failed and the target holds no draft", async () => {

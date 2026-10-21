@@ -332,6 +332,91 @@ describe("the deploy role owns the managed schema", () => {
       deployed: [{ folder: "00002-add-orders" }],
     });
   });
+
+  test("names every kind of object with an ALTER ... OWNER TO that PostgreSQL accepts, leaving out what goes with its table or type", async () => {
+    const deployer = roleName("deployer");
+    const admin = roleName("admin");
+    const database = targetDatabaseName();
+    await server.query(`create role ${deployer} login password 'deployer'`);
+    await server.query(`create role ${admin} nologin`);
+    await server.query(`create database ${database} owner ${deployer}`);
+    const { project } = await deployProject(
+      server,
+      {},
+      {
+        database,
+        preamble: asDeployerPreamble(database, deployer),
+        adapter: "asDeployer",
+        settings: 'managedSchema: "app",',
+      },
+    );
+    await server.query(
+      `create schema app authorization ${admin};
+       set role ${admin};
+       create table app.items (id bigint generated always as identity primary key, code serial);
+       create view app.item_ids as select id from app.items;
+       create materialized view app.item_count as select count(*) from app.items;
+       create sequence app.counter;
+       create type app.mood as enum ('sad', 'happy');
+       create type app.pair as (a int, b int);
+       create type app.span as range (subtype = int4);
+       create domain app.code as text;
+       create function app.same(int, int) returns boolean language sql immutable return $1 = $2;
+       create function app.negate(int) returns int language sql immutable return -$1;
+       create procedure app.noop() language sql begin atomic select 1; end;
+       create aggregate app.tally(*) (sfunc = int8inc, stype = int8, initcond = '0');
+       create aggregate app.total(int) (sfunc = int4pl, stype = int4);
+       create operator app.=== (leftarg = int, rightarg = int, function = app.same);
+       create operator app.~~~ (rightarg = int, function = app.negate);
+       create collation app.c_copy from "C";
+       create statistics app.items_stats on id, code from app.items;
+       create text search dictionary app.simple_copy (template = pg_catalog.simple);
+       create text search configuration app.config_copy (copy = pg_catalog.simple);
+       reset role;
+       create operator family app.ints using btree;
+       create operator class app.int_ops for type int using btree family app.ints as operator 1 <, function 1 btint4cmp(int, int);
+       alter operator family app.ints using btree owner to ${admin};
+       alter operator class app.int_ops using btree owner to ${admin};`,
+      [],
+      database,
+    );
+    const notOwned = async () =>
+      (await status(project, { target: "dev" })).preflight.notOwned;
+
+    const found = await notOwned();
+
+    expect(found.map(({ fix }) => fix)).toEqual(
+      [
+        "SCHEMA app",
+        "AGGREGATE app.tally(*)",
+        "AGGREGATE app.total(integer)",
+        "COLLATION app.c_copy",
+        "DOMAIN app.code",
+        "FUNCTION app.negate(integer)",
+        "FUNCTION app.same(integer, integer)",
+        "MATERIALIZED VIEW app.item_count",
+        "OPERATOR app.===(integer, integer)",
+        "OPERATOR app.~~~(NONE, integer)",
+        "OPERATOR CLASS app.int_ops USING btree",
+        "OPERATOR FAMILY app.ints USING btree",
+        "PROCEDURE app.noop()",
+        "SEQUENCE app.counter",
+        "STATISTICS app.items_stats",
+        "TABLE app.items",
+        "TEXT SEARCH CONFIGURATION app.config_copy",
+        "TEXT SEARCH DICTIONARY app.simple_copy",
+        "TYPE app.mood",
+        "TYPE app.pair",
+        "TYPE app.span",
+        "VIEW app.item_ids",
+      ].map((object) => `ALTER ${object} OWNER TO ${deployer}`),
+    );
+    expect(found.every(({ owner }) => owner === admin)).toBe(true);
+    for (const { fix } of found) {
+      await server.query(fix, [], database);
+    }
+    expect(await notOwned()).toEqual([]);
+  });
 });
 
 describe("the deploy role's privileges", () => {
