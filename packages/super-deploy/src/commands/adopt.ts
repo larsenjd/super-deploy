@@ -55,6 +55,11 @@
 // If steps 3-4 fail, every file adoption wrote is removed again, so the
 // project is as it was; except when the target's COMMIT outcome is unknown
 // (the record may be there: the next status or deploy settles it).
+//
+// Undoing a successful adoption is documented, not a command: the README's
+// "Starting an adoption over". The refusals point there when what is in the
+// way is an earlier adoption: the project's migration 1 is 00001-adopt, or
+// the target records only migration 1, marked, named adopt.
 
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -115,6 +120,7 @@ import {
   indexFileName,
   listFiles,
   makeWritable,
+  migrationFolderName,
   readIndex,
 } from "../store/migrations.ts";
 import {
@@ -132,6 +138,15 @@ import { finalize } from "./finalize.ts";
 
 /** The draft name, so migration 1 is `00001-adopt`. */
 const migrationName = "adopt";
+const adoptedFolder = migrationFolderName(1, migrationName);
+
+/**
+ * Where a refusal points when what is in the way looks like an earlier
+ * adoption: the README section on undoing one, valid only while the target
+ * records nothing but its adoption.
+ */
+const startOver =
+  'to start the adoption over, see "Starting an adoption over" in README.md';
 
 export interface AdoptOptions {
   /** The target's name in config. */
@@ -269,8 +284,9 @@ async function requireEmptyProject(
     (path) => path !== indexFileName,
   );
   if (!index.ok || index.entries.length > 0 || migrationFiles.length > 0) {
+    const adopted = index.ok && index.entries[0]?.folder === adoptedFolder;
     reasons.push(
-      `the project already has migrations in ${projectRelative(root, paths.migrations)}`,
+      `the project already has migrations in ${projectRelative(root, paths.migrations)}${adopted ? ` (${startOver})` : ""}`,
     );
   }
   if (await exists(paths.draft)) {
@@ -320,8 +336,14 @@ async function readTarget(
       config.historySchema,
     );
     if (recorded.length > 0) {
+      const [first] = recorded;
+      const onlyAdoption =
+        recorded.length === 1 &&
+        first?.recordedHow === "marked" &&
+        first.number === 1 &&
+        first.name === migrationName;
       throw new AdoptConflictError(target.name, [
-        `it already records ${plural(recorded.length, "migration")} in its history schema "${config.historySchema}"`,
+        `it already records ${plural(recorded.length, "migration")} in its history schema "${config.historySchema}"${onlyAdoption ? `, only its adoption (${startOver})` : ""}`,
       ]);
     }
     const schemas = await userSchemas(session, config.historySchema);

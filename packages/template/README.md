@@ -387,6 +387,26 @@ answer cancels the adoption, writing nothing. Without a terminal (in CI, for
 example) adoption refuses them, saying to run it in a terminal. `finalize` and `validate` show these
 overrides like any other.
 
+### Starting an adoption over
+
+An adoption that went wrong (the wrong `managedSchema` or target, a target
+that needed changing first) can be started over, but only while the target
+records nothing but the adoption: `status --target <target>` shows
+`1 migration recorded`, `00001-adopt`, marked. Adopting again is refused
+until then, and both refusals point here.
+
+1. On the target, as the deploy role (it created the history schema, so it
+   owns it): `drop schema deployment_history cascade` (or your
+   `historySchema`). This also deletes the target's attempt log and its
+   disposable flag.
+2. In the project, delete `data-model/migrations/` and the `.sql` files
+   adoption wrote in `data-model/desired-schema/`.
+3. Fix what was wrong, then run `pnpm exec super-deploy init --adopt <target>`
+   again.
+
+Never do this on a target that has deployed migrations since it was
+adopted: its history is what every later deployment relies on.
+
 ## Permissions
 
 super-deploy knows about one role: the deploy role, which it connects to a

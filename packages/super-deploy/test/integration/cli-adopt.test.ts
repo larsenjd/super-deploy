@@ -1,6 +1,7 @@
 // CLI seam for `init --adopt <target>`: it runs in the project found from the
 // working directory, prints what it wrote, and lists what V1 doesn't support
 // on stderr when it refuses. In a terminal it asks for override reasons.
+import { rm } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import { asSuperuser, deployConfig } from "../support/deploy.ts";
@@ -128,6 +129,39 @@ describe("init --adopt", () => {
       stderr:
         'Error: Cannot adopt target prod: its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts); the target has schemas app, public. Nothing was written\n',
     });
+  });
+
+  test("adopting again points both refusals to starting the adoption over, which lets it adopt again", async () => {
+    const prod = await server.createDatabase(
+      "create table customers (id bigint primary key);",
+    );
+    const dir = await createTestProject({
+      config: deployConfig(server, {
+        otherTargets: `prod: { adapter: ${asSuperuser(prod)} },`,
+      }).config,
+    });
+    const adopt = () => runCli(["init", "--adopt", "prod"], { cwd: dir.root });
+    expect((await adopt()).exitCode).toBe(0);
+    const startOver =
+      'to start the adoption over, see "Starting an adoption over" in README.md';
+
+    expect(await adopt()).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: `Error: Cannot adopt target prod: the project already has migrations in data-model/migrations (${startOver}); the desired schema already has data-model/desired-schema/tables.sql. Nothing was written\n`,
+    });
+
+    // The README's steps: the project side, then the target's history schema.
+    await rm(dir.path("data-model/migrations"), { recursive: true });
+    await rm(dir.path("data-model/desired-schema/tables.sql"));
+    expect(await adopt()).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: `Error: Cannot adopt target prod: it already records 1 migration in its history schema "deployment_history", only its adoption (${startOver}). Nothing was written\n`,
+    });
+
+    await server.query("drop schema deployment_history cascade", [], prod);
+    expect((await adopt()).exitCode).toBe(0);
   });
 
   test("an unknown target is a usage error (exit 2)", async () => {
