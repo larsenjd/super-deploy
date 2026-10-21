@@ -399,7 +399,9 @@ just before the pre-migration script (see [Seed data](#seed-data)). It is
 never run by a deployment.
 
 No other file in a draft or migration is run. `draft.json` holds the draft's
-name.
+name. `draft`, `rehearse`, `finalize` and `validate` warn about any other
+file in the draft folder, such as a misnamed `post-migrate.sql`, naming it
+and the files a draft holds; `finalize` still copies it into the migration.
 
 Finalized migrations are read-only and hashed: never edit them.
 `super-deploy validate` checks their hashes, and `pnpm precommit` runs

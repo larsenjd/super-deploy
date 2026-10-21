@@ -481,6 +481,63 @@ alter table customers alter column phone set not null;
     });
   });
 
+  test("a misnamed script never runs: draft, rehearse and finalize warn about it, and finalize still copies it", async () => {
+    const { dir, project } = await deployProject(server, {
+      "customers.sql": customers,
+    });
+    await draft(project, { name: "add customers" });
+    await dir.write("data-model/draft/post-migrate.sql", "select 1/0;\n");
+    const unknownFiles = [
+      {
+        file: "data-model/draft/post-migrate.sql",
+        message:
+          "data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql and post-migration.sql)",
+      },
+    ];
+
+    const drafted = await draft(project);
+    const rehearsed = await rehearse(project);
+    const finalized = await finalize(project);
+
+    expect(drafted.unknownFiles).toEqual(unknownFiles);
+    expect(rehearsed.unknownFiles).toEqual(unknownFiles);
+    expect(finalized.unknownFiles).toEqual(unknownFiles);
+    expect(
+      await dir.read(
+        "data-model/migrations/00001-add-customers/post-migrate.sql",
+      ),
+    ).toBe("select 1/0;\n");
+  });
+
+  test("a draft holding only a draft's files warns about none", async () => {
+    const { dir, project } = await withFirstMigration();
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      `${customers.replace(/\n\);\n$/, "")},\n  greeting text\n);\n`,
+    );
+    await draft(project, { name: "add greeting" });
+    await dir.write(
+      "data-model/draft/seed-data.sql",
+      "insert into customers (id, name) values (2, 'Grace');\n",
+    );
+    await dir.write(
+      "data-model/draft/pre-migration.sql",
+      "update customers set name = trim(name);\n",
+    );
+    await dir.write(
+      "data-model/draft/post-migration.sql",
+      "update customers set greeting = 'Hello ' || name;\n",
+    );
+
+    const drafted = await draft(project);
+    const rehearsed = await rehearse(project);
+    const finalized = await finalize(project);
+
+    expect(drafted.unknownFiles).toEqual([]);
+    expect(rehearsed.unknownFiles).toEqual([]);
+    expect(finalized.unknownFiles).toEqual([]);
+  });
+
   test("draft refuses DDL in a post-migration script before running anything", async () => {
     const { dir, project } = await withFirstMigration();
     await draft(project, { name: "sneak index" });

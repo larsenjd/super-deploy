@@ -43,7 +43,7 @@ import {
   OverwriteNotAcknowledgedError,
 } from "../questions.ts";
 import type { LockWarning, Override } from "../sql-analysis/index.ts";
-import { readDraft } from "../store/draft.ts";
+import { readDraft, type UnknownDraftFile } from "../store/draft.ts";
 import type { ValidationProblem } from "../store/integrity.ts";
 import {
   migrationFolderName,
@@ -369,7 +369,7 @@ const draftCommand: CommandDefinition = {
         ? `Renamed draft ${result.renamedFrom} to ${result.name}`
         : `Regenerated draft ${result.name}`;
     context.result(`${what}: ${count} in ${where}`);
-    for (const item of result.toCover) {
+    for (const item of [...result.toCover, ...result.unknownFiles]) {
       context.warn(`warning: ${item.message}`);
     }
   },
@@ -383,7 +383,7 @@ const rehearseCommand: CommandDefinition = {
   options: [],
   async run(project, _values, context) {
     const result = await rehearse(project);
-    reportWarnings(result.warnings, context);
+    reportWarnings(result, context);
     for (const statement of result.destructive) {
       context.warn(
         `destructive: ${statement.file}:${statement.line}: ${statement.message} (finalize needs it acknowledged)`,
@@ -397,15 +397,24 @@ const rehearseCommand: CommandDefinition = {
   },
 };
 
-/** One warning line per statement that rewrites or scans an existing table. */
+/**
+ * One warning line per statement that rewrites or scans an existing table,
+ * then one per file in the draft folder that a draft doesn't hold.
+ */
 function reportWarnings(
-  warnings: readonly LockWarning[],
+  result: {
+    readonly warnings: readonly LockWarning[];
+    readonly unknownFiles: readonly UnknownDraftFile[];
+  },
   context: CommandContext,
 ): void {
-  for (const warning of warnings) {
+  for (const warning of result.warnings) {
     context.warn(
       `warning: ${warning.file}:${warning.line}: ${warning.message}`,
     );
+  }
+  for (const unknown of result.unknownFiles) {
+    context.warn(`warning: ${unknown.message}`);
   }
 }
 
@@ -434,7 +443,7 @@ const finalizeCommand: CommandDefinition = {
     if (result === undefined) {
       return;
     }
-    reportWarnings(result.warnings, context);
+    reportWarnings(result, context);
     context.result(
       result.recovery === undefined
         ? `Finalized migration ${result.folder} in ${context.displayPath(result.path)}`

@@ -31,6 +31,8 @@ import {
   NoDraftError,
   readDraft,
   recoverySchemaChange,
+  type UnknownDraftFile,
+  unknownDraftFiles,
 } from "../store/draft.ts";
 import { type HashedFile, normaliseLineEndings } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
@@ -57,10 +59,13 @@ export interface RehearseResult {
   readonly destructive: readonly DestructiveStatement[];
   /** Statements that rewrite or scan an existing table while holding its lock (draft paths). */
   readonly warnings: readonly LockWarning[];
+  /** Files in the draft folder that a draft doesn't hold: they never run (store/draft.ts). */
+  readonly unknownFiles: readonly UnknownDraftFile[];
 }
 
 export async function rehearse(project: Project): Promise<RehearseResult> {
   const rehearsed = await rehearseCurrentDraft(project, "rehearse");
+  const unknownFiles = await unknownDraftFiles(project.root, project.paths);
   return {
     name: rehearsed.draft.name,
     recoveryOf: rehearsed.recoveryOf?.number,
@@ -71,6 +76,7 @@ export async function rehearse(project: Project): Promise<RehearseResult> {
     serverVersion: rehearsed.serverVersion,
     destructive: rehearsed.analysis.destructive,
     warnings: rehearsed.analysis.warnings,
+    unknownFiles,
   };
 }
 

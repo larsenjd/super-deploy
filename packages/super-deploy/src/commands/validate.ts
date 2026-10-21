@@ -5,8 +5,9 @@
 // the desired schema, in every finalized migration's and Recovery's
 // deploy-time files and seed data, and in the draft's; a Recovery draft
 // whose schema change is no longer its migration's.
-// Warnings: an unfinalized draft, and desired-schema
-// changes not yet drafted. `strict` turns warnings into failures.
+// Warnings: an unfinalized draft, a file in the draft folder that a draft
+// doesn't hold (store/draft.ts), and desired-schema changes not yet drafted.
+// `strict` turns warnings into failures.
 // Those two are a draft in progress (the codes in `draftInProgress`):
 // `allowDraft` keeps them warnings even under `strict`, so the template's
 // hook lets a draft be committed for review while CI (`--strict` alone)
@@ -34,7 +35,11 @@ import {
   readDesiredSchema,
   readDesiredSchemaFiles,
 } from "../store/desired-schema.ts";
-import { type DraftMetadata, readDraft } from "../store/draft.ts";
+import {
+  type DraftMetadata,
+  readDraft,
+  unknownDraftFiles,
+} from "../store/draft.ts";
 import { desiredSchemaHash, InvalidEncodingError } from "../store/hashing.ts";
 import {
   checkMigrations,
@@ -112,6 +117,9 @@ export async function validate(
       `Draft ${draft.name}${draft.recoveryOf === undefined ? "" : ` (a Recovery of migration ${recoveryOf?.folder ?? draft.recoveryOf})`} is not finalized yet`,
       display(paths.draft),
     );
+  }
+  for (const unknown of await unknownDraftFiles(root, paths)) {
+    warn("unknown-draft-file", unknown.message, unknown.file);
   }
   if (draft?.recoveryOf !== undefined) {
     problems.push(
