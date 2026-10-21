@@ -252,6 +252,46 @@ describe("transaction control, CALL and DO", () => {
   });
 });
 
+describe("SET and RESET", () => {
+  const roleReason =
+    /a deployment runs everything as the deploy role, and roles and privileges are set up on targets outside super-deploy/;
+  const localReason =
+    /super-deploy pins the session settings for every migration in the deployment's one transaction, and SET LOCAL would change them for the rest of it/;
+  const plainReason =
+    /super-deploy pins the session settings, and a plain SET outlives the transaction/;
+
+  test.each([
+    ["set local role x", /^SET LOCAL ROLE is not allowed/, roleReason],
+    ["set role x", /^SET ROLE is not allowed/, roleReason],
+    ["reset role", /^RESET ROLE is not allowed/, roleReason],
+    [
+      "set session authorization x",
+      /^SET SESSION AUTHORIZATION is not allowed/,
+      roleReason,
+    ],
+    [
+      "reset session authorization",
+      /^RESET SESSION AUTHORIZATION is not allowed/,
+      roleReason,
+    ],
+    [
+      "set local statement_timeout = 0",
+      /^SET LOCAL is not allowed/,
+      localReason,
+    ],
+    ["set statement_timeout = 0", /^SET is not allowed/, plainReason],
+    ["reset all", /^RESET is not allowed/, plainReason],
+  ])("%s gets a reason that fits it", async (sql, what, reason) => {
+    const found = await check("pre-migration", `${sql};`);
+    expect(found).toEqual([
+      expect.objectContaining({ rule: "escapes-transaction" }),
+    ]);
+    expect(found[0]?.message).toMatch(what);
+    expect(found[0]?.message).toMatch(reason);
+    expect(found[0]?.message.includes("outlives")).toBe(reason === plainReason);
+  });
+});
+
 describe("a migration's files", () => {
   test("are checked in order, each against its own kind", async () => {
     const analysis = await analyseMigration([
