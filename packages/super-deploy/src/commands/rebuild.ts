@@ -223,7 +223,11 @@ export async function rebuild(
         await runMigrations(session, migrations, applyOptions);
       }).catch((error: unknown) => {
         throw error instanceof SqlFileFailedError
-          ? error.rolledBack({ command: "rebuild", target: target.name })
+          ? error.rolledBack({
+              command: "rebuild",
+              target: target.name,
+              recorded: undefined,
+            })
           : error;
       });
       return {

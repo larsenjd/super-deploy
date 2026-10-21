@@ -276,7 +276,7 @@ describe("deploy", () => {
       detail: "Key (slug)=(a) already exists.",
       rollback: {
         target: "dev",
-        lastRecorded: "00001-add-customers",
+        recorded: { lastRecorded: "00001-add-customers" },
         migration: 2,
       },
     });

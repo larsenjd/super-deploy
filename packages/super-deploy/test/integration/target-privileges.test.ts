@@ -336,7 +336,10 @@ describe("row-level security forced on a target", () => {
     expect(error).toBeInstanceOf(SqlFileFailedError);
     expect(error).toMatchObject({
       file: "data-model/migrations/00002-priority/post-migration.sql",
-      rollback: { target: "dev", lastRecorded: "00001-add-orders" },
+      rollback: {
+        target: "dev",
+        recorded: { lastRecorded: "00001-add-orders" },
+      },
     });
     const { message } = error as SqlFileFailedError;
     expect(message).toContain('"orders"');

@@ -34,6 +34,7 @@ import {
   PreflightFailedError,
   preflightRefusals,
 } from "../deploy/preflight.ts";
+import type { TargetCommand } from "../deploy/rollback.ts";
 import { plural } from "../errors.ts";
 import { findUpward, type Project } from "../project.ts";
 import type {
@@ -188,11 +189,14 @@ interface CommandBase {
   readonly summary: string;
   readonly options: readonly OptionDefinition[];
   /**
-   * For a command that changes a target: the option naming it, and what the
-   * change is called (`deployment`). After an interruption the CLI then says
-   * what happened to the target (run.ts).
+   * For a command that changes a target: the option naming it, and the
+   * command as its attempt records it. After an interruption the CLI then
+   * says what happened to the target (run.ts).
    */
-  readonly changesTarget?: { readonly option: string; readonly noun: string };
+  readonly changesTarget?: {
+    readonly option: string;
+    readonly command: TargetCommand;
+  };
 }
 
 /** A command on the project found from the working directory (most commands). */
@@ -292,7 +296,7 @@ const initCommand: DirectoryCommandDefinition = {
   summary:
     "Create a project here, or adopt a database into an initialised project with no migrations yet",
   needsProject: false,
-  changesTarget: { option: "adopt", noun: "adoption" },
+  changesTarget: { option: "adopt", command: "init --adopt" },
   options: [
     {
       name: "adopt",
@@ -814,7 +818,7 @@ const deployCommand: CommandDefinition = {
   summary:
     "Rehearse every pending migration, then apply them all to the target in one transaction",
   options: [targetOption],
-  changesTarget: { option: "target", noun: "deployment" },
+  changesTarget: { option: "target", command: "deploy" },
   async run(project, values, context) {
     const result = await deploy(project, {
       target: String(values.target),
@@ -948,7 +952,7 @@ const markCommand: CommandDefinition = {
   summary:
     "Record the target's next pending migration as deployed after fixing the target by hand, if it matches a replica exactly; asks you to type YES",
   options: [targetOption],
-  changesTarget: { option: "target", noun: "mark" },
+  changesTarget: { option: "target", command: "mark" },
   async run(project, values, context) {
     try {
       const result = await mark(project, { target: String(values.target) });
@@ -969,7 +973,7 @@ const disposableCommand: CommandDefinition = {
   group: "Disposable",
   summary:
     "Flag the target as disposable (or not) in its own history schema; asks you to type YES",
-  changesTarget: { option: "target", noun: "flag change" },
+  changesTarget: { option: "target", command: "disposable" },
   options: [
     targetOption,
     {
@@ -1041,7 +1045,7 @@ const deployDraftCommand: CommandDefinition = {
   group: "Disposable",
   summary:
     "Try the unfinalized draft on a disposable target, in one transaction; asks you to type YES",
-  changesTarget: { option: "target", noun: "draft's deployment" },
+  changesTarget: { option: "target", command: "deploy-draft" },
   options: [
     targetOption,
     {
@@ -1089,7 +1093,7 @@ const rebuildCommand: CommandDefinition = {
   group: "Disposable",
   summary:
     "Wipe a disposable target and replay migrations 1 to N, without seed data; asks you to type YES",
-  changesTarget: { option: "target", noun: "rebuild" },
+  changesTarget: { option: "target", command: "rebuild" },
   options: [
     targetOption,
     {

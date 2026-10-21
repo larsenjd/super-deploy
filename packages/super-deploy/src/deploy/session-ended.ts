@@ -37,8 +37,8 @@ import {
   sessionEnding,
   sqlStateOf,
 } from "../errors.ts";
-import type { InterruptedRollback } from "../interruption.ts";
-import { SqlFileFailedError, unchangedTarget } from "../rehearsal/replay.ts";
+import { SqlFileFailedError } from "../rehearsal/replay.ts";
+import { rolledBackSentence, type TargetRollback } from "./rollback.ts";
 import {
   isTimeoutState,
   type TargetTimeoutSettings,
@@ -87,14 +87,6 @@ export function markRolledBack(error: unknown): void {
   }
 }
 
-/** What a rolled-back command did not change, for TargetSessionEndedError. */
-export interface SessionRollback {
-  /** What rolled back, e.g. `deployment`. */
-  readonly noun: string;
-  /** What the target records; undefined when it couldn't be read. */
-  readonly recorded: InterruptedRollback | undefined;
-}
-
 /**
  * The error a command under the target lock reports for `error`: a traced
  * session ending as TargetSessionEndedError, a traced timeout as
@@ -106,7 +98,7 @@ export interface SessionRollback {
 export async function targetFailure(
   error: unknown,
   target: ResolvedTarget,
-  rollback: () => Promise<SessionRollback>,
+  rollback: () => Promise<TargetRollback>,
 ): Promise<unknown> {
   if (error instanceof SqlFileFailedError) {
     return error.onTarget(target);
@@ -140,12 +132,12 @@ export class TargetSessionEndedError extends SuperDeployError {
   readonly target: string;
   readonly ending: SessionEnding;
   /** Set when the session ended inside a transaction, which rolled back. */
-  readonly rollback: SessionRollback | undefined;
+  readonly rollback: TargetRollback | undefined;
 
   constructor(
     target: string,
     ending: SessionEnding,
-    options: ErrorOptions & { rollback?: SessionRollback | undefined },
+    options: ErrorOptions & { rollback?: TargetRollback | undefined },
   ) {
     const { rollback } = options;
     const reason = errorReason(options.cause);
@@ -156,11 +148,7 @@ export class TargetSessionEndedError extends SuperDeployError {
           : `The connection to target ${target} was lost (${reason}).`,
         rollback === undefined
           ? `Nothing changed on target ${target}.`
-          : `The ${rollback.noun} rolled back: ${
-              rollback.recorded === undefined
-                ? `target ${target} is unchanged`
-                : unchangedTarget(target, rollback.recorded.lastRecorded)
-            }.`,
+          : rolledBackSentence(rollback),
         `Next: retry once target ${target} is reachable${ending === "ended" ? "; if its session was ended on purpose, find out why first" : ""}.`,
       ].join(" "),
       options,

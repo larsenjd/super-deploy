@@ -54,11 +54,10 @@
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { SuperDeployError, sessionEnding } from "../errors.ts";
-import { InterruptedError, type InterruptedRollback } from "../interruption.ts";
+import { InterruptedError } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { type ReplayUnit, runUnit } from "../rehearsal/replay.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
-import { migrationFolderName } from "../store/migrations.ts";
 import {
   type Attempt,
   type AttemptCommand,
@@ -76,6 +75,7 @@ import {
 import { interruptibleSession } from "./interruptible-session.ts";
 import { acquireTargetLock, type TargetLock } from "./lock.ts";
 import { requireHistorySchemaUsable } from "./preflight.ts";
+import { recordedPosition, type TargetRollback } from "./rollback.ts";
 import {
   markRolledBack,
   targetFailure,
@@ -163,12 +163,11 @@ export async function withLockedTarget<T>(
                   error instanceof InterruptedError
                     ? error.cause
                     : (signal?.reason ?? error),
-                rollback: await rolledBack(log, historySchema, target.name),
+                rollback: await rolledBack(log, historySchema, command, target),
               })
-            : await targetFailure(error, target, async () => ({
-                noun: rolledBackNoun(command.command),
-                recorded: await rolledBack(log, historySchema, target.name),
-              }));
+            : await targetFailure(error, target, () =>
+                rolledBack(log, historySchema, command, target),
+              );
         await attempt
           .end(
             outcome,
@@ -191,42 +190,21 @@ export async function withLockedTarget<T>(
 }
 
 /**
- * What an abandoned attempt left the target at: its deploy transaction rolled
- * back (a COMMIT already sent finishes first, and then the attempt
- * succeeds), so the target still records what it did before. Undefined if
- * that can't be read.
+ * What a command whose transaction rolled back left the target at: it still
+ * records what it did before (a COMMIT already sent finishes first, and then
+ * the attempt succeeds). Its position is unknown if that can't be read.
  */
 async function rolledBack(
   log: Session,
   historySchema: string,
-  target: string,
-): Promise<InterruptedRollback | undefined> {
-  try {
-    const last = (await readRecordedMigrations(log, historySchema)).at(-1);
-    return {
-      target,
-      lastRecorded:
-        last === undefined
-          ? undefined
-          : migrationFolderName(last.number, last.name),
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-/** What a command's rolled-back transaction is called, e.g. `deployment`. */
-function rolledBackNoun(command: string): string {
-  switch (command) {
-    case "deploy":
-      return "deployment";
-    case "deploy-draft":
-      return "draft's deployment";
-    case "init --adopt":
-      return "adoption";
-    default:
-      return command;
-  }
+  command: AttemptCommand,
+  target: ResolvedTarget,
+): Promise<TargetRollback> {
+  const recorded = await readRecordedMigrations(log, historySchema).then(
+    recordedPosition,
+    () => undefined,
+  );
+  return { command: command.command, target: target.name, recorded };
 }
 
 /** What an abandoned attempt records as its error, e.g. `Interrupted (SIGINT)`. */

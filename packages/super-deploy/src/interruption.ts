@@ -24,6 +24,7 @@ import type {
   Session,
   ThrowawayDatabase,
 } from "./adapters/types.ts";
+import type { TargetRollback } from "./deploy/rollback.ts";
 import { SuperDeployError } from "./errors.ts";
 
 const started = new WeakMap<AbortSignal, Set<Promise<void>>>();
@@ -142,13 +143,6 @@ async function guarded<T>(
   }
 }
 
-/** What an interrupted command that held a target left it at: unchanged. */
-export interface InterruptedRollback {
-  readonly target: string;
-  /** Folder of the newest migration the target records, e.g. `00003-add-email`; undefined when it records none. */
-  readonly lastRecorded: string | undefined;
-}
-
 /**
  * The project's interruption signal aborted while a command was running. The
  * command has cleaned up (rolled back, dropped throwaway databases) by the
@@ -157,10 +151,10 @@ export interface InterruptedRollback {
  */
 export class InterruptedError extends SuperDeployError {
   readonly code = "interrupted";
-  readonly rollback: InterruptedRollback | undefined;
+  readonly rollback: TargetRollback | undefined;
 
   constructor(
-    options?: ErrorOptions & { rollback?: InterruptedRollback | undefined },
+    options?: ErrorOptions & { rollback?: TargetRollback | undefined },
   ) {
     super("Interrupted", options);
     this.rollback = options?.rollback;

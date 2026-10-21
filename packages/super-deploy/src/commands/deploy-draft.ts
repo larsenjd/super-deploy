@@ -238,7 +238,7 @@ export async function deployDraft(
           ? error.rolledBack({
               command: "deploy-draft",
               target: target.name,
-              lastRecorded: plan.baseFolder,
+              recorded: { lastRecorded: plan.baseFolder },
               seedData: plan.seedData,
             })
           : error;

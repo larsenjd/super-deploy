@@ -17,10 +17,10 @@ import {
   PreflightFailedError,
   preflightRefusals,
 } from "../deploy/preflight.ts";
+import { commandNoun, rolledBackSentence } from "../deploy/rollback.ts";
 import { errorReason } from "../errors.ts";
 import { InterruptedError, settleCleanups } from "../interruption.ts";
 import type { Project } from "../project.ts";
-import { unchangedTarget } from "../rehearsal/replay.ts";
 import { RehearsalMismatchError } from "../rehearsal/same-structure.ts";
 import {
   describeViolation,
@@ -144,14 +144,13 @@ function interruptedOutcome(
   if (target === undefined || typeof name !== "string") {
     return undefined;
   }
-  const { noun } = target;
+  const noun = commandNoun(target.command);
   if (failed === undefined) {
     return `The ${noun} had already finished: the interruption came too late to stop it on target ${name}.`;
   }
   const { error } = failed;
   if (error instanceof InterruptedError && error.rollback !== undefined) {
-    const { rollback } = error;
-    return `The ${noun} rolled back: ${unchangedTarget(rollback.target, rollback.lastRecorded)}.`;
+    return rolledBackSentence(error.rollback);
   }
   if (error instanceof CommitOutcomeUnknownError) {
     return `Whether the ${noun} committed on target ${name} is unknown: the next status or deploy settles it.`;
