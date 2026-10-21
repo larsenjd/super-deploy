@@ -142,23 +142,31 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
     expect(await terminal.exited).toBe(1);
   });
 
-  test("the Host line shows only the server's address for an adapter that doesn't say where it connects", async () => {
-    const { dir } = await deployedProject({
-      otherTargets:
-        "qa: { adapter: { connect: (options) => real.connect(options) } },",
-    });
+  test.each([
+    ["doesn't say where it connects", ""],
+    [
+      "fails to say where it connects",
+      'host: () => { throw new Error("no host"); },',
+    ],
+  ])(
+    "the Host line shows only the server's address for an adapter that %s",
+    async (_, host) => {
+      const { dir } = await deployedProject({
+        otherTargets: `qa: { adapter: { connect: (options) => real.connect(options), ${host} } },`,
+      });
 
-    const terminal = spawnTerminal(
-      ["disposable", "--target", "qa", "--set", "yes"],
-      { cwd: dir.root },
-    );
+      const terminal = spawnTerminal(
+        ["disposable", "--target", "qa", "--set", "yes"],
+        { cwd: dir.root },
+      );
 
-    expect(await terminal.waitFor("Type YES")).toMatch(
-      /Host: +127\.0\.0\.1:\d+ +│/,
-    );
-    terminal.type(keys.ctrlC);
-    expect(await terminal.exited).toBe(1);
-  });
+      expect(await terminal.waitFor("Type YES")).toMatch(
+        /Host: +127\.0\.0\.1:\d+ +│/,
+      );
+      terminal.type(keys.ctrlC);
+      expect(await terminal.exited).toBe(1);
+    },
+  );
 
   test("disposable shows the action and the target's details, and sets the flag once YES is typed, recording a manual attempt", async () => {
     const { dir, database } = await deployedProject();

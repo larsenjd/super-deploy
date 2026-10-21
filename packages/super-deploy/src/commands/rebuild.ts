@@ -46,7 +46,6 @@ import {
   runMigrations,
 } from "../deploy/engine.ts";
 import { historyTable } from "../deploy/history.ts";
-import { requireManagedSchemaOwned } from "../deploy/ownership.ts";
 import { requireDisposable } from "../deploy/target.ts";
 import {
   dependentsOutside,
@@ -160,7 +159,6 @@ export async function rebuild(
           ? []
           : [`deployed draft ${view.draft.name}`]),
       ];
-      await requireManagedSchemaOwned(session, target, config.managedSchema);
       await requireWipeable(session, target, config.managedSchema);
       const dependents = await dependentsOutside(
         session,

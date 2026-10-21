@@ -107,7 +107,7 @@ export interface PreflightFindings {
   readonly historyMismatches: readonly HistoryMismatch[];
   /**
    * Why the deploy role is more privileged than a deployment needs, then
-   * each object the pending units drop and create again whose hand-made
+   * each object the deployment's units drop and create again whose hand-made
    * grants, revokes or policies on the target will be lost. Never refuses.
    */
   readonly warnings: readonly string[];
@@ -160,7 +160,7 @@ export interface PreflightInput {
    * What the deployment would run, in order: each pending migration's
    * variant, or a draft (and its seed data).
    */
-  readonly pending: readonly { readonly unit: ReplayUnit }[];
+  readonly units: readonly ReplayUnit[];
 }
 
 /** Runs every check on `session` (read-only queries, no transaction). */
@@ -183,12 +183,11 @@ export async function preflightChecks(
       input.migrations,
       input.recorded,
       await readDeployedDraft(session, project.config.historySchema),
-      {
-        name: input.targetName,
-        disposable: (
-          await readTargetSettings(session, project.config.historySchema)
-        ).disposable,
-      },
+      await draftHolder(
+        session,
+        project.config.historySchema,
+        input.targetName,
+      ),
       await migrationDraftName(project),
     ),
     warnings: [
@@ -196,7 +195,7 @@ export async function preflightChecks(
       ...(await recreatedPrivilegeWarnings(
         session,
         project.config.managedSchema,
-        input.pending.map(({ unit }) => unit),
+        input.units,
       )),
     ],
   };
@@ -509,6 +508,18 @@ export function onlyHeldDraft(
 export interface DraftHolder {
   readonly name: string;
   readonly disposable: boolean;
+}
+
+/** Target `name` as a DraftHolder, its disposable flag read on `session`. */
+export async function draftHolder(
+  session: Session,
+  historySchema: string,
+  name: string,
+): Promise<DraftHolder> {
+  return {
+    name,
+    disposable: (await readTargetSettings(session, historySchema)).disposable,
+  };
 }
 
 /**

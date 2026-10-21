@@ -253,7 +253,7 @@ describe("validate warnings", () => {
     });
     const error = await validationError(project, { strict: true });
     expect(error.problems).toEqual([unfinalized]);
-    expect(error.message).toContain("1 warning (--strict)");
+    expect(error.message).toContain("1 warning (--strict fails on warnings)");
   });
 
   test("warn about desired-schema changes made after the draft was generated", async () => {

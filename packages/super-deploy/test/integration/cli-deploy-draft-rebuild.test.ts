@@ -1465,6 +1465,43 @@ unix("rebuild", () => {
     expect(terminal.screen).not.toContain("su_owned");
   });
 
+  test("refuses a managed schema the deploy role doesn't own and an extension it can't drop in one refusal, with the fix for each", async () => {
+    const { dir, database } = await appOwnedBySuperuser();
+    await server.query("create extension citext schema app", [], database);
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    const shown = await terminal.waitFor("(nothing changed)");
+    expect(shown).toContain("can't drop extension citext");
+    expect(shown).toContain("DROP EXTENSION citext CASCADE");
+    expect(shown).toContain(`ALTER SCHEMA app OWNER TO ${embeddedDeployRole}`);
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    await server.query("drop extension citext", [], database);
+  });
+
+  test("a table a superuser made in a managed schema the deploy role owns doesn't stop it: the wipe drops it", async () => {
+    const { dir, database } = await deployedAsDatabaseOwner();
+    await server.query("create table admin_notes (id int)", [], database);
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor("Type YES");
+    terminal.type(`YES${keys.enter}`);
+    expect(await terminal.exited).toBe(0);
+    expect(
+      await server.query(
+        "select to_regclass('admin_notes') as notes",
+        [],
+        database,
+      ),
+    ).toEqual([{ notes: null }]);
+  });
+
   test("says it rolled back when PostgreSQL refuses a drop after YES", async () => {
     const { dir, database } = await deployedAsDatabaseOwner();
 

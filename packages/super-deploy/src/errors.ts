@@ -102,23 +102,59 @@ export function sqlStateOf(error: unknown): string | undefined {
 /** How a session ended: by the server, or by losing the connection. */
 export type SessionEnding = "ended" | "lost";
 
+/** Node's codes for a socket that failed or closed under a connection. */
+const socketFailures = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ECONNABORTED",
+  "EPIPE",
+  "ETIMEDOUT",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENETDOWN",
+  "ENOTCONN",
+]);
+
+/**
+ * node-postgres's errors, which carry no code, for a connection that is gone
+ * (pg/lib/client.js): it ended under a query, or a query was sent after.
+ */
+const pgConnectionGone =
+  /^(?:Connection terminated(?: unexpectedly)?|Client has encountered a connection error and is not queryable|Client was closed and is not queryable)$/;
+
 /**
  * Whether a statement's error says its session is gone, and how: `ended` by
  * the server (SQLSTATE 57P01-57P05, such as `pg_terminate_backend` or a
- * shutdown, and 25P03, the idle-in-transaction timeout), or `lost` (class 08,
- * or no SQLSTATE at all: node-postgres reports a dropped connection without
- * one). Undefined when the server refused the statement and the session
- * lives on, and for the library's own errors (e.g. InterruptedError).
+ * shutdown, and 25P03, the idle-in-transaction timeout), or `lost` (class
+ * 08, a socket error such as ECONNRESET, or node-postgres's own error for a
+ * dropped connection, which has no code). Undefined when the server refused
+ * the statement and the session lives on, for any other error without a
+ * SQLSTATE (e.g. a custom adapter's), and for the library's own errors (e.g.
+ * InterruptedError).
  */
 export function sessionEnding(error: unknown): SessionEnding | undefined {
   if (error instanceof SuperDeployError) {
     return undefined;
   }
   const sqlState = sqlStateOf(error);
-  if (sqlState === undefined || sqlState.startsWith("08")) {
+  if (sqlState === undefined) {
+    return connectionGone(error) ? "lost" : undefined;
+  }
+  if (sqlState.startsWith("08")) {
     return "lost";
   }
   return sqlState.startsWith("57P") || sqlState === "25P03"
     ? "ended"
     : undefined;
+}
+
+function connectionGone(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const { code } = error as { code?: unknown };
+  return (
+    (typeof code === "string" && socketFailures.has(code)) ||
+    pgConnectionGone.test(error.message)
+  );
 }

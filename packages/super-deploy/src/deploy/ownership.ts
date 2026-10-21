@@ -10,7 +10,7 @@
 // as a script a DBA can paste into psql (`notOwnedDetails`). Without the
 // check such a target fails with "must be owner" partway through a deploy.
 // `rebuild` before asking checks the managed schema alone
-// (`requireManagedSchemaOwned`, QA 172): it drops what is in it, and what it
+// (`managedSchemaNotOwned`, QA 172): it drops what is in it, and what it
 // creates again is the deploy role's.
 //
 // "Has the privileges of" is `pg_has_role(current_user, owner, 'USAGE')`,
@@ -60,10 +60,15 @@ export interface NotOwnedObject {
   readonly fix: string;
 }
 
-/** Something in the managed schema `rebuild`'s wipe can't drop. */
+/**
+ * Something in the managed schema `rebuild`'s wipe can't drop: an extension
+ * in it, or (`extension` set) a member of an extension elsewhere.
+ */
 export interface UndroppableObject {
   /** e.g. `extension citext`, `function app.answer()`. */
   readonly object: string;
+  /** Its name alone, as SQL writes it, e.g. `citext`. */
+  readonly name: string;
   /** The role that owns it; for an extension's member, the extension's owner. */
   readonly owner: string;
   /** For a member of an extension outside the managed schema: the extension. */
@@ -148,7 +153,14 @@ export async function objectsNotOwned(
 export async function objectsNotOwnedAt(
   session: Session,
   managedSchema: string,
-): Promise<{ notOwned: NotOwnedObject; address: ObjectAddress }[]> {
+): Promise<
+  {
+    notOwned: NotOwnedObject;
+    address: ObjectAddress;
+    /** e.g. `SCHEMA`, `TABLE`. */
+    kind: string;
+  }[]
+> {
   const { rows } = await session.query<{
     class: string;
     oid: string;
@@ -198,6 +210,7 @@ export async function objectsNotOwnedAt(
               fix: `ALTER ${kind} ${name} OWNER TO ${deploy_role}`,
             },
       address: { class: classId, obj: oid, sub: 0 },
+      kind,
     }),
   );
 }
@@ -210,11 +223,12 @@ const databaseOwnerRole = "pg_database_owner";
 
 /**
  * The objects in the managed schema (sorted) that the session's current role
- * can't drop, for `rebuild`'s wipe, each with its owner. PostgreSQL lets the
- * schema's owner drop what is in it, so with the managed schema's owner's
- * privileges only extensions owned by someone else are left; without them,
- * every object `objectsNotOwned` lists. Members of an extension outside the
- * managed schema are listed too, whoever owns it: the wipe never drops that
+ * couldn't drop even with the managed schema's owner's privileges, for
+ * `rebuild`'s wipe, each with its owner. PostgreSQL lets the schema's owner
+ * drop what is in it, so only extensions owned by someone else are left
+ * (rebuild refuses a managed schema it doesn't own on its own,
+ * `managedSchemaNotOwned`). Members of an extension outside the managed
+ * schema are listed too, whoever owns it: the wipe never drops that
  * extension. Read-only.
  */
 export async function objectsNotDroppable(
@@ -230,10 +244,7 @@ export async function objectsNotDroppable(
     `WITH s AS (SELECT oid, nspname, nspowner FROM pg_catalog.pg_namespace WHERE nspname = $1),
      owned AS (${ownedObjectsQuery}),
      dropped AS (
-       SELECT class, oid, kind, name, owner FROM owned
-        WHERE kind <> 'SCHEMA' AND NOT pg_catalog.pg_has_role(current_user, (SELECT nspowner FROM s), 'USAGE')
-       UNION ALL
-       SELECT 'pg_extension'::regclass, e.oid, 'EXTENSION', pg_catalog.quote_ident(e.extname), e.extowner
+       SELECT 'pg_extension'::regclass AS class, e.oid, 'EXTENSION' AS kind, pg_catalog.quote_ident(e.extname) AS name, e.extowner AS owner
          FROM pg_catalog.pg_extension e JOIN s ON s.oid = e.extnamespace),
      members_elsewhere AS (
        SELECT owned.kind, owned.name, e.extowner AS owner, pg_catalog.quote_ident(e.extname) AS extension
@@ -254,6 +265,7 @@ export async function objectsNotDroppable(
   );
   return rows.map(({ kind, name, owner, extension }) => ({
     object: `${kind.toLowerCase()} ${name}`,
+    name,
     owner,
     ...(extension === null ? {} : { extension }),
   }));
@@ -328,20 +340,17 @@ export async function requireOwnership(
 }
 
 /**
- * Throws NotOwnedError, for `rebuild`, if the deploy role doesn't own the
- * managed schema itself. What is in it the wipe drops and the migrations
- * create again, owned by the deploy role; the schema stays as it is, so
- * `deploy` would refuse the rebuilt target.
+ * The managed schema itself, if the deploy role doesn't own it, for
+ * `rebuild`: what is in it the wipe drops and the migrations create again,
+ * owned by the deploy role, but the schema stays as it is, so `deploy`
+ * would refuse the rebuilt target.
  */
-export async function requireManagedSchemaOwned(
+export async function managedSchemaNotOwned(
   session: Session,
-  target: string,
   managedSchema: string,
-): Promise<void> {
-  const [first] = await objectsNotOwned(session, managedSchema);
-  if (first?.object.startsWith("schema ")) {
-    throw new NotOwnedError(target, [first], "rebuild");
-  }
+): Promise<NotOwnedObject | undefined> {
+  const found = await objectsNotOwnedAt(session, managedSchema);
+  return found.find(({ kind }) => kind === "SCHEMA")?.notOwned;
 }
 
 /**

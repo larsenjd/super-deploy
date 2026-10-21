@@ -13,9 +13,11 @@
 // them too: rehearsals lack them, so migrations touching what they use fail
 // at deploy.
 //
-// Before asking, `rebuild` refuses a managed schema holding something the
-// deploy role can't drop (`requireWipeable`, CannotWipeError, e.g. an
-// extension a superuser installed). A drop PostgreSQL refuses all the same
+// Before asking, `rebuild` refuses (`requireWipeable`) a managed schema the
+// deploy role doesn't own (QA 172: deploy would refuse the rebuilt target;
+// NotOwnedError) or one holding something it couldn't drop even then
+// (CannotWipeError, e.g. an extension a superuser installed), both in one
+// refusal when both hold. A drop PostgreSQL refuses all the same
 // (something appeared meanwhile) becomes WipeDropFailedError, which says the
 // rebuild rolled back. The drops cover every kind of object a schema can
 // hold. Afterwards the schema's dependents in pg_depend (what DROP SCHEMA
@@ -26,20 +28,33 @@ import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { errorReason, SuperDeployError } from "../errors.ts";
 import { quoteIdentifier } from "../sql-analysis/index.ts";
-import { objectsNotDroppable, type UndroppableObject } from "./ownership.ts";
+import {
+  managedSchemaNotOwned,
+  NotOwnedError,
+  type NotOwnedObject,
+  notOwnedMessage,
+  objectsNotDroppable,
+  type UndroppableObject,
+} from "./ownership.ts";
 
 /**
  * Throws CannotWipeError when the managed schema holds something the deploy
- * role can't drop. Read-only, for `rebuild` before it asks.
+ * role can't drop (naming the schema's owner too, if the deploy role doesn't
+ * own it), NotOwnedError when the schema's owner is all that is wrong.
+ * Read-only, for `rebuild` before it asks.
  */
 export async function requireWipeable(
   session: Session,
   target: string,
   schema: string,
 ): Promise<void> {
+  const notOwned = await managedSchemaNotOwned(session, schema);
   const objects = await objectsNotDroppable(session, schema);
   if (objects.length > 0) {
-    throw new CannotWipeError(target, schema, objects);
+    throw new CannotWipeError(target, schema, objects, notOwned);
+  }
+  if (notOwned !== undefined) {
+    throw new NotOwnedError(target, [notOwned], "rebuild");
   }
 }
 
@@ -323,13 +338,11 @@ export class WipeDropFailedError extends SuperDeployError {
   }
 }
 
-/** How `objectsNotDroppable` names an extension, e.g. `extension citext`. */
-const extensionPrefix = "extension ";
-
 /**
  * rebuild refused before asking: the managed schema holds objects the deploy
- * role can't drop (e.g. an extension a superuser installed, or a member of
- * an extension living elsewhere). Nothing changed and no attempt was
+ * role can't drop (an extension a superuser installed, or a member of an
+ * extension living elsewhere), and maybe the deploy role doesn't own the
+ * schema either (`schemaNotOwned`). Nothing changed and no attempt was
  * recorded.
  */
 export class CannotWipeError extends SuperDeployError {
@@ -338,35 +351,34 @@ export class CannotWipeError extends SuperDeployError {
   readonly schema: string;
   /** Each object, e.g. `extension citext`, with its owner; never empty. */
   readonly objects: readonly UndroppableObject[];
+  /** The managed schema, when the deploy role doesn't own it either. */
+  readonly schemaNotOwned: NotOwnedObject | undefined;
 
   constructor(
     target: string,
     schema: string,
     objects: readonly UndroppableObject[],
+    schemaNotOwned?: NotOwnedObject | undefined,
   ) {
     const describe = ({ object, owner, extension }: UndroppableObject) =>
       extension === undefined
         ? `${object} (owned by ${owner})`
         : `${object} (a member of extension ${extension}, owned by ${owner})`;
     // PostgreSQL can't give an extension another owner: only its owner or a
-    // superuser can drop it.
-    const owned = objects.filter(({ extension }) => extension === undefined);
-    const extensions = owned
-      .filter(({ object }) => object.startsWith(extensionPrefix))
-      .map(({ object }) => object.slice(extensionPrefix.length));
-    const others = owned.length - extensions.length;
-    const members = objects.length - owned.length;
+    // superuser can drop it. What isn't a member of one is an extension.
+    const extensions = objects
+      .filter(({ extension }) => extension === undefined)
+      .map(({ name }) => name);
+    const members = objects.length - extensions.length;
     const advice = [
       extensions.length === 0
         ? ""
         : extensions.length === 1
           ? `Have the extension's owner or a superuser run DROP EXTENSION ${extensions.join(", ")} CASCADE`
           : `Have the extensions' owners or a superuser run DROP EXTENSION ${extensions.join(", ")} CASCADE`,
-      others === 0
+      schemaNotOwned === undefined
         ? ""
-        : others === 1
-          ? "Drop it, change its owner to the deploy role, or ask its owner to"
-          : "Drop them, change their owners to the deploy role, or ask their owners to",
+        : `Run ${schemaNotOwned.fix} as a superuser, so deploy doesn't refuse the rebuilt target`,
       members === 0
         ? ""
         : members === 1
@@ -378,11 +390,16 @@ export class CannotWipeError extends SuperDeployError {
         i === 0 ? part : part.charAt(0).toLowerCase() + part.slice(1),
       )
       .join("; ");
+    const owner =
+      schemaNotOwned === undefined
+        ? ""
+        : `; and ${notOwnedMessage(schemaNotOwned)}`;
     super(
-      `rebuild can't wipe schema ${schema} on target ${target}: the deploy role can't drop ${objects.map(describe).join(", ")}. ${advice}, then run rebuild again (nothing changed)`,
+      `rebuild can't wipe schema ${schema} on target ${target}: the deploy role can't drop ${objects.map(describe).join(", ")}${owner}. ${advice}, then run rebuild again (nothing changed)`,
     );
     this.target = target;
     this.schema = schema;
     this.objects = objects;
+    this.schemaNotOwned = schemaNotOwned;
   }
 }

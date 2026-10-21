@@ -38,7 +38,6 @@ import {
   type RecordedMigration,
   readDeployedDraft,
   readRecordedMigrations,
-  readTargetSettings,
   recordMigration,
 } from "./history.ts";
 import { requireOwnership } from "./ownership.ts";
@@ -46,6 +45,7 @@ import { pendingMigrations } from "./pending.ts";
 import {
   type DraftHolder,
   describeHeldDraft,
+  draftHolder,
   type HistoryMismatch,
   historyMismatches,
   onlyHeldDraft,
@@ -169,12 +169,11 @@ export async function markNextPending(
     project.config.historySchema,
   );
   const next = nextToMark(
-    {
-      name: locked.target.name,
-      disposable: (
-        await readTargetSettings(locked.session, project.config.historySchema)
-      ).disposable,
-    },
+    await draftHolder(
+      locked.session,
+      project.config.historySchema,
+      locked.target.name,
+    ),
     migrations,
     recorded,
     await readDeployedDraft(locked.session, project.config.historySchema),

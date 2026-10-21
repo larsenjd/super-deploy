@@ -128,7 +128,13 @@ import {
 } from "../deploy/target.ts";
 import { dependentsOutside } from "../deploy/wipe.ts";
 import { differ } from "../differ/index.ts";
-import { joined, listed, plural, SuperDeployError } from "../errors.ts";
+import {
+  joined,
+  listed,
+  plural,
+  SuperDeployError,
+  sqlStateOf,
+} from "../errors.ts";
 import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import type { AskOverrideReason } from "../questions.ts";
@@ -434,9 +440,9 @@ function timedOut(
   error: unknown,
 ): { readonly error: Error; readonly sqlState: TimeoutState } | undefined {
   for (let at = error; at instanceof Error; at = at.cause) {
-    const { code } = at as { code?: unknown };
-    if (isTimeoutState(code)) {
-      return { error: at, sqlState: code };
+    const sqlState = sqlStateOf(at);
+    if (isTimeoutState(sqlState)) {
+      return { error: at, sqlState };
     }
   }
   return undefined;
@@ -558,7 +564,7 @@ async function readTargetOn(
     ),
   );
   const unsupported = await namedOnTarget(session, config.managedSchema, found);
-  const notOwnedSupported = await ownedIfSupported(
+  const notOwnedSupported = await notOwnedWorthFixing(
     session,
     notOwned,
     unsupported,
@@ -651,7 +657,7 @@ async function readTargetOn(
  * unsupported (named alike, as the catalog check names objects): nobody
  * should give the deploy role an object only to drop it.
  */
-async function ownedIfSupported(
+async function notOwnedWorthFixing(
   session: Session,
   notOwned: readonly { notOwned: NotOwnedObject; address: ObjectAddress }[],
   unsupported: readonly UnsupportedObject[],

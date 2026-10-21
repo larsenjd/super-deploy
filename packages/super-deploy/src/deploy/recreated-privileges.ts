@@ -38,17 +38,17 @@ interface ObjectPrivileges {
 }
 
 /**
- * One warning per object the `pending` units drop and create again that has
+ * One warning per object `units` drop and create again that has
  * grants, revokes, policies or row-level security on the target that the
  * deploy role's default privileges won't give it back. Read-only.
  */
 export async function recreatedPrivilegeWarnings(
   session: Session,
   managedSchema: string,
-  pending: readonly ReplayUnit[],
+  units: readonly ReplayUnit[],
 ): Promise<string[]> {
   const recreated = await recreatedObjects(
-    pending.map((unit) => ({
+    units.map((unit) => ({
       label: unit.label,
       files: unit.files.map(({ file, sql }) => ({ path: file, text: sql })),
     })),

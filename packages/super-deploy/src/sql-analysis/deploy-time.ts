@@ -261,7 +261,6 @@ const transactionEffects: Record<string, string> = {
   TRANS_STMT_ROLLBACK_PREPARED: "cannot run inside a transaction block",
 };
 
-/** Statement types PostgreSQL refuses inside a transaction block (hazards §1). */
 /**
  * SET and RESET of these switch the role the deployment runs as: refused for
  * that, not for the session settings super-deploy pins.
@@ -271,6 +270,7 @@ const roleSwitches: Record<string, string> = {
   session_authorization: "SESSION AUTHORIZATION",
 };
 
+/** Statement types PostgreSQL refuses inside a transaction block (hazards §1). */
 const notInTransaction = new Set([
   "CreatedbStmt",
   "DropdbStmt",

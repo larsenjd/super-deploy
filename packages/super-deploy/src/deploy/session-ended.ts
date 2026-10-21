@@ -6,9 +6,10 @@
 //
 // Which errors count:
 // - `sessionEnding` (errors.ts): SQLSTATE 57P01-57P05 and 25P03 are the
-//   server ending the session; class 08, or an error with no SQLSTATE at all
-//   (node-postgres reports a dropped connection so), is a lost connection.
-//   Either way nothing the session had not committed survives. The
+//   server ending the session; class 08, a socket error (ECONNRESET, EPIPE)
+//   or node-postgres's own error for a dropped connection is a lost one.
+//   Either way nothing the session had not committed survives. Any other
+//   error without a SQLSTATE (a custom adapter's) is neither. The
 //   deploy-time SQL runner (rehearsal/replay.ts) passes these on unwrapped,
 //   since they are no refusal of the file, and a lost COMMIT is told apart
 //   by them (deploy/engine.ts, CommitOutcomeUnknownError).

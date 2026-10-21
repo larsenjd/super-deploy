@@ -43,7 +43,6 @@ import { lockHolder, TargetLockedError } from "../deploy/lock.ts";
 import { connectTarget, resolveTarget } from "../deploy/target.ts";
 import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
-import { adapterCall } from "../rehearsal/throwaway.ts";
 import { migrationFolderName } from "../store/migrations.ts";
 import { askForYes } from "./prompt.ts";
 
@@ -107,7 +106,7 @@ export async function runGuarded<P, T>(
     await refuseIfLocked(project, target, session);
     shown = await readTargetView(project, target, session);
     decision = await action.check(shown, session);
-    configured = await configuredHost(target);
+    configured = await adapterHost(target);
   } finally {
     await session.close().catch(() => {});
   }
@@ -196,18 +195,19 @@ async function readTargetView(
   };
 }
 
-/** Where the target's adapter says it connects, if it says (see the header). */
-async function configuredHost(
+/**
+ * Where the target's adapter says it connects, if it says (see the header).
+ * An adapter whose `host()` fails says nothing: the server's address is
+ * shown alone, as for one without `host()`.
+ */
+async function adapterHost(
   target: ResolvedTarget,
 ): Promise<string | undefined> {
-  const host = target.adapter.host?.bind(target.adapter);
-  return host === undefined
-    ? undefined
-    : adapterCall(
-        `The deployment adapter of target ${target.name}`,
-        "say where it connects",
-        host,
-      );
+  try {
+    return await target.adapter.host?.();
+  } catch {
+    return undefined;
+  }
 }
 
 function describeTarget(

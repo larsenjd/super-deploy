@@ -103,7 +103,7 @@ export async function deploy(
         targetName: target.name,
         migrations,
         recorded,
-        pending,
+        units: pending.map((migration) => migration.unit),
       });
       for (const warning of findings.warnings) {
         options.onWarning?.(warning);
