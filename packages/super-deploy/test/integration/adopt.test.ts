@@ -22,6 +22,7 @@ import {
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   asDeployerPreamble,
+  asSuperuser,
   deployProject,
   finalizeMigration,
   roleName,
@@ -46,7 +47,7 @@ async function adoptableProject(sql: string, settings = "") {
     server,
     {},
     {
-      otherTargets: `prod: { adapter: postgres.target(${JSON.stringify(prod)}) },`,
+      otherTargets: `prod: { adapter: ${asSuperuser(prod)} },`,
       settings,
     },
   );
@@ -481,7 +482,7 @@ describe("adopt", () => {
       {},
       {
         settings: 'managedSchema: "app",',
-        otherTargets: `prod: { adapter: postgres.target(${JSON.stringify(prod)}) },`,
+        otherTargets: `prod: { adapter: ${asSuperuser(prod)} },`,
       },
     );
     try {
@@ -1009,7 +1010,7 @@ describe("adopt", () => {
   test("refuses a project that already has migrations, a draft or a desired schema", async () => {
     const prod = await server.createDatabase();
     const targets = {
-      otherTargets: `prod: { adapter: postgres.target(${JSON.stringify(prod)}) },`,
+      otherTargets: `prod: { adapter: ${asSuperuser(prod)} },`,
     };
     const finalized = await deployProject(
       server,
@@ -1096,7 +1097,7 @@ describe("adopt", () => {
     const prod = await server.createDatabase(
       "create schema app; create table public.t (id bigint primary key);",
     );
-    const otherTargets = `prod: { adapter: postgres.target(${JSON.stringify(prod)}) },`;
+    const otherTargets = `prod: { adapter: ${asSuperuser(prod)} },`;
     const mistyped = await deployProject(
       server,
       {},
@@ -1147,9 +1148,10 @@ describe("adopt", () => {
       {},
       {
         preamble: `let connects = 0;
+const prodAdapter = ${asSuperuser(prod)};
 const changing = {
   async connect() {
-    const session = await postgres.target(${JSON.stringify(prod)}).connect();
+    const session = await prodAdapter.connect();
     connects += 1;
     if (connects === 2) {
       await session.execute("create table added_meanwhile (id bigint primary key)");

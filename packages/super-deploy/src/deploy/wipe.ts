@@ -1,18 +1,44 @@
 // Wiping the managed schema for `rebuild`, inside its deploy transaction.
-// Everything IN the schema is dropped (with CASCADE, so objects elsewhere
-// that depend on it go too, as with DROP SCHEMA ... CASCADE), but the schema
-// itself stays: its owner, comment, grants and default privileges belong to
-// the target's setup, not to the migrations (ADR-0006), and dropping the
-// schema would lose them.
+// Everything IN the schema is dropped, but the schema itself stays: its
+// owner, comment, grants and default privileges belong to the target's
+// setup, not to the migrations (ADR-0006), and dropping the schema would
+// lose them.
 //
-// The drops cover every kind of object a schema can hold. Afterwards the
-// schema's dependents in pg_depend (what DROP SCHEMA would have dropped)
-// must be gone; anything left refuses the rebuild with WipeFailedError.
+// The drops use CASCADE, so objects in other schemas that depend on managed
+// ones are dropped too: a view on a managed table, a foreign key to one, a
+// column of a managed type (with its data). `rebuild` lists them in its
+// confirmation first (`dependentsOutside`), so the person typing YES has
+// seen exactly what goes outside the managed schema.
+//
+// Before asking, `rebuild` refuses a managed schema holding something the
+// deploy role can't drop (`requireWipeable`, CannotWipeError, e.g. an
+// extension a superuser installed). A drop PostgreSQL refuses all the same
+// (something appeared meanwhile) becomes WipeDropFailedError, which says the
+// rebuild rolled back. The drops cover every kind of object a schema can
+// hold. Afterwards the schema's dependents in pg_depend (what DROP SCHEMA
+// would have dropped) must be gone; anything left refuses the rebuild with
+// WipeFailedError.
 
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
-import { SuperDeployError } from "../errors.ts";
+import { errorReason, SuperDeployError } from "../errors.ts";
 import { quoteIdentifier } from "./history.ts";
+import { type NotOwnedObject, objectsNotDroppable } from "./ownership.ts";
+
+/**
+ * Throws CannotWipeError when the managed schema holds something the deploy
+ * role can't drop. Read-only, for `rebuild` before it asks.
+ */
+export async function requireWipeable(
+  session: Session,
+  target: string,
+  schema: string,
+): Promise<void> {
+  const objects = await objectsNotDroppable(session, schema);
+  if (objects.length > 0) {
+    throw new CannotWipeError(target, schema, objects);
+  }
+}
 
 /** Drops every object in `schema` (creating the schema if the target lacks it). */
 export async function wipeManagedSchema(
@@ -33,7 +59,16 @@ export async function wipeManagedSchema(
     namespace,
   ]);
   for (const { statement } of drops.rows) {
-    await session.execute(statement);
+    try {
+      await session.execute(statement);
+    } catch (error) {
+      if (error instanceof SuperDeployError) {
+        throw error;
+      }
+      throw new WipeDropFailedError(target.name, schema, statement, {
+        cause: error,
+      });
+    }
   }
   const left = await session.query<{ object: string }>(
     `SELECT pg_catalog.pg_describe_object(classid, objid, objsubid) AS object
@@ -51,6 +86,91 @@ export async function wipeManagedSchema(
     );
   }
 }
+
+/**
+ * What wiping `managedSchema` drops or alters outside it and `historySchema`,
+ * described for people and sorted, e.g. `view reporting.customer_names`,
+ * `foreign key archive_customer_fk on reporting.orders_archive`, `column
+ * reporting.snap.c (with its data)`. Read-only; empty when the target lacks
+ * the managed schema.
+ */
+export async function dependentsOutside(
+  session: Session,
+  managedSchema: string,
+  historySchema: string,
+): Promise<string[]> {
+  const { rows } = await session.query<{ description: string }>(
+    dependentsQuery,
+    [managedSchema, historySchema],
+  );
+  return rows.map((row) => row.description);
+}
+
+// `dropped` is everything the wipe's CASCADE reaches, walked as PostgreSQL's
+// own dependency walk does: the objects in the schema the wipe drops itself
+// (not extension members or default privileges, as below), then whatever
+// depends on a dropped object (on the column, when only a column goes), and
+// whatever a dropped object is an internal part or extension member of
+// (PostgreSQL drops the whole, e.g. the view a rule belongs to). Listed are
+// those outside both schemas, leaving out an internal part of any dropped
+// object (a managed table's TOAST table, a view's rule and row type), a
+// dropped extension's members (its casts have no schema), what goes with
+// another listed object (a dropped table's columns, a dropped column's
+// default) and a schemaless part of a dropped object (an operator family's
+// support function, a table's place in a publication). pg_identify_object gives an extension no schema: its
+// extnamespace stands in.
+const dependentsQuery = `
+WITH RECURSIVE dropped(classid, objid, objsubid) AS (
+  SELECT d.classid, d.objid, d.objsubid
+    FROM pg_catalog.pg_depend d JOIN pg_catalog.pg_namespace n ON n.oid = d.refobjid
+   WHERE d.refclassid = 'pg_catalog.pg_namespace'::regclass AND n.nspname = $1
+     AND d.classid <> 'pg_catalog.pg_default_acl'::regclass
+     AND NOT EXISTS (SELECT FROM pg_catalog.pg_depend member
+                      WHERE member.classid = d.classid AND member.objid = d.objid AND member.deptype = 'e')
+  UNION
+  SELECT next.classid, next.objid, next.objsubid
+    FROM dropped m CROSS JOIN LATERAL (
+      SELECT d.classid, d.objid, d.objsubid FROM pg_catalog.pg_depend d
+       WHERE d.refclassid = m.classid AND d.refobjid = m.objid
+         AND (m.objsubid = 0 OR d.refobjsubid = m.objsubid)
+      UNION ALL
+      SELECT d.refclassid, d.refobjid, d.refobjsubid FROM pg_catalog.pg_depend d
+       WHERE d.classid = m.classid AND d.objid = m.objid
+         AND (m.objsubid = 0 OR d.objsubid = m.objsubid) AND d.deptype IN ('i', 'e')
+    ) next
+),
+outside AS (
+  SELECT m.classid, m.objid, m.objsubid, o.type, o.schema, o.identity
+    FROM dropped m CROSS JOIN LATERAL pg_catalog.pg_identify_object(m.classid, m.objid, m.objsubid) o
+   WHERE COALESCE(o.schema, (SELECT n.nspname FROM pg_catalog.pg_extension e
+                               JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
+                              WHERE m.classid = 'pg_catalog.pg_extension'::regclass AND e.oid = m.objid))
+         IS DISTINCT FROM $1
+     AND o.schema IS DISTINCT FROM $2
+)
+SELECT DISTINCT
+       CASE WHEN x.type = 'table column' THEN pg_catalog.format('column %s (with its data)', x.identity)
+            WHEN x.type = 'table constraint' AND EXISTS (
+                   SELECT FROM pg_catalog.pg_constraint c
+                    WHERE x.classid = 'pg_catalog.pg_constraint'::regclass AND c.oid = x.objid AND c.contype = 'f')
+              THEN pg_catalog.format('foreign key %s', x.identity)
+            WHEN x.type = 'table constraint' THEN pg_catalog.format('constraint %s', x.identity)
+            ELSE pg_catalog.format('%s %s', x.type, x.identity) END COLLATE "C" AS description
+  FROM outside x
+ WHERE NOT (x.objsubid <> 0 AND EXISTS (
+         SELECT FROM outside whole
+          WHERE whole.classid = x.classid AND whole.objid = x.objid AND whole.objsubid = 0))
+   AND NOT EXISTS (
+         SELECT FROM pg_catalog.pg_depend d
+           JOIN dropped owner ON owner.classid = d.refclassid AND owner.objid = d.refobjid
+                             AND (owner.objsubid = 0 OR owner.objsubid = d.refobjsubid)
+          WHERE d.classid = x.classid AND d.objid = x.objid
+            AND (x.objsubid = 0 OR d.objsubid = x.objsubid)
+            AND (d.deptype IN ('i', 'e')
+                 OR d.deptype = 'a' AND (x.schema IS NULL OR EXISTS (
+                      SELECT FROM outside o
+                       WHERE o.classid = owner.classid AND o.objid = owner.objid AND o.objsubid = owner.objsubid))))
+ ORDER BY 1`;
 
 // One DROP ... IF EXISTS ... CASCADE per object in namespace $1, extensions
 // first (their members go with them). Members of extensions are skipped:
@@ -163,6 +283,61 @@ export class WipeFailedError extends SuperDeployError {
   constructor(target: string, schema: string, objects: readonly string[]) {
     super(
       `Could not wipe schema ${schema} on target ${target}: it still holds ${objects.join(", ")}; drop them by hand, then run rebuild again (nothing changed)`,
+    );
+    this.target = target;
+    this.schema = schema;
+    this.objects = objects;
+  }
+}
+
+/**
+ * PostgreSQL refused one of the wipe's drops, e.g. `must be owner of
+ * extension citext` for an extension installed after rebuild checked. The
+ * rebuild rolled back: the target is unchanged.
+ */
+export class WipeDropFailedError extends SuperDeployError {
+  readonly code = "wipe-drop-failed";
+  readonly target: string;
+  readonly schema: string;
+  /** The refused statement, e.g. `DROP EXTENSION IF EXISTS citext CASCADE`. */
+  readonly statement: string;
+
+  constructor(
+    target: string,
+    schema: string,
+    statement: string,
+    options: ErrorOptions,
+  ) {
+    super(
+      `Could not wipe schema ${schema} on target ${target}: PostgreSQL refused ${statement}: ${errorReason(options.cause)}. The rebuild rolled back: target ${target} is unchanged`,
+      options,
+    );
+    this.target = target;
+    this.schema = schema;
+    this.statement = statement;
+  }
+}
+
+/**
+ * rebuild refused before asking: the managed schema holds objects the deploy
+ * role can't drop (e.g. an extension a superuser installed). Nothing changed
+ * and no attempt was recorded.
+ */
+export class CannotWipeError extends SuperDeployError {
+  readonly code = "cannot-wipe";
+  readonly target: string;
+  readonly schema: string;
+  /** Each object, e.g. `extension citext`, with its owner; never empty. */
+  readonly objects: readonly Omit<NotOwnedObject, "fix">[];
+
+  constructor(
+    target: string,
+    schema: string,
+    objects: readonly Omit<NotOwnedObject, "fix">[],
+  ) {
+    const one = objects.length === 1;
+    super(
+      `rebuild can't wipe schema ${schema} on target ${target}: the deploy role can't drop ${objects.map(({ object, owner }) => `${object} (owned by ${owner})`).join(", ")}. ${one ? "Drop it, change its owner to the deploy role, or ask its owner to" : "Drop them, change their owners to the deploy role, or ask their owners to"}, then run rebuild again (nothing changed)`,
     );
     this.target = target;
     this.schema = schema;

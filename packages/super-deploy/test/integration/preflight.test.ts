@@ -14,10 +14,12 @@ import {
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   asDeployerPreamble,
+  asSuperuser,
   deployProject,
   finalizeMigration,
   roleName,
   targetDatabaseName,
+  testSession,
 } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
@@ -52,7 +54,7 @@ describe("roles in rehearsals", () => {
     await server.query(
       `create role ${rehearser} login createdb password 'rehearser'`,
     );
-    const { project } = await deployProject(
+    const { project, database } = await deployProject(
       server,
       { "customers.sql": customers, "orders.sql": orders },
       {
@@ -64,6 +66,8 @@ const asRehearser = postgresRehearsal({ connectionString: rehearsalUrl.href });`
         rehearsal: "asRehearser",
       },
     );
+    // The embedded dev target creates its deploy role on first connect.
+    await (await testSession(server, database)).close();
     const before = await roles();
 
     await finalizeMigration(project, "add customers");
@@ -514,9 +518,13 @@ describe("the deploy role can create the history schema", () => {
 
 describe("the deploy role's privileges", () => {
   test("warns, without refusing, when the deploy role is a superuser", async () => {
-    const { project } = await deployProject(server, {
-      "customers.sql": customers,
-    });
+    const database = targetDatabaseName();
+    await server.query(`create database ${database}`);
+    const { project } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { database, adapter: asSuperuser(database) },
+    );
     await finalizeMigration(project, "add customers");
     const warnings: string[] = [];
 

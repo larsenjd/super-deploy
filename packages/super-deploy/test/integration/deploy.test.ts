@@ -907,7 +907,7 @@ describe("status", () => {
         missingExternalSchemas: [],
         notOwned: [],
         historyMismatches: [],
-        warnings: [expect.stringContaining("is a superuser")],
+        warnings: [],
       },
       drift: [],
     });

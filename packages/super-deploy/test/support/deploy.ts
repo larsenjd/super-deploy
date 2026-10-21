@@ -45,6 +45,31 @@ export function testSession(
     .connect();
 }
 
+/**
+ * The role an embedded target (`postgres.target(...)`, so `dev` here) deploys
+ * as: not a superuser, and the owner of the target's database.
+ */
+export const embeddedDeployRole = "deployer";
+
+/**
+ * Runs `sql` on `database` as the embedded targets' deploy role, like a
+ * change an administrator makes by hand as the deploy role: what it creates
+ * is the deploy role's, as a deployment's would be. (`server.query` runs as
+ * the superuser, whose objects fail the ownership pre-flight.)
+ */
+export async function asDeployRole(
+  server: Pick<TestServer, "dataDir">,
+  database: string,
+  sql: string,
+): Promise<void> {
+  const session = await testSession(server, database);
+  try {
+    await session.execute(sql);
+  } finally {
+    await session.close();
+  }
+}
+
 /** A role name no other test uses (roles are server-wide). */
 export function roleName(prefix = "reader"): string {
   return `${prefix}_${randomBytes(4).toString("hex")}`;
@@ -65,6 +90,24 @@ const asDeployer = {
     return postgresTarget({ connectionString: url.href }).connect();
   },
 };`;
+}
+
+/**
+ * An adapter expression (for `adapter` or `otherTargets`) that connects to
+ * `database` on the test server as its superuser `super_deploy`, unlike
+ * `postgres.target(...)`, which deploys as the non-superuser `deployer`: a
+ * real target logging in as a superuser, which may act on objects any role
+ * owns. The database must exist.
+ */
+export function asSuperuser(database: string): string {
+  return `{
+  async connect(options) {
+    const { postgresTarget } = await import("super-deploy");
+    return postgresTarget({
+      connectionString: await postgres.connectionString(${JSON.stringify(database)}),
+    }).connect(options);
+  },
+}`;
 }
 
 /** A unique database name for one test's target. */

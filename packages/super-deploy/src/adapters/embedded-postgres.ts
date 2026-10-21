@@ -10,6 +10,17 @@
 // running (another command, or a test harness), the adapter attaches to it
 // and leaves it running.
 //
+// The server's superuser `super_deploy` sets the server up and runs the
+// rehearsal databases. A target (`target(database)`) is deployed as the
+// deploy role `deployer` instead, like a real target's: a LOGIN role that is
+// not a superuser and holds no predefined roles, so `dev` gets none of the
+// deploy pre-flight's superuser warnings. On each connect the superuser
+// creates the role if it is missing and the database if it is missing, and
+// makes the role the database's owner. Owning the database gives it CREATE
+// there (for the history schema) and `public`, through `pg_database_owner`.
+// A database created before the deploy role existed keeps what the superuser
+// created in it: the ownership pre-flight lists those objects.
+//
 // Ctrl+C in a terminal reaches the whole process group, so the server may
 // have stopped before the command closes it. Stopping it is then a no-op: the
 // library's `stop()` waits for an `exit` event that has already fired. Of the
@@ -43,20 +54,39 @@ export interface EmbeddedPostgresOptions {
 export interface EmbeddedPostgres {
   /** Throwaway databases on the embedded server. */
   readonly rehearsal: RehearsalAdapter;
-  /** A target that is a database on the embedded server, created on first connect. */
+  /**
+   * A target that is a database on the embedded server, created on first
+   * connect. It is deployed as the deploy role `deployer`, which isn't a
+   * superuser and owns the database.
+   */
   target(database: string): DeploymentAdapter;
   /** Starts the server, or attaches to it if it is already running. */
   start(): Promise<void>;
   /** Stops the server if this instance started it. */
   stop(): Promise<void>;
-  /** A connection string for `database` (default `postgres`), starting the server if needed. */
+  /**
+   * A connection string for `database` (default `postgres`) as the server's
+   * superuser, starting the server if needed.
+   */
   connectionString(database?: string): Promise<string>;
 }
 
 // Local-only credentials: the server listens on 127.0.0.1 only.
 const user = "super_deploy";
 const password = "super_deploy";
+const deployRole = "deployer";
+const deployRolePassword = "deployer";
 const host = "127.0.0.1";
+
+// Creates the deploy role unless it exists. Another process may create it
+// meanwhile, so losing that race is not an error.
+const createDeployRole = `DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${deployRole}') THEN
+    CREATE ROLE ${deployRole} LOGIN PASSWORD '${deployRolePassword}';
+  END IF;
+EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+END $$`;
 
 export function embeddedPostgres(
   options: EmbeddedPostgresOptions,
@@ -147,8 +177,16 @@ export function embeddedPostgres(
   }
 
   async function connectionString(database = "postgres"): Promise<string> {
+    return connectionStringAs(user, password, database);
+  }
+
+  async function connectionStringAs(
+    role: string,
+    rolePassword: string,
+    database: string,
+  ): Promise<string> {
     const serverPort = await port();
-    return `postgres://${user}:${password}@${host}:${serverPort}/${encodeURIComponent(database)}`;
+    return `postgres://${role}:${rolePassword}@${host}:${serverPort}/${encodeURIComponent(database)}`;
   }
 
   async function stop(): Promise<void> {
@@ -208,19 +246,23 @@ export function embeddedPostgres(
       const target = targetOver(async () => {
         const admin = await connectSession(await connectionString());
         try {
-          const existing = await admin.query(
-            "SELECT 1 FROM pg_database WHERE datname = $1",
+          await admin.query(createDeployRole);
+          const existing = await admin.query<{ owner: string }>(
+            "SELECT pg_catalog.pg_get_userbyid(datdba) AS owner FROM pg_catalog.pg_database WHERE datname = $1",
             [database],
           );
+          const quoted = pg.escapeIdentifier(database);
           if (existing.rows.length === 0) {
+            await admin.query(`CREATE DATABASE ${quoted} OWNER ${deployRole}`);
+          } else if (existing.rows[0]?.owner !== deployRole) {
             await admin.query(
-              `CREATE DATABASE ${pg.escapeIdentifier(database)}`,
+              `ALTER DATABASE ${quoted} OWNER TO ${deployRole}`,
             );
           }
         } finally {
           await admin.close();
         }
-        return connectionString(database);
+        return connectionStringAs(deployRole, deployRolePassword, database);
       });
       return { connect: (options) => target.connect(options), close: stop };
     },

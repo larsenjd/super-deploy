@@ -20,6 +20,11 @@
 // dependency (identity sequences, row types, arrays, multiranges, a range's
 // constructors) and an extension's members (`e`). Each object comes with the ALTER ... OWNER TO that
 // gives it to the deploy role, its names quoted and schema-qualified.
+//
+// `rebuild` judges with the same test what its wipe can drop
+// (`objectsNotDroppable`), which is less than ownership: the schema's owner
+// may drop anything in it but an extension. Extensions aren't in the
+// ownership check, since a deployment never alters or drops one.
 
 import type { Session } from "../adapters/types.ts";
 import { SuperDeployError } from "../errors.ts";
@@ -124,6 +129,44 @@ export async function objectsNotOwned(
     object: `${kind.toLowerCase()} ${name}`,
     owner,
     fix: `ALTER ${kind} ${name} OWNER TO ${deploy_role}`,
+  }));
+}
+
+/**
+ * The objects in the managed schema (sorted) that the session's current role
+ * can't drop, for `rebuild`'s wipe, each with its owner. PostgreSQL lets the
+ * schema's owner drop what is in it, so with the managed schema's owner's
+ * privileges only extensions owned by someone else are left; without them,
+ * every object `objectsNotOwned` lists. Read-only.
+ */
+export async function objectsNotDroppable(
+  session: Session,
+  managedSchema: string,
+): Promise<Omit<NotOwnedObject, "fix">[]> {
+  const { rows } = await session.query<{
+    kind: string;
+    name: string;
+    owner: string;
+  }>(
+    `WITH s AS (SELECT oid, nspname, nspowner FROM pg_catalog.pg_namespace WHERE nspname = $1),
+     owned AS (${ownedObjectsQuery}),
+     dropped AS (
+       SELECT class, oid, kind, name, owner FROM owned
+        WHERE kind <> 'SCHEMA' AND NOT pg_catalog.pg_has_role(current_user, (SELECT nspowner FROM s), 'USAGE')
+       UNION ALL
+       SELECT 'pg_extension'::regclass, e.oid, 'EXTENSION', pg_catalog.quote_ident(e.extname), e.extowner
+         FROM pg_catalog.pg_extension e JOIN s ON s.oid = e.extnamespace)
+     SELECT kind, name, pg_catalog.pg_get_userbyid(owner) AS owner
+       FROM dropped
+      WHERE NOT pg_catalog.pg_has_role(current_user, owner, 'USAGE')
+        AND NOT EXISTS (SELECT FROM pg_catalog.pg_depend d
+                         WHERE d.classid = dropped.class AND d.objid = dropped.oid AND d.deptype IN ('e', 'i'))
+      ORDER BY kind COLLATE "C", name COLLATE "C"`,
+    [managedSchema],
+  );
+  return rows.map(({ kind, name, owner }) => ({
+    object: `${kind.toLowerCase()} ${name}`,
+    owner,
   }));
 }
 

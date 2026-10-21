@@ -20,9 +20,16 @@ import { status } from "../commands/status.ts";
 import { unfinalize } from "../commands/unfinalize.ts";
 import { ValidationFailedError, validate } from "../commands/validate.ts";
 import type { AttemptRecord, RecordedMigration } from "../deploy/history.ts";
-import { describeLockHolder, lockHolderName } from "../deploy/lock.ts";
+import {
+  describeLockHolder,
+  lockHolderName,
+  TargetLockedError,
+} from "../deploy/lock.ts";
 import { MarkMismatchError } from "../deploy/mark.ts";
-import { preflightRefusals } from "../deploy/preflight.ts";
+import {
+  PreflightFailedError,
+  preflightRefusals,
+} from "../deploy/preflight.ts";
 import { plural } from "../errors.ts";
 import { findUpward, type Project } from "../project.ts";
 import type {
@@ -694,7 +701,7 @@ const statusCommand: CommandDefinition = {
   name: "status",
   group: "Deploy",
   summary:
-    "Show the target's pending migrations, recent attempts and drift (exit 1 on drift)",
+    "Show the target's pending migrations, recent attempts and drift (exit 1 on drift, on drift not checked or when deploy would refuse)",
   options: [targetOption],
   async run(project, values, context) {
     const report = await status(project, { target: String(values.target) });
@@ -750,12 +757,22 @@ const statusCommand: CommandDefinition = {
         context.result(`  ${describeAttempt(attempt, report.recorded)}`);
       }
     }
+    // Exit 0 only when nothing would make deploy refuse and drift was checked
+    // and found none (pending migrations are fine), so a pipeline can gate
+    // deploy on status and a scheduled status alerts on drift and on drift
+    // going unchecked. Drift is unchecked only for a history mismatch (itself
+    // a refusal) or while another command holds the target lock.
     if (report.drift !== undefined && report.drift.length > 0) {
-      // Exit 1, so a scheduled status alerts on drift.
       throw new DriftError(report.target, report.drift, {
         command: "status",
         pending: report.pending.length,
       });
+    }
+    if (refusals.length > 0) {
+      throw new PreflightFailedError(report.target, preflight);
+    }
+    if (report.lockedBy !== undefined) {
+      throw new TargetLockedError(report.target, report.lockedBy);
     }
   },
 };
