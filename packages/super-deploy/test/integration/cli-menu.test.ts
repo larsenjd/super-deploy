@@ -2,7 +2,7 @@
 // Skipped on Windows: ConPTY's key and Ctrl+C handling is unverified there.
 import { rm } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { waitForFile } from "../support/cli.ts";
+import { runCli, waitForFile } from "../support/cli.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import {
   createTestProject,
@@ -79,6 +79,32 @@ describe.skipIf(process.platform === "win32")("menu", () => {
     await terminal.chooseMenuItem("quit");
     expect(await terminal.exited).toBe(0);
     expect(dir.exists("data-model/draft")).toBe(false);
+  });
+
+  test("validate asks whether to allow a draft in progress; yes passes --strict with a draft present", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: { "data-model/desired-schema/customers.sql": customers },
+    });
+    const drafted = await runCli(["draft", "--name", "add customers"], {
+      cwd: dir.root,
+    });
+    expect(drafted.exitCode).toBe(0);
+    const terminal = spawnTerminal([], { cwd: dir.root });
+
+    await terminal.waitFor("quit");
+    await terminal.chooseMenuItem("validate");
+    // A yes/no question takes "y" as its answer, without Enter.
+    await terminal.waitFor("Fail on warnings too");
+    terminal.type("y");
+    await terminal.waitFor("Allow a draft in progress?");
+    terminal.type("y");
+
+    await terminal.waitFor("Draft add-customers is not finalized yet");
+    await terminal.waitFor("Validated 0 migrations");
+    await terminal.waitFor("quit");
+    terminal.type(keys.escape);
+    expect(await terminal.exited).toBe(0);
   });
 
   test("cancelling a question runs nothing and returns to the menu; Ctrl+C there leaves", async () => {

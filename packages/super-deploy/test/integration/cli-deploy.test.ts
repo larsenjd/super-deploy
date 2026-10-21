@@ -77,17 +77,18 @@ describe("deploy and status", () => {
     );
   });
 
-  test("status lists what a deployment would refuse, and deploy then fails with exit code 1", async () => {
+  test("status lists what a deployment would refuse and exits 1, and deploy then fails with exit code 1", async () => {
     const dir = await finalizedProject('externalSchemas: ["loader"],');
+    const preflightFailed = `${superuserWarning}Error: Target dev failed the deploy pre-flight checks: external schema "loader" does not exist (it is declared in externalSchemas)\n`;
 
     const report = await runCli(["status", "--target", "dev"], {
       cwd: dir.root,
     });
     expect(report).toMatchObject({
-      exitCode: 0,
+      exitCode: 1,
       stdout:
         'Target dev: 0 migrations recorded, 1 pending\nDeploy would refuse:\n  external schema "loader" does not exist (it is declared in externalSchemas)\nPending:\n  00001-add-customers\n',
-      stderr: superuserWarning,
+      stderr: preflightFailed,
     });
 
     const refused = await runCli(["deploy", "--target", "dev"], {
@@ -96,11 +97,11 @@ describe("deploy and status", () => {
     expect(refused).toMatchObject({
       exitCode: 1,
       stdout: "",
-      stderr: `${superuserWarning}Error: Target dev failed the deploy pre-flight checks: external schema "loader" does not exist (it is declared in externalSchemas)\n`,
+      stderr: preflightFailed,
     });
   });
 
-  test("status lists a history mismatch, with its way out, under what a deployment would refuse", async () => {
+  test("status lists a history mismatch, with its way out, under what a deployment would refuse, leaves drift unchecked and exits 1", async () => {
     const dir = await finalizedProject();
     for (const args of [
       ["deploy", "--target", "dev"],
@@ -113,12 +114,16 @@ describe("deploy and status", () => {
     const report = await runCli(["status", "--target", "dev"], {
       cwd: dir.root,
     });
+    expect(report.exitCode).toBe(1);
     expect(report.stdout).toContain(
-      "Deploy would refuse:\n  the target records migration 00001-add-customers, which the repo doesn't have: restore 00001-add-customers (and index.json) from version control (a migration a target has recorded must never change, so put new changes in a new migration)\n",
+      "Deploy would refuse:\n  the target records migration 00001-add-customers, which the repo doesn't have: restore 00001-add-customers (and index.json) from version control (a migration a target has recorded must never change, so put new changes in a new migration)\nDrift: not checked (the recorded history doesn't match the project's migrations)\n",
+    );
+    expect(report.stderr).toContain(
+      "Error: Target dev failed the deploy pre-flight checks: the target records migration 00001-add-customers",
     );
   });
 
-  test("status lists a history schema the deploy role can't create as a refusal", async () => {
+  test("status lists a history schema the deploy role can't create as a refusal and exits 1", async () => {
     const deployer = roleName("deployer");
     const database = targetDatabaseName();
     await server.query(`create role ${deployer} login password 'deployer'`);
@@ -141,7 +146,7 @@ describe("deploy and status", () => {
       cwd: dir.root,
     });
 
-    expect(report.exitCode).toBe(0);
+    expect(report.exitCode).toBe(1);
     expect(report.stdout).toContain(
       `Deploy would refuse:\n  the deploy role ${deployer} needs CREATE on database ${database} to create the history schema "deployment_history" (fix: GRANT CREATE ON DATABASE ${database} TO ${deployer})\n`,
     );
@@ -198,6 +203,17 @@ describe("deploy and status", () => {
       new RegExp(
         `\nRecent attempts:\n  #2 deploy failed by ${userInfo().username} at \\S+Z: Target dev has drifted`,
       ),
+    );
+  });
+
+  test("status --help says when it exits 1", async () => {
+    const dir = await createTestProject();
+
+    const result = await runCli(["status", "--help"], { cwd: dir.root });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "exit 1 on drift, on drift not checked or when deploy would refuse",
     );
   });
 

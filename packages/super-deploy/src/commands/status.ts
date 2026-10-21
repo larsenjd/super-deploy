@@ -5,12 +5,14 @@
 // reports the deploy pre-flight's findings (including a draft deploy-draft
 // left on the target, a history mismatch), and drift: the target's managed
 // schema compared with a replica of its recorded migrations, built on a
-// throwaway database matching its locale (the CLI exits 1 on drift). Drift is
-// not checked while the history mismatches or the target holds a deployed
-// draft (ADR-0005), told apart so a draft alone isn't called a mismatch, nor
-// while another command holds the target lock: a deploy transaction's locks
-// would block the catalog read until the lock timeout, so status names the
-// holder (`lockHolder`, as deploy's refusal does) and reports the rest.
+// throwaway database matching its locale. Drift is not checked while the
+// history mismatches or the target holds a deployed draft (ADR-0005), told
+// apart so a draft alone isn't called a mismatch, nor while another command
+// holds the target lock: a deploy transaction's locks would block the catalog
+// read until the lock timeout, so status names the holder (`lockHolder`, as
+// deploy's refusal does) and reports the rest. The function returns the
+// report whatever it finds; the CLI exits 1 unless the target is deployable
+// with no drift: on drift, on any pre-flight refusal, and while locked.
 import { settleAttempts } from "../deploy/attempts.ts";
 import {
   type AttemptRecord,

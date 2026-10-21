@@ -251,7 +251,6 @@ describe("column type changes", () => {
     ["qty", "numeric(5)"],
     ["ratio", "integer"],
     ["price", "integer"],
-    ["price", "numeric(10,1)"],
     ["price", "numeric(10,3)"],
     ["name", "varchar(50)"],
     ["note", "varchar(50)"],
@@ -311,6 +310,92 @@ alter table t alter column title type text;`,
     expect(
       await destructiveKinds(`create table x (a numeric(10,2));
 alter table x alter column a type integer;`),
+    ).toEqual([]);
+  });
+});
+
+describe("narrowing type changes", () => {
+  const previous = `create table customers (
+  display_name text,
+  title varchar(100),
+  code varchar(10),
+  short varchar(5),
+  flags bit(4),
+  cost numeric(6,2)
+);
+`;
+  /** A type change as pg-delta generates it: always `USING col::newtype`. */
+  const generated = (column: string, type: string) =>
+    `ALTER TABLE "public"."customers" ALTER COLUMN "${column}" TYPE ${type} USING "${column}"::${type};`;
+  const destructive = async (sql: string) =>
+    (await analyse([["schema-change", sql]], previous)).destructive;
+
+  test.each([
+    [
+      "display_name",
+      "character varying(5)",
+      "customers.display_name narrows from text to varchar(5): values longer than 5 characters are cut to 5 on every target, without an error",
+    ],
+    [
+      "title",
+      "character varying(10)",
+      "customers.title narrows from varchar(100) to varchar(10): values longer than 10 characters are cut to 10 on every target, without an error",
+    ],
+    [
+      "code",
+      "character(3)",
+      "customers.code narrows from varchar(10) to char(3): values longer than 3 characters are cut to 3 on every target, without an error",
+    ],
+    [
+      "flags",
+      "bit(2)",
+      "customers.flags narrows from bit(4) to bit(2): values longer than 2 bits are cut to 2 on every target, without an error",
+    ],
+    [
+      "cost",
+      "numeric(4,1)",
+      "customers.cost narrows from numeric(6,2) to numeric(4,1): values are rounded to 1 decimal place on every target, without an error",
+    ],
+  ])("%s to %s is a narrowing", async (column, type, message) => {
+    expect(await destructive(generated(column, type))).toEqual([
+      expect.objectContaining({ kind: "lossy-type-change", message }),
+    ]);
+  });
+
+  test("a type change whose cast fails rather than shortens keeps the plain loss reason", async () => {
+    expect(await destructive(generated("display_name", "integer"))).toEqual([
+      expect.objectContaining({
+        kind: "lossy-type-change",
+        message: expect.stringContaining(
+          "can lose data: not every text value fits int4 unchanged",
+        ),
+      }),
+    ]);
+  });
+
+  test("without USING, an over-long string is refused rather than cut, but a numeric is still rounded", async () => {
+    const plain = (column: string, type: string) =>
+      `ALTER TABLE "public"."customers" ALTER COLUMN "${column}" TYPE ${type};`;
+    expect(
+      await destructive(plain("display_name", "character varying(5)")),
+    ).toEqual([
+      expect.objectContaining({
+        message: expect.stringContaining(
+          "can lose data: not every text value fits varchar(5) unchanged",
+        ),
+      }),
+    ]);
+    expect(await destructive(plain("cost", "numeric(6,0)"))).toEqual([
+      expect.objectContaining({
+        message:
+          "customers.cost narrows from numeric(6,2) to numeric(6,0): values are rounded to whole numbers on every target, without an error",
+      }),
+    ]);
+  });
+
+  test("a widening is no narrowing, and not destructive", async () => {
+    expect(
+      await destructive(generated("short", "character varying(10)")),
     ).toEqual([]);
   });
 });

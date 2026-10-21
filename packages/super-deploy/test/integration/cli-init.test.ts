@@ -91,7 +91,7 @@ describe("init", () => {
     expect(next).toMatch(/^Next: git init, then pnpm install\b/);
     await linkDependencies(root);
 
-    // The template's precommit: biome check && tsc --noEmit && super-deploy validate --strict
+    // The template's precommit: biome check && tsc --noEmit && super-deploy validate --strict --allow-draft
     expect(runTool(root, "@biomejs/biome/bin/biome", ["check"])).toMatchObject({
       exitCode: 0,
     });
@@ -99,12 +99,12 @@ describe("init", () => {
       exitCode: 0,
       output: "",
     });
-    expect(await runCli(["validate", "--strict"], { cwd: root })).toMatchObject(
-      {
-        exitCode: 0,
-        stdout: "Validated 0 migrations\n",
-      },
-    );
+    expect(
+      await runCli(["validate", "--strict", "--allow-draft"], { cwd: root }),
+    ).toMatchObject({
+      exitCode: 0,
+      stdout: "Validated 0 migrations\n",
+    });
 
     await writeFile(
       join(root, "data-model", "desired-schema", "customers.sql"),
