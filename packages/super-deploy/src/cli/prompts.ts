@@ -1,7 +1,9 @@
 // Terminal questions with @clack/prompts: the menu's command list, one
 // question per option kind, and yes/no confirmations (default no). Every
-// prompt is cancelled by Escape or Ctrl+C (clack reads them in raw mode) and
-// by the interruption signal.
+// prompt is cancelled by Escape or Ctrl+C (clack reads them in raw mode), by
+// Ctrl+D on an empty answer (`askUntilEndOfInput`) and by the interruption
+// signal.
+import type { Readable, Writable } from "node:stream";
 import { styleText } from "node:util";
 import { SelectPrompt, TextPrompt } from "@clack/core";
 import {
@@ -17,6 +19,7 @@ import {
   text,
   unicodeOr,
 } from "@clack/prompts";
+import { askUntilEndOfInput, type PromptStreams } from "../end-of-input.ts";
 import type { Project } from "../project.ts";
 import {
   InvalidDraftNameError,
@@ -38,13 +41,20 @@ export interface PromptIo {
   readonly signal: AbortSignal;
 }
 
-// clack types its streams as node:stream's Readable/Writable.
-function streams(io: PromptIo) {
-  return {
-    input: io.input as import("node:stream").Readable,
-    output: io.output as import("node:stream").Writable,
-    signal: io.signal,
-  };
+/** Every prompt is asked through here, so that end of input cancels it. */
+function ask<T>(
+  io: PromptIo,
+  prompt: (streams: PromptStreams) => Promise<T>,
+): Promise<T> {
+  // clack types its streams as node:stream's Readable/Writable.
+  return askUntilEndOfInput(
+    {
+      input: io.input as Readable,
+      output: io.output as Writable,
+      signal: io.signal,
+    },
+    prompt,
+  );
 }
 
 export const quit = "quit";
@@ -85,37 +95,39 @@ export async function pickCommand(
   const width = Math.max(...entries.map((entry) => entry.label.length)) + 2;
   const message = "What do you want to do?";
 
-  const answer = await new SelectPrompt<MenuEntry>({
-    ...streams(io),
-    options: entries,
-    initialValue: current?.name ?? commands[0]?.name ?? quit,
-    render() {
-      const title = `${styleText("gray", S_BAR)}\n${symbol(this.state)}  ${message}\n`;
-      const chosen = this.options[this.cursor];
-      if (this.state === "submit" || this.state === "cancel") {
-        const label = chosen?.label ?? "";
-        return `${title}${styleText("gray", S_BAR)}  ${styleText(this.state === "cancel" ? ["strikethrough", "dim"] : "dim", label)}`;
-      }
-      const bar = styleText("cyan", S_BAR);
-      const lines = this.options.map((entry, index) => {
-        if (entry.disabled) {
-          return `${bar}  ${styleText("bold", entry.label)}`;
+  const answer = await ask(io, (streams) =>
+    new SelectPrompt<MenuEntry>({
+      ...streams,
+      options: entries,
+      initialValue: current?.name ?? commands[0]?.name ?? quit,
+      render() {
+        const title = `${styleText("gray", S_BAR)}\n${symbol(this.state)}  ${message}\n`;
+        const chosen = this.options[this.cursor];
+        if (this.state === "submit" || this.state === "cancel") {
+          const label = chosen?.label ?? "";
+          return `${title}${styleText("gray", S_BAR)}  ${styleText(this.state === "cancel" ? ["strikethrough", "dim"] : "dim", label)}`;
         }
-        const active = index === this.cursor;
-        const radio = active
-          ? styleText("green", S_RADIO_ACTIVE)
-          : styleText("dim", S_RADIO_INACTIVE);
-        const label = entry.label.padEnd(width);
-        const hint = styleText("dim", entry.hint ?? "");
-        return `${bar}    ${radio} ${active ? label : styleText("dim", label)}${hint}`;
-      });
-      const footer = styleText(
-        "dim",
-        "Up/Down to move, Enter to run, Escape to leave",
-      );
-      return `${title}${lines.join("\n")}\n${bar}\n${styleText("cyan", S_BAR_END)}  ${footer}\n`;
-    },
-  }).prompt();
+        const bar = styleText("cyan", S_BAR);
+        const lines = this.options.map((entry, index) => {
+          if (entry.disabled) {
+            return `${bar}  ${styleText("bold", entry.label)}`;
+          }
+          const active = index === this.cursor;
+          const radio = active
+            ? styleText("green", S_RADIO_ACTIVE)
+            : styleText("dim", S_RADIO_INACTIVE);
+          const label = entry.label.padEnd(width);
+          const hint = styleText("dim", entry.hint ?? "");
+          return `${bar}    ${radio} ${active ? label : styleText("dim", label)}${hint}`;
+        });
+        const footer = styleText(
+          "dim",
+          "Up/Down to move, Enter to run, Escape to leave",
+        );
+        return `${title}${lines.join("\n")}\n${bar}\n${styleText("cyan", S_BAR_END)}  ${footer}\n`;
+      },
+    }).prompt(),
+  );
   if (isCancel(answer) || answer === undefined || answer === quit) {
     return undefined;
   }
@@ -160,11 +172,13 @@ async function askOption(
         throw new RefusedError("super-deploy.config.ts has no targets");
       }
       return answered(
-        await select({
-          ...streams(io),
-          message,
-          options: names.map((name) => ({ value: name, label: name })),
-        }),
+        await ask(io, (streams) =>
+          select({
+            ...streams,
+            message,
+            options: names.map((name) => ({ value: name, label: name })),
+          }),
+        ),
       );
     }
     case "migration": {
@@ -180,32 +194,36 @@ async function askOption(
       }
       const none = "";
       const answer = answered(
-        await autocomplete({
-          ...streams(io),
-          message,
-          placeholder: "Type to search",
-          maxItems: 10,
-          options: [
-            ...(option.required ? [] : [{ value: none, label: "(none)" }]),
-            ...migrations.map((migration) => ({
-              value: String(migration.number),
-              label: migrationFolderName(migration.number, migration.name),
-            })),
-          ],
-        }),
+        await ask(io, (streams) =>
+          autocomplete({
+            ...streams,
+            message,
+            placeholder: "Type to search",
+            maxItems: 10,
+            options: [
+              ...(option.required ? [] : [{ value: none, label: "(none)" }]),
+              ...migrations.map((migration) => ({
+                value: String(migration.number),
+                label: migrationFolderName(migration.number, migration.name),
+              })),
+            ],
+          }),
+        ),
       );
       return answer === none ? undefined : answer;
     }
     case "choice":
       return answered(
-        await select({
-          ...streams(io),
-          message,
-          options: option.choices.map((choice) => ({
-            value: choice,
-            label: choice,
-          })),
-        }),
+        await ask(io, (streams) =>
+          select({
+            ...streams,
+            message,
+            options: option.choices.map((choice) => ({
+              value: choice,
+              label: choice,
+            })),
+          }),
+        ),
       );
     case "name":
       return askName(io, option, project);
@@ -215,7 +233,9 @@ async function askOption(
         return undefined;
       }
       const answer = answered(
-        await clackConfirm({ ...streams(io), message, initialValue: false }),
+        await ask(io, (streams) =>
+          clackConfirm({ ...streams, message, initialValue: false }),
+        ),
       );
       return answer === cancelled ? cancelled : answer ? true : undefined;
     }
@@ -266,36 +286,38 @@ async function askName(
       throw error;
     }
   };
-  const answer = await new TextPrompt({
-    ...streams(io),
-    initialValue: initial,
-    validate(value) {
-      const input = value ?? "";
-      if (input.trim() === "") {
-        return option.required ? "A name is required" : undefined;
-      }
-      try {
-        normaliseDraftName(input);
-        return undefined;
-      } catch (error) {
-        return error instanceof Error ? error.message : String(error);
-      }
-    },
-    render() {
-      const title = `${styleText("gray", S_BAR)}\n${symbol(this.state)}  ${option.description}\n`;
-      const input = this.userInput;
-      switch (this.state) {
-        case "submit":
-          return `${title}${styleText("gray", S_BAR)}  ${styleText("dim", input.trim() === "" ? "(none)" : normaliseDraftName(input))}`;
-        case "cancel":
-          return `${title}${styleText("gray", S_BAR)}  ${styleText(["strikethrough", "dim"], input)}`;
-        case "error":
-          return `${title}${styleText("yellow", S_BAR)}  ${this.userInputWithCursor}\n${styleText("yellow", S_BAR_END)}  ${styleText("yellow", this.error)}\n`;
-        default:
-          return `${title}${styleText("cyan", S_BAR)}  ${this.userInputWithCursor}\n${styleText("cyan", S_BAR_END)}  ${preview(input)}\n`;
-      }
-    },
-  }).prompt();
+  const answer = await ask(io, (streams) =>
+    new TextPrompt({
+      ...streams,
+      initialValue: initial,
+      validate(value) {
+        const input = value ?? "";
+        if (input.trim() === "") {
+          return option.required ? "A name is required" : undefined;
+        }
+        try {
+          normaliseDraftName(input);
+          return undefined;
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+      },
+      render() {
+        const title = `${styleText("gray", S_BAR)}\n${symbol(this.state)}  ${option.description}\n`;
+        const input = this.userInput;
+        switch (this.state) {
+          case "submit":
+            return `${title}${styleText("gray", S_BAR)}  ${styleText("dim", input.trim() === "" ? "(none)" : normaliseDraftName(input))}`;
+          case "cancel":
+            return `${title}${styleText("gray", S_BAR)}  ${styleText(["strikethrough", "dim"], input)}`;
+          case "error":
+            return `${title}${styleText("yellow", S_BAR)}  ${this.userInputWithCursor}\n${styleText("yellow", S_BAR_END)}  ${styleText("yellow", this.error)}\n`;
+          default:
+            return `${title}${styleText("cyan", S_BAR)}  ${this.userInputWithCursor}\n${styleText("cyan", S_BAR_END)}  ${preview(input)}\n`;
+        }
+      },
+    }).prompt(),
+  );
   if (isCancel(answer)) {
     return cancelled;
   }
@@ -308,7 +330,9 @@ export async function askAtTerminal(
   io: PromptIo,
   question: string,
 ): Promise<string | undefined> {
-  const answer = await text({ ...streams(io), message: question });
+  const answer = await ask(io, (streams) =>
+    text({ ...streams, message: question }),
+  );
   return isCancel(answer) ? undefined : answer;
 }
 
@@ -317,10 +341,8 @@ export async function confirmAtTerminal(
   io: PromptIo,
   question: string,
 ): Promise<boolean> {
-  const answer = await clackConfirm({
-    ...streams(io),
-    message: question,
-    initialValue: false,
-  });
+  const answer = await ask(io, (streams) =>
+    clackConfirm({ ...streams, message: question, initialValue: false }),
+  );
   return answer === true;
 }

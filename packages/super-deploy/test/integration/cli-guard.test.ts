@@ -8,7 +8,7 @@ import { runCli } from "../support/cli.ts";
 import { deployConfig } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject } from "../support/project.ts";
-import { keys, spawnTerminal } from "../support/terminal.ts";
+import { keys, showCursor, spawnTerminal } from "../support/terminal.ts";
 
 let server: TestServer;
 beforeAll(async () => {
@@ -199,6 +199,48 @@ describe.skipIf(process.platform === "win32")("at a terminal", () => {
         database,
       ),
     ).toEqual([{ count: 0 }]);
+  });
+
+  test("Ctrl+D on an empty answer cancels the question like Ctrl+C: nothing changes and the cursor is shown again", async () => {
+    const { dir, database } = await guardedProject();
+
+    const terminal = spawnTerminal(
+      ["disposable", "--target", "dev", "--set", "yes"],
+      { cwd: dir.root },
+    );
+
+    await terminal.waitFor("Type YES");
+    const before = terminal.output.length;
+    terminal.type(keys.ctrlD);
+    await terminal.waitFor(
+      "Error: disposable on target dev was not confirmed (cancelled): nothing changed",
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.output.slice(before)).toContain(showCursor);
+    expect(terminal.screen).not.toContain("unsettled top-level await");
+    expect(
+      await server.query(
+        "select count(*)::int as count from pg_namespace where nspname = 'deployment_history'",
+        [],
+        database,
+      ),
+    ).toEqual([{ count: 0 }]);
+  });
+
+  test("Ctrl+D after typing part of the answer leaves the question waiting", async () => {
+    const { dir } = await deployedProject();
+
+    const terminal = spawnTerminal(
+      ["disposable", "--target", "dev", "--set", "yes"],
+      { cwd: dir.root },
+    );
+
+    await terminal.waitFor("Type YES");
+    terminal.type("YE");
+    terminal.type(keys.ctrlD);
+    terminal.type(`S${keys.enter}`);
+    await terminal.waitFor("Target dev is now disposable");
+    expect(await terminal.exited).toBe(0);
   });
 
   test("a target that already has the value is left alone without asking", async () => {

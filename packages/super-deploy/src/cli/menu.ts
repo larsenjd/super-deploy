@@ -1,7 +1,7 @@
 // The interactive menu: `super-deploy` with no arguments at a terminal.
 // Pick a command, answer its options, see it run, and land back on the same
 // command. Failures print and return to the menu; cancelling a question runs
-// nothing; quit, Escape or Ctrl+C at the menu leaves (exit 0). An
+// nothing; quit, Escape, Ctrl+C or Ctrl+D at the menu leaves (exit 0). An
 // interruption while a command runs cleans up and exits like any other.
 import { cancel, intro, outro } from "@clack/prompts";
 import { findConfig, loadProject } from "../project.ts";
