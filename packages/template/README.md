@@ -30,14 +30,111 @@ port whenever a command needs it.
    migration to the target in one transaction.
 
 Run `pnpm exec super-deploy` with no arguments for an interactive menu, or
-`pnpm exec super-deploy --help` for every command. Add real targets (QA,
-production) to `super-deploy.config.ts`; keep credentials out of it, for
-example by reading a connection string from an environment variable.
+`pnpm exec super-deploy --help` for every command. To deploy to a real
+database (QA, production), add it as a target: see
+[Adding a real target](#adding-a-real-target).
+
+## Configuration
+
+`super-deploy.config.ts` exports `defineConfig({ ... })`. These are all its
+settings; super-deploy refuses any other.
+
+### Project settings
+
+- `postgresVersion`: required, and must be `18`.
+- `rehearsal`: required. Provides the throwaway databases rehearsals use.
+  The generated config uses its private embedded server
+  (`postgres.rehearsal`). `postgresRehearsal({ env: "REHEARSAL_DATABASE_URL" })`,
+  imported from `super-deploy`, uses an existing PostgreSQL 18 server
+  instead; its login needs `CREATEDB`.
+- `targets`: the named targets, such as `dev`, `qa` and `prod` (see
+  [Targets](#targets)). Default none. A target's name may contain letters,
+  digits, `-` and `_`.
+- `managedSchema`: the one schema super-deploy manages. The desired schema
+  describes it, and deployments create and change everything in it.
+  Default `public`.
+- `historySchema`: the schema super-deploy creates on each target to record
+  which migrations it ran, every deployment attempt, and whether the target
+  is disposable. Default `deployment_history`. It must differ from
+  `managedSchema`.
+- `externalSchemas`: schemas outside the managed schema that PL/pgSQL
+  routines in the desired schema may refer to, such as `["auth"]`.
+  super-deploy neither creates them nor reproduces them in rehearsals: each
+  must already exist on every target (see "Permissions"). Default none.
+- `directory`: the folder holding `desired-schema/`, `draft/` and
+  `migrations/`, relative to the config file and inside the project.
+  Default `data-model`.
+
+Schema names are lowercase PostgreSQL identifiers (letters, digits and `_`),
+and none may be a system schema (`pg_...`, `information_schema`).
+
+### Targets
+
+Each entry in `targets` is one target:
+
+- `adapter`: required. How to connect to the target:
+  `postgres.target("<database>")` for a database on the private embedded
+  server, or `postgresTarget(...)` for an existing server (see
+  [Adding a real target](#adding-a-real-target)).
+- `lockTimeout`: how long a statement waits for a lock on the target before
+  failing (PostgreSQL's `lock_timeout`). A deployment that hits it rolls back
+  as a whole. Default `"5s"`.
+- `statementTimeout`: how long one statement may run on the target
+  (PostgreSQL's `statement_timeout`). Default none: the server's own
+  setting for the deploy role applies.
+
+Both apply inside deployments, and to super-deploy's reads of the target's
+schema (its drift check, and `init --adopt`). A duration is a positive whole
+number of milliseconds (`500`) or a string with the unit `ms`, `s`, `min` or
+`h`: `"500ms"`, `"5s"`, `"2min"`, `"1h"`.
+
+### Adding a real target
+
+A real target connects to an existing PostgreSQL 18 server with
+`postgresTarget`. Import it beside `defineConfig`, and give each target the
+name of the environment variable holding its connection string:
+
+```ts
+import { defineConfig, postgresTarget } from "super-deploy";
+
+export default defineConfig({
+  // ...
+  targets: {
+    dev: { adapter: postgres.target("dev") },
+    qa: { adapter: postgresTarget({ env: "QA_DATABASE_URL" }) },
+    prod: {
+      adapter: postgresTarget({ env: "PROD_DATABASE_URL" }),
+      lockTimeout: "2s",
+    },
+  },
+});
+```
+
+The generated `super-deploy.config.ts` has the `qa` line, commented out.
+
+`postgresTarget({ env: "QA_DATABASE_URL" })` reads the variable only when a
+command connects to `qa`, so every other command and target works without
+it. A command that uses `qa` while the variable is unset or empty fails
+before connecting, changing nothing:
+`Environment variable QA_DATABASE_URL is not set`. The variable holds a
+connection string such as
+`postgresql://deploy_role:password@db.example.com:5432/app`.
+
+`postgresTarget({ connectionString: "postgresql://..." })` takes the
+connection string itself instead. The config is committed to Git, so keep
+credentials out of it: use `{ env }` for any connection string with a
+password in it.
+
+**The deploy role is the user in the connection string**: `deploy_role` in
+the example above. super-deploy runs everything on the target as that user,
+and "Permissions" says what it needs.
 
 ## Adopting an existing database
 
 To bring a database that already exists under management, add it as a target
-in `super-deploy.config.ts` (before any draft or migration exists), then run
+in `super-deploy.config.ts` (see [Adding a real target](#adding-a-real-target);
+before any draft or migration exists), and set `managedSchema` if its schema
+isn't `public` (see [Project settings](#project-settings)). Then run
 `pnpm exec super-deploy init --adopt <target>`. Its managed schema becomes the
 desired schema and migration `00001-adopt`, which is recorded on that target
 as already deployed. If the database holds anything super-deploy doesn't
@@ -61,7 +158,10 @@ overrides like any other.
 ## Permissions
 
 super-deploy knows about one role: the deploy role, which it connects to a
-target as, and which owns the managed schema and everything in it. Who else
+target as (the user in the target's connection string, see
+[Adding a real target](#adding-a-real-target)), and which owns the managed
+schema (`managedSchema`, see [Project settings](#project-settings)) and
+everything in it. Who else
 may use the database is set up on each target outside super-deploy.
 
 ### What the desired schema declares
@@ -123,7 +223,8 @@ default privileges as they are.
     on the column. Rehearsals can't catch it, because their databases have
     no hand-made policies. The deployment rolls back and PostgreSQL's error
     names the policy: drop the policy, deploy, then create it again.
-- **External schemas** (`externalSchemas` in `super-deploy.config.ts`), which
+- **External schemas** (`externalSchemas` in `super-deploy.config.ts`, see
+  [Project settings](#project-settings)), which
   must exist on every target (`deploy` refuses otherwise), and grants on them
   and their objects. Routines run as their caller, so it's the application's
   roles that need these grants (and the deploy role too, if a migration's
