@@ -3,7 +3,11 @@
 // calls the exported API function and prints its result. To add a command,
 // define it here and append it to `commands`.
 import { join } from "node:path";
-import { adopt, overrideListing } from "../commands/adopt.ts";
+import {
+  adopt,
+  type LeftOnTarget,
+  overrideListing,
+} from "../commands/adopt.ts";
 import { deploy, describeMigration } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
 import { discardDraft } from "../commands/discard-draft.ts";
@@ -315,11 +319,24 @@ const initCommand: DirectoryCommandDefinition = {
         if (result.warning !== undefined) {
           context.warn(`warning: ${result.warning}`);
         }
-        const { grants, policies } = result.leftOnTarget;
-        if (grants + policies > 0) {
+        const left = leftOnTarget(result.leftOnTarget);
+        if (left !== undefined) {
           context.result(
-            `Left ${plural(grants, "grant")} and ${plural(policies, "policy", "policies")} on target ${result.target} as they are: privileges and row-level security are set up outside super-deploy`,
+            `Left ${left} on target ${result.target} as they are: privileges and row-level security are set up outside super-deploy`,
           );
+        }
+        const dependents = result.dependentsOutside;
+        if (dependents.length > 0) {
+          const one = dependents.length === 1;
+          const [them, they, uses] = one
+            ? ["it", "it", "uses"]
+            : ["them", "they", "use"];
+          context.result(
+            `Target ${result.target} has ${plural(dependents.length, "object")} in other schemas that ${one ? "depends" : "depend"} on schema ${project.config.managedSchema}. Rehearsals don't have ${them}, so a migration that changes or drops what ${they} ${uses} will fail on target ${result.target} (drop ${them}, deploy, then create ${them} again):`,
+          );
+          for (const dependent of dependents) {
+            context.result(`  ${dependent}`);
+          }
         }
         for (const override of result.overrides) {
           context.result(
@@ -335,6 +352,35 @@ const initCommand: DirectoryCommandDefinition = {
     },
   },
 };
+
+/**
+ * What adoption left on the target, e.g. `3 grants, 0 policies, row-level
+ * security on 2 tables (forced on 1) and 1 default privilege rule`; always
+ * the grants and policies, the rest when there are any. Undefined when it
+ * left nothing.
+ */
+function leftOnTarget(left: LeftOnTarget): string | undefined {
+  const forced =
+    left.forcedRowLevelSecurity === 0
+      ? ""
+      : ` (forced on ${left.forcedRowLevelSecurity})`;
+  const parts = [
+    plural(left.grants, "grant"),
+    plural(left.policies, "policy", "policies"),
+    ...(left.rowLevelSecurity === 0
+      ? []
+      : [
+          `row-level security on ${plural(left.rowLevelSecurity, "table")}${forced}`,
+        ]),
+    ...(left.defaultPrivileges === 0
+      ? []
+      : [plural(left.defaultPrivileges, "default privilege rule")]),
+  ];
+  if (Object.values(left).every((count) => count === 0)) {
+    return undefined;
+  }
+  return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+}
 
 /**
  * `init --adopt`'s override reasons, asked at the terminal after listing

@@ -137,7 +137,14 @@ describe("adopt", () => {
         "data-model/desired-schema/routines.sql",
         "data-model/desired-schema/comments.sql",
       ]);
-      expect(result.leftOnTarget).toEqual({ grants: 1, policies: 0 });
+      expect(result.leftOnTarget).toEqual({
+        grants: 1,
+        policies: 0,
+        rowLevelSecurity: 0,
+        forcedRowLevelSecurity: 0,
+        defaultPrivileges: 0,
+      });
+      expect(result.dependentsOutside).toEqual([]);
       // Two tables, a view and a function: indexes and identity sequences go with their table.
       expect(result.objects).toBe(4);
       expect(result.warning).toBeUndefined();
@@ -762,8 +769,84 @@ describe("adopt", () => {
           /GRANT|REVOKE|POLICY|ROW LEVEL SECURITY/,
         );
       }
-      expect(result.leftOnTarget).toEqual({ grants: 3, policies: 1 });
+      expect(result.leftOnTarget).toEqual({
+        grants: 3,
+        policies: 1,
+        rowLevelSecurity: 1,
+        forcedRowLevelSecurity: 0,
+        defaultPrivileges: 0,
+      });
       await expectReproducedOnDev(project);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("counts the tables with row-level security on, those forcing it, and the deploy role's default privileges it left, not another role's", async () => {
+    const deployer = roleName("adopt_deployer");
+    const other = roleName("adopt_other");
+    const reader = roleName("adopt_reader");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create role ${other} nologin;
+      create role ${reader} nologin;
+      create schema core authorization ${deployer};
+      do $$ begin execute format('grant create on database %I to ${deployer}', current_database()); end $$;
+      alter default privileges for role ${other} in schema core grant select on tables to ${reader};
+      alter default privileges for role ${other} grant usage on types to ${reader};
+      set role ${deployer};
+      create table core.items (id int primary key, qty int);
+      create table core.parts (id int primary key);
+      create table core.notes (id int primary key);
+      alter table core.items enable row level security;
+      alter table core.parts enable row level security;
+      alter table core.parts force row level security;
+      alter default privileges in schema core grant select on tables to ${reader};
+    `);
+    const { project } = await deployProject(
+      server,
+      {},
+      {
+        settings: 'managedSchema: "core",',
+        preamble: asDeployerPreamble(prod, deployer),
+        otherTargets: "prod: { adapter: asDeployer },",
+      },
+    );
+    try {
+      const result = await adopt(project, { target: "prod" });
+
+      expect(result.leftOnTarget).toEqual({
+        grants: 0,
+        policies: 0,
+        rowLevelSecurity: 2,
+        forcedRowLevelSecurity: 1,
+        defaultPrivileges: 1,
+      });
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("names the objects in other schemas that depend on the managed schema, which rehearsals won't have", async () => {
+    const { project } = await adoptableProject(
+      `
+      create schema core;
+      create schema reporting;
+      create table core.items (id int primary key, qty int);
+      create view reporting.item_view as select id, qty from core.items;
+      create table reporting.snap (it core.items);
+      create table reporting.lines (item_id int constraint lines_item_fk references core.items (id));
+      `,
+      'managedSchema: "core",',
+    );
+    try {
+      const result = await adopt(project, { target: "prod" });
+
+      expect(result.dependentsOutside).toEqual([
+        "column reporting.snap.it (with its data)",
+        "foreign key lines_item_fk on reporting.lines",
+        "view reporting.item_view",
+      ]);
     } finally {
       await project.close();
     }
@@ -944,6 +1027,84 @@ describe("adopt", () => {
       await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
         migration: { folder: "00001-adopt" },
       });
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("adopts, and deploys to, a target whose DBA pre-created an empty history schema owned by the deploy role instead of granting CREATE on the database", async () => {
+    const deployer = roleName("adopt_deployer");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create schema app authorization ${deployer};
+      create schema deployment_history authorization ${deployer};
+      set role ${deployer};
+      create table app.t (id bigint generated always as identity primary key);
+    `);
+    const { dir, project } = await asDeployerProject(prod, deployer);
+    try {
+      await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
+        migration: { folder: "00001-adopt" },
+      });
+      await dir.write(
+        "data-model/desired-schema/notes.sql",
+        "create table notes (id bigint primary key);\n",
+      );
+      await finalizeMigration(project, "add notes");
+
+      await expect(deploy(project, { target: "prod" })).resolves.toMatchObject({
+        deployed: [{ folder: "00002-add-notes" }],
+      });
+      expect(
+        (await status(project, { target: "prod" })).recorded.map(
+          (migration) => migration.number,
+        ),
+      ).toEqual([1, 2]);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses a target whose history schema holds objects super-deploy didn't make, naming the schema, what it holds and the setting, writing nothing", async () => {
+    const prod = `
+      create schema audit;
+      create table audit.migrations (x int);
+      create table audit.log (y int);
+      create table customers (id bigint primary key);
+    `;
+    const {
+      dir,
+      project,
+      prod: database,
+    } = await adoptableProject(prod, 'historySchema: "audit",');
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      expect(error).toMatchObject({
+        objects: [],
+        notOwned: [],
+        historySchemaNotCreatable: undefined,
+        foreignHistorySchema: {
+          historySchema: "audit",
+          objects: ["table audit.log", "table audit.migrations"],
+        },
+      });
+      expect((error as Error).message).toContain(
+        `the history schema "audit" exists but super-deploy didn't make it: it holds table audit.log, table audit.migrations`,
+      );
+      expect((error as Error).message).toContain("historySchema");
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+      expect(dir.exists("data-model/migrations")).toBe(false);
+      expect(
+        await server.query(
+          "select table_name from information_schema.tables where table_schema = 'audit' order by 1",
+          [],
+          database,
+        ),
+      ).toEqual([{ table_name: "log" }, { table_name: "migrations" }]);
     } finally {
       await project.close();
     }

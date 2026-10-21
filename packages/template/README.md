@@ -271,7 +271,10 @@ settings; super-deploy refuses any other.
 - `historySchema`: the schema super-deploy creates on each target to record
   which migrations it ran, every deployment attempt, and whether the target
   is disposable. Default `deployment_history`. It must differ from
-  `managedSchema`.
+  `managedSchema`. If a target already has a schema of that name, it must be
+  super-deploy's, or empty and owned by the deploy role (super-deploy then
+  creates its tables in it). Every command refuses any other, naming what
+  it holds: drop it, or choose another name here.
 - `externalSchemas`: schemas outside the managed schema that PL/pgSQL
   routines in the desired schema may refer to, such as `["auth"]`.
   super-deploy neither creates them, nor reproduces them in rehearsals, nor
@@ -427,7 +430,10 @@ constraint instead of `citext`, and to the built-in `gen_random_uuid()`
 instead of pgcrypto's functions. Grants,
 policies and row-level security on the target stay
 as they are, left out of the desired schema; adoption says how many grants
-and policies it left.
+and policies it left, and, when there are any, how many tables have
+row-level security on (and forced) and how many default-privilege rules the
+deploy role has in the managed schema or globally. A new target, such as
+`dev`, has none of them until you set them up there.
 
 Functions (or other statements) that use dynamic SQL (`EXECUTE`) or call a
 built-in whose effects escape the transaction (such as `pg_notify`) need an
@@ -510,7 +516,10 @@ default privileges as they are.
   OWNER TO <deploy role>`, which leaves `public` with `pg_database_owner`.
   The deploy role also needs `CREATE` on the database for
   the first deployment, which creates the history schema (and the managed
-  schema, if the target lacks it).
+  schema, if the target lacks it). Instead, a DBA may create both schemas
+  beforehand, owned by the deploy role, e.g. `create schema
+  deployment_history authorization deploy_role`: the first deployment (or
+  adoption) creates its tables in the empty history schema.
 - **The application's roles**, their role membership and their database
   privileges: `CONNECT` (and `TEMPORARY`, if needed). super-deploy never
   creates or drops roles, apart from `deployer` on its private embedded
@@ -598,6 +607,13 @@ default privileges as they are.
     Rehearsals can't catch it. Run `ALTER TABLE orders NO FORCE ROW LEVEL
     SECURITY` while deploying and `FORCE` it again afterwards, or move the
     work out of the migration.
+- **Objects in other schemas that depend on managed ones**, such as a
+  reporting schema's view on a managed table, a foreign key to one, or a
+  column of a managed type. Rehearsals don't have them, so a migration that
+  changes or drops what they use passes its rehearsals and fails at deploy:
+  PostgreSQL refuses, the deployment rolls back, and its error names the
+  object. Drop it, deploy, then create it again. `init --adopt` lists the
+  ones the target has, and `rebuild` lists them before dropping them.
 - **External schemas** (`externalSchemas` in `super-deploy.config.ts`, see
   [Project settings](#project-settings)), and grants on them and their
   objects. super-deploy doesn't check them: `deploy` goes ahead on a target
