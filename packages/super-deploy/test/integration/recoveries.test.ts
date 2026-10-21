@@ -470,7 +470,7 @@ describe("the deploy pre-flight", () => {
         number: 2,
         reason: "recovery",
         message:
-          "the target records migration 00002-require-email with Recovery 1, which the repo doesn't have: restore 00002-require-email/recoveries/recovery-1 (and index.json) from version control (a migration a target has recorded must never change, so put new changes in a new migration)",
+          "the target records migration 00002-require-email with Recovery 1, which the repo doesn't have: restore 00002-require-email/recoveries/recovery-1 (and index.json) from version control (a Recovery a target has run must never change, so put new changes in a new Recovery)",
       },
     ]);
     expect(report.drift).toBeUndefined();
@@ -488,7 +488,7 @@ describe("the deploy pre-flight", () => {
       { number: 2, reason: "recovery" },
     ]);
     expect(report.preflight.historyMismatches[0]?.message).toMatch(
-      /^the target records migration 00002-require-email Recovery 1 with chain hash [0-9a-f]{64}, but the repo's is [0-9a-f]{64}: restore 00002-require-email\/recoveries\/recovery-1 \(and index\.json\) from version control \(a migration a target has recorded must never change, so put new changes in a new migration\)$/,
+      /^the target records migration 00002-require-email Recovery 1 with chain hash [0-9a-f]{64}, but the repo's is [0-9a-f]{64}: restore 00002-require-email\/recoveries\/recovery-1 \(and index\.json\) from version control \(a Recovery a target has run must never change, so put new changes in a new Recovery\)$/,
     );
   });
 });

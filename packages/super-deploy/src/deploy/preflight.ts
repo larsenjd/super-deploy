@@ -268,13 +268,13 @@ export function historyMismatches(
         mismatches.push({
           number: entry.number,
           reason: "recovery",
-          message: `the target records migration ${ours.folder} with Recovery ${k}, which the repo doesn't have: ${restore(folder)}`,
+          message: `the target records migration ${ours.folder} with Recovery ${k}, which the repo doesn't have: ${restore(folder, "", keepRecovery)}`,
         });
       } else if (recovery.chainHash !== entry.recoveryChainHash) {
         mismatches.push({
           number: entry.number,
           reason: "recovery",
-          message: `the target records migration ${ours.folder} Recovery ${k} with chain hash ${entry.recoveryChainHash ?? "(none)"}, but the repo's is ${recovery.chainHash}: ${restore(folder)}`,
+          message: `the target records migration ${ours.folder} Recovery ${k} with chain hash ${entry.recoveryChainHash ?? "(none)"}, but the repo's is ${recovery.chainHash}: ${restore(folder, "", keepRecovery)}`,
         });
       }
     }
@@ -288,10 +288,16 @@ export function historyMismatches(
 /** Why a refusal says to restore what a target recorded. */
 const keepRecorded =
   "a migration a target has recorded must never change, so put new changes in a new migration";
+const keepRecovery =
+  "a Recovery a target has run must never change, so put new changes in a new Recovery";
 
-/** The way out of a mismatch: restore `folder` (in the migrations directory) as the target recorded it. */
-function restore(folder: string, where = ""): string {
-  return `restore ${folder} (and ${indexFileName}) from version control${where} (${keepRecorded})`;
+/**
+ * The way out of a mismatch: restore `folder` (in the migrations directory)
+ * as the target recorded it, and why (`why`: a migration's reason, or a
+ * Recovery's).
+ */
+function restore(folder: string, where = "", why = keepRecorded): string {
+  return `restore ${folder} (and ${indexFileName}) from version control${where} (${why})`;
 }
 
 /**
