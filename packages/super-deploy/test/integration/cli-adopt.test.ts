@@ -224,7 +224,7 @@ describe("init --adopt", () => {
         `  function app.widget_named(wanted text, since bigint) (owned by ${admin})`,
         `  table app.widgets (owned by ${admin})`,
         `  view app.widget_names (owned by ${admin})`,
-        "To fix, run as a superuser or as each object's owner:",
+        "To fix, run as a superuser:",
         `  ALTER FUNCTION app.widget_named(wanted text, since bigint) OWNER TO ${deployer};`,
         `  ALTER TABLE app.widgets OWNER TO ${deployer};`,
         `  ALTER VIEW app.widget_names OWNER TO ${deployer};`,

@@ -626,7 +626,10 @@ default privileges as they are.
     policies or row-level security its default privileges won't give back,
     e.g. `warning: view app.order_totals is recreated by 00007-wider-total:
     its grants of SELECT to app_report will be lost (default privileges
-    don't restore them)`. The deployment still goes ahead.
+    don't restore them)`. The deployment still goes ahead. The warning
+    names only objects a statement drops by name: what a hand-written
+    `DROP ... CASCADE` takes with it (a view over a dropped table) loses its
+    privileges unwarned.
   - A migration that changes the type of, or drops, a column a hand-made
     policy uses fails at deploy: PostgreSQL refuses while the policy depends
     on the column. Rehearsals can't catch it, because their databases have

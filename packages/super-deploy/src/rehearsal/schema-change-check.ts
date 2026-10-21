@@ -15,6 +15,7 @@
 // there is one, or else from what pg-delta can't generate. Seed data and
 // the post-migration script change only data, so they never cause one.
 import type { Session } from "../adapters/types.ts";
+import { quoteIdentifier } from "../sql-analysis/index.ts";
 import type { FactDifference } from "../verification/catalog.ts";
 import {
   type DeployTimeFile,
@@ -181,10 +182,7 @@ function compositeTypeOf(difference: FactDifference): string | undefined {
 
 /** `public.size` → `size`, for the managed schema (named as pg_describe_object quotes it). */
 function unqualified(name: string, managedSchema: string): string {
-  const prefixes = [
-    `${managedSchema}.`,
-    `"${managedSchema.replaceAll('"', '""')}".`,
-  ];
+  const prefixes = [`${managedSchema}.`, `${quoteIdentifier(managedSchema)}.`];
   const prefix = prefixes.find((candidate) => name.startsWith(candidate));
   return prefix === undefined ? name : name.slice(prefix.length);
 }

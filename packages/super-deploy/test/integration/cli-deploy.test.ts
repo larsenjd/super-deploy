@@ -146,7 +146,7 @@ describe("deploy and status", () => {
       stderr: [
         "The deploy role on target dev doesn't own 1 object in the managed schema:",
         "  schema app (owned by super_deploy)",
-        "To fix, run as a superuser or as each object's owner:",
+        "To fix, run as a superuser:",
         "  ALTER SCHEMA app OWNER TO deployer;",
         "Error: Target dev failed the deploy pre-flight checks (1 finding, listed above)",
         "",

@@ -33,7 +33,7 @@
 // runs (ticket 06).
 
 import type { Session } from "../adapters/types.ts";
-import { plural, SuperDeployError } from "../errors.ts";
+import { listed, plural, SuperDeployError } from "../errors.ts";
 import { configFileName, type Project } from "../project.ts";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
 import { InvalidDraftError, readDraft } from "../store/draft.ts";
@@ -255,9 +255,6 @@ export function historySchemaNotCreatableMessage(
   return `the deploy role ${finding.role} needs CREATE on database ${finding.database} to create the history schema "${finding.historySchema}" (fix: ${finding.fix})`;
 }
 
-/** How many of a foreign history schema's objects its message names. */
-const objectsNamed = 5;
-
 /**
  * The schema named `historySchema`, if super-deploy didn't make it and
  * can't use it: it doesn't hold the history tables, and it holds something
@@ -308,13 +305,10 @@ export function foreignHistorySchemaMessage(
   finding: ForeignHistorySchema,
 ): string {
   const { objects } = finding;
-  const named = objects.slice(0, objectsNamed).join(", ");
   const what =
     objects.length === 0
       ? `it is empty, but owned by ${finding.owner}, whose privileges the deploy role ${finding.role} doesn't have`
-      : objects.length > objectsNamed
-        ? `it holds ${objects.length} objects, among them ${named}`
-        : `it holds ${named}`;
+      : `it holds ${listed(objects)}`;
   const fix = finding.fix === undefined ? "" : `run ${finding.fix}, `;
   return `the history schema "${finding.historySchema}" exists but super-deploy didn't make it: ${what} (${fix}drop it, or set historySchema in ${configFileName} to a schema the target doesn't have)`;
 }

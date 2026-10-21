@@ -8,12 +8,12 @@ import type {
   Session,
 } from "../adapters/types.ts";
 import { AdapterError } from "../adapters/types.ts";
-import { quoteIdentifier } from "../deploy/history.ts";
 import { errorReason, SuperDeployError } from "../errors.ts";
 import type { ParsedStatement } from "../sql-analysis/index.ts";
 import {
   externalSchemasBoundAtCreate,
   isAlreadyInstalled,
+  quoteIdentifier,
 } from "../sql-analysis/index.ts";
 
 /**

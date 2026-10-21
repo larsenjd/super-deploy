@@ -58,6 +58,7 @@ import { InterruptedError } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { type ReplayUnit, runUnit } from "../rehearsal/replay.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
+import { quoteIdentifier } from "../sql-analysis/index.ts";
 import {
   type Attempt,
   type AttemptCommand,
@@ -68,7 +69,6 @@ import {
   type AttemptOutcome,
   ensureHistorySchema,
   type MigrationVariantIdentity,
-  quoteIdentifier,
   readRecordedMigrations,
   recordMigration,
 } from "./history.ts";

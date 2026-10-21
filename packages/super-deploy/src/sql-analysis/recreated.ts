@@ -10,19 +10,26 @@
 // and family: relations share one family (they share pg_class's names), as
 // do routines (matched by name, not signature: changing a function's
 // arguments drops it and creates a new one, which loses its privileges just
-// the same) and types. Each object is named by its DROP, which is what the
-// target holds now (`identity`, for to_regclass, to_regprocedure or
-// to_regtype). Objects outside the managed schema are skipped: deploy-time
+// the same, as QA 183 and 184 count it) and types. Each object is named by
+// its DROP, which is what the target holds now (`identity`, for to_regclass,
+// to_regprocedure or to_regtype; to_regproc for a routine dropped without
+// its argument types). Objects outside the managed schema are skipped: deploy-time
 // files can't create or drop them there.
 import type {
   CreateFunctionStmt,
   DropStmt,
   ObjectWithArgs,
-  RangeVar,
   TypeName,
 } from "@pgsql/types";
 import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
-import { type Json, statementBody, stringList, unwrap } from "./syntax-tree.ts";
+import { quoteIdentifier } from "./statement-names.ts";
+import {
+  type Json,
+  rangeVar,
+  statementBody,
+  stringList,
+  unwrap,
+} from "./syntax-tree.ts";
 
 /** Which catalog an object's name and privileges live in. */
 export type RecreatedFamily = "relation" | "routine" | "type";
@@ -33,7 +40,8 @@ export interface RecreatedObject {
   /**
    * The object as its DROP names it, schema-qualified and quoted, e.g.
    * `"app"."order_count"("pg_catalog"."int8")`: what to_regclass,
-   * to_regprocedure or to_regtype resolves on a target.
+   * to_regprocedure (to_regproc for a routine dropped without its argument
+   * types) or to_regtype resolves on a target.
    */
   readonly identity: string;
   /** The label of the unit that drops it, e.g. `00005-wider-total`. */
@@ -127,17 +135,20 @@ function drops(
     if (name === undefined || schema !== managedSchema) {
       return [];
     }
-    const qualified = `${quoted(schema)}.${quoted(name)}`;
-    const args = (routine?.objargs ?? []).flatMap((arg) => {
+    const qualified = `${quoteIdentifier(schema)}.${quoteIdentifier(name)}`;
+    const argTypes = (routine?.objargs ?? []).flatMap((arg) => {
       const argType = unwrap<TypeName>(arg, "TypeName");
-      return argType === undefined ? [] : [typeText(argType)];
+      return argType === undefined ? [] : [argType];
     });
+    const withArguments =
+      routine !== undefined && routine.args_unspecified !== true;
     return [
       {
         family,
         key: `${family}:${name}`,
-        identity:
-          family === "routine" ? `${qualified}(${args.join(", ")})` : qualified,
+        identity: withArguments
+          ? `${qualified}(${argTypes.map(typeText).join(", ")})`
+          : qualified,
       },
     ];
   });
@@ -187,20 +198,14 @@ function createdKeys(
 
 /** A RangeVar's name parts, wrapped or not: `[schema, name]` or `[name]`. */
 function rangeParts(value: unknown): string[] {
-  const range = (unwrap<RangeVar>(value, "RangeVar") ?? value) as
-    | RangeVar
-    | undefined;
-  return [range?.schemaname, range?.relname].filter(
-    (part): part is string => part !== undefined,
+  const range = rangeVar(value);
+  return [range.schemaname, range.relname].filter(
+    (part): part is string => typeof part === "string",
   );
 }
 
 /** A type as PostgreSQL's regtype input reads it: quoted parts, array bounds. */
 function typeText(type: TypeName): string {
-  const name = stringList(type.names).map(quoted).join(".");
+  const name = stringList(type.names).map(quoteIdentifier).join(".");
   return `${name}${"[]".repeat(type.arrayBounds?.length ?? 0)}`;
-}
-
-function quoted(name: string): string {
-  return `"${name.replaceAll('"', '""')}"`;
 }

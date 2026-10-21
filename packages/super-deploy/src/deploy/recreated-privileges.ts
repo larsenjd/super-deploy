@@ -128,7 +128,7 @@ WITH wanted AS (
   SELECT w.ord, w.family,
          CASE w.family
            WHEN 'relation' THEN pg_catalog.to_regclass(w.identity)::oid
-           WHEN 'routine' THEN pg_catalog.to_regprocedure(w.identity)::oid
+           WHEN 'routine' THEN coalesce(pg_catalog.to_regprocedure(w.identity)::oid, pg_catalog.to_regproc(w.identity)::oid)
            ELSE pg_catalog.to_regtype(w.identity)::oid
          END AS oid
     FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS w(family, identity, ord)

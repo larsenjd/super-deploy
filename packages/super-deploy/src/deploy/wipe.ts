@@ -25,7 +25,7 @@
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { errorReason, SuperDeployError } from "../errors.ts";
-import { quoteIdentifier } from "./history.ts";
+import { quoteIdentifier } from "../sql-analysis/index.ts";
 import { objectsNotDroppable, type UndroppableObject } from "./ownership.ts";
 
 /**

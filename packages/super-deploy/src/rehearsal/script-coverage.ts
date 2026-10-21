@@ -28,7 +28,6 @@ import type {
   TypeName,
 } from "@pgsql/types";
 import type { Session } from "../adapters/types.ts";
-import { quoteIdentifier } from "../deploy/history.ts";
 import type { PlannedStatement } from "../differ/index.ts";
 import {
   type ColumnReplacement,
@@ -40,6 +39,7 @@ import {
   replacedColumnReason,
 } from "../sql-analysis/destructive.ts";
 import { type ParsedStatement, parseSqlFile } from "../sql-analysis/parse.ts";
+import { quoteIdentifier } from "../sql-analysis/statement-names.ts";
 import {
   isObject,
   type Json,

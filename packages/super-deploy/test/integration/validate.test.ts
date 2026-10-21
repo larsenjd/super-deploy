@@ -352,7 +352,7 @@ describe("validate warnings", () => {
     });
 
     expect(error.message).toBe(
-      "Validation failed with 1 warning (--strict): data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)",
+      "Validation failed with 1 warning (--strict fails on warnings): data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql, schema-change.generated.sql and post-migration.sql)",
     );
     expect(error.problems.map((problem) => problem.code)).toEqual([
       "unfinalized-draft",

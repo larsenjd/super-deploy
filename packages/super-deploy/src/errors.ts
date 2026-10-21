@@ -39,10 +39,23 @@ export function plural(
   return `${count} ${count === 1 ? noun : nouns}`;
 }
 
-/** Up to five items, then how many more. */
-export function listed(objects: readonly string[]): string {
-  const shown = objects.slice(0, 5).join(", ");
+/**
+ * Up to five items, `separator`-separated, then how many more: `a, b, c, d,
+ * e and 2 more`. `; ` separates items that may hold commas themselves.
+ */
+export function listed(
+  objects: readonly string[],
+  separator: ", " | "; " = ", ",
+): string {
+  const shown = objects.slice(0, 5).join(separator);
   return objects.length > 5 ? `${shown} and ${objects.length - 5} more` : shown;
+}
+
+/** Every part, the last joined with "and": `a`, `a and b`, `a, b and c`. */
+export function joined(parts: readonly string[]): string {
+  return parts.length <= 1
+    ? (parts[0] ?? "")
+    : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
 /**

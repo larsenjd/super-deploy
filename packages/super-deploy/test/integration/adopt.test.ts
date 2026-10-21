@@ -1176,6 +1176,38 @@ describe("adopt", () => {
     }
   });
 
+  test("refuses a target whose empty history schema another role owns, with its ALTER SCHEMA among the fixes' script", async () => {
+    const deployer = roleName("adopt_deployer");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create schema app authorization ${deployer};
+      create schema audit;
+    `);
+    const { project } = await deployProject(
+      server,
+      {},
+      {
+        settings: 'managedSchema: "app", historySchema: "audit",',
+        preamble: asDeployerPreamble(prod, deployer),
+        otherTargets: "prod: { adapter: asDeployer },",
+      },
+    );
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      const { details } = error as AdoptUnsupportedError;
+      const script = details.slice(
+        details.indexOf("To fix, run as a superuser:"),
+      );
+      expect(script).toContain(`  ALTER SCHEMA audit OWNER TO ${deployer};`);
+    } finally {
+      await project.close();
+    }
+  });
+
   test("refuses once for everything: objects owned by another role, CREATE on the database and what V1 doesn't support, listing an object that is both only as unsupported", async () => {
     const deployer = roleName("adopt_deployer");
     const other = roleName("adopt_other");

@@ -113,7 +113,7 @@ describe("validate", () => {
     expect(strict.stdout).toBe("");
     expect(strict.stderr.trimEnd().split("\n")).toEqual([
       "warning: Draft add-customers is not finalized yet",
-      "Error: Validation failed with 1 warning (--strict) (listed above)",
+      "Error: Validation failed with 1 warning (--strict fails on warnings), listed above",
     ]);
   });
 
@@ -244,7 +244,7 @@ describe("validate", () => {
       expect.stringMatching(
         /^error: data-model\/migrations\/00001-add-customers was changed after it was finalized .*: restore it from Git \(`git checkout HEAD -- data-model\/migrations\/00001-add-customers`/,
       ),
-      "Error: Validation failed with 1 error (listed above)",
+      "Error: Validation failed with 1 error, listed above",
     ]);
   });
 });

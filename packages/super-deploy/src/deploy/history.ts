@@ -62,6 +62,7 @@
 // tables as having no history yet, so `status` can report that refusal.
 import { inTransaction } from "../adapters/transaction.ts";
 import type { Session } from "../adapters/types.ts";
+import { quoteIdentifier } from "../sql-analysis/index.ts";
 import { lockKey } from "./lock.ts";
 
 export const historyLayoutVersion = 1;
@@ -110,11 +111,6 @@ export interface AttemptRecord {
   readonly outcome: AttemptOutcome;
   readonly error: string | undefined;
   readonly errorFile: string | undefined;
-}
-
-/** Double-quotes an identifier for SQL. */
-export function quoteIdentifier(name: string): string {
-  return `"${name.replaceAll('"', '""')}"`;
 }
 
 /** `"<schema>"."<table>"` for one of the history tables. */

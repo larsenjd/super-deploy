@@ -1,4 +1,11 @@
-// Human names for statement node types, used in rule messages.
+// Names in SQL: human names for statement node types, used in rule messages,
+// and identifiers quoted for SQL.
+
+/** Double-quotes an identifier for SQL: `say "hi"` → `"say ""hi"""`. */
+export function quoteIdentifier(name: string): string {
+  return `"${name.replaceAll('"', '""')}"`;
+}
+
 const names: Record<string, string> = {
   AlterDatabaseSetStmt: "ALTER DATABASE ... SET",
   AlterDatabaseStmt: "ALTER DATABASE",

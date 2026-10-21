@@ -274,8 +274,7 @@ function notOwnedHeadline(
 
 /**
  * The objects as lines for people, the way the CLI prints a refusal: the
- * headline, then each object with its owner. `notOwnedFixer` says who can
- * run their fixes (`fixScript`).
+ * headline, then each object with its owner.
  */
 export function notOwnedListing(
   target: string,
@@ -287,9 +286,6 @@ export function notOwnedListing(
   ];
 }
 
-/** Who may run the fixes of objects the deploy role doesn't own. */
-export const notOwnedFixer = "a superuser or as each object's owner";
-
 /** `notOwnedListing`, then the objects' fixes as a script. */
 export function notOwnedDetails(
   target: string,
@@ -297,25 +293,21 @@ export function notOwnedDetails(
 ): string[] {
   return [
     ...notOwnedListing(target, objects),
-    ...fixScript(
-      notOwnedFixer,
-      objects.map(({ fix }) => fix),
-    ),
+    ...fixScript(objects.map(({ fix }) => fix)),
   ];
 }
 
 /**
- * `statements` as a script under a line saying who must run it, the way
- * the CLI prints fixes: each statement once (several objects `public`'s
- * owner owns share one fix), one per line, each ending in `;`, so a DBA
- * can paste it into psql as it is.
+ * `statements` as a script, the way the CLI prints fixes: each statement
+ * once (several objects `public`'s owner owns share one fix), one per line,
+ * each ending in `;`, so a DBA can paste it into psql as it is. It is run as
+ * a superuser, the one role every fix works for: `ALTER ... OWNER TO` needs
+ * the owner to be a member of the deploy role too, and `pg_database_owner`
+ * (`public`'s owner, whose fix is `ALTER DATABASE`) can't log in.
  */
-export function fixScript(
-  who: string,
-  statements: readonly string[],
-): string[] {
+export function fixScript(statements: readonly string[]): string[] {
   return [
-    `To fix, run as ${who}:`,
+    "To fix, run as a superuser:",
     ...[...new Set(statements)].map((statement) => `  ${statement};`),
   ];
 }

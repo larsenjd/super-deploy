@@ -35,7 +35,7 @@ import {
   preflightRefusals,
 } from "../deploy/preflight.ts";
 import type { TargetCommand } from "../deploy/rollback.ts";
-import { plural } from "../errors.ts";
+import { joined, plural } from "../errors.ts";
 import { findUpward, type Project } from "../project.ts";
 import type {
   AskOverrideReason,
@@ -61,7 +61,7 @@ import {
   type DriftedObject,
   driftLabel,
 } from "../verification/drift.ts";
-import { indentContinuation, ReportedError } from "./run.ts";
+import { alreadyListed, indentContinuation } from "./run.ts";
 
 export type CommandGroup =
   | "Start"
@@ -407,7 +407,7 @@ function leftOnTarget(left: LeftOnTarget): string | undefined {
   if (Object.values(left).every((count) => count === 0)) {
     return undefined;
   }
-  return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+  return joined(parts);
 }
 
 /**
@@ -631,6 +631,7 @@ const validateCommand: CommandDefinition = {
     } catch (error) {
       if (error instanceof ValidationFailedError) {
         error.problems.forEach(report);
+        throw alreadyListed(error, error.summary);
       }
       throw error;
     }
@@ -909,12 +910,10 @@ const statusCommand: CommandDefinition = {
       throw report.driftNotChecked === "target-locked" &&
         report.lockedBy !== undefined
         ? new TargetLockedError(report.target, report.lockedBy)
-        : new ReportedError(new PreflightFailedError(report.target, preflight));
+        : alreadyListed(new PreflightFailedError(report.target, preflight));
     }
     if (refusals.length > 0) {
-      throw new ReportedError(
-        new PreflightFailedError(report.target, preflight),
-      );
+      throw alreadyListed(new PreflightFailedError(report.target, preflight));
     }
   },
 };
