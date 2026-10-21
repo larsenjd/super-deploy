@@ -153,6 +153,37 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
     );
     expect(status.stdout).toContain("Pending:\n  00003-add-notes\n");
   });
+  test("the confirmation names the migration's scripts that will not run, and only when it has some", async () => {
+    const { dir, database } = await pendingProject();
+    await asDeployRole(server, database, orders);
+
+    const withScript = spawnTerminal(["mark", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    const shown = await withScript.waitFor("Type YES");
+    expect(shown).toContain(
+      "00002-add-orders/post-migration.sql will not run: make the changes it makes by hand before typing YES",
+    );
+    withScript.type(`YES${keys.enter}`);
+    expect(await withScript.exited).toBe(0);
+
+    await asDeployRole(
+      server,
+      database,
+      "create table notes (id bigint primary key);",
+    );
+    const schemaChangeOnly = spawnTerminal(["mark", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    const shownAgain = await schemaChangeOnly.waitFor(
+      "Type YES to mark migration 00003-add-notes",
+    );
+    expect(shownAgain).not.toContain("will not run");
+    expect(shownAgain).toContain("Its schema change is not run");
+    schemaChangeOnly.type(keys.ctrlC);
+    expect(await schemaChangeOnly.exited).toBe(1);
+  });
+
   test("refuses without asking when the target differs from the replica, listing the differences: nothing is recorded", async () => {
     const { dir, database } = await pendingProject();
     // Fixed by hand, but without orders.note, and migration 3's table added too.

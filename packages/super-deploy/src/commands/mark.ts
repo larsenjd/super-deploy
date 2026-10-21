@@ -12,6 +12,11 @@
 // lock, right before recording (`markNextPending`), because neither the
 // target's structure nor its owners are part of the guard's fingerprint, and
 // either may have changed while the person read the screen.
+//
+// The confirmation names the migration's pre- and post-migration scripts,
+// which never run on the target (`skippedScripts`): the replica check sees
+// structure, not data, so a backfill made by no one goes unnoticed.
+import { basename } from "node:path";
 import {
   markNextPending,
   nextToMark,
@@ -22,6 +27,7 @@ import { requireOwnership } from "../deploy/ownership.ts";
 import { runGuarded } from "../guard/guard.ts";
 import type { Project } from "../project.ts";
 import type { MigrationWithUnit } from "../rehearsal/replica.ts";
+import { schemaChangeFileName } from "../store/migrations.ts";
 
 export interface MarkOptions {
   /** The target's name in config. */
@@ -82,7 +88,7 @@ export async function mark(
         action: `Mark migration ${next.folder} as deployed on target ${view.target.name}`,
         details: [
           `The target matches a replica of migrations up to ${next.folder} (column order aside), and the deploy role owns everything in its managed schema.`,
-          "Its scripts are not run: only the target's history schema records it, as marked.",
+          ...skippedScripts(next),
         ],
         plan: migrations,
       };
@@ -102,4 +108,25 @@ export async function mark(
       };
     },
   });
+}
+
+/**
+ * What marking leaves unrun. The replica check compares structure only, so a
+ * pre- or post-migration script's data changes are the one thing it can't
+ * check: each is named, with what to do about it (QA 175).
+ */
+function skippedScripts(migration: MigrationWithUnit): string[] {
+  const scripts = migration.unit.files
+    .map(({ file }) => basename(file))
+    .filter((name) => name !== schemaChangeFileName);
+  const recorded = "only the target's history schema records it, as marked.";
+  return scripts.length === 0
+    ? [`Its schema change is not run: ${recorded}`]
+    : [
+        `Its schema change and scripts are not run: ${recorded}`,
+        ...scripts.map(
+          (name) =>
+            `${migration.folder}/${name} will not run: make the changes it makes by hand before typing YES`,
+        ),
+      ];
 }

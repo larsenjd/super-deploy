@@ -914,7 +914,10 @@ draft-finalize-deploy path:
   migrations up to that one. The comparison ignores column order and
   ownership, and separately the deploy role must own the managed schema and
   everything in it (see [Permissions](#permissions)). Each run marks one
-  migration.
+  migration. None of the migration's files run, its pre-migration and
+  post-migration scripts included: make their changes by hand too, such as
+  a backfill of the column you added, since the comparison sees structure,
+  not data. The confirmation names each script that won't run.
 
 All four need a person at a terminal. Each shows the target's name, host,
 database and last recorded migration, and goes ahead only when you type
