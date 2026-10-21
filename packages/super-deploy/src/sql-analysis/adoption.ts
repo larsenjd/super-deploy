@@ -19,6 +19,11 @@
 // The differ never generates grants, default privileges, policies or
 // row-level security (differ/pg-delta.ts): they stay on the target.
 //
+// A serial column comes as a CREATE SEQUENCE and an ALTER SEQUENCE ... OWNED
+// BY. They are kept (the column's DEFAULT nextval() references the
+// sequence), and adoption refuses the column once instead of the two
+// statements (`isSequenceStatement`, commands/adopt.ts).
+//
 // ALTER TABLEs the differ splits off a table's CREATE TABLE (columns,
 // storage parameters) are folded back into it (adoption-folding.ts).
 import { foldTableAlters, type KeptStatement } from "./adoption-folding.ts";
@@ -148,6 +153,22 @@ export async function adoptedDesiredSchema(
       ? []
       : [{ path, text: `${header}\n\n${texts.join("\n\n")}\n` }];
   });
+}
+
+/**
+ * Whether `sql` is a CREATE SEQUENCE or ALTER SEQUENCE of one of
+ * `sequences` (names in the managed schema).
+ */
+export async function isSequenceStatement(
+  sql: string,
+  sequences: readonly string[],
+): Promise<boolean> {
+  const statement = await parsedStatement(sql);
+  return (
+    (statement?.type === "CreateSeqStmt" ||
+      statement?.type === "AlterSeqStmt") &&
+    sequences.includes(String(rangeVar(statement.node.sequence).relname))
+  );
 }
 
 /**

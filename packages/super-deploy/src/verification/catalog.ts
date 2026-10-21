@@ -108,42 +108,53 @@ const queries: Readonly<Record<string, string>> = {
                   union all select 1 from pg_type t join pg_namespace n on n.oid = t.typnamespace where t.oid = d.objoid and n.nspname = $1
                   union all select 1 from pg_trigger g join pg_class c on c.oid = g.tgrelid join pg_namespace n on n.oid = c.relnamespace where g.oid = d.objoid and n.nspname = $1)`,
   // Everything else a schema can hold. Desired schemas can't create these,
-  // so rehearsals never have any; on a target they are drift.
+  // so rehearsals never have any; on a target they are drift. Members of an
+  // extension in the schema (pg_depend deptype 'e': its functions, types,
+  // operators...) go with their extension: only it is listed.
   other: `
-    select ${describe("pg_proc", "p.oid")}, p.prokind::text || ' ' || p.oid::regprocedure::text
-    from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = $1 and p.prokind not in ('f','p')
-    union all
-    select ${describe("pg_type", "t.oid")}, t.typtype::text || ' ' || t.typname
-    from pg_type t join pg_namespace n on n.oid = t.typnamespace where n.nspname = $1 and t.typtype in ('b','p') and t.typelem = 0
-    union all
-    select ${describe("pg_rewrite", "r.oid")}, pg_get_ruledef(r.oid)
-    from pg_rewrite r join pg_class c on c.oid = r.ev_class join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = $1 and r.rulename <> '_RETURN'
-    union all
-    select ${describe("pg_statistic_ext", "x.oid")}, pg_get_statisticsobjdef(x.oid)
-    from pg_statistic_ext x join pg_namespace n on n.oid = x.stxnamespace where n.nspname = $1
-    union all
-    select ${describe("pg_extension", "e.oid")}, e.extname || ' ' || e.extversion
-    from pg_extension e join pg_namespace n on n.oid = e.extnamespace where n.nspname = $1
-    union all
-    select ${describe("pg_publication_rel", "pr.oid")}, ${describe("pg_publication_rel", "pr.oid")}
-    from pg_publication_rel pr join pg_class c on c.oid = pr.prrelid join pg_namespace n on n.oid = c.relnamespace where n.nspname = $1
-    union all
-    select ${describe("pg_publication_namespace", "pn.oid")}, ${describe("pg_publication_namespace", "pn.oid")}
-    from pg_publication_namespace pn join pg_namespace n on n.oid = pn.pnnspid where n.nspname = $1
-    union all
-    select pg_describe_object(o.class, o.obj, 0), pg_describe_object(o.class, o.obj, 0)
-    from (select 'pg_operator'::regclass, oid, oprnamespace from pg_operator
-          union all select 'pg_opclass'::regclass, oid, opcnamespace from pg_opclass
-          union all select 'pg_opfamily'::regclass, oid, opfnamespace from pg_opfamily
-          union all select 'pg_collation'::regclass, oid, collnamespace from pg_collation
-          union all select 'pg_conversion'::regclass, oid, connamespace from pg_conversion
-          union all select 'pg_ts_config'::regclass, oid, cfgnamespace from pg_ts_config
-          union all select 'pg_ts_dict'::regclass, oid, dictnamespace from pg_ts_dict
-          union all select 'pg_ts_parser'::regclass, oid, prsnamespace from pg_ts_parser
-          union all select 'pg_ts_template'::regclass, oid, tmplnamespace from pg_ts_template) o(class, obj, ns)
-    join pg_namespace n on n.oid = o.ns
-    where n.nspname = $1`,
+    select pg_describe_object(o.class, o.obj, 0), o.line
+    from (
+      select 'pg_proc'::regclass, p.oid, p.prokind::text || ' ' || p.oid::regprocedure::text
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = $1 and p.prokind not in ('f','p')
+      union all
+      select 'pg_type'::regclass, t.oid, t.typtype::text || ' ' || t.typname
+      from pg_type t join pg_namespace n on n.oid = t.typnamespace where n.nspname = $1 and t.typtype in ('b','p') and t.typelem = 0
+      union all
+      select 'pg_rewrite'::regclass, r.oid, pg_get_ruledef(r.oid)
+      from pg_rewrite r join pg_class c on c.oid = r.ev_class join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = $1 and r.rulename <> '_RETURN'
+      union all
+      select 'pg_statistic_ext'::regclass, x.oid, pg_get_statisticsobjdef(x.oid)
+      from pg_statistic_ext x join pg_namespace n on n.oid = x.stxnamespace where n.nspname = $1
+      union all
+      select 'pg_extension'::regclass, e.oid, e.extname || ' ' || e.extversion
+      from pg_extension e join pg_namespace n on n.oid = e.extnamespace where n.nspname = $1
+      union all
+      select 'pg_publication_rel'::regclass, pr.oid, ${describe("pg_publication_rel", "pr.oid")}
+      from pg_publication_rel pr join pg_class c on c.oid = pr.prrelid join pg_namespace n on n.oid = c.relnamespace where n.nspname = $1
+      union all
+      select 'pg_publication_namespace'::regclass, pn.oid, ${describe("pg_publication_namespace", "pn.oid")}
+      from pg_publication_namespace pn join pg_namespace n on n.oid = pn.pnnspid where n.nspname = $1
+      union all
+      select m.class, m.obj, pg_describe_object(m.class, m.obj, 0)
+      from (select 'pg_operator'::regclass, oid, oprnamespace from pg_operator
+            union all select 'pg_opclass'::regclass, oid, opcnamespace from pg_opclass
+            union all select 'pg_opfamily'::regclass, oid, opfnamespace from pg_opfamily
+            union all select 'pg_collation'::regclass, oid, collnamespace from pg_collation
+            union all select 'pg_conversion'::regclass, oid, connamespace from pg_conversion
+            union all select 'pg_ts_config'::regclass, oid, cfgnamespace from pg_ts_config
+            union all select 'pg_ts_dict'::regclass, oid, dictnamespace from pg_ts_dict
+            union all select 'pg_ts_parser'::regclass, oid, prsnamespace from pg_ts_parser
+            union all select 'pg_ts_template'::regclass, oid, tmplnamespace from pg_ts_template) m(class, obj, ns)
+      join pg_namespace n on n.oid = m.ns
+      where n.nspname = $1
+    ) o(class, obj, line)
+    where not exists (
+      select 1 from pg_depend d
+      join pg_extension e on e.oid = d.refobjid
+      join pg_namespace n on n.oid = e.extnamespace
+      where d.classid = o.class and d.objid = o.obj and d.deptype = 'e'
+        and d.refclassid = 'pg_extension'::regclass and n.nspname = $1)`,
 };
 
 const bindingQueries: Readonly<Record<string, string>> = {
