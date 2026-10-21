@@ -137,7 +137,13 @@ describe("adopt", () => {
         "data-model/desired-schema/routines.sql",
         "data-model/desired-schema/comments.sql",
       ]);
-      expect(result.leftOnTarget).toEqual({ grants: 1, policies: 0 });
+      expect(result.leftOnTarget).toEqual({
+        grants: 1,
+        policies: 0,
+        rowLevelSecurity: 0,
+        forcedRowLevelSecurity: 0,
+        defaultPrivileges: 0,
+      });
       // Two tables, a view and a function: indexes and identity sequences go with their table.
       expect(result.objects).toBe(4);
       expect(result.warning).toBeUndefined();
@@ -762,8 +768,59 @@ describe("adopt", () => {
           /GRANT|REVOKE|POLICY|ROW LEVEL SECURITY/,
         );
       }
-      expect(result.leftOnTarget).toEqual({ grants: 3, policies: 1 });
+      expect(result.leftOnTarget).toEqual({
+        grants: 3,
+        policies: 1,
+        rowLevelSecurity: 1,
+        forcedRowLevelSecurity: 0,
+        defaultPrivileges: 0,
+      });
       await expectReproducedOnDev(project);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("counts the tables with row-level security on, those forcing it, and the deploy role's default privileges it left, not another role's", async () => {
+    const deployer = roleName("adopt_deployer");
+    const other = roleName("adopt_other");
+    const reader = roleName("adopt_reader");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create role ${other} nologin;
+      create role ${reader} nologin;
+      create schema core authorization ${deployer};
+      do $$ begin execute format('grant create on database %I to ${deployer}', current_database()); end $$;
+      alter default privileges for role ${other} in schema core grant select on tables to ${reader};
+      alter default privileges for role ${other} grant usage on types to ${reader};
+      set role ${deployer};
+      create table core.items (id int primary key, qty int);
+      create table core.parts (id int primary key);
+      create table core.notes (id int primary key);
+      alter table core.items enable row level security;
+      alter table core.parts enable row level security;
+      alter table core.parts force row level security;
+      alter default privileges in schema core grant select on tables to ${reader};
+    `);
+    const { project } = await deployProject(
+      server,
+      {},
+      {
+        settings: 'managedSchema: "core",',
+        preamble: asDeployerPreamble(prod, deployer),
+        otherTargets: "prod: { adapter: asDeployer },",
+      },
+    );
+    try {
+      const result = await adopt(project, { target: "prod" });
+
+      expect(result.leftOnTarget).toEqual({
+        grants: 0,
+        policies: 0,
+        rowLevelSecurity: 2,
+        forcedRowLevelSecurity: 1,
+        defaultPrivileges: 1,
+      });
     } finally {
       await project.close();
     }

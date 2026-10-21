@@ -413,7 +413,10 @@ constraint instead of `citext`, and to the built-in `gen_random_uuid()`
 instead of pgcrypto's functions. Grants,
 policies and row-level security on the target stay
 as they are, left out of the desired schema; adoption says how many grants
-and policies it left.
+and policies it left, and, when there are any, how many tables have
+row-level security on (and forced) and how many default-privilege rules the
+deploy role has in the managed schema or globally. A new target, such as
+`dev`, has none of them until you set them up there.
 
 Functions (or other statements) that use dynamic SQL (`EXECUTE`) or call a
 built-in whose effects escape the transaction (such as `pg_notify`) need an

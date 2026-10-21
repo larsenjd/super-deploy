@@ -25,7 +25,9 @@
 //      the target's locale; the managed schema's statements become
 //      desired-schema files (sql-analysis/adoption.ts). Grants, policies
 //      and row-level security stay on the target as they are and are never
-//      written (ADR-0006); the result counts the grants and policies.
+//      written (ADR-0006); the result counts the grants, policies, tables
+//      with row-level security on (and forced), and the deploy role's
+//      default privileges, which a new target won't have.
 //      Reading needs no privilege on the managed schema (pg-delta and the
 //      catalog check read only the catalogs), so a target whose objects
 //      all belong to a superuser is read, and refused once, like any other.
@@ -241,6 +243,15 @@ export interface LeftOnTarget {
   readonly grants: number;
   /** Row-level security policies on the managed schema's tables. */
   readonly policies: number;
+  /** The managed schema's tables with row-level security enabled. */
+  readonly rowLevelSecurity: number;
+  /** Of those, the ones that force it on their owner too. */
+  readonly forcedRowLevelSecurity: number;
+  /**
+   * The deploy role's default-privilege rules (`ALTER DEFAULT PRIVILEGES`),
+   * in the managed schema or global; not other roles'.
+   */
+  readonly defaultPrivileges: number;
 }
 
 /**
@@ -729,7 +740,9 @@ function unsupportedFact(fact: CatalogFact): UnsupportedObject[] {
 }
 
 /**
- * The grants and policies in the managed schema (LeftOnTarget). A grant is
+ * What the managed schema has outside super-deploy (LeftOnTarget): grants,
+ * policies, row-level security, and the session's role's default
+ * privileges there or global. A grant is
  * an ACL item that isn't in the object's default ACL (acldefault, plus
  * PUBLIC's USAGE on schema public) and isn't to its owner or the session's
  * role, counted once per object, column and grantee.
@@ -771,10 +784,25 @@ async function countLeftOnTarget(
      )
      SELECT (SELECT count(*) FROM grants)::int AS grants,
             (SELECT count(*) FROM pg_catalog.pg_policy p
-               JOIN pg_catalog.pg_class c ON c.oid = p.polrelid JOIN n ON c.relnamespace = n.oid)::int AS policies`,
+               JOIN pg_catalog.pg_class c ON c.oid = p.polrelid JOIN n ON c.relnamespace = n.oid)::int AS policies,
+            (SELECT count(*) FROM pg_catalog.pg_class c JOIN n ON c.relnamespace = n.oid
+              WHERE c.relrowsecurity)::int AS "rowLevelSecurity",
+            (SELECT count(*) FROM pg_catalog.pg_class c JOIN n ON c.relnamespace = n.oid
+              WHERE c.relrowsecurity AND c.relforcerowsecurity)::int AS "forcedRowLevelSecurity",
+            (SELECT count(*) FROM pg_catalog.pg_default_acl d
+              WHERE d.defaclrole = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+                AND (d.defaclnamespace = 0 OR d.defaclnamespace IN (SELECT oid FROM n)))::int AS "defaultPrivileges"`,
     [managedSchema],
   );
-  return rows[0] ?? { grants: 0, policies: 0 };
+  return (
+    rows[0] ?? {
+      grants: 0,
+      policies: 0,
+      rowLevelSecurity: 0,
+      forcedRowLevelSecurity: 0,
+      defaultPrivileges: 0,
+    }
+  );
 }
 
 /** Each table's column names in the managed schema, in the target's order. */
