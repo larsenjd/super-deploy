@@ -166,6 +166,7 @@ unix("deploy-draft", () => {
     const status = await runCli(["status", "--target", "dev"], {
       cwd: dir.root,
     });
+    expect(status.exitCode).toBe(1);
     expect(status.stdout).toContain(
       "Deploy would refuse:\n  the target holds draft require-city (deployed by attempt #2 on top of 00001-add-customers, without seed data), not a finalized migration: reset it with rebuild --to 1\nDrift: not checked (the target holds deployed draft require-city; rebuild resets it)\n",
     );
@@ -296,6 +297,7 @@ unix("deploy-draft", () => {
     const mismatched = await runCli(["status", "--target", "dev"], {
       cwd: dir.root,
     });
+    expect(mismatched.exitCode).toBe(1);
     expect(mismatched.stdout).toContain(
       "Drift: not checked (the recorded history doesn't match the project's migrations)\n",
     );

@@ -146,7 +146,10 @@ export function describeLockHolder(holder: LockHolder): string {
   return details.length === 0 ? name : `${name} (${details.join(", ")})`;
 }
 
-/** Another command holds the target's lock (deploy, mark, rebuild, deploy-draft, disposable). */
+/**
+ * Another command holds the target's lock (deploy, mark, rebuild, deploy-draft,
+ * disposable). The CLI's `status` also throws it, after its report, to exit 1.
+ */
 export class TargetLockedError extends SuperDeployError {
   readonly code = "target-locked";
   readonly target: string;

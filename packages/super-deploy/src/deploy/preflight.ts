@@ -426,7 +426,7 @@ async function deployRoleWarnings(
  * missing, the deploy role can't create the history schema or doesn't own
  * the managed schema or something in it, or its recorded history doesn't
  * match the repo. Nothing was rehearsed or changed; the attempt is logged as
- * failed.
+ * failed. The CLI's `status` also throws it, after its report, to exit 1.
  */
 export class PreflightFailedError extends SuperDeployError {
   readonly code = "preflight-failed";

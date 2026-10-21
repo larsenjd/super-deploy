@@ -212,7 +212,7 @@ describe.each([
   },
 );
 
-test("status during a deployment names the holder, leaves drift unchecked and exits 0", async () => {
+test("status during a deployment names the holder, leaves drift unchecked and exits 1", async () => {
   const { dir, marker } = await finalizedProject();
   const cli = spawnCli(["deploy", "--target", "dev"], {
     cwd: dir.root,
@@ -225,7 +225,10 @@ test("status during a deployment names the holder, leaves drift unchecked and ex
       cwd: dir.root,
     });
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(
+      /^Error: Target dev is locked by attempt #1 \(deploy by .*\); try again when it has finished$/m,
+    );
     expect(result.stdout).toMatch(
       new RegExp(
         `^Locked by attempt #1 \\(deploy by ${userInfo().username}, started \\S+, server process \\d+\\)$`,
