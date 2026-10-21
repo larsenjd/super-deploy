@@ -4,6 +4,10 @@ import { orderDesiredSchema, statementProblems } from "./ordering.ts";
 import type { Override } from "./overrides.ts";
 import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 import {
+  type UnqualifiedNameWarning,
+  unqualifiedNameWarnings,
+} from "./routine-bodies.ts";
+import {
   analyseFile,
   type RuleContext,
   type RuleViolation,
@@ -63,7 +67,10 @@ export {
   overrideObject,
 } from "./overrides.ts";
 export { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
-export { externalSchemasBoundAtCreate } from "./routine-bodies.ts";
+export {
+  externalSchemasBoundAtCreate,
+  type UnqualifiedNameWarning,
+} from "./routine-bodies.ts";
 export {
   type RuleCategory,
   type RuleDefinition,
@@ -83,6 +90,12 @@ export interface DesiredSchemaAnalysis {
   readonly statements: readonly ParsedStatement[];
   /** The override markers accepted, in file order. */
   readonly overrides: readonly Override[];
+  /**
+   * Routines whose bodies name the desired schema's objects without a
+   * schema, so they fail for callers without the managed schema on their
+   * search_path; in file order. Advisory.
+   */
+  readonly unqualifiedNames: readonly UnqualifiedNameWarning[];
 }
 
 /**
@@ -127,7 +140,15 @@ export async function desiredSchemaAnalysis(
   if (ordering.errors.length > 0) {
     throw new SqlRuleViolationError(ordering.errors);
   }
-  return { statements: ordering.statements, overrides };
+  const order = new Map(files.map((file, index) => [file.path, index]));
+  const unqualifiedNames = unqualifiedNameWarnings(
+    ordering.statements,
+    context.managedSchema ?? "public",
+  ).sort(
+    (a, b) =>
+      (order.get(a.file) ?? 0) - (order.get(b.file) ?? 0) || a.line - b.line,
+  );
+  return { statements: ordering.statements, overrides, unqualifiedNames };
 }
 /**
  * `violations` (the rules', in file order) with ordering's checks of each

@@ -629,6 +629,35 @@ describe("privileges, roles, ownership, row-level security and SECURITY DEFINER"
     );
   });
 
+  const runOnTargets = /remove it and run it on each target instead/;
+  const removeIt = /remove it: the deploy role owns everything it creates/;
+  test.each([
+    ["grant select on t to reader", runOnTargets],
+    ["revoke select on t from reader", runOnTargets],
+    ["create policy p on t using (true)", runOnTargets],
+    ["alter table t enable row level security", runOnTargets],
+    [
+      "alter default privileges grant select on tables to reader",
+      /run it on each target as the deploy role, where it grants what every deployment creates/,
+    ],
+    ["create role r", /create and grant roles on each target/],
+    ["grant reader to writer", /create and grant roles on each target/],
+    ["alter table t owner to r", removeIt],
+    ["reassign owned by a to b", removeIt],
+    ["drop owned by a", removeIt],
+    [
+      "create function f() returns int language sql security definer as $$ select 1 $$",
+      /leave the default, SECURITY INVOKER/,
+    ],
+  ])(
+    "%s says what to do instead and where it's documented",
+    async (sql, next) => {
+      const [found] = await violations(`${sql};`);
+      expect(found?.message).toMatch(next);
+      expect(found?.message).toMatch(/\(see the README, "Permissions"\)$/);
+    },
+  );
+
   test("an override marker can't bypass them", async () => {
     const found = await violations(
       "-- OVERRIDE SUPER-DEPLOY REFUSAL: the app needs it\ngrant select on t to reader;",
@@ -642,6 +671,57 @@ describe("privileges, roles, ownership, row-level security and SECURITY DEFINER"
         "create function f() returns int language sql security invoker as $$ select 1 $$;",
       ),
     ).toEqual([]);
+  });
+
+  describe("inside a routine body", () => {
+    const plpgsql = (statement: string) =>
+      `create function f() returns trigger language plpgsql as $$\nbegin\n  ${statement};\n  return new;\nend $$;`;
+
+    test.each([
+      ["grant select on notes to public", /^GRANT is not supported/],
+      ["revoke select on notes from public", /^REVOKE is not supported/],
+      [
+        "alter table orders disable row level security",
+        /^ALTER TABLE \.\.\. DISABLE ROW LEVEL SECURITY is not supported/,
+      ],
+      [
+        "create policy p on notes using (true)",
+        /^CREATE POLICY is not supported/,
+      ],
+      [
+        "alter table notes owner to someone",
+        /^ALTER TABLE \.\.\. OWNER TO is not supported/,
+      ],
+    ])("a PL/pgSQL body refuses %s on its own line", async (sql, message) => {
+      expect(await violations(plpgsql(sql))).toEqual([
+        expect.objectContaining({
+          line: 3,
+          rule: "unsupported-object",
+          message: expect.stringMatching(message),
+        }),
+      ]);
+    });
+
+    test("a LANGUAGE sql string body refuses GRANT on its own line", async () => {
+      expect(
+        await violations(
+          "create function g() returns void language sql as $$\n  select 1;\n  grant select on notes to public\n$$;",
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          line: 3,
+          rule: "unsupported-object",
+          message: expect.stringMatching(/^GRANT is not supported/),
+        }),
+      ]);
+    });
+
+    test("an override marker before the routine can't bypass them", async () => {
+      const found = await violations(
+        `-- OVERRIDE SUPER-DEPLOY REFUSAL: the app needs it\n${plpgsql("grant select on notes to public")}`,
+      );
+      expect(found.map(({ rule }) => rule)).toContain("unsupported-object");
+    });
   });
 });
 

@@ -83,7 +83,7 @@ describe("rehearse", () => {
     expect(await server.databases()).toEqual(before);
   });
 
-  test("a mismatch re-drafting can't fix says the scripts or seed data cause it, not run draft again", async () => {
+  test("a mismatch re-drafting can't fix says the pre-migration script causes it, not run draft again", async () => {
     const dir = await createTestProject({
       config: embeddedConfig(server),
       files: { "data-model/desired-schema/customers.sql": customers },
@@ -105,7 +105,7 @@ describe("rehearse", () => {
 
     expect(error).toBeInstanceOf(RehearsalMismatchError);
     expect((error as RehearsalMismatchError).subject).toBe(
-      "The rehearsal does not match the desired schema, and running draft again won't change that: the desired schema hasn't changed since draft, so the pre-migration script, post-migration script or seed data cause the difference (a column renamed in the pre-migration script needs its NOT NULL constraint renamed too: see the README, \"Renaming a column\")",
+      "The rehearsal does not match the desired schema, and running draft again won't change that: the pre-migration script causes the difference, or pg-delta can't generate it (a column renamed in the pre-migration script needs its NOT NULL constraint renamed too: see the README, \"Renaming a column\")",
     );
   });
 
@@ -160,7 +160,7 @@ describe("rehearse", () => {
 
     expect(error).toBeInstanceOf(RehearsalMismatchError);
     expect((error as RehearsalMismatchError).subject).toContain(
-      "the pre-migration script, post-migration script or seed data cause the difference",
+      "pg-delta can't generate the difference: make the change by hand in the pre-migration script",
     );
   });
 
@@ -208,7 +208,7 @@ describe("rehearse", () => {
     ]);
   });
 
-  test("our own catalog comparison catches what pg-delta misses: reordered composite type attributes", async () => {
+  test("our own catalog comparison catches what pg-delta misses: reordered composite type attributes, and names the cause", async () => {
     // pg-delta 1.0.0-alpha.59 doesn't diff attribute order, so the swap
     // generates nothing and its re-diff is empty.
     const dir = await createTestProject({
@@ -243,6 +243,10 @@ describe("rehearse", () => {
         /^catalog: from the desired schema: column: size\.width .* position=2$/,
       ),
     ]);
+    // No scripts or seed data: the message blames none of them.
+    expect((error as RehearsalMismatchError).subject).toBe(
+      "The rehearsal does not match the desired schema, and running draft again won't change that: the generated schema change doesn't reorder composite type size's attributes: pg-delta can't express it; drop and recreate the type in the pre-migration script (see the README, \"Reordering a composite type's attributes\")",
+    );
   });
 
   test("a comment on a domain-typed column passes, though pg-delta adds the column last", async () => {

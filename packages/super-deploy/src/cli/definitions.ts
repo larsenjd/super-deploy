@@ -42,7 +42,7 @@ import {
   DestructiveNotAcknowledgedError,
   OverwriteNotAcknowledgedError,
 } from "../questions.ts";
-import type { LockWarning, Override } from "../sql-analysis/index.ts";
+import type { Override } from "../sql-analysis/index.ts";
 import { readDraft, type UnknownDraftFileOptions } from "../store/draft.ts";
 import { handEditReportFileName, handEditWarning } from "../store/hand-edit.ts";
 import type { ValidationProblem } from "../store/integrity.ts";
@@ -383,9 +383,18 @@ const draftCommand: CommandDefinition = {
         : `Regenerated draft ${result.name}`;
     context.result(`${what}: ${count} in ${where}`);
     reportWarnings(
-      result.toCover.map((item) => item.message),
+      [
+        ...result.toCover.map((item) => item.message),
+        ...located(result.unqualifiedNames),
+      ],
       context,
     );
+    for (const shortfall of result.shortfalls) {
+      context.warn(`warning: ${shortfall.message}`);
+      for (const difference of shortfall.differences) {
+        context.warn(`  ${difference}`);
+      }
+    }
   },
 };
 
@@ -398,7 +407,7 @@ const rehearseCommand: CommandDefinition = {
   async run(project, _values, context) {
     const result = await rehearse(project, warnUnknownFiles(context));
     reportWarnings(handEditWarnings(result.handEdited), context);
-    reportWarnings(lockWarnings(result.warnings), context);
+    reportWarnings(located(result.warnings), context);
     for (const statement of result.destructive) {
       context.warn(
         `destructive: ${statement.file}:${statement.line}: ${statement.message} (finalize needs it acknowledged)`,
@@ -427,8 +436,10 @@ function handEditWarnings(file: string | undefined): string[] {
   return file === undefined ? [] : [handEditWarning(file)];
 }
 
-/** Each statement that rewrites or scans an existing table, as a warning message. */
-function lockWarnings(warnings: readonly LockWarning[]): string[] {
+/** Warnings about a place in a file, each as `<file>:<line>: <message>`. */
+function located(
+  warnings: readonly { file: string; line: number; message: string }[],
+): string[] {
   return warnings.map(
     (warning) => `${warning.file}:${warning.line}: ${warning.message}`,
   );
@@ -470,7 +481,10 @@ const finalizeCommand: CommandDefinition = {
       return;
     }
     reportWarnings(handEditWarnings(result.handEdited), context);
-    reportWarnings(lockWarnings(result.warnings), context);
+    reportWarnings(
+      [...located(result.warnings), ...located(result.unqualifiedNames)],
+      context,
+    );
     context.result(
       result.recovery === undefined
         ? `Finalized migration ${result.folder} in ${context.displayPath(result.path)}`

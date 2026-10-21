@@ -6,16 +6,18 @@
 // deploy-time files and seed data, and in the draft's; a Recovery draft
 // whose schema change is no longer its migration's.
 // Warnings: an unfinalized draft, a file in the draft folder that a draft
-// doesn't hold (store/draft.ts), and desired-schema changes not yet drafted.
-// Notices: a migration whose schema change was edited by hand
-// (store/hand-edit.ts). Never a failure, even under `strict`: the migration
-// was rehearsed, and its HAND-EDITED.md is for reviewers.
+// doesn't hold (store/draft.ts), desired-schema changes not yet drafted, and
+// desired-schema routines whose bodies name its objects without a schema
+// (`unqualified-routine-names`, routine-bodies.ts).
 // `strict` turns warnings into failures.
 // The first and the last are a draft in progress (the codes in `draftInProgress`):
 // `allowDraft` keeps them warnings even under `strict`, so the template's
 // hook lets a draft be committed for review while CI (`--strict` alone)
 // refuses it until it is finalized. Any other warning, such as one a later
 // check adds, still fails under `strict`.
+// Notices: a migration whose schema change was edited by hand
+// (store/hand-edit.ts). Never a failure, even under `strict`: the migration
+// was rehearsed, and its HAND-EDITED.md is for reviewers.
 //
 // Read-only state: git does not store it, so a fresh checkout has writable
 // finalized files. A writable file whose migration still verifies is made
@@ -337,10 +339,17 @@ async function ruleProblems(
     }
     const desired = await readDesiredSchema(root, paths.desiredSchema);
     try {
-      collect({
-        violations: [],
-        ...(await desiredSchemaAnalysis(desired, rules)),
-      });
+      const analysis = await desiredSchemaAnalysis(desired, rules);
+      collect({ violations: [], overrides: analysis.overrides });
+      for (const warning of analysis.unqualifiedNames) {
+        problems.push({
+          severity: "warning",
+          code: "unqualified-routine-names",
+          message: `${warning.file}:${warning.line}: ${warning.message}`,
+          path: warning.file,
+          line: warning.line,
+        });
+      }
     } catch (error) {
       if (!(error instanceof SqlRuleViolationError)) {
         throw error;

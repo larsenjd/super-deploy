@@ -4,18 +4,20 @@ import { rehearseDraft } from "../rehearsal/rehearse-draft.ts";
 import { rehearseRecovery } from "../rehearsal/rehearse-recovery.ts";
 import { readMigrationUnits, readReplayUnit } from "../rehearsal/replay.ts";
 import {
+  hasPreMigrationScript,
   readSeededUnit,
   type SeededUnit,
   seededFiles,
   seededUnits,
 } from "../rehearsal/seed-data.ts";
 import {
-  analyseDesiredSchema,
   type DestructiveStatement,
+  desiredSchemaAnalysis,
   type LockWarning,
   type MigrationAnalysis,
   type Override,
   type ParsedStatement,
+  type UnqualifiedNameWarning,
 } from "../sql-analysis/index.ts";
 import {
   asSqlFiles,
@@ -106,6 +108,8 @@ export interface RehearsedDraft {
   readonly analysis: MigrationAnalysis;
   /** The hand edit of a (non-Recovery) draft's schema change, if any. */
   readonly handEdit: SchemaChangeHandEdit | undefined;
+  /** Desired-schema routines whose bodies name its objects unqualified (none for a Recovery draft). */
+  readonly unqualifiedNames: readonly UnqualifiedNameWarning[];
 }
 
 export interface RehearseDraftHooks extends UnknownDraftFileOptions {
@@ -141,11 +145,8 @@ export async function rehearseCurrentDraft(
   if (draft.recoveryOf !== undefined) {
     return rehearseRecoveryDraft(project, draft, migrations, beforeRehearsal);
   }
-  const { desiredSchema, statements, seeded, analysis } = await checkDraft(
-    project,
-    draft,
-    migrations,
-  );
+  const { desiredSchema, statements, seeded, analysis, unqualifiedNames } =
+    await checkDraft(project, draft, migrations);
   await beforeRehearsal?.(draft, analysis);
   const units = await readMigrationUnits(root, migrations);
   // The draft's seed data loads just before its pre-migration script; the
@@ -155,6 +156,7 @@ export async function rehearseCurrentDraft(
     desiredSchemaChanged:
       draft.desiredSchemaHash !== desiredSchemaHash(desiredSchema),
     editedSchemaChange: editedSchemaChange(project, draft, seeded),
+    preMigrationScript: hasPreMigrationScript(seeded),
   });
   return {
     draft,
@@ -165,6 +167,7 @@ export async function rehearseCurrentDraft(
     overrides: analysis.overrides,
     analysis,
     handEdit: await draftSchemaChangeHandEdit(root, paths),
+    unqualifiedNames,
   };
 }
 
@@ -198,6 +201,8 @@ export interface CheckedDraft {
   readonly seeded: SeededUnit;
   /** The analysis of the draft's files as they run. */
   readonly analysis: MigrationAnalysis;
+  /** Desired-schema routines whose bodies name its objects unqualified. */
+  readonly unqualifiedNames: readonly UnqualifiedNameWarning[];
 }
 
 /**
@@ -213,7 +218,7 @@ export async function checkDraft(
 ): Promise<CheckedDraft> {
   const { root, paths, config } = project;
   const desiredSchema = await readDesiredSchemaFiles(root, paths.desiredSchema);
-  const statements = await analyseDesiredSchema(
+  const { statements, unqualifiedNames } = await desiredSchemaAnalysis(
     asSqlFiles(root, paths.desiredSchema, desiredSchema),
     {
       managedSchema: config.managedSchema,
@@ -228,7 +233,7 @@ export async function checkDraft(
     schemas: [previous, statements],
     previous,
   });
-  return { desiredSchema, statements, seeded, analysis };
+  return { desiredSchema, statements, seeded, analysis, unqualifiedNames };
 }
 
 /**
@@ -278,6 +283,7 @@ async function rehearseRecoveryDraft(
     overrides: analysis.overrides,
     analysis,
     handEdit: undefined,
+    unqualifiedNames: [],
   };
 }
 

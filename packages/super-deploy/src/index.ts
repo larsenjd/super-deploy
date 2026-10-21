@@ -211,6 +211,7 @@ export type {
 export { SqlFileFailedError } from "./rehearsal/replay.ts";
 export { UnknownRecordedMigrationError } from "./rehearsal/replica.ts";
 export { RehearsalMismatchError } from "./rehearsal/same-structure.ts";
+export type { SchemaChangeShortfall } from "./rehearsal/schema-change-check.ts";
 export type {
   ScriptCoverage,
   ScriptCoverageKind,
@@ -230,6 +231,7 @@ export {
   SqlRuleViolationError,
 } from "./sql-analysis/index.ts";
 export type { Override } from "./sql-analysis/overrides.ts";
+export type { UnqualifiedNameWarning } from "./sql-analysis/routine-bodies.ts";
 export {
   InvalidDraftError,
   NoDraftError,

@@ -6,10 +6,14 @@
 // rehearsals: readReplayUnit does not read it. Finalize freezes it with the
 // migration as an audit record.
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { decodeHashedText } from "../store/hashing.ts";
 import { projectRelative } from "../store/layout.ts";
-import { exists, seedDataFileName } from "../store/migrations.ts";
+import {
+  exists,
+  preMigrationFileName,
+  seedDataFileName,
+} from "../store/migrations.ts";
 import { type ReplayUnit, readReplayUnit } from "./replay.ts";
 
 /** A draft (or Recovery) folder's deploy-time files with the seed data that goes before them. */
@@ -65,4 +69,11 @@ export function seededFiles(seeded: SeededUnit): ReplayUnit {
     label: seeded.migration.label,
     files: seededUnits(seeded).flatMap((unit) => unit.files),
   };
+}
+
+/** Whether the folder has a pre-migration script. */
+export function hasPreMigrationScript(seeded: SeededUnit): boolean {
+  return seeded.migration.files.some(
+    ({ file }) => posix.basename(file) === preMigrationFileName,
+  );
 }

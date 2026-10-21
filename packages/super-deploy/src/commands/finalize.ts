@@ -16,6 +16,7 @@ import type {
   DestructiveStatement,
   LockWarning,
   Override,
+  UnqualifiedNameWarning,
 } from "../sql-analysis/index.ts";
 import {
   draftMetadataFileName,
@@ -110,6 +111,12 @@ export interface FinalizeResult {
    * records it (metadata.json and HAND-EDITED.md).
    */
   readonly handEdited: string | undefined;
+  /**
+   * Desired-schema routines whose bodies name its objects without a schema,
+   * which fail for callers without the managed schema on their search_path.
+   * Advisory; empty when none.
+   */
+  readonly unqualifiedNames: readonly UnqualifiedNameWarning[];
 }
 
 /**
@@ -212,6 +219,7 @@ export async function finalize(
     destructive: destructive.map(finalized),
     warnings: warnings.map(finalized),
     handEdited: handEdit?.file,
+    unqualifiedNames: rehearsed.unqualifiedNames,
   };
 }
 
