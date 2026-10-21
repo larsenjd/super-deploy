@@ -9,7 +9,7 @@ import {
   embeddedConfig,
   stallingConfig,
 } from "../support/project.ts";
-import { keys, spawnTerminal } from "../support/terminal.ts";
+import { keys, showCursor, spawnTerminal } from "../support/terminal.ts";
 
 let server: TestServer;
 beforeAll(async () => {
@@ -98,6 +98,28 @@ describe.skipIf(process.platform === "win32")("menu", () => {
     await terminal.waitFor("quit");
     terminal.type(keys.ctrlC);
     expect(await terminal.exited).toBe(0);
+    expect(dir.exists("data-model/draft")).toBe(false);
+  });
+
+  test("Ctrl+D on an empty answer cancels a question and returns to the menu; Ctrl+D there leaves", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: { "data-model/desired-schema/customers.sql": customers },
+    });
+    const terminal = spawnTerminal([], { cwd: dir.root });
+
+    await terminal.waitFor("quit");
+    await terminal.chooseMenuItem("draft");
+    await terminal.waitFor("Name");
+    terminal.type(keys.ctrlD);
+    await terminal.waitFor("Cancelled: nothing ran");
+
+    await terminal.waitFor("quit");
+    const before = terminal.output.length;
+    terminal.type(keys.ctrlD);
+    await terminal.waitFor("Bye");
+    expect(await terminal.exited).toBe(0);
+    expect(terminal.output.slice(before)).toContain(showCursor);
     expect(dir.exists("data-model/draft")).toBe(false);
   });
 

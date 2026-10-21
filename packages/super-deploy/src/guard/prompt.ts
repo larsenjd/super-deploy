@@ -1,6 +1,8 @@
 // The guard's question, asked at this process's own terminal (the guard has
-// already checked that stdin and stdout are terminals).
+// already checked that stdin and stdout are terminals). Ctrl+D on an empty
+// answer cancels it, like Ctrl+C (`askUntilEndOfInput`).
 import { isCancel, note, text } from "@clack/prompts";
+import { askUntilEndOfInput } from "../end-of-input.ts";
 import { throwIfInterrupted } from "../interruption.ts";
 
 export interface GuardQuestion {
@@ -21,13 +23,11 @@ export async function askForYes(
   question: GuardQuestion,
   signal: AbortSignal | undefined,
 ): Promise<string | undefined> {
-  const streams = {
-    input: process.stdin,
-    output: process.stdout,
-    ...(signal === undefined ? {} : { signal }),
-  };
   note(question.lines.join("\n"), question.title, { output: process.stdout });
-  const answer = await text({ ...streams, message: question.question });
+  const answer = await askUntilEndOfInput(
+    { input: process.stdin, output: process.stdout, signal },
+    (streams) => text({ ...streams, message: question.question }),
+  );
   throwIfInterrupted(signal);
   return isCancel(answer) ? undefined : (answer ?? "");
 }
