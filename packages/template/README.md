@@ -714,6 +714,31 @@ NOT NULL, rename its constraint too: PostgreSQL 18 names NOT NULL constraints
 would refuse the draft. For example,
 `alter table t rename constraint t_old_not_null to t_new_not_null`.
 
+## Column order
+
+A table's columns may not be in the order the desired schema declares
+them, and their order may differ between targets:
+
+- A column added to an existing table goes at the end of it.
+- A new table gets its columns in the declared order, except a column whose
+  type (a domain or a composite type) or default (a function) is created in
+  the same migration as the table: the differ creates the table first and
+  adds that column afterwards, after the table's other columns. Declaring
+  the type or function first in the desired schema doesn't change this.
+- A column whose collation or generation expression changes is dropped and
+  added again, at the end (see [Destructive changes](#destructive-changes)).
+
+For an adopted database, this means the adopted target keeps its own
+column order, while `dev`, rehearsals and every target built from
+`00001-adopt` can have such columns at the end of their tables.
+
+A table's column order is never compared: rehearsals, drift and `mark`
+ignore it, so nothing refuses or warns about it. What depends on it is SQL that uses
+columns by position. A draft's scripts and seed data refuse it: `INSERT`
+without a column list, `SELECT *`, `ORDER BY` or `GROUP BY` by position,
+`NATURAL JOIN` and whole-row references. Write your application's SQL the
+same way, naming its columns.
+
 ## Reordering a composite type's attributes
 
 `draft` can't reorder a composite type's attributes, or add one anywhere
