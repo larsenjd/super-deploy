@@ -9,7 +9,10 @@
 // not rehearsed first: the target is disposable and the transaction rolls
 // back on any failure. An ordinary draft goes on top of the newest finalized
 // migration; a Recovery draft of migration N goes on top of N-1, since it
-// runs N's schema change between its scripts.
+// runs N's schema change between its scripts. An ordinary draft must have
+// been generated from the desired schema now on disk (the hash comparison
+// validate warns on), so what is tried is the current work; a Recovery
+// draft, like its rehearsal, ignores the desired schema.
 //
 // What the target records: the draft is not a finalized migration, so no
 // migrations row is written. Instead the history schema's `deployed_draft`
@@ -39,11 +42,18 @@ import type { Project } from "../project.ts";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
 import { runUnit } from "../rehearsal/replay.ts";
 import type { SeededUnit } from "../rehearsal/seed-data.ts";
-import { NoDraftError, readDraft } from "../store/draft.ts";
-import { sha256 } from "../store/hashing.ts";
+import { type DraftMetadata, NoDraftError, readDraft } from "../store/draft.ts";
+import { desiredSchemaHash, sha256 } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
-import { migrationFolderName } from "../store/migrations.ts";
-import { checkDraft, checkRecoveryDraft } from "./rehearse.ts";
+import {
+  type FinalizedMigration,
+  migrationFolderName,
+} from "../store/migrations.ts";
+import {
+  type CheckedDraft,
+  checkDraft,
+  checkRecoveryDraft,
+} from "./rehearse.ts";
 
 export interface DeployDraftOptions {
   /** The target's name in config. */
@@ -84,7 +94,8 @@ interface Plan {
  * No option skips that.
  *
  * Refuses before asking: TargetNotDisposableError; NoDraftError;
- * SqlRuleViolationError for the draft's files; PreflightFailedError when a
+ * SqlRuleViolationError for the draft's files; UndraftedChangesError when
+ * the desired schema changed since the draft was generated; PreflightFailedError when a
  * role or external schema is missing, the deploy role doesn't own the
  * managed schema or something in it, the recorded history doesn't match the
  * repo, or the target already holds a draft; TargetBehindError when it has
@@ -114,7 +125,7 @@ export async function deployDraft(
       const { seeded, migration: recovered } =
         metadata.recoveryOf === undefined
           ? {
-              ...(await checkDraft(project, metadata, migrations)),
+              ...(await checkCurrentDraft(project, metadata, migrations)),
               migration: undefined,
             }
           : await checkRecoveryDraft(project, metadata, migrations);
@@ -216,6 +227,19 @@ export async function deployDraft(
   });
 }
 
+/** checkDraft, then refuses a draft generated from another desired schema. */
+async function checkCurrentDraft(
+  project: Project,
+  metadata: DraftMetadata,
+  migrations: readonly FinalizedMigration[],
+): Promise<CheckedDraft> {
+  const checked = await checkDraft(project, metadata, migrations);
+  if (metadata.desiredSchemaHash !== desiredSchemaHash(checked.desiredSchema)) {
+    throw new UndraftedChangesError(metadata.name);
+  }
+  return checked;
+}
+
 function seedDataLine(withSeed: boolean, seeded: SeededUnit): string {
   if (!withSeed) {
     return "Seed data: not loaded";
@@ -232,6 +256,24 @@ export function draftContentHash(units: readonly ReplayUnit[]): string {
       units.flatMap((unit) => unit.files.map((file) => [file.file, file.sql])),
     ),
   );
+}
+
+/**
+ * deploy-draft was refused because the desired schema changed since the
+ * draft was generated: the draft would not be the current work. Nothing was
+ * asked or changed.
+ */
+export class UndraftedChangesError extends SuperDeployError {
+  readonly code = "undrafted-changes";
+  /** The draft's name. */
+  readonly draft: string;
+
+  constructor(draft: string) {
+    super(
+      `The desired schema has changed since draft ${draft} was generated: run draft again`,
+    );
+    this.draft = draft;
+  }
 }
 
 /**
