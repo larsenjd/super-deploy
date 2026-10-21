@@ -4,7 +4,12 @@
 import { rm } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
-import { asSuperuser, deployConfig } from "../support/deploy.ts";
+import {
+  asDeployerPreamble,
+  asSuperuser,
+  deployConfig,
+  roleName,
+} from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject } from "../support/project.ts";
 import { keys, spawnTerminal } from "../support/terminal.ts";
@@ -102,9 +107,9 @@ describe("init --adopt", () => {
     expect(result.stderr).toBe(
       [
         "Target prod has 2 things V1 doesn't support:",
-        '  CREATE SEQUENCE "public"."counter" AS bigint INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE …',
+        "  sequence public.counter",
         "    unsupported-object: Standalone sequences are not supported in V1: use an identity column (`bigint generated always as identity`)",
-        `  CREATE TYPE "public"."mood" AS ENUM ('sad')`,
+        "  type public.mood",
         "    unsupported-object: Enums are not supported in V1: use a lookup table with a foreign key, or a CHECK constraint",
         "Error: Cannot adopt target prod: its managed schema has 2 things V1 doesn't support, listed above. Nothing was written; change the target first, then adopt again",
         "",
@@ -129,6 +134,59 @@ describe("init --adopt", () => {
       stderr:
         'Error: Cannot adopt target prod: its managed schema "ap" does not exist (check managedSchema in super-deploy.config.ts); the target has schemas app, public. Nothing was written\n',
     });
+  });
+
+  test("lists each object the deploy role doesn't own, then the fixes as a script that, run as a superuser, lets adoption through (exit 1)", async () => {
+    const deployer = roleName("cli_adopt_deployer");
+    const admin = roleName("cli_adopt_admin");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create role ${admin} nologin;
+      do $$ begin execute format('grant connect, create on database %I to ${deployer}, ${admin}', current_database()); end $$;
+      create schema app authorization ${deployer};
+      grant usage, create on schema app to ${admin};
+      set role ${admin};
+      create table app.widgets (id bigint generated always as identity primary key, name text not null);
+      create view app.widget_names as select name from app.widgets;
+      create function app.widget_named(wanted text, since bigint) returns bigint language sql stable
+        as $$ select count(*) from app.widgets where name = wanted and id > since $$;
+    `);
+    const dir = await createTestProject({
+      config: deployConfig(server, {
+        settings: 'managedSchema: "app",',
+        preamble: asDeployerPreamble(prod, deployer),
+        otherTargets: "prod: { adapter: asDeployer },",
+      }).config,
+    });
+
+    const result = await runCli(["init", "--adopt", "prod"], {
+      cwd: dir.root,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe(
+      [
+        "The deploy role on target prod doesn't own 3 objects in the managed schema:",
+        `  function app.widget_named(wanted text, since bigint) (owned by ${admin})`,
+        `  table app.widgets (owned by ${admin})`,
+        `  view app.widget_names (owned by ${admin})`,
+        "To fix, run as a superuser or as each object's owner:",
+        `  ALTER FUNCTION app.widget_named(wanted text, since bigint) OWNER TO ${deployer};`,
+        `  ALTER TABLE app.widgets OWNER TO ${deployer};`,
+        `  ALTER VIEW app.widget_names OWNER TO ${deployer};`,
+        "Error: Cannot adopt target prod: the deploy role doesn't own 3 objects in the managed schema, listed above. Nothing was written; run the fixes as a superuser, then adopt again",
+        "",
+      ].join("\n"),
+    );
+
+    const script = result.stderr
+      .split("\n")
+      .filter((line) => line.startsWith("  ALTER "))
+      .join("\n");
+    await server.query(script, [], prod);
+    expect(
+      await runCli(["init", "--adopt", "prod"], { cwd: dir.root }),
+    ).toMatchObject({ exitCode: 0 });
   });
 
   test("adopting again points both refusals to starting the adoption over, which lets it adopt again", async () => {
@@ -179,7 +237,7 @@ describe("init --adopt", () => {
     });
   });
 
-  test("without a terminal refuses functions that need an override marker, saying a terminal would ask", async () => {
+  test("without a terminal lists the functions that need an override reason apart from anything unsupported, advising a terminal", async () => {
     const dir = await projectAdopting(loader);
 
     const result = await runCli(["init", "--adopt", "prod"], {
@@ -187,11 +245,12 @@ describe("init --adopt", () => {
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain(
-      "    plpgsql-dynamic-sql: EXECUTE (dynamic SQL) is not allowed",
+    expect(result.stderr).not.toContain("doesn't support");
+    expect(result.stderr).toMatch(
+      /^Target prod has 1 object that needs an override reason, asked only in a terminal:\n {2}function load_staging\(text\)\n {4}plpgsql-dynamic-sql: EXECUTE \(dynamic SQL\) is not allowed/,
     );
     expect(result.stderr).toMatch(
-      /\nError: Cannot adopt target prod: its managed schema has 1 thing V1 doesn't support, listed above\. Nothing was written; run adoption in a terminal to give an override reason for each object that breaks only risk rules\n$/,
+      /\nError: Cannot adopt target prod without a terminal: 1 object needs an override reason, listed above\. Nothing was written; run adoption in a terminal to give an override reason for each object that breaks only risk rules\n$/,
     );
     expect(dir.exists("data-model/desired-schema")).toBe(false);
   });
@@ -252,7 +311,7 @@ describe.skipIf(process.platform === "win32")(
       expect(await terminal.exited).toBe(1);
       const screen = terminal.screen.replace(/\s+/g, " ");
       expect(screen).toContain(
-        "Target prod has 1 thing V1 doesn't support: CREATE TYPE",
+        "Target prod has 1 thing V1 doesn't support: type public.mood",
       );
       expect(screen).toContain(
         "Once nothing else is refused, adoption will ask an override reason for 1 object that breaks only risk rules: function load_staging(text)",

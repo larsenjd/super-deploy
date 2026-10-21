@@ -316,6 +316,47 @@ unix("deploy-draft", () => {
     expect(await terminal.exited).toBe(1);
   });
 
+  test("says in the confirmation that the schema change was edited by hand and hasn't been rehearsed, then deploys it on YES", async () => {
+    const { dir, database } = await deployedProject();
+    await requireCityDraft(dir);
+    const schemaChange = "data-model/draft/schema-change.sql";
+    await dir.write(
+      schemaChange,
+      `${await dir.read(schemaChange)}create table sneaky (x int);\n`,
+    );
+
+    const terminal = spawnTerminal(["deploy-draft", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    const shown = await terminal.waitFor("Type YES");
+    expect(shown).toContain(
+      "data-model/draft/schema-change.sql was edited by hand since draft generated it and hasn't been rehearsed",
+    );
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor("Deployed draft require-city to dev");
+    expect(await terminal.exited).toBe(0);
+    expect(
+      await server.query(
+        "select count(*)::int as count from information_schema.tables where table_name = 'sneaky'",
+        [],
+        database,
+      ),
+    ).toEqual([{ count: 1 }]);
+  });
+
+  test("says nothing about a hand edit in the confirmation of an unedited draft", async () => {
+    const { dir } = await deployedProject();
+    await requireCityDraft(dir);
+
+    const terminal = spawnTerminal(["deploy-draft", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    const shown = await terminal.waitFor("Type YES");
+    terminal.type(keys.escape);
+    expect(await terminal.exited).not.toBe(0);
+    expect(shown).not.toContain("edited by hand");
+  });
+
   test("refuses a target that isn't disposable without asking: nothing changes", async () => {
     const { dir, database } = await deployedProject({ disposable: false });
     await requireCityDraft(dir);
@@ -453,7 +494,7 @@ unix("deploy-draft", () => {
     });
 
     await terminal.waitFor(
-      `table public.customers is owned by super_deploy, whose privileges the deploy role doesn't have (fix: ALTER TABLE public.customers OWNER TO ${deployer})`,
+      `ALTER TABLE public.customers OWNER TO ${deployer};`,
     );
     expect(await terminal.exited).toBe(1);
     expect(terminal.screen).not.toContain("Type YES");

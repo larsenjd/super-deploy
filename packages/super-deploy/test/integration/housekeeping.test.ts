@@ -285,6 +285,42 @@ describe("unfinalize", () => {
     expect(await dir.read("data-model/migrations/index.json")).toBe(index);
   });
 
+  test("finalizing again recreates a migration whose schema change was edited by hand", async () => {
+    const tables = ["a", "b", "c", "d"]
+      .map((name) => `create table ${name} (id bigint primary key);\n`)
+      .join("");
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: { [customersFile]: tables },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    await draft(project, { name: "Add tables" });
+    // Two edits far apart, the second leaving no newline at the end.
+    const file = "data-model/draft/schema-change.sql";
+    const [first = "", ...rest] = (await dir.read(file)).split("\n");
+    await dir.write(
+      file,
+      [first, "-- reviewed by hand", ...rest].join("\n") +
+        "create index a_id_idx on a (id);",
+    );
+    await dir.write(
+      customersFile,
+      `${tables}create index a_id_idx on a (id);\n`,
+    );
+    const finalized = await finalize(project);
+    expect(finalized.handEdited).toBe(file);
+    const migration = "data-model/migrations/00001-add-tables";
+    const index = await dir.read("data-model/migrations/index.json");
+    const report = await dir.read(`${migration}/HAND-EDITED.md`);
+
+    await unfinalize(project);
+    expect(dir.exists("data-model/draft/HAND-EDITED.md")).toBe(false);
+    await finalize(project);
+
+    expect(await dir.read("data-model/migrations/index.json")).toBe(index);
+    expect(await dir.read(`${migration}/HAND-EDITED.md`)).toBe(report);
+  });
+
   test("only takes the newest migration, keeping earlier ones and their chain", async () => {
     const { dir, project } = await finalizedProject();
     const first = await dir.read("data-model/migrations/index.json");

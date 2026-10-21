@@ -12,7 +12,9 @@
 // runs N's schema change between its scripts. An ordinary draft must have
 // been generated from the desired schema now on disk (the hash comparison
 // validate warns on), so what is tried is the current work; a Recovery
-// draft, like its rehearsal, ignores the desired schema.
+// draft, like its rehearsal, ignores the desired schema. A schema change
+// edited by hand since `draft` generated it (store/hand-edit.ts) is named in
+// the YES confirmation, since nothing has rehearsed it, and deployed on YES.
 //
 // What the target records: the draft is not a finalized migration, so no
 // migrations row is written. Instead the history schema's `deployed_draft`
@@ -43,6 +45,10 @@ import type { ReplayUnit } from "../rehearsal/replay.ts";
 import { runUnit } from "../rehearsal/replay.ts";
 import type { SeededUnit } from "../rehearsal/seed-data.ts";
 import { type DraftMetadata, NoDraftError, readDraft } from "../store/draft.ts";
+import {
+  draftSchemaChangeHandEdit,
+  handEditWarning,
+} from "../store/hand-edit.ts";
 import { desiredSchemaHash, sha256 } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import {
@@ -102,7 +108,9 @@ interface Plan {
  * repo, or the target already holds a draft; TargetBehindError when it has
  * pending migrations. A Recovery draft of migration N goes on top of N-1
  * instead (RecoveryBaseMismatchError otherwise), after the checks rehearse
- * makes (UnknownMigrationError, RecoverySchemaChangeEditedError).
+ * makes (UnknownMigrationError, RecoverySchemaChangeEditedError). An
+ * ordinary draft's schema change edited by hand is not refused: the
+ * confirmation names it.
  */
 export async function deployDraft(
   project: Project,
@@ -170,6 +178,11 @@ export async function deployDraft(
       }
 
       const files = units.flatMap((unit) => unit.files.map((f) => f.file));
+      // A Recovery draft's schema change has its own check (checkRecoveryDraft).
+      const handEdit =
+        recovered === undefined
+          ? await draftSchemaChangeHandEdit(root, paths)
+          : undefined;
       const what =
         recovered === undefined
           ? `draft ${metadata.name}`
@@ -179,6 +192,9 @@ export async function deployDraft(
         details: [
           `Runs in one transaction, on top of ${base ?? "no recorded migration"}:`,
           ...files.map((file) => `  ${file}`),
+          ...(handEdit === undefined
+            ? []
+            : [`${handEditWarning(handEdit.file)} and hasn't been rehearsed`]),
           seedDataLine(withSeed, seeded),
           `The target then holds the draft, not a migration: deploy refuses it until rebuild resets it`,
           ...findings.warnings.map((warning) => `Warning: ${warning}`),

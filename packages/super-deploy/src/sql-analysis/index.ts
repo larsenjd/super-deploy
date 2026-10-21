@@ -19,6 +19,8 @@ export {
   type AdoptionOptions,
   adoptedDesiredSchema,
   adoptedObject,
+  adoptedObjectReference,
+  type CatalogReference,
   type ExternalSchemaReference,
   externalSchemaReferences,
   isSequenceStatement,

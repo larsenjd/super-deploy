@@ -23,10 +23,15 @@ import type { Project } from "../project.ts";
 import { acknowledgeOverwrite, type OverwriteOptions } from "../questions.ts";
 import { restoreFromSnapshot } from "../store/desired-schema.ts";
 import {
+  writeDraft,
   writeDraftMetadata,
   writeRecoverySchemaChange,
 } from "../store/draft.ts";
-import { desiredSchemaHash, fileHash } from "../store/hashing.ts";
+import {
+  generatedFromReport,
+  handEditReportFileName,
+} from "../store/hand-edit.ts";
+import { desiredSchemaHash } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
@@ -121,8 +126,11 @@ export async function unfinalize(
     }));
   const draftFiles = files.filter(
     (file) =>
-      !file.path.startsWith(snapshotPrefix) && file.path !== metadataFileName,
+      !file.path.startsWith(snapshotPrefix) &&
+      file.path !== metadataFileName &&
+      file.path !== handEditReportFileName,
   );
+  const report = files.find((file) => file.path === handEditReportFileName);
 
   const pending = await pendingRestore(project, snapshot);
   await acknowledgeOverwrite(options, {
@@ -134,17 +142,29 @@ export async function unfinalize(
 
   await rm(paths.draft, { recursive: true, force: true });
   await writeFiles(paths.draft, draftFiles);
-  // The schema change comes back as `draft` wrote it, so a later hand edit
-  // of it is told apart from one by the scripts (rehearse.ts).
+  // The draft gets the schema change `draft` generated back beside the
+  // finalized one (restored from HAND-EDITED.md's diff when it was edited
+  // by hand), so finalizing again records the same hand edit, and a later
+  // one is told apart from one by the scripts (store/hand-edit.ts).
   const schemaChange = draftFiles.find(
     (file) => file.path === schemaChangeFileName,
   );
-  await writeDraftMetadata(paths, {
+  const metadata = {
     name: newest.name,
     desiredSchemaHash: desiredSchemaHash(snapshot),
-    schemaChangeHash:
-      schemaChange === undefined ? undefined : fileHash(schemaChange.text),
-  });
+  };
+  if (schemaChange === undefined) {
+    await writeDraftMetadata(paths, metadata);
+  } else {
+    await writeDraft(
+      paths,
+      metadata,
+      report === undefined
+        ? schemaChange.text
+        : generatedFromReport(report.text, schemaChange.text),
+      schemaChange.text,
+    );
+  }
   await restoreFromSnapshot(paths.desiredSchema, snapshot, pending.differences);
 
   const index = await readIndex(paths);

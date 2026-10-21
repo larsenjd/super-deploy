@@ -53,7 +53,12 @@ import {
   rehearsalOver,
   targetOver,
 } from "./node-postgres.ts";
-import { freePort, localHost as host, portInUse } from "./ports.ts";
+import {
+  freePort,
+  localHost as host,
+  hostAndPort,
+  portInUse,
+} from "./ports.ts";
 import {
   type Registration,
   register,
@@ -276,7 +281,11 @@ export function embeddedPostgres(
         }
         return urlAs(deployRole, deployRolePassword, database, await port());
       });
-      return { connect: (options) => target.connect(options), close: stop };
+      return {
+        connect: (options) => target.connect(options),
+        host: async () => hostAndPort(host, await port()),
+        close: stop,
+      };
     },
     start: async () => {
       await port();

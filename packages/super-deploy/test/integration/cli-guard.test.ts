@@ -3,6 +3,7 @@
 // are about to do and go ahead only when YES is typed.
 import { userInfo } from "node:os";
 import { deploy, draft, finalize, loadProject } from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import { asDeployRole, deployConfig } from "../support/deploy.ts";
@@ -87,8 +88,10 @@ describe("guarded commands refuse", () => {
 });
 
 /** Drafts, finalizes and deploys `add customers` to `dev`. */
-async function deployedProject() {
-  const project = await guardedProject();
+async function deployedProject(
+  options: Parameters<typeof deployConfig>[1] = {},
+) {
+  const project = await guardedProject(options);
   for (const args of [
     ["draft", "--name", "add customers"],
     ["finalize"],
@@ -99,7 +102,64 @@ async function deployedProject() {
   return project;
 }
 
+/** A URL for `database` on the test server as the deploy role, naming its host `localhost`. */
+async function localhostUrl(database: string): Promise<string> {
+  const client = embeddedPostgres({ dataDir: server.dataDir });
+  try {
+    const url = new URL(await client.connectionString(database));
+    url.hostname = "localhost";
+    url.username = "deployer";
+    url.password = "deployer";
+    return url.href;
+  } finally {
+    await client.stop();
+  }
+}
+
 describe.skipIf(process.platform === "win32")("at a terminal", () => {
+  test("the Host line shows a postgresTarget's host as configured, then the server's address", async () => {
+    const { dir, database } = await deployedProject({
+      preamble: 'import { postgresTarget } from "super-deploy";',
+      otherTargets:
+        'qa: { adapter: postgresTarget({ env: "SUPER_DEPLOY_TEST_QA_URL" }) },',
+    });
+
+    const terminal = spawnTerminal(
+      ["disposable", "--target", "qa", "--set", "yes"],
+      {
+        cwd: dir.root,
+        env: { SUPER_DEPLOY_TEST_QA_URL: await localhostUrl(database) },
+      },
+    );
+
+    const shown = await terminal.waitFor("Type YES");
+    expect(shown).toMatch(/Target: +qa/);
+    expect(shown).toMatch(
+      /Host: +localhost:(\d+) \((?:127\.0\.0\.1|\[::1\]):\1\)/,
+    );
+    expect(shown).not.toContain("deployer");
+    terminal.type(keys.ctrlC);
+    expect(await terminal.exited).toBe(1);
+  });
+
+  test("the Host line shows only the server's address for an adapter that doesn't say where it connects", async () => {
+    const { dir } = await deployedProject({
+      otherTargets:
+        "qa: { adapter: { connect: (options) => real.connect(options) } },",
+    });
+
+    const terminal = spawnTerminal(
+      ["disposable", "--target", "qa", "--set", "yes"],
+      { cwd: dir.root },
+    );
+
+    expect(await terminal.waitFor("Type YES")).toMatch(
+      /Host: +127\.0\.0\.1:\d+ +│/,
+    );
+    terminal.type(keys.ctrlC);
+    expect(await terminal.exited).toBe(1);
+  });
+
   test("disposable shows the action and the target's details, and sets the flag once YES is typed, recording a manual attempt", async () => {
     const { dir, database } = await deployedProject();
 
