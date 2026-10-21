@@ -376,3 +376,46 @@ describe("an attempt its command could not end", () => {
     ]);
   });
 });
+
+describe("a deployment failing with an error that has no message of its own", () => {
+  test("records its inner errors' reasons, deduplicated, falling back to an error's code", async () => {
+    // As Node reports a refused connect to localhost (::1 and 127.0.0.1): an
+    // AggregateError with an empty message. One inner error has no message.
+    const aggregateAdapter = `{
+  async connect() {
+    const session = await real.connect();
+    return {
+      ...session,
+      async execute(sql) {
+        if (sql.includes("lock_timeout") && !sql.includes("READ ONLY")) {
+          const refused = (address) => Object.assign(new Error("connect ECONNREFUSED " + address), { code: "ECONNREFUSED" });
+          throw Object.assign(
+            new AggregateError([refused("::1:5432"), refused("::1:5432"), Object.assign(new Error(""), { code: "ECONNRESET" })], ""),
+            { code: "ECONNREFUSED" },
+          );
+        }
+        return session.execute(sql);
+      },
+    };
+  },
+}`;
+    const { project, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { adapter: aggregateAdapter },
+    );
+    await finalizeMigration(project, "add customers");
+
+    await expect(deploy(project, { target: "dev" })).rejects.toBeInstanceOf(
+      AggregateError,
+    );
+
+    expect(await attempts(database)).toEqual([
+      {
+        id: expect.any(String),
+        outcome: "failed",
+        error: "connect ECONNREFUSED ::1:5432; ECONNRESET",
+      },
+    ]);
+  });
+});
