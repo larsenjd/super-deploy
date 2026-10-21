@@ -42,6 +42,7 @@ import {
   carryOverrides,
   desiredSchemaAnalysis,
   type Override,
+  type UnqualifiedNameWarning,
 } from "../sql-analysis/index.ts";
 import { asSqlFiles, readDesiredSchemaFiles } from "../store/desired-schema.ts";
 import {
@@ -97,6 +98,12 @@ export interface DraftResult {
    * Advisory; empty when it produces the desired schema.
    */
   readonly shortfalls: readonly SchemaChangeShortfall[];
+  /**
+   * Desired-schema routines whose bodies name its objects without a schema,
+   * which fail for callers without the managed schema on their search_path.
+   * Advisory; empty when none.
+   */
+  readonly unqualifiedNames: readonly UnqualifiedNameWarning[];
 }
 
 export async function draft(
@@ -117,13 +124,14 @@ export async function draft(
   const { config, paths } = project;
   await reportUnknownDraftFiles(project.root, paths, options);
   const files = await readDesiredSchemaFiles(project.root, paths.desiredSchema);
-  const { statements, overrides } = await desiredSchemaAnalysis(
-    asSqlFiles(project.root, paths.desiredSchema, files),
-    {
-      managedSchema: config.managedSchema,
-      externalSchemas: config.externalSchemas,
-    },
-  );
+  const { statements, overrides, unqualifiedNames } =
+    await desiredSchemaAnalysis(
+      asSqlFiles(project.root, paths.desiredSchema, files),
+      {
+        managedSchema: config.managedSchema,
+        externalSchemas: config.externalSchemas,
+      },
+    );
   const finalized = await verifiedMigrations(project.root, paths);
   const migrations = await readMigrationUnits(project.root, finalized);
   const rules: MigrationRuleContext = {
@@ -233,6 +241,7 @@ export async function draft(
     statements: planned,
     toCover,
     shortfalls,
+    unqualifiedNames,
   };
 }
 

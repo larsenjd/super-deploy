@@ -984,6 +984,18 @@ function viewFacts(
 }
 
 /** Unqualified relation names that match a CTE in the statement refer to the CTE. */
+/**
+ * The relations, types and functions a syntax tree names without a schema
+ * (a CTE's name excluded), as keys like those `provides` lists.
+ */
+export function unqualifiedReferences(tree: unknown): Reference[] {
+  // With no managed schema, the collector keeps only names without one.
+  const collector = new Collector("");
+  collector.walk(tree);
+  dropCteReferences(collector);
+  return collector.references;
+}
+
 function dropCteReferences(collector: Collector): void {
   const kept = collector.references.filter(
     (reference) =>

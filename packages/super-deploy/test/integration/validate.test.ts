@@ -341,6 +341,54 @@ describe("validate warnings", () => {
     });
   });
 
+  test("warn about a routine body naming the managed schema's objects unqualified, in draft, finalize and validate; --strict fails on it", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(server, 'managedSchema: "app",'),
+      files: {
+        "data-model/desired-schema/orders.sql": `create table orders (id bigint primary key, customer_id bigint not null);
+
+create function order_count(cid bigint) returns bigint
+language sql stable as $$ select count(*) from orders where customer_id = cid $$;
+`,
+      },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    const warning = {
+      file: "data-model/desired-schema/orders.sql",
+      line: 3,
+      routine: "function order_count(int8)",
+      names: ["orders"],
+    };
+
+    const drafted = await draft(project, { name: "orders" });
+    const finalized = await finalize(project);
+    const error = await validationError(project, {
+      strict: true,
+      allowDraft: true,
+    });
+
+    expect(drafted.unqualifiedNames).toEqual([
+      expect.objectContaining(warning),
+    ]);
+    expect(finalized.unqualifiedNames).toEqual([
+      expect.objectContaining(warning),
+    ]);
+    expect(error.problems).toEqual([
+      expect.objectContaining({
+        severity: "warning",
+        code: "unqualified-routine-names",
+        path: warning.file,
+        line: warning.line,
+        message: expect.stringMatching(
+          /^data-model\/desired-schema\/orders\.sql:3: function order_count\(int8\) names orders without a schema/,
+        ),
+      }),
+    ]);
+    await expect(validate(project)).resolves.toMatchObject({
+      problems: [{ code: "unqualified-routine-names" }],
+    });
+  });
+
   test("never touches a database", async () => {
     const dir = await createTestProject({
       config: `import { defineConfig } from "super-deploy";
