@@ -31,8 +31,8 @@ import {
   NoDraftError,
   readDraft,
   recoverySchemaChange,
-  type UnknownDraftFile,
-  unknownDraftFiles,
+  reportUnknownDraftFiles,
+  type UnknownDraftFileOptions,
 } from "../store/draft.ts";
 import {
   desiredSchemaHash,
@@ -64,13 +64,15 @@ export interface RehearseResult {
   readonly destructive: readonly DestructiveStatement[];
   /** Statements that rewrite or scan an existing table while holding its lock (draft paths). */
   readonly warnings: readonly LockWarning[];
-  /** Files in the draft folder that a draft doesn't hold: they never run (store/draft.ts). */
-  readonly unknownFiles: readonly UnknownDraftFile[];
 }
 
-export async function rehearse(project: Project): Promise<RehearseResult> {
-  const rehearsed = await rehearseCurrentDraft(project, "rehearse");
-  const unknownFiles = await unknownDraftFiles(project.root, project.paths);
+export type RehearseOptions = UnknownDraftFileOptions;
+
+export async function rehearse(
+  project: Project,
+  options: RehearseOptions = {},
+): Promise<RehearseResult> {
+  const rehearsed = await rehearseCurrentDraft(project, "rehearse", options);
   return {
     name: rehearsed.draft.name,
     recoveryOf: rehearsed.recoveryOf?.number,
@@ -81,7 +83,6 @@ export async function rehearse(project: Project): Promise<RehearseResult> {
     serverVersion: rehearsed.serverVersion,
     destructive: rehearsed.analysis.destructive,
     warnings: rehearsed.analysis.warnings,
-    unknownFiles,
   };
 }
 
@@ -99,25 +100,35 @@ export interface RehearsedDraft {
   readonly analysis: MigrationAnalysis;
 }
 
+export interface RehearseDraftHooks extends UnknownDraftFileOptions {
+  /**
+   * Runs once the draft has passed the rules, before any database work
+   * (finalize asks for the destructive acknowledgement there).
+   */
+  beforeRehearsal?: (
+    draft: DraftMetadata,
+    analysis: MigrationAnalysis,
+  ) => Promise<void>;
+}
+
 /**
- * Shared by `rehearse` and `finalize`. `beforeRehearsal` runs once the
- * draft has passed the rules, before any database work (finalize asks for
- * the destructive acknowledgement there). A Recovery draft is rehearsed
- * against its migration's original instead of the desired schema.
+ * Shared by `rehearse` and `finalize`. Unknown draft files are reported
+ * first, then the rules run, then `beforeRehearsal`, then the rehearsal. A
+ * Recovery draft is rehearsed against its migration's original instead of
+ * the desired schema.
  */
 export async function rehearseCurrentDraft(
   project: Project,
   action: string,
-  beforeRehearsal?: (
-    draft: DraftMetadata,
-    analysis: MigrationAnalysis,
-  ) => Promise<void>,
+  hooks: RehearseDraftHooks = {},
 ): Promise<RehearsedDraft> {
   const { root, paths } = project;
   const draft = await readDraft(root, paths);
   if (draft === undefined) {
     throw new NoDraftError(action);
   }
+  await reportUnknownDraftFiles(root, paths, hooks);
+  const { beforeRehearsal } = hooks;
   const migrations = await verifiedMigrations(root, paths);
   if (draft.recoveryOf !== undefined) {
     return rehearseRecoveryDraft(project, draft, migrations, beforeRehearsal);

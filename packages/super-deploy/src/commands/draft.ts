@@ -37,9 +37,9 @@ import {
 import { asSqlFiles, readDesiredSchemaFiles } from "../store/desired-schema.ts";
 import {
   readDraft,
+  reportUnknownDraftFiles,
   schemaChangeHeader,
-  type UnknownDraftFile,
-  unknownDraftFiles,
+  type UnknownDraftFileOptions,
   writeDraft,
 } from "../store/draft.ts";
 import { normaliseDraftName } from "../store/draft-name.ts";
@@ -56,7 +56,7 @@ import {
 } from "./check-rules.ts";
 import { RecoveryDraftError } from "./recovery.ts";
 
-export interface DraftOptions {
+export interface DraftOptions extends UnknownDraftFileOptions {
   /**
    * The draft's name, normalised to kebab-case. Required when there is no
    * draft yet; for an existing draft, a different name renames it.
@@ -81,8 +81,6 @@ export interface DraftResult {
    * the affected rows in the rehearsal data. Advisory; empty when none.
    */
   readonly toCover: readonly ScriptCoverage[];
-  /** Files in the draft folder that a draft doesn't hold: they never run (store/draft.ts). */
-  readonly unknownFiles: readonly UnknownDraftFile[];
 }
 
 export async function draft(
@@ -101,6 +99,7 @@ export async function draft(
   }
 
   const { config, paths } = project;
+  await reportUnknownDraftFiles(project.root, paths, options);
   const files = await readDesiredSchemaFiles(project.root, paths.desiredSchema);
   const { statements, overrides } = await desiredSchemaAnalysis(
     asSqlFiles(project.root, paths.desiredSchema, files),
@@ -197,7 +196,6 @@ export async function draft(
     schemaChangePath: paths.draftSchemaChange,
     statements: planned,
     toCover,
-    unknownFiles: await unknownDraftFiles(project.root, paths),
   };
 }
 

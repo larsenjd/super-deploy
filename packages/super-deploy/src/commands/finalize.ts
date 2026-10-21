@@ -19,8 +19,7 @@ import type {
 } from "../sql-analysis/index.ts";
 import {
   draftMetadataFileName,
-  type UnknownDraftFile,
-  unknownDraftFiles,
+  type UnknownDraftFileOptions,
 } from "../store/draft.ts";
 import {
   chainHash,
@@ -74,7 +73,11 @@ export interface DestructiveAcknowledgement {
   readonly statements: readonly DestructiveStatement[];
 }
 
-export type FinalizeOptions = DestructiveOptions;
+/**
+ * `onUnknownFile` reports the draft folder's unknown files before the rules,
+ * the acknowledgement question and the rehearsal; finalize still copies them.
+ */
+export type FinalizeOptions = DestructiveOptions & UnknownDraftFileOptions;
 
 export interface FinalizeResult {
   /** The migration's number (for a Recovery, the number of the migration it recovers). */
@@ -94,12 +97,6 @@ export interface FinalizeResult {
   readonly destructive: readonly DestructiveStatement[];
   /** Statements that rewrite or scan an existing table while holding its lock (project-relative paths in the new migration folder). */
   readonly warnings: readonly LockWarning[];
-  /**
-   * Files the draft folder held that a draft doesn't (project-relative paths
-   * in the draft folder): they never run, yet are copied like the rest
-   * (store/draft.ts).
-   */
-  readonly unknownFiles: readonly UnknownDraftFile[];
 }
 
 /**
@@ -112,10 +109,9 @@ export async function finalize(
   options: FinalizeOptions = {},
 ): Promise<FinalizeResult> {
   const { root, paths } = project;
-  const rehearsed = await rehearseCurrentDraft(
-    project,
-    "finalize",
-    async (draft, analysis) => {
+  const rehearsed = await rehearseCurrentDraft(project, "finalize", {
+    onUnknownFile: options.onUnknownFile,
+    async beforeRehearsal(draft, analysis) {
       const count = analysis.destructive.length;
       await acknowledgeDestructive(options, {
         kind: "acknowledge-destructive",
@@ -124,9 +120,8 @@ export async function finalize(
         statements: analysis.destructive,
       });
     },
-  );
+  });
   const { destructive, warnings } = rehearsed.analysis;
-  const unknownFiles = await unknownDraftFiles(root, paths);
   const target = await finalizedPlace(project, rehearsed);
   const { path } = target;
   // Draft files are named by project-relative path; once finalized they are
@@ -198,7 +193,6 @@ export async function finalize(
     recovery: migration === undefined ? undefined : target.number,
     destructive: destructive.map(finalized),
     warnings: warnings.map(finalized),
-    unknownFiles,
   };
 }
 

@@ -8,6 +8,7 @@ import {
   rehearse,
   SqlFileFailedError,
   SqlRuleViolationError,
+  type UnknownDraftFile,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { deployProject } from "../support/deploy.ts";
@@ -37,6 +38,20 @@ async function withFirstMigration() {
   );
   await finalize(setup.project);
   return setup;
+}
+
+/** Collects what each command reports through its `onUnknownFile` option. */
+function unknownFilesReported() {
+  const by: Record<string, UnknownDraftFile[]> = {};
+  return {
+    by,
+    option(command: string) {
+      by[command] = [];
+      return {
+        onUnknownFile: (file: UnknownDraftFile) => by[command]?.push(file),
+      };
+    },
+  };
 }
 
 /** Desired schema for migration 2: `name` renamed to `full_name`, plus `greeting`. */
@@ -495,13 +510,17 @@ alter table customers alter column phone set not null;
       },
     ];
 
-    const drafted = await draft(project);
-    const rehearsed = await rehearse(project);
-    const finalized = await finalize(project);
+    const reported = unknownFilesReported();
 
-    expect(drafted.unknownFiles).toEqual(unknownFiles);
-    expect(rehearsed.unknownFiles).toEqual(unknownFiles);
-    expect(finalized.unknownFiles).toEqual(unknownFiles);
+    await draft(project, reported.option("draft"));
+    await rehearse(project, reported.option("rehearse"));
+    await finalize(project, reported.option("finalize"));
+
+    expect(reported.by).toEqual({
+      draft: unknownFiles,
+      rehearse: unknownFiles,
+      finalize: unknownFiles,
+    });
     expect(
       await dir.read(
         "data-model/migrations/00001-add-customers/post-migrate.sql",
@@ -529,13 +548,13 @@ alter table customers alter column phone set not null;
       "update customers set greeting = 'Hello ' || name;\n",
     );
 
-    const drafted = await draft(project);
-    const rehearsed = await rehearse(project);
-    const finalized = await finalize(project);
+    const reported = unknownFilesReported();
 
-    expect(drafted.unknownFiles).toEqual([]);
-    expect(rehearsed.unknownFiles).toEqual([]);
-    expect(finalized.unknownFiles).toEqual([]);
+    await draft(project, reported.option("draft"));
+    await rehearse(project, reported.option("rehearse"));
+    await finalize(project, reported.option("finalize"));
+
+    expect(reported.by).toEqual({ draft: [], rehearse: [], finalize: [] });
   });
 
   test("draft refuses DDL in a post-migration script before running anything", async () => {

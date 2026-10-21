@@ -94,7 +94,11 @@ export {
   RecoverySchemaChangeEditedError,
   recovery,
 } from "./commands/recovery.ts";
-export { type RehearseResult, rehearse } from "./commands/rehearse.ts";
+export {
+  type RehearseOptions,
+  type RehearseResult,
+  rehearse,
+} from "./commands/rehearse.ts";
 export {
   type RestoredDesiredSchema,
   type RestoreSchemaOptions,
@@ -229,6 +233,7 @@ export {
   InvalidDraftError,
   NoDraftError,
   type UnknownDraftFile,
+  type UnknownDraftFileOptions,
 } from "./store/draft.ts";
 export {
   InvalidDraftNameError,

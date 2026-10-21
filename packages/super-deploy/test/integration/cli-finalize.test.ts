@@ -128,6 +128,46 @@ describe("validate", () => {
     }
   });
 
+  test("a misnamed script in a draft that then fails: draft, rehearse and finalize warn about it first", async () => {
+    const dir = await draftedProject();
+    await dir.write("data-model/draft/post-migrate.sql", "select 1;\n");
+    // Runs before the schema change that creates customers.
+    await dir.write(
+      "data-model/draft/pre-migration.sql",
+      "update customers set name = name;\n",
+    );
+    const warning =
+      "warning: data-model/draft/post-migrate.sql is not one of a draft's files, so it will not run (a draft holds draft.json, seed-data.sql, pre-migration.sql, schema-change.sql and post-migration.sql)";
+    const run = (...args: string[]) => runCli(args, { cwd: dir.root });
+
+    for (const command of ["draft", "rehearse", "finalize"]) {
+      const result = await run(command);
+
+      expect(result.exitCode).toBe(1);
+      const lines = result.stderr.trimEnd().split("\n");
+      expect(lines[0]).toBe(warning);
+      expect(lines.at(-1)).toMatch(/^Error: .*"customers" does not exist/);
+    }
+  });
+
+  test("a misnamed script in a destructive draft: finalize warns about it before asking for the acknowledgement", async () => {
+    const dir = await draftedProject();
+    expect((await runCli(["finalize"], { cwd: dir.root })).exitCode).toBe(0);
+    await dir.write("data-model/desired-schema/customers.sql", "");
+    expect(
+      (await runCli(["draft", "--name", "drop customers"], { cwd: dir.root }))
+        .exitCode,
+    ).toBe(0);
+    await dir.write("data-model/draft/post-migrate.sql", "select 1;\n");
+
+    const result = await runCli(["finalize"], { cwd: dir.root });
+
+    expect(result.exitCode).toBe(1);
+    const lines = result.stderr.trimEnd().split("\n");
+    expect(lines[0]).toMatch(/^warning: data-model\/draft\/post-migrate\.sql /);
+    expect(lines.at(-1)).toContain("--acknowledge-destructive");
+  });
+
   test("--help lists --allow-draft", async () => {
     const dir = await createTestProject();
 

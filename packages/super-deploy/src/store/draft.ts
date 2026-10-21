@@ -17,7 +17,9 @@
 // script such as `post-migrate.sql`, or notes) never runs, yet finalize
 // copies it into the migration, so `draft`, `rehearse`, `finalize` and
 // `validate` warn about each one (unknownDraftFiles) and carry on: the
-// maintainer chose a warning over a refusal (QA 44).
+// maintainer chose a warning over a refusal (QA 44). The commands that
+// rehearse report them through `onUnknownFile` before any check, rehearsal or
+// question: a misnamed backfill is often why the rehearsal then fails.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -92,6 +94,29 @@ export interface UnknownDraftFile {
   readonly file: string;
   /** Names the file and the files a draft holds; for a `.sql` file, says it will not run. */
   readonly message: string;
+}
+
+export interface UnknownDraftFileOptions {
+  /**
+   * Called with each file in the draft folder that a draft doesn't hold,
+   * before the draft is checked or rehearsed, so it is reported even when
+   * the command then fails: such a file never runs.
+   */
+  onUnknownFile?: ((file: UnknownDraftFile) => void) | undefined;
+}
+
+/** Calls `onUnknownFile` with each of unknownDraftFiles. */
+export async function reportUnknownDraftFiles(
+  root: string,
+  paths: ProjectPaths,
+  options: UnknownDraftFileOptions,
+): Promise<void> {
+  if (options.onUnknownFile === undefined) {
+    return;
+  }
+  for (const file of await unknownDraftFiles(root, paths)) {
+    options.onUnknownFile(file);
+  }
 }
 
 /** The files under the draft folder that a draft doesn't hold; none without a draft. */

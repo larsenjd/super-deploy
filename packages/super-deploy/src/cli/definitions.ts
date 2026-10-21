@@ -43,7 +43,7 @@ import {
   OverwriteNotAcknowledgedError,
 } from "../questions.ts";
 import type { LockWarning, Override } from "../sql-analysis/index.ts";
-import { readDraft, type UnknownDraftFile } from "../store/draft.ts";
+import { readDraft, type UnknownDraftFileOptions } from "../store/draft.ts";
 import type { ValidationProblem } from "../store/integrity.ts";
 import {
   migrationFolderName,
@@ -364,7 +364,10 @@ const draftCommand: CommandDefinition = {
   ],
   async run(project, values, context) {
     const name = typeof values.name === "string" ? values.name : undefined;
-    const result = await draft(project, name === undefined ? {} : { name });
+    const result = await draft(project, {
+      ...(name === undefined ? {} : { name }),
+      ...warnUnknownFiles(context),
+    });
     const count = plural(result.statements.length, "statement");
     const where = context.displayPath(result.schemaChangePath);
     const what = result.created
@@ -373,9 +376,10 @@ const draftCommand: CommandDefinition = {
         ? `Renamed draft ${result.renamedFrom} to ${result.name}`
         : `Regenerated draft ${result.name}`;
     context.result(`${what}: ${count} in ${where}`);
-    for (const item of [...result.toCover, ...result.unknownFiles]) {
-      context.warn(`warning: ${item.message}`);
-    }
+    reportWarnings(
+      result.toCover.map((item) => item.message),
+      context,
+    );
   },
 };
 
@@ -386,8 +390,8 @@ const rehearseCommand: CommandDefinition = {
     "Replay every migration plus the draft on a throwaway database and prove it matches the desired schema",
   options: [],
   async run(project, _values, context) {
-    const result = await rehearse(project);
-    reportWarnings(result, context);
+    const result = await rehearse(project, warnUnknownFiles(context));
+    reportWarnings(lockWarnings(result.warnings), context);
     for (const statement of result.destructive) {
       context.warn(
         `destructive: ${statement.file}:${statement.line}: ${statement.message} (finalize needs it acknowledged)`,
@@ -401,25 +405,30 @@ const rehearseCommand: CommandDefinition = {
   },
 };
 
-/**
- * One warning line per statement that rewrites or scans an existing table,
- * then one per file in the draft folder that a draft doesn't hold.
- */
+/** One `warning:` line on stderr per message. */
 function reportWarnings(
-  result: {
-    readonly warnings: readonly LockWarning[];
-    readonly unknownFiles: readonly UnknownDraftFile[];
-  },
+  messages: readonly string[],
   context: CommandContext,
 ): void {
-  for (const warning of result.warnings) {
-    context.warn(
-      `warning: ${warning.file}:${warning.line}: ${warning.message}`,
-    );
+  for (const message of messages) {
+    context.warn(`warning: ${message}`);
   }
-  for (const unknown of result.unknownFiles) {
-    context.warn(`warning: ${unknown.message}`);
-  }
+}
+
+/** Each statement that rewrites or scans an existing table, as a warning message. */
+function lockWarnings(warnings: readonly LockWarning[]): string[] {
+  return warnings.map(
+    (warning) => `${warning.file}:${warning.line}: ${warning.message}`,
+  );
+}
+
+/**
+ * Warns about each file in the draft folder that a draft doesn't hold as soon
+ * as the command finds it: before any rehearsal or question, so the warning
+ * stands even when the command then fails.
+ */
+function warnUnknownFiles(context: CommandContext): UnknownDraftFileOptions {
+  return { onUnknownFile: (file) => reportWarnings([file.message], context) };
 }
 
 const finalizeCommand: CommandDefinition = {
@@ -442,12 +451,13 @@ const finalizeCommand: CommandDefinition = {
       finalize(project, {
         acknowledgeDestructive: values["acknowledge-destructive"] === true,
         ...(confirm === undefined ? {} : { confirm }),
+        ...warnUnknownFiles(context),
       }),
     );
     if (result === undefined) {
       return;
     }
-    reportWarnings(result, context);
+    reportWarnings(lockWarnings(result.warnings), context);
     context.result(
       result.recovery === undefined
         ? `Finalized migration ${result.folder} in ${context.displayPath(result.path)}`
@@ -718,9 +728,7 @@ const statusCommand: CommandDefinition = {
   async run(project, values, context) {
     const report = await status(project, { target: String(values.target) });
     const { preflight } = report;
-    for (const warning of preflight.warnings) {
-      context.warn(`warning: ${warning}`);
-    }
+    reportWarnings(preflight.warnings, context);
     context.result(
       `Target ${report.target}${report.disposable ? " (disposable)" : ""}: ${plural(report.recorded.length, "migration")} recorded, ${report.pending.length} pending`,
     );
