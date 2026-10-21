@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Spec:** `../spec.md` (stories 65, 67, 98, 99; "Rules: desired schema", "Rules: deploy-time SQL", "Differ", "Deployment engine and history schema", "Guarded and recovery commands", "Out of Scope")
 

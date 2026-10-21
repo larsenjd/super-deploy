@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02, 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] The README's "Permissions" section is rewritten:
   - The desired schema declares no grants, revokes, policies, row-level security or `SECURITY DEFINER` routines.
