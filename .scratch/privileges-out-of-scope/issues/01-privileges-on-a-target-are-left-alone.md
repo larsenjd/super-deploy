@@ -6,7 +6,7 @@ Until 02 lands, grants still declared in a desired schema are accepted but no lo
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Generated schema changes never contain grants, revokes, default privileges, policies or RLS flag changes. pg-delta's own filtering does this; ownership stays pruned as now.
 - [ ] The catalog comparison no longer reads ACLs (on objects, columns or the managed schema), policies or a table's RLS flags. Drift, `mark`, `status`, rehearsals, order-independence and adoption's reproduction check all follow from it.
