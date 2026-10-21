@@ -1,6 +1,6 @@
 # 176: In the menu, disposable preselects "yes" and doesn't show the target's current flag
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** low
 **Area:** disp
@@ -68,3 +68,14 @@ Whatever the target, the menu asks with the flag's help text and preselects `yes
 - **(recommended)** A static question and `no` preselected, matching the spec's "default no". No connection from the menu. The current flag stays visible in `status` and in the YES confirmation (which could add `Now: disposable` / `Now: not disposable`).
 - After the target is chosen, the menu reads its flag, says it in the question (`Target qa is disposable now. Make it not disposable?`) and preselects the change. This needs a connection, and a way for a choice to depend on an earlier answer.
 - Keep `yes` first and add only the menu question.
+
+### Decided, 2026-10-21
+
+The maintainer chose: **preselect "no", and show the target's current flag.**
+- After the target is chosen, the menu reads the target's current flag and shows it in the question, e.g. `Target qa is not disposable now. Make it disposable?`, with **no** preselected whatever the current value.
+- If the flag can't be read (the target is unreachable), the question says so and still preselects no.
+- The YES confirmation adds `Now: disposable` / `Now: not disposable`.
+
+**Acceptance criteria:**
+- [ ] Pseudo-terminal test: for a non-disposable target the menu question names the current flag and "no" is selected; same for a disposable target.
+- [ ] The YES confirmation shows the current flag.

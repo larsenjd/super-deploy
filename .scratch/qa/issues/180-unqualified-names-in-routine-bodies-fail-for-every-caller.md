@@ -1,6 +1,6 @@
 # 180: Routines whose bodies use unqualified names deploy fine but fail for every caller when `managedSchema` isn't `public`
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** high
 **Area:** privs
@@ -131,3 +131,14 @@ which are resolved at call time too.
 - Refuse, as a structural rule, a routine with a string body that names a managed-schema object unqualified and has no `SET search_path`, only when `managedSchema` isn't `public`; document the three fixes (recommended). `public` is on every default search path, so exempting it keeps existing projects working.
 - Warn instead of refusing (in `draft`, `finalize` and `validate`), same condition.
 - Document only: the README section above, no rule.
+
+### Decided, 2026-10-21
+
+The maintainer chose **warn**, not refuse.
+- When `managedSchema` isn't `public`, a routine whose string body names a managed-schema object unqualified and has no `SET search_path` gets a warning in `draft`, `finalize` and `validate` (so `validate --strict` fails CI), naming the routine and the unqualified names, and giving the fixes: qualify the names, add `SET search_path = <schema>, pg_catalog` to the routine, or use a `BEGIN ATOMIC` body.
+- Projects whose managed schema is `public` get no warning.
+- README: a section on writing routine bodies for a non-public managed schema.
+
+**Acceptance criteria:**
+- [ ] SQL-analysis seam: an unqualified reference in a `LANGUAGE sql` string body and in a PL/pgSQL body warns when the managed schema is `app`; no warning when qualified, with `SET search_path`, with `BEGIN ATOMIC`, or when the managed schema is `public`.
+- [ ] API seam: `draft` reports the warning; `validate --strict` exits 1 on it.

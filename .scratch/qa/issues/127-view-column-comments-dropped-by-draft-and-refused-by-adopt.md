@@ -1,6 +1,6 @@
 # 127: Comments on view and materialized-view columns: adoption refuses them as "not-reproduced", and draft silently drops them
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** medium
 **Area:** adopt
@@ -105,3 +105,16 @@ The README lists "`COMMENT ON` the objects above" as supported, so the README's 
 - Refuse comments on view and materialized-view columns with a static desired-schema rule and list them in the README's "Refused". Adoption reports them under that rule with the `IS NULL` fix. Cheap, and loud where the gap is today silent (recommended).
 - Add the missing statements: after pg-delta's plan, emit `COMMENT ON COLUMN` for view and materialized-view columns whose comment differs, including after a view is recreated. Keeps the README's promise, but adds planning of our own beside the differ.
 - Report it upstream and wait for a pg-delta fix, with the first option until then.
+
+### Decided, 2026-10-21
+
+Policy decided for 101, 103, 104 and 127 together: **keep pg-delta's output** (as with 09) and warn, refuse or document; never patch or post-process it. Report each case upstream and record it in pg-delta research §8 ("Known behaviours").
+
+For 127: **refuse** comments on view and materialized-view columns.
+- A static desired-schema rule refuses `COMMENT ON COLUMN <view>.<column>` (views and materialized views), saying pg-delta doesn't reproduce them in V1. Listed in the README's "Refused".
+- Adoption reports such comments under that rule, with the fix (`COMMENT ON COLUMN ... IS NULL` on the target, or keep it out of the desired schema).
+- Report upstream; research §8 records it.
+
+**Acceptance criteria:**
+- [ ] The rule refuses a comment on a view column and on a materialized-view column; a comment on a table column is still accepted (SQL-analysis seam).
+- [ ] Adopting a target with a view-column comment refuses it under the rule with the fix (API seam).

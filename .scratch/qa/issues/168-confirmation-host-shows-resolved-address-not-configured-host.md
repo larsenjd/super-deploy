@@ -1,6 +1,6 @@
 # 168: The confirmation's Host line shows the resolved address, not the host in the connection string
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** low
 **Area:** disp
@@ -71,3 +71,12 @@ Guess: it shows the connected socket's remote address. For a real target such as
 - **(recommended)** An optional adapter member describing the configured host, shown first, with the server's address in brackets.
 - Show the configured host only, from the adapter, falling back to the server's address.
 - Keep the server's address, and document in the README that `Host:` is the address the server reports.
+
+### Decided, 2026-10-21
+
+The maintainer chose **the configured host first, with the server's address in brackets**, and the box keeps naming the target.
+- `Target:` stays (the target's name from config).
+- `Host:` shows the host and port from the connection string, then the server's address in brackets when it differs: `Host: localhost:54818 ([::1]:54818)`, `Host: db.prod.internal:5432 (10.0.4.7:5432)`.
+- Adapters expose the configured host through an optional member; without it, the server's address alone is shown as today.
+
+**Acceptance criteria:** pseudo-terminal test of a guarded command against `localhost` shows `Target:` and `Host: localhost:<port> ([::1]:<port>)` (or the IPv4 form).

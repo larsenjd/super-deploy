@@ -1,6 +1,6 @@
 # 164: A disposable target can't be reset to before migration 1, so a Recovery of migration 1 can be tried only once per database
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** low
 **Area:** disp
@@ -88,3 +88,10 @@ Workaround: create a new database, flag it disposable, deploy-draft there. A `re
 **Decision needed:**
 - **(recommended)** Allow `rebuild --to 0` as described.
 - No new value: fix the messages to say a draft deployed before any migration can't be reset and the target must be a new database (or dropped and recreated by hand), and say so in the README.
+
+### Decided, 2026-10-21
+
+The maintainer chose **allow `rebuild --to 0`**: it wipes the managed schema, the recorded migrations and any deployed draft, and replays nothing. The menu offers 0 as "no migrations" below migration 1; the confirmation says so; `--help` and the README document it.
+
+**Acceptance criteria:**
+- [ ] Pseudo-terminal test: after `deploy-draft` of a first draft, `rebuild --to 0` leaves the target with no migrations and no deployed draft, and `deploy-draft` can run again.

@@ -1,6 +1,6 @@
 # 141: Closing the terminal during a command leaves the embedded rehearsal server running
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** medium
 **Merged:** 162
@@ -101,3 +101,9 @@ After the first SIGINT, SIGTERM or SIGHUP, any second signal exits at once. Unde
 - A repeat of the same signal within about 1 s of the first counts as the same interruption, and SIGHUP never forces an immediate exit (no one is at the terminal to insist). A later second signal still exits at once (recommended: covers any wrapper that forwards signals, including ones that forward SIGINT).
 - Only a second SIGINT exits at once. Repeated SIGTERM and SIGHUP are ignored while cleaning up; supervisors escalate with SIGKILL anyway.
 - Keep the rule, and document that `pnpm exec` in a terminal doubles SIGTERM and SIGHUP.
+
+### Decided, 2026-10-21
+
+The maintainer chose **option 1**: a repeat of the same signal within about 1 s of the first counts as the same interruption, and SIGHUP never forces an immediate exit. A second signal later still exits at once.
+
+**Acceptance criteria:** the brief's; a CLI test sends SIGTERM twice within 100 ms through a process group and the command still cleans up (no embedded server left running).

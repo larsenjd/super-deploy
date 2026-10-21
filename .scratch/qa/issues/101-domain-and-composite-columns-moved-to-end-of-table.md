@@ -1,6 +1,6 @@
 # 101: Columns of a domain or composite type end up last in the table, not where the desired schema puts them
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** medium
 **Merged:** 120
@@ -108,3 +108,14 @@ A column typed with a domain or composite type, or defaulting to a managed-schem
 1. **(recommended)** Patch the pinned pg-delta (`pnpm patch`) so that, among actions with no edge between them, domains, types and routines come before tables. Then the columns fold into `CREATE TABLE` as pg-delta intends. Report it upstream, drop the patch when a fixed version is pinned, and record it in research §8.
 2. Report upstream only. Pin the fixed version when it ships, and document the behaviour in the README meanwhile.
 3. Keep the behaviour and only document it: columns whose type or default is created in the same migration go last, and an adopted target's order can differ from other targets'.
+
+### Decided, 2026-10-21
+
+Policy decided for 101, 103, 104 and 127 together: **keep pg-delta's output** (as with 09) and warn, refuse or document; never patch or post-process it. Report each case upstream and record it in pg-delta research §8 ("Known behaviours").
+
+For 101: **document only.** No ordering change.
+- README (the section on columns and column order): a column whose type, domain or default is created in the same migration as its table is added after the table's other columns, so its position can differ from the desired schema's. Column order is never compared, so nothing refuses; position-dependent SQL is already refused in scripts.
+- Spell out the consequence for adoption: an adopted target's column order can differ from that of a target built from the migrations.
+- Research §8 gets the bullet; the upstream report is linked from it.
+
+**Acceptance criteria:** the README and research §8 say the above; no code change.

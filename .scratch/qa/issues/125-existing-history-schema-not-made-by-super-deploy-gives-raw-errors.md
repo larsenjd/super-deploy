@@ -1,6 +1,6 @@
 # 125: A history schema that exists but wasn't made by super-deploy gives raw PostgreSQL errors in adopt and status
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** medium
 **Area:** adopt
@@ -99,3 +99,14 @@ An existing schema with the history schema's name is taken to be super-deploy's.
 **Decision needed:**
 - Accept an existing schema that is empty and owned by the deploy role (or by a role whose privileges it has): create super-deploy's tables in it. Refuse any other non-super-deploy schema with a clear message. The README says a DBA may pre-create the history schema instead of granting CREATE on the database (recommended).
 - Refuse any existing schema that super-deploy didn't make, empty ones included. The README says the history schema must not exist beforehand.
+
+### Decided, 2026-10-21
+
+The maintainer chose **accept an empty schema, refuse anything else.**
+- An existing history schema that is empty and owned by the deploy role (or a role it is a member of) is accepted: super-deploy creates its tables in it.
+- Any other existing schema of that name that super-deploy didn't make is refused by every command with a clear message naming the schema and what's in it, and the config setting to choose another name.
+- README: a DBA may pre-create the history schema (owned by the deploy role) instead of granting CREATE on the database.
+
+**Acceptance criteria:**
+- [ ] Pre-created empty history schema owned by the deploy role, no CREATE on the database: adopt and deploy succeed (API seam).
+- [ ] A history schema holding an unrelated table: `adopt`, `status` and `deploy` refuse with the message, no raw PostgreSQL error.

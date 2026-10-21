@@ -1,6 +1,6 @@
 # 110: Interrupting a deploy doesn't say the deployment was rolled back
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** low
 **Merged:** 143
@@ -81,3 +81,9 @@ Ctrl+C, SIGTERM or SIGHUP during `deploy` prints one notice when the signal arri
 1. **(recommended)** A closing outcome line after cleanup, for commands that change a target, and the spec line amended.
 2. Reword the single notice for those commands ("… cleaning up; the deployment will roll back unless it has already committed"). This keeps one line, but it can't state the outcome.
 3. Keep one notice (spec) and close as wontfix; `status` shows the abandoned attempt.
+
+### Decided, 2026-10-21
+
+The maintainer chose **option 1: a closing outcome line.** For commands that change a target (deploy, deploy-draft, rebuild, mark, disposable, adopt), after the interruption's cleanup the CLI prints one line saying what happened, e.g. `The deployment rolled back: target qa is unchanged, still at migration 4`, or that it had already committed. The spec line on interruption notices is amended.
+
+**Acceptance criteria:** the brief's, with a CLI test for Ctrl+C during deploy (rolled back) and one where the commit already happened.

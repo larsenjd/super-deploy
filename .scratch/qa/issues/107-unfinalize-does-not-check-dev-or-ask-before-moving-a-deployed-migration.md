@@ -1,6 +1,6 @@
 # 107: unfinalize moves a migration dev has recorded without asking, and only warns afterwards, vaguely
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** medium
 **Area:** newproj
@@ -90,3 +90,14 @@ Deploy would refuse:
 1. **(recommended)** Check the embedded targets and ask (or refuse without a terminal, unless acknowledged) when one has recorded the migration. Put the warning in the overwrite question too.
 2. Keep "no question", but warn before the move and in the overwrite question.
 3. Keep round 1's decision as it is. `status` still gets the "finalize the draft unchanged" hint.
+
+### Decided, 2026-10-21
+
+The maintainer chose **option 2: warn before moving**, still with no new question.
+- `unfinalize` prints its warning before it moves the migration (not after), and the overwrite question, when it is asked, includes it too.
+- The warning names the migration and says what to do if it was deployed anywhere: `restore-schema` to put it back, then a new migration, or a Recovery if it failed on a target.
+- It does not check targets.
+- `status` gets the hint for the mismatch that follows, as the brief describes.
+
+**Acceptance criteria:**
+- [ ] CLI test: the warning appears before the "moved" line; the overwrite question contains it.

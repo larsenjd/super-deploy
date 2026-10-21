@@ -1,6 +1,6 @@
 # 104: Changing the type of a column a generated column uses: draft succeeds, but its schema change can never run
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** medium
 **Area:** newproj
@@ -101,3 +101,17 @@ Error: data-model/draft/schema-change.sql:10: PostgreSQL refused it: cannot alte
 **Decision needed:**
 1. **(recommended)** Keep the generated output. Detect it at `draft` (with 102's option 1). Name the pre-migration fix in the warning and in the rehearsal error, and add it to the README.
 2. Generate the drop / retype / re-add sequence in our differ, or in a patched pg-delta (with 101's option 1).
+
+### Decided, 2026-10-21
+
+Policy decided for 101, 103, 104 and 127 together: **keep pg-delta's output** (as with 09) and warn, refuse or document; never patch or post-process it. Report each case upstream and record it in pg-delta research §8 ("Known behaviours").
+
+For 104: **keep the generated output; detect it and name the fix.**
+- With 102's `draft` check, `draft` warns when the schema change can't run because a generated column depends on the retyped column, naming the generated column and the pre-migration fix: drop the generated column, change the type, and let the schema change re-add it (or retype both in the pre-migration script).
+- The rehearsal error for the same case names the same fix.
+- README gets the recipe.
+
+**Blocked by:** 102.
+
+**Acceptance criteria:**
+- [ ] Retyping a column a generated column uses: `draft` warns naming both columns and the fix; following the fix, `rehearse` passes (API seam).

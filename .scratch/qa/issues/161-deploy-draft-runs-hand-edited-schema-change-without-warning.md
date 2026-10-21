@@ -1,6 +1,6 @@
 # 161: deploy-draft runs a hand-edited schema-change.sql without a word, though rehearse refuses it
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** medium
 **Area:** disp
@@ -75,3 +75,23 @@ Before the YES question, `deploy-draft` compares `schema-change.sql` with `draft
 - **(recommended)** Refuse before asking, with a typed error like `UndraftedChangesError` ("schema-change.sql was edited by hand since draft generated it: run draft again"). `deploy-draft` has no rehearsal, so the hash is its only safeguard. Make `finalize` refuse too (108).
 - Warn in the confirmation ("schema-change.sql was edited by hand since draft generated it and hasn't been rehearsed") and go ahead on YES.
 - Allow the edit when a rehearsal passed since then (would need recording that a rehearsal passed).
+
+### Decided, 2026-10-21
+
+The maintainer chose **warn and record**, plus a **report file in the finalized migration** so a hand edit is easy to spot in a PR review. Decided for 108 and 161 together.
+
+- `draft` keeps the generated schema change beside the draft as a known draft file (e.g. `schema-change.generated.sql`; add it to 44's list of known draft files), next to `draft.json`'s existing `schemaChangeHash`.
+- `rehearse` and `finalize` warn when `schema-change.sql` differs from what `draft` generated: `schema-change.sql was edited by hand since draft generated it`. Rehearsal still proves the result.
+- `finalize` of a hand-edited schema change:
+  - records it in the migration's metadata (e.g. `schemaChangeEditedByHand: true`);
+  - writes a report file into the migration folder, e.g. `HAND-EDITED.md`, saying the schema change was edited by hand after `draft` and containing a unified diff from the generated schema change to the final one. It is part of the migration's content hash like every other file.
+  - `validate` lists hand-edited migrations as a notice (not a warning, so `--strict` doesn't fail on it).
+- `deploy-draft` shows the hand edit in the YES confirmation (`schema-change.sql was edited by hand since draft generated it and hasn't been rehearsed`) and goes ahead on YES.
+- A draft written before the generated copy existed counts as not edited.
+- README: the files section mentions `HAND-EDITED.md`.
+
+**Acceptance criteria:**
+- [ ] API seam: hand-edit `schema-change.sql` in a way that still produces the desired schema; `finalize` warns, succeeds, records the flag, and the migration folder holds `HAND-EDITED.md` with the diff.
+- [ ] An unedited draft writes no report file and no flag.
+- [ ] Pseudo-terminal test: `deploy-draft` of a hand-edited draft shows the line in the confirmation.
+- [ ] `validate` lists the hand-edited migration.

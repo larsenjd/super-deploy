@@ -1,6 +1,6 @@
 # 122: Adoption refuses in separate rounds (ownership, then CREATE, then unsupported objects), not with one list as the README says
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** low
 **Area:** adopt
@@ -91,3 +91,10 @@ Ownership, then CREATE on the database, then unsupported objects: each is a sepa
 - One refusal for everything static: ownership, CREATE on the database and unsupported objects. Objects that are also unsupported are dropped from the ownership list. The spec's "before anything is rehearsed" goes (recommended).
 - Merge only the two cheap target checks, ownership and CREATE on the database, into one refusal, as `status` already shows them. The README says that refusal comes before the list of unsupported objects.
 - Keep three rounds, and have the README describe the order.
+
+### Decided, 2026-10-21
+
+The maintainer chose **one list**: adoption reports everything it can find statically in one refusal: ownership, CREATE on the database, and unsupported objects. An object that is both foreign-owned and unsupported is listed once, as unsupported. The spec's "before anything is rehearsed" wording goes if the unsupported-object check needs the differ; the README's "one list" stays true.
+
+**Acceptance criteria:**
+- [ ] A target with a foreign-owned table, no CREATE on the database and an unlogged table gets one refusal listing all three (API seam).

@@ -1,6 +1,6 @@
 # 103: Changing a column's collation or a generated column's expression drops and re-adds the column
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** medium
 **Area:** newproj
@@ -112,3 +112,15 @@ Changing a column's collation, or a stored generated column's expression, genera
 1. **(recommended)** Keep pg-delta's output, consistent with the decision on 09, and recognise the replaced column in the warning and the destructive reason, with the in-place statement to use. This is cheap and needs no differ change.
 2. Post-process our pg-delta differ's output: rewrite such a drop-and-add pair into `ALTER COLUMN … TYPE … COLLATE` or `SET EXPRESSION`, and record it in research §8.
 3. Patch pg-delta (with 101's option 1, if chosen) so these attributes are altered, not replaced, and report upstream.
+
+### Decided, 2026-10-21
+
+Policy decided for 101, 103, 104 and 127 together: **keep pg-delta's output** (as with 09) and warn, refuse or document; never patch or post-process it. Report each case upstream and record it in pg-delta research §8 ("Known behaviours").
+
+For 103: **keep the drop-and-add, and say so precisely.**
+- When a migration drops a column and adds one of the same name and type in the same table (pg-delta's way of changing a collation or a generated column's expression), the destructive reason at `finalize` and the warning at `draft` name it as a replaced column: `orders.code is dropped and re-added to change its collation: its values are lost. To keep them, change it in place in the pre-migration script: ALTER TABLE orders ALTER COLUMN code TYPE text COLLATE "C"` (for an expression: `ALTER TABLE ... ALTER COLUMN ... SET EXPRESSION AS (...)`).
+- README's destructive-changes section and research §8 describe it.
+
+**Acceptance criteria:**
+- [ ] A collation change and a generated-expression change each give the replaced-column reason with the in-place statement (SQL-analysis and API seams).
+- [ ] A real drop of one column and add of a different one keeps today's messages.

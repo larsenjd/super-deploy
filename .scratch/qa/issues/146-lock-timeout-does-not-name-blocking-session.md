@@ -1,6 +1,6 @@
 # 146: Lock-timeout failures and "Locked by" don't name the session that holds the lock
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** low
 **Area:** fail
@@ -76,3 +76,9 @@ A lock timeout says `retry once whatever held the lock has finished`. `status` d
 - `status` and the lock refusal name what the holder waits on; the lock-timeout error stays as it is but says how to find the blocker next time (`pg_blocking_pids`, `pg_stat_activity`) (recommended: cheap, and `status` is where an operator looks during a stuck deploy).
 - Both: also sample blockers from the attempt-log session while a deploy statement waits, and name them in the lock-timeout error.
 - Neither: wontfix.
+
+### Decided, 2026-10-21
+
+The maintainer chose **option 1**: `status` and the lock refusal name what the holding session is waiting on; the lock-timeout error stays as it is but adds how to find the blocker next time (`select pg_blocking_pids(<pid>)`, `pg_stat_activity`). No sampling during a deploy.
+
+**Acceptance criteria:** the brief's first option.

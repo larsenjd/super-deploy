@@ -1,6 +1,6 @@
 # 124: No documented way to undo or redo an adoption; both refusals give no way forward
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** medium
 **Area:** adopt
@@ -88,3 +88,9 @@ After a wrong adoption (wrong schema, wrong target, adopted before cleaning up t
   It is valid only while the target records just the adoption. Both refusals point to it (recommended).
 - Add a guarded command or flag (e.g. `init --adopt <target> --again`) that does both sides after YES, refusing unless the target records only its adoption.
 - Document it without changing the refusals.
+
+### Decided, 2026-10-21
+
+The maintainer chose **document the steps**: the README's adoption section explains how to start over, valid only while the target records just the adoption: on the target, as the deploy role, `drop schema <historySchema> cascade`; delete `data-model/migrations/` and the desired-schema files; adopt again. Both refusals named in the brief point to that section.
+
+**Acceptance criteria:** README section present; both refusals' messages point to it (CLI test pins the wording).

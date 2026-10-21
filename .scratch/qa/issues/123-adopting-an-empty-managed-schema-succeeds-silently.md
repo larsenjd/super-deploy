@@ -1,6 +1,6 @@
 # 123: Adopting an empty managed schema succeeds silently when the tables are in another schema (forgotten managedSchema)
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** medium
 **Area:** adopt
@@ -78,3 +78,11 @@ An existing but empty managed schema is adopted: an empty migration 1 is recorde
 - Refuse any empty managed schema: there is nothing to adopt, and a plain `deploy` already works on an empty database. The refusal names the other schemas that hold objects (recommended).
 - Refuse only when other non-system schemas hold objects. An empty schema in an otherwise empty database is still adopted.
 - Keep adopting, but print a warning naming the other schemas, plus "Adopted 0 objects".
+
+### Decided, 2026-10-21
+
+The maintainer chose **warn only**: adopting an empty managed schema still succeeds, but prints `Adopted 0 objects from schema <managed>`, and, when other non-system schemas hold objects, names them (`schema app holds 12 tables: is managedSchema right?`).
+
+**Acceptance criteria:**
+- [ ] Adopting empty `public` while `app` holds tables succeeds and warns naming `app` (API seam: the warning is in the result).
+- [ ] Adopting an empty schema in an otherwise empty database warns `Adopted 0 objects` only.

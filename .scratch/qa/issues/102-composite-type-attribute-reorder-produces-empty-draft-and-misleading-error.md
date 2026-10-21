@@ -1,6 +1,6 @@
 # 102: Reordering a composite type's attributes gives an empty draft, then a rehearsal error that blames scripts that don't exist
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** medium
 **Area:** newproj
@@ -108,3 +108,18 @@ A change pg-delta can't generate, such as reordering a composite type's attribut
 **Decision needed:**
 1. **(recommended)** `draft` runs its generated schema change on the starting point it has already built: the migrations, seed data and pre-migration script. It then compares the result with the desired schema. A failure or a difference becomes a warning; `draft` still writes the draft and exits 0. This catches 102, 104 and 111's overflow at `draft` time, at the cost of applying the schema change once more per `draft`. The spec's `draft` line gains it.
 2. Leave `draft` as it is. Only fix the rehearsal message and add the README recipe.
+
+### Decided, 2026-10-21
+
+The maintainer chose **option 1: `draft` checks its own output.**
+
+- After generating the schema change, `draft` applies it once on the starting point it already builds (the migrations, seed data and pre-migration script) and compares the result with the desired schema, using the same comparison as rehearsals.
+- A failure to apply, or a difference, becomes a warning naming the cause (e.g. `the generated schema change doesn't reorder composite type size's attributes: pg-delta can't express it; drop and recreate the type in the pre-migration script`). `draft` still writes the draft and exits 0.
+- The rehearsal mismatch message for this case names the same cause and no longer blames scripts that don't exist.
+- This also catches 104's case and 111's numeric overflow at `draft` time.
+- Spec: the `draft` line says it checks its output. README: the recipe for reordering a composite type.
+
+**Acceptance criteria:**
+- [ ] Reordering a composite type's attributes: `draft` warns naming the type, writes the draft, exits 0 (API seam).
+- [ ] The rehearsal mismatch for the same draft names the cause, not scripts.
+- [ ] A draft whose schema change applies cleanly and matches gives no such warning.

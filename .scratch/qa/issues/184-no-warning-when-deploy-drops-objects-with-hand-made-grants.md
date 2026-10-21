@@ -1,6 +1,6 @@
 # 184: Nothing warns that a deployment will drop and recreate objects carrying hand-made grants (e.g. a view recreated only because a column it reads changed type)
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** medium
 **Area:** privs
@@ -105,3 +105,12 @@ A migration that drops and recreates a view (for example because a column it rea
 - Yes: `status`/`deploy`/`deploy-draft` warnings compared against default privileges, as above; update ADR-0006's consequence and the REFINEMENTS entry (recommended). 183 shows the silent loss can widen access, which is the case REFINEMENTS was waiting for.
 - Only an offline line in `draft`/`finalize` listing recreated objects, with no target read: cheaper, but warns for every recreated object, and says nothing about whether anything is lost.
 - No: keep it in REFINEMENTS; the README's warning (with 183's wording) is enough. Close as wontfix.
+
+### Decided, 2026-10-21
+
+The maintainer chose **option 1: warn from the target.**
+- `status`, `deploy` and `deploy-draft` read the target and list, as a warning, each object the pending migrations (or the draft) will drop and recreate that carries grants, revokes or policies beyond what the deploy role's default privileges would restore, e.g. `view app.order_totals is recreated by 00007: its grants to app_reader will be lost (default privileges don't restore them)`.
+- super-deploy still never changes privileges (ADR-0006). ADR-0006's consequence and the REFINEMENTS entry are updated to say the loss is now warned about.
+- Also cover 183's case: a recreated function regains PUBLIC's EXECUTE when the target had revoked it.
+
+**Acceptance criteria:** the brief's first option, including 183's case at the API seam.
