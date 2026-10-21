@@ -21,6 +21,7 @@ import { unfinalize } from "../commands/unfinalize.ts";
 import { ValidationFailedError, validate } from "../commands/validate.ts";
 import type { AttemptRecord } from "../deploy/history.ts";
 import { MarkMismatchError } from "../deploy/mark.ts";
+import { notOwnedMessage } from "../deploy/ownership.ts";
 import type { Project } from "../project.ts";
 import type {
   AskOverrideReason,
@@ -702,6 +703,7 @@ const statusCommand: CommandDefinition = {
       ...preflight.missingExternalSchemas.map(
         (schema) => `external schema "${schema}" does not exist`,
       ),
+      ...preflight.notOwned.map(notOwnedMessage),
       ...preflight.historyMismatches.map((mismatch) => mismatch.message),
     ];
     if (refusals.length > 0) {

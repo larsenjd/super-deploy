@@ -11,6 +11,7 @@ import {
   deploy,
   draft,
   MarkMismatchError,
+  NotOwnedError,
   type Override,
   type OverrideReasonQuestion,
   type Project,
@@ -513,11 +514,9 @@ describe("adopt", () => {
   test("leaves the target's grants, revoked PUBLIC defaults, policies and row-level security out of the desired schema, counting what it left", async () => {
     const deployer = "adopt_deployer";
     const prod = await server.createDatabase(`
-      create role adopt_admin nologin;
       create role ${deployer} login password 'deployer';
       create role adopt_app nologin;
-      create schema app authorization adopt_admin;
-      grant usage, create on schema app to ${deployer} with grant option;
+      create schema app authorization ${deployer};
       do $$ begin execute format('grant create on database %I to ${deployer}', current_database()); end $$;
       set role ${deployer};
       create table app.notes (id bigint primary key, body text);
@@ -589,6 +588,75 @@ describe("adopt", () => {
 
       expect(result.migration.folder).toBe("00001-adopt");
       await expectReproducedOnDev(project);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses a target whose table, view and function belong to another role, naming each, before rehearsing or writing anything, until the deploy role owns them", async () => {
+    const deployer = "adopt_owned_deployer";
+    const admin = "adopt_owned_admin";
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      create role ${admin} nologin;
+      do $$ begin execute format('grant connect, create on database %I to ${deployer}, ${admin}', current_database()); end $$;
+      create schema app authorization ${deployer};
+      grant usage, create on schema app to ${admin};
+      set role ${admin};
+      create table app.widgets (id bigint generated always as identity primary key, name text not null);
+      create view app.widget_names as select name from app.widgets;
+      create function app.widget_count() returns bigint language sql stable as $$ select count(*) from app.widgets $$;
+    `);
+    const { dir, project } = await deployProject(
+      server,
+      {},
+      {
+        settings: 'managedSchema: "app",',
+        preamble: asDeployerPreamble(prod, deployer),
+        otherTargets: "prod: { adapter: asDeployer },",
+      },
+    );
+    try {
+      const databases = await server.databases();
+
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(NotOwnedError);
+      expect(error).toMatchObject({
+        code: "not-owned",
+        target: "prod",
+        objects: [
+          {
+            object: "function app.widget_count()",
+            owner: admin,
+            fix: `ALTER FUNCTION app.widget_count() OWNER TO ${deployer}`,
+          },
+          {
+            object: "table app.widgets",
+            owner: admin,
+            fix: `ALTER TABLE app.widgets OWNER TO ${deployer}`,
+          },
+          {
+            object: "view app.widget_names",
+            owner: admin,
+            fix: `ALTER VIEW app.widget_names OWNER TO ${deployer}`,
+          },
+        ],
+      });
+      expect(await server.databases()).toEqual(databases);
+      expect(dir.exists("data-model/desired-schema")).toBe(false);
+      expect(dir.exists("data-model/migrations")).toBe(false);
+
+      await server.query(
+        (error as NotOwnedError).objects.map(({ fix }) => fix).join(";\n"),
+        [],
+        prod,
+      );
+      await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
+        migration: { folder: "00001-adopt" },
+      });
     } finally {
       await project.close();
     }

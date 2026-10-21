@@ -85,7 +85,8 @@ interface Plan {
  *
  * Refuses before asking: TargetNotDisposableError; NoDraftError;
  * SqlRuleViolationError for the draft's files; PreflightFailedError when a
- * role or external schema is missing, the recorded history doesn't match the
+ * role or external schema is missing, the deploy role doesn't own the
+ * managed schema or something in it, the recorded history doesn't match the
  * repo, or the target already holds a draft; TargetBehindError when it has
  * pending migrations. A Recovery draft of migration N goes on top of N-1
  * instead (RecoveryBaseMismatchError otherwise), after the checks rehearse

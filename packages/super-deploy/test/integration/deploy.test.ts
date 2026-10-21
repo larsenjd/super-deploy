@@ -752,6 +752,7 @@ describe("status", () => {
       preflight: {
         missingRoles: [],
         missingExternalSchemas: [],
+        notOwned: [],
         historyMismatches: [],
         warnings: [expect.stringContaining("is a superuser")],
       },

@@ -6,7 +6,13 @@ import { userInfo } from "node:os";
 import { deploy, draft, finalize, loadProject } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
-import { type DeployConfigOptions, deployConfig } from "../support/deploy.ts";
+import {
+  asDeployerPreamble,
+  type DeployConfigOptions,
+  deployConfig,
+  roleName,
+  targetDatabaseName,
+} from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject } from "../support/project.ts";
 import { keys, spawnTerminal } from "../support/terminal.ts";
@@ -75,10 +81,11 @@ async function attempts(database: string) {
 }
 
 describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
-  test("records the next pending migration as marked once YES is typed, when the target matches a replica (column order and ownership aside), without running its scripts", async () => {
+  test("records the next pending migration as marked once YES is typed, when the target matches a replica (column order aside), without running its scripts", async () => {
     const { dir, database } = await pendingProject();
     const owner = `mark_owner_${database}`;
-    // Fixed by hand: columns in another order, owned by another role.
+    // Fixed by hand: columns in another order, owned by another role (the
+    // superuser deploy role is a member of every role).
     await server.query(`create role ${owner}`);
     await server.query(
       `create table orders (note text, customer_id bigint not null, id bigint primary key);
@@ -173,6 +180,51 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
     expect(await attempts(database)).toEqual([
       { command: "deploy", outcome: "succeeded", error: null },
     ]);
+  });
+
+  test("refuses without asking when the hand-applied objects belong to a role the deploy role isn't a member of, until it owns them", async () => {
+    const deployer = roleName("deployer");
+    const database = targetDatabaseName();
+    await server.query(`create role ${deployer} login password 'deployer'`);
+    await server.query(`create database ${database} owner ${deployer}`);
+    const { dir } = await pendingProject({
+      database,
+      preamble: asDeployerPreamble(database, deployer),
+      adapter: "asDeployer",
+    });
+    // Fixed by hand as the superuser, so it owns the table.
+    await server.query(orders, [], database);
+    const fix = `ALTER TABLE public.orders OWNER TO ${deployer}`;
+
+    const terminal = spawnTerminal(["mark", "--target", "dev"], {
+      cwd: dir.root,
+    });
+
+    await terminal.waitFor(
+      `Error: The deploy role on target dev doesn't own everything in the managed schema: table public.orders is owned by super_deploy, which the deploy role isn't a member of (fix: ${fix})`,
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    expect(await recordedMigrations(database)).toEqual([
+      { number: 1, recorded_how: "deployed", recovery: null, attempt: 1 },
+    ]);
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).toContain(
+      `Deploy would refuse:\n  table public.orders is owned by super_deploy, which the deploy role isn't a member of (fix: ${fix})\n`,
+    );
+
+    await server.query(fix, [], database);
+    const again = spawnTerminal(["mark", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    await again.waitFor("Type YES");
+    again.type(`YES${keys.enter}`);
+    await again.waitFor(
+      "Marked migration 00002-add-orders as deployed on target dev",
+    );
+    expect(await again.exited).toBe(0);
   });
 
   test("refuses when nothing is pending", async () => {

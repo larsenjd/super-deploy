@@ -136,6 +136,10 @@ export {
   MarkMismatchError,
   NothingToMarkError,
 } from "./deploy/mark.ts";
+export {
+  NotOwnedError,
+  type NotOwnedObject,
+} from "./deploy/ownership.ts";
 export type {
   HistoryMismatch,
   PreflightFindings,

@@ -1,6 +1,7 @@
 // API seam: roles in rehearsals, and the deploy pre-flight (granted roles and
-// external schemas exist on the target, the deploy role's privileges, recorded
-// hashes match the repo), which status reports too.
+// external schemas exist on the target, the deploy role owns the managed
+// schema and everything in it, the deploy role's privileges, recorded hashes
+// match the repo), which status reports too.
 
 import {
   deploy,
@@ -242,6 +243,94 @@ describe("deploy pre-flight", () => {
           "the target doesn't record migration 00001-add-customers, but records the later migration 2",
       },
     ]);
+  });
+});
+
+describe("the deploy role owns the managed schema", () => {
+  test("refuses a target where the managed schema or an object in it belongs to a role the deploy role isn't a member of, listing each fix, until it owns them or joins their owner", async () => {
+    const deployer = roleName("deployer");
+    const admin = roleName("admin");
+    const database = targetDatabaseName();
+    await server.query(`create role ${deployer} login password 'deployer'`);
+    await server.query(`create role ${admin} nologin`);
+    await server.query(`create database ${database} owner ${deployer}`);
+    const { project, dir } = await deployProject(
+      server,
+      {
+        "customers.sql":
+          "create table customers (id bigint generated always as identity primary key, name text not null);\n",
+        "answer.sql":
+          "create function answer() returns integer language sql immutable return 42;\n",
+      },
+      {
+        database,
+        preamble: asDeployerPreamble(database, deployer),
+        adapter: "asDeployer",
+        settings: 'managedSchema: "app",',
+      },
+    );
+    await finalizeMigration(project, "add customers");
+    // No managed schema yet: nothing to own.
+    expect(
+      (await status(project, { target: "dev" })).preflight.notOwned,
+    ).toEqual([]);
+    await deploy(project, { target: "dev" });
+    await dir.write("data-model/desired-schema/orders.sql", orders);
+    await finalizeMigration(project, "add orders");
+    // An administrator takes them over (the table's identity sequence goes with it).
+    await server.query(
+      `alter schema app owner to ${admin};
+       alter table app.customers owner to ${admin};
+       alter function app.answer() owner to ${admin};`,
+      [],
+      database,
+    );
+
+    const refusal = await deploy(project, { target: "dev" }).catch(
+      (error: unknown) => error,
+    );
+
+    const notOwned = [
+      {
+        object: "schema app",
+        owner: admin,
+        fix: `ALTER SCHEMA app OWNER TO ${deployer}`,
+      },
+      {
+        object: "function app.answer()",
+        owner: admin,
+        fix: `ALTER FUNCTION app.answer() OWNER TO ${deployer}`,
+      },
+      {
+        object: "table app.customers",
+        owner: admin,
+        fix: `ALTER TABLE app.customers OWNER TO ${deployer}`,
+      },
+    ];
+    expect(refusal).toBeInstanceOf(PreflightFailedError);
+    expect(refusal).toMatchObject({ findings: { notOwned } });
+    for (const { object, fix } of notOwned) {
+      expect((refusal as Error).message).toContain(
+        `${object} is owned by ${admin}`,
+      );
+      expect((refusal as Error).message).toContain(fix);
+    }
+    expect(
+      (await status(project, { target: "dev" })).preflight.notOwned,
+    ).toEqual(notOwned);
+
+    await server.query(
+      `alter table app.customers owner to ${deployer}`,
+      [],
+      database,
+    );
+    await server.query(`grant ${admin} to ${deployer}`);
+    expect(
+      (await status(project, { target: "dev" })).preflight.notOwned,
+    ).toEqual([]);
+    await expect(deploy(project, { target: "dev" })).resolves.toMatchObject({
+      deployed: [{ folder: "00002-add-orders" }],
+    });
   });
 });
 

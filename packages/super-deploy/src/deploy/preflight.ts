@@ -4,6 +4,8 @@
 //   - every role the deployment grants to exists (rehearsals create missing
 //     roles on their own server, but nothing creates roles on targets)
 //   - every declared external schema exists
+//   - the deploy role owns the managed schema and everything in it, or is a
+//     member of their owner (deploy/ownership.ts)
 //   - the deploy role is not superuser and holds none of the predefined roles
 //     that reach outside the database (a warning, never a refusal)
 //   - what the target's history schema records matches the repo, and the
@@ -27,6 +29,11 @@ import {
   type RecordedMigration,
   readDeployedDraft,
 } from "./history.ts";
+import {
+  type NotOwnedObject,
+  notOwnedMessage,
+  objectsNotOwned,
+} from "./ownership.ts";
 import { lastRecordedNumber } from "./pending.ts";
 
 /** One way the target's recorded history disagrees with the repo. */
@@ -63,6 +70,12 @@ export interface PreflightFindings {
   readonly missingRoles: readonly string[];
   /** Declared external schemas the target lacks, in config order. Refuses a deployment. */
   readonly missingExternalSchemas: readonly string[];
+  /**
+   * The managed schema and the objects in it whose owner the deploy role
+   * isn't a member of, schema first. Empty when the target has no managed
+   * schema yet. Refuses a deployment.
+   */
+  readonly notOwned: readonly NotOwnedObject[];
   /** Recorded migrations that don't match the repo, by number. Refuses a deployment. */
   readonly historyMismatches: readonly HistoryMismatch[];
   /** Why the deploy role is more privileged than a deployment needs. Never refuses. */
@@ -104,6 +117,7 @@ export async function preflightChecks(
       "SELECT nspname AS name FROM pg_catalog.pg_namespace WHERE nspname = ANY($1::text[])",
       project.config.externalSchemas,
     ),
+    notOwned: await objectsNotOwned(session, project.config.managedSchema),
     historyMismatches: historyMismatches(
       input.migrations,
       input.recorded,
@@ -118,6 +132,7 @@ export function refusesDeployment(findings: PreflightFindings): boolean {
   return (
     findings.missingRoles.length > 0 ||
     findings.missingExternalSchemas.length > 0 ||
+    findings.notOwned.length > 0 ||
     findings.historyMismatches.length > 0
   );
 }
@@ -297,8 +312,9 @@ async function deployRoleWarnings(
 
 /**
  * The deploy pre-flight refused the target: a role the deployment grants to
- * or a declared external schema is missing, or its recorded history doesn't
- * match the repo. Nothing was rehearsed or changed; the attempt is logged as
+ * or a declared external schema is missing, the deploy role doesn't own the
+ * managed schema or something in it, or its recorded history doesn't match
+ * the repo. Nothing was rehearsed or changed; the attempt is logged as
  * failed.
  */
 export class PreflightFailedError extends SuperDeployError {
@@ -319,7 +335,7 @@ export class PreflightFailedError extends SuperDeployError {
       (mismatch) => mismatch.message,
     );
     super(
-      `Target ${target} failed the deploy pre-flight checks: ${[...roles, ...schemas, ...history].join("; ")}`,
+      `Target ${target} failed the deploy pre-flight checks: ${[...roles, ...schemas, ...findings.notOwned.map(notOwnedMessage), ...history].join("; ")}`,
     );
     this.target = target;
     this.findings = findings;

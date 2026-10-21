@@ -6,7 +6,9 @@
 // Adoption needs the target's connection, so it runs in a project that is
 // already initialised (`init`, then the target added to
 // super-deploy.config.ts) and still empty: no finalized migrations, no draft
-// and no desired-schema SQL files. The target must record no migrations.
+// and no desired-schema SQL files. The target must record no migrations, and
+// its deploy role must own the managed schema and everything in it
+// (deploy/ownership.ts), checked before anything is rehearsed.
 //
 // Steps, and what each one guarantees:
 //   1. Read the target (never writing to it): pg-delta generates the
@@ -49,6 +51,7 @@ import {
 } from "../deploy/engine.ts";
 import { readRecordedMigrations } from "../deploy/history.ts";
 import { markNextPending, readMarkableMigrations } from "../deploy/mark.ts";
+import { requireOwnership } from "../deploy/ownership.ts";
 import {
   connectTarget,
   resolveTarget,
@@ -151,8 +154,9 @@ export interface LeftOnTarget {
 
 /**
  * Refuses with UnknownTargetError, AdoptConflictError (the project or the
- * target isn't empty) or AdoptUnsupportedError (listing everything V1
- * doesn't support) before writing anything.
+ * target isn't empty), NotOwnedError (the deploy role doesn't own the
+ * managed schema or something in it) or AdoptUnsupportedError (listing
+ * everything V1 doesn't support) before writing anything.
  */
 export async function adopt(
   project: Project,
@@ -278,6 +282,8 @@ async function readTarget(
         `it already records ${recorded.length} migration${recorded.length === 1 ? "" : "s"} in its history schema "${config.historySchema}"`,
       ]);
     }
+    // Later migrations alter what is adopted: the deploy role must own it.
+    await requireOwnership(session, target.name, config.managedSchema);
     // The differ reads definitions that wait for table locks: never longer
     // than the target allows.
     await session.execute(

@@ -1,9 +1,11 @@
 // `mark --target X`: after someone has fixed a target by hand, record its
 // next pending migration as deployed (marked, original variant) without
-// running it, but only if the target's managed schema matches a replica of
-// its migrations up to that one (deploy/mark.ts). A guarded command
-// (guard/guard.ts): terminal-only, YES typed exactly, a manual attempt under
-// the OS username, the target lock.
+// running it, but only if the deploy role owns the target's managed schema
+// and everything in it (deploy/ownership.ts: objects applied by hand are
+// often someone else's) and the schema matches a replica of its migrations
+// up to that one (deploy/mark.ts). A guarded command (guard/guard.ts):
+// terminal-only, YES typed exactly, a manual attempt under the OS username,
+// the target lock.
 //
 // The replica check runs twice: before asking (a precondition, so a target
 // that doesn't match is refused without asking) and again under the lock,
@@ -15,6 +17,7 @@ import {
   readMarkableMigrations,
   requireReplicaMatch,
 } from "../deploy/mark.ts";
+import { requireOwnership } from "../deploy/ownership.ts";
 import { runGuarded } from "../guard/guard.ts";
 import type { Project } from "../project.ts";
 import type { MigrationWithUnit } from "../rehearsal/replica.ts";
@@ -44,7 +47,8 @@ export interface MarkResult {
  * and stdout (before touching the target), and NotConfirmedError for any
  * other answer. No option skips that.
  *
- * Also refuses with NothingToMarkError, HistoryMismatchError or
+ * Also refuses with NothingToMarkError, HistoryMismatchError, NotOwnedError
+ * (the deploy role doesn't own the managed schema or something in it) or
  * MarkMismatchError (the target doesn't match the replica).
  */
 export async function mark(
@@ -63,6 +67,11 @@ export async function mark(
         view.recorded,
         view.draft,
       );
+      await requireOwnership(
+        session,
+        view.target.name,
+        project.config.managedSchema,
+      );
       await requireReplicaMatch(project, view.target, session, {
         migrations,
         recorded: view.recorded,
@@ -71,7 +80,7 @@ export async function mark(
       return {
         action: `Mark migration ${next.folder} as deployed on target ${view.target.name}`,
         details: [
-          `The target matches a replica of migrations up to ${next.folder} (column order and ownership aside).`,
+          `The target matches a replica of migrations up to ${next.folder} (column order aside), and the deploy role owns everything in its managed schema.`,
           "Its scripts are not run: only the target's history schema records it, as marked.",
         ],
         plan: migrations,

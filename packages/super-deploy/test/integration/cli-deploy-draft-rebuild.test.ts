@@ -280,6 +280,43 @@ unix("deploy-draft", () => {
     ]);
   });
 
+  test("refuses, without asking, a target where the deploy role doesn't own an object in the managed schema", async () => {
+    const deployer = roleName("deployer");
+    const database = targetDatabaseName();
+    await server.query(`create role ${deployer} login password 'deployer'`);
+    await server.query(`create database ${database} owner ${deployer}`);
+    const { config } = deployConfig(server, {
+      database,
+      preamble: asDeployerPreamble(database, deployer),
+      adapter: "asDeployer",
+    });
+    const dir = await customersDeployed(config);
+    await server.query(
+      `update deployment_history.settings set disposable = true;
+       alter table customers owner to super_deploy;`,
+      [],
+      database,
+    );
+    await requireCityDraft(dir);
+
+    const terminal = spawnTerminal(["deploy-draft", "--target", "dev"], {
+      cwd: dir.root,
+    });
+
+    await terminal.waitFor(
+      `table public.customers is owned by super_deploy, which the deploy role isn't a member of (fix: ALTER TABLE public.customers OWNER TO ${deployer})`,
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    expect(
+      await server.query(
+        "select is_nullable from information_schema.columns where table_name = 'customers' and column_name = 'city'",
+        [],
+        database,
+      ),
+    ).toEqual([{ is_nullable: "YES" }]);
+  });
+
   test("a failing draft rolls back entirely: the attempt failed and the target holds no draft", async () => {
     const { dir, database } = await deployedProject();
     await requireCityDraft(dir);
@@ -708,11 +745,11 @@ unix("rebuild", () => {
     await server.query(`create role ${deployer} login password 'deployer'`);
     await server.query(`create role ${reader} nologin`);
     await server.query(`create database ${database}`);
-    // An administrator's setup: app belongs to its owner, who lets the
-    // deploy role create objects there.
+    // An administrator's setup: app belongs to its owner, and the deploy
+    // role is a member of the owner.
+    await server.query(`grant ${owner} to ${deployer}`);
     await server.query(
       `create schema app authorization ${owner};
-       grant usage, create on schema app to ${deployer};
        grant create on database ${database} to ${deployer}`,
       [],
       database,

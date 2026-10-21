@@ -67,7 +67,8 @@ export interface StatusReport {
   readonly preflight: PreflightFindings;
   /**
    * How the target's managed schema differs from what its recorded
-   * migrations produce (column order and ownership aside). Empty: no drift.
+   * migrations produce (column order and ownership aside: ownership is
+   * `preflight.notOwned`). Empty: no drift.
    * Undefined when the recorded history doesn't match the project's
    * migrations (`preflight.historyMismatches`), so no replica can be built.
    */

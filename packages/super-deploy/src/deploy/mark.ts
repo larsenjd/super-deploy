@@ -2,7 +2,8 @@
 // running it, because someone already brought the target there by hand. Only
 // when the target's managed schema matches, with no exceptions, a replica of
 // its migrations up to that one (column order and ownership aside, as in the
-// drift check). The record is the migration's original variant, marked
+// drift check; `mark` and adoption check ownership on their own,
+// deploy/ownership.ts). The record is the migration's original variant, marked
 // rather than deployed, and is the only thing written: one `migrations` row
 // in the target's history schema, inside its own transaction.
 //
