@@ -1,6 +1,6 @@
 # 14: Two commands run at the same time in one project: one fails with ECONNREFUSED / "the database system is starting up"
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** medium
 **Merged:** 49
@@ -98,3 +98,17 @@ The first command starts the server; others attach to it if `postmaster.pid` exi
 - A lease: each process registers in the data dir (pid file per client), and the last live client stops the server. A dead owner's server is adopted by the next command (recommended).
 - Before stopping, the owner checks `pg_stat_activity` for other clients and leaves the server running if any are there (simpler, racier).
 - Never stop the server automatically; document a stop command.
+
+### Decided, 2026-10-21
+
+The maintainer chose: **a lease file.** Each command using an embedded server registers in that server's data directory, and the last live one stops it. A server left by a dead command is taken over by the next one.
+
+- Registration: a file per client process (pid, start time) in the data directory. A command removes its own file when it closes; the one that removes the last file stops the server.
+- A client file whose process is gone counts as dead. A command that finds a server with only dead clients takes it over: it registers, sweeps leftover throwaway databases, and stops the server at the end like any last client.
+- Attaching retries while the server reports 57P03 ("starting up"), within a bounded time.
+- Applies to each embedded server separately (06 gives rehearsals and `dev` one each).
+- Keep it cross-platform: no reliance on signals to other processes to test liveness beyond what Node offers on Windows (`process.kill(pid, 0)` works there).
+
+**Blocked by:** 06 (it reshapes the embedded adapter and adds the second server).
+
+**Acceptance criteria:** the brief's five, plus: a server whose only client file belongs to a dead pid is stopped by the next command's close.

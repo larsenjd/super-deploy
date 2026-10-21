@@ -1,6 +1,6 @@
 # 11: `status` exits 0 when it reports "Deploy would refuse"
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** low
 **Area:** newproj
@@ -82,3 +82,12 @@ A script can tell "deployable, no drift" from "would refuse" and from "drift not
 ### Note, 2026-10-20
 
 ADR-0006 puts privileges, ownership and row-level security outside the system in V1 (`.scratch/super-deploy/issues/28-privileges-out-of-scope.md`). The missing-role refusal in the reproduction goes away. The issue stands for the other reasons `status` reports "Deploy would refuse": history mismatch, a held draft, and the new ownership refusal.
+
+### Decided, 2026-10-21
+
+The maintainer chose: **exit 1 unless the target is deployable with no drift.**
+
+- `status` exits 0 only when nothing would make `deploy` refuse and drift was checked and found none (pending migrations still exit 0). It exits 1 for drift, for any "Deploy would refuse" finding (history mismatch, deployed draft, ownership, and any other pre-flight refusal), and for "Drift: not checked". Usage errors stay 2.
+- `status --help` states this, and the spec's exit-code table and story 54 match.
+
+**Acceptance criteria:** as the brief above, with these exit codes: up to date 0, pending 0, drift 1, would refuse 1, drift not checked 1. CLI tests cover each.

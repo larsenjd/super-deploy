@@ -1,6 +1,6 @@
 # 51: After a SIGKILLed deploy, "locked by attempt #N ... try again when it has finished" gives no hint the CLI is gone
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** low
 **Area:** fail
@@ -66,3 +66,12 @@ After a deploy's CLI dies, the target-lock refusal says "try again when it has f
 **Decision needed:**
 - Set `client_connection_check_interval` (e.g. 5 s) and show the pid and `pg_stat_activity` details; no history change (recommended).
 - Also record client host and pid in the attempt, so a same-host CLI can report "the process that started it is gone".
+
+### Decided, 2026-10-21
+
+The maintainer chose: **detect dead clients**, with no history change.
+
+- The deploy session sets `client_connection_check_interval` (5 s), so PostgreSQL ends a dead CLI's session soon after it disappears.
+- The lock refusal (shared with `status`, 41) names the holding backend's pid, its `pg_stat_activity` state, when its current statement started, and the statement, and says that if that deploy is known to be dead, `select pg_cancel_backend(<pid>)` ends it.
+
+**Acceptance criteria:** the brief's first two; the third (client host and pid in the attempt) is dropped.

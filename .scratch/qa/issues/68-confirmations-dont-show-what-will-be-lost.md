@@ -1,6 +1,6 @@
 # 68: The disposable and rebuild confirmations don't show what's on the target
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** low
 **Area:** disp
@@ -83,3 +83,15 @@ Marking a 1000-row production-like target disposable shows the same box as for a
 - Disposable: table count and estimated rows (`reltuples`). Rebuild: the drift-style list of objects not from migrations, capped with "and N more" (recommended).
 - Counts only, for both.
 - Fix the wording only.
+
+### Decided, 2026-10-21
+
+The maintainer chose: **counts for `disposable`, and the extra objects for `rebuild`.**
+
+- `disposable --set yes`: the confirmation shows how many tables the managed schema has and their estimated total rows (`reltuples`), e.g. `Schema public holds 12 tables, about 48,000 rows`.
+- `rebuild`: the confirmation also lists the objects in the managed schema that no recorded migration created (the drift comparison's "only on the target" objects), capped at 10 with "and N more". 61 adds the dependents in other schemas to the same box.
+- In scope regardless: the disposable box says `deploy-draft` may deploy a draft and `rebuild` may wipe, instead of both wiping.
+
+**Blocked by:** 61 (both change `rebuild`'s confirmation in `commands/rebuild.ts`).
+
+**Acceptance criteria:** the brief's four.

@@ -1,6 +1,6 @@
 # 07: The pre-commit hook refuses any commit while a draft exists, which the README doesn't say
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** low
 **Area:** newproj
@@ -72,3 +72,16 @@ Either a draft can be committed and pushed for review, while other `validate` pr
 **Decision needed:**
 - Let the hook pass "draft not finalized" and "no draft covers it" (for example a `--strict` mode that skips work-in-progress warnings, used only by the hook), and keep CI strict (recommended).
 - Keep blocking and document "finalize before committing, or `--no-verify`".
+
+### Decided, 2026-10-21
+
+The maintainer chose: **the hook lets a draft in progress through; CI stays strict.**
+
+- `validate` gains a mode for the hook (e.g. `--allow-draft`, combinable with `--strict`) that does not count the work-in-progress findings, "draft not finalized" and "no draft covers it", as failures. It still lists them, as warnings. Every other finding fails as under `--strict`.
+- The template's `precommit` uses it. CI (`validate --strict` without the new flag) still fails on an unfinalized draft.
+- The README says what the hook blocks, that a draft can be committed for review, and that CI refuses until it is finalized.
+
+**Acceptance criteria** (replacing the "once decided" ones):
+- [ ] CLI test: with a draft present, `validate --strict --allow-draft` exits 0 and prints the warnings; `validate --strict` exits 1.
+- [ ] A finding other than the two work-in-progress ones (e.g. an edited migration) still fails with `--allow-draft`.
+- [ ] The template's precommit uses the flag, and the README documents it.

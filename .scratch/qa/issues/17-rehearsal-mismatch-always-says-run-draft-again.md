@@ -1,6 +1,6 @@
 # 17: A rehearsal mismatch always says "run draft again", even when re-drafting can't fix it
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** medium
 **Area:** newproj
@@ -92,3 +92,15 @@ Every mismatch says "The rehearsal does not match the desired schema; run draft 
 **Decision needed:**
 - Branch the message on the stored desired-schema hash, and add a schema-change hash so hand edits are named (recommended).
 - Branch only on the desired-schema hash; no metadata change.
+
+### Decided, 2026-10-21
+
+The maintainer chose: **two hashes.** `draft.json` keeps `desiredSchemaHash` and gains a hash of the `schema-change.sql` that `draft` wrote.
+
+- On a rehearsal mismatch:
+  - desired schema changed since `draft`: "run draft again" (as today);
+  - desired schema unchanged, `schema-change.sql` edited by hand: say so, and say the hand edit doesn't produce the desired schema;
+  - neither changed: say the scripts or seed data cause it (pre-migration, post-migration, seed data), and point to the README's renaming section for constraint names.
+- A draft written before this change (no schema-change hash) is treated as not hand-edited.
+
+**Acceptance criteria:** the brief's three, with the hash added.

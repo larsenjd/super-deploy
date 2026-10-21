@@ -1,6 +1,6 @@
 # 44: A misnamed script in the draft (e.g. `post-migrate.sql`) never runs, yet is frozen into the migration
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** medium
 **Area:** fail
@@ -80,3 +80,16 @@ A misnamed script (`post-migrate.sql`, `premigration.sql`) in `data-model/draft/
 - Refuse any unknown `.sql` file; allow non-`.sql` files and keep copying them (recommended).
 - Refuse any unknown file at all.
 - Warn only.
+
+### Decided, 2026-10-21
+
+The maintainer chose: **warn only.** Unknown files are still copied into the migration when it is finalized.
+
+- `draft`, `rehearse`, `validate` and `finalize` warn about each file in the draft folder that isn't part of a draft, naming it and listing the names a draft may hold (`pre-migration.sql`, `post-migration.sql`, `seed-data.sql`, ...). An unknown `.sql` file's warning adds that it will not run.
+- `finalize` still freezes it (the warning is shown before the acknowledgement-free finalize completes); `validate --strict` treats it as a warning, so it fails CI.
+- A draft with only known files behaves as today.
+
+**Acceptance criteria** (replacing the "once decided" ones):
+- [ ] A draft holding `post-migrate.sql`: `rehearse`, `validate` and `finalize` warn, naming the file and the allowed names; `finalize` still succeeds and copies it.
+- [ ] `validate --strict` exits 1 on it.
+- [ ] A draft with only known files prints no such warning.

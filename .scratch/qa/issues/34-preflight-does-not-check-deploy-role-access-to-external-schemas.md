@@ -1,6 +1,6 @@
 # 34: Pre-flight checks that an external schema exists, but not that the deploy role can use it
 
-**Status:** ready-for-agent
+**Status:** wontfix
 **Category:** enhancement
 **Severity:** low
 **Area:** adopt
@@ -71,3 +71,7 @@ The pre-flight checks refuse when a schema listed in `externalSchemas` doesn't e
 ### Note, 2026-10-20
 
 ADR-0006 puts privileges, ownership and row-level security outside the system in V1 (`.scratch/super-deploy/issues/28-privileges-out-of-scope.md`). `SECURITY DEFINER` is refused, so routines run as their caller and the application's roles, not the deploy role, need the external schema's grants. That removes this issue's motivating case. Re-triage before implementing: it may now be wontfix.
+
+### Decided, 2026-10-21
+
+The maintainer closed it: routines run as their caller (`SECURITY DEFINER` is refused, ADR-0006), so the deploy role's access to external schemas doesn't matter, and per 06 external schemas are the DBA's job and no longer checked at all.

@@ -1,6 +1,6 @@
 # 05: The template's own `dev` target prints a superuser warning on every command
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** low
 **Area:** newproj
@@ -68,3 +68,20 @@ A fresh project's `status --target dev` and `deploy --target dev` print no warni
 - Have the embedded `target()` create and connect as a non-superuser deploy role that owns the database, so `dev` behaves like a real target (recommended).
 - Suppress the superuser warning for embedded targets.
 - Keep it and document in the README that `dev` warns by design.
+
+### Decided, 2026-10-21
+
+The maintainer chose: **the embedded target connects as a non-superuser deploy role that owns the database**, so `dev` behaves like a real target. This completes the brief above.
+
+- `embeddedPostgres(...).target(database)` creates, on first connect, a `LOGIN` role that is not a superuser and has no predefined roles (name and password fixed and local-only, like today's `super_deploy` credentials), makes it the owner of the target database, and connects as it. Server setup that needs the superuser (creating the database and the role) keeps using `super_deploy`.
+- The deploy role owns the database, so it owns `public` through `pg_database_owner` and passes the ownership pre-flight; it has `CREATE` on the database for the history schema.
+- Rehearsals are unaffected (06 moves them to their own server).
+- README: the `dev` section names the role `dev` deploys as.
+
+**Blocked by:** None (can start immediately). 06 and 14 build on this ticket's changes to `adapters/embedded-postgres.ts`.
+
+**Acceptance criteria** (replacing the "once decided" ones):
+- [ ] In a fresh `init` project, `status --target dev` and `deploy --target dev` print no superuser warning (API and CLI seams).
+- [ ] `dev`'s deploy role is not a superuser, owns the `dev` database, and deploys a migration with a table, view and function (API seam).
+- [ ] A `postgresTarget` connecting as a superuser still gets the warning.
+- [ ] `docs/agents/testing.md`'s note that embedded targets always carry the superuser warning is updated.

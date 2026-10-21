@@ -1,6 +1,6 @@
 # 10: `unfinalize` moves an already-deployed, committed migration back into the draft without a warning, and the resulting refusal says nothing about how to recover
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** medium
 **Area:** newproj
@@ -90,3 +90,14 @@ Before or while moving the migration back, `unfinalize` tells the user that a mi
 - Print a warning line after moving it ("if this migration was deployed anywhere, restore it instead of changing it"), with no new question (recommended).
 - Ask for confirmation when the migration folder is committed in git (needs a git dependency).
 - Leave as is.
+
+### Decided, 2026-10-21
+
+The maintainer chose: **a warning line after moving it, with no new question.**
+
+- After `unfinalize` moves migration N back into the draft, it prints: `If migration N was deployed anywhere, don't change it: run restore-schema to put it back, then make the change in a new migration (or a Recovery if it failed on a target)`. Wording may be tightened; it must name the migration, `restore-schema`, and Recovery.
+- The API result carries the same note so the menu prints it too.
+
+**Acceptance criteria** (replacing the "once decided" ones):
+- [ ] CLI test pins the warning line after a successful `unfinalize`.
+- [ ] `unfinalize` asks nothing new and works as today otherwise.

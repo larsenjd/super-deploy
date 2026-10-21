@@ -1,6 +1,6 @@
 # 06: No documented way to connect to the local `dev` database (to look at it, create roles or run the app)
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** medium
 **Merged:** 31
@@ -82,3 +82,38 @@ targets, and with no way to connect (above) I couldn't check.
 ### Note, 2026-10-20
 
 ADR-0006 puts privileges, ownership and row-level security outside the system in V1 (`.scratch/super-deploy/issues/28-privileges-out-of-scope.md`). Rehearsals stop creating placeholder roles and the pre-flight stops checking granted roles, so the role leak into `dev` goes away. What remains: a documented way to connect to `dev` (to look at it, point an app at it, or create external schemas). Ignore the role-specific acceptance criterion.
+
+### Decided, 2026-10-21
+
+The maintainer chose:
+- **Rehearsals run on a separate embedded server from `dev`**, so `dev` is a database on a server of its own, like a real target.
+- **The config declares how to connect to `dev`:** a fixed `port` option on `embeddedPostgres`, so `dev` is always at a known URL, documented in the README.
+- **External schemas are the DBA's job:** the pre-flight no longer refuses a target that lacks a declared external schema. A routine that reads a missing one fails only when it runs, which is outside super-deploy's responsibility. No setup mechanism for external schemas on `dev` is added.
+
+This supersedes the brief above (its placeholder-role parts went with ADR-0006).
+
+## Brief (ready-for-agent)
+
+**Summary:** `dev` lives on its own embedded server at a port the config declares, so users can connect to it; rehearsals use a separate embedded server; and a missing external schema no longer blocks a deployment.
+
+**Desired behavior:**
+- `EmbeddedPostgresOptions` gains `port?: number`. With a port, the server listens on `127.0.0.1:<port>`; if that port is taken by something else, the command fails naming the port and the config setting. Without one, behaviour is as today (a free port).
+- The template's `super-deploy.config.ts` uses two embedded servers: one for `dev` with a `port`, in `.super-deploy/dev` (gitignored), and one for rehearsals on a free port, in `.super-deploy/rehearsal`. `init` writes a port that is free when it runs.
+- The README's `dev` section gives the connection URL (`postgres://<deploy role from 05>:<password>@127.0.0.1:<port>/dev`), the superuser URL for DBA work on `dev` (creating app roles, external schemas, grants), and when the server runs (a command starts it; see 14 for when it stops). It says the port is set in `super-deploy.config.ts`.
+- The pre-flight drops the "external schema does not exist" refusal. `deploy`, `deploy-draft`, `status` and `mark` go ahead on a target without a declared external schema. `PreflightFailedError` and the `status` result lose the missing-schemas finding.
+- `externalSchemas` keeps its other jobs (which PL/pgSQL references the rules accept).
+- Spec: story 66 is removed; the `deploy` sequence and "Target setup that stays outside super-deploy" say external schemas are set up by the DBA and are not checked. The README's `externalSchemas` entry says the same.
+
+**Key interfaces:**
+- `adapters/embedded-postgres.ts` (`EmbeddedPostgresOptions`, start and attach).
+- The template's `super-deploy.config.ts`, `.gitignore` and README; `init`, which writes the config.
+- `deploy/preflight.ts` and `PreflightFailedError`.
+
+**Blocked by:** 05. 14 builds on this ticket's adapter changes.
+
+**Acceptance criteria:**
+- [ ] A fresh `init` project's `dev` is reachable at the URL the README gives, using the port in its config (API seam: connect with `pg` after `deploy --target dev` and read a deployed table).
+- [ ] A rehearsal never creates a database on `dev`'s server (list the databases on both servers during a `rehearse`).
+- [ ] A configured port that is already in use fails with a message naming the port and the setting.
+- [ ] With `externalSchemas: ["auth"]` and no `auth` schema on the target, `deploy` succeeds and `status` reports no refusal.
+- [ ] Spec story 66 and the README match; the template's precommit passes.

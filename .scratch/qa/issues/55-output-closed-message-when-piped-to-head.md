@@ -1,6 +1,6 @@
 # 55: Piping output to `head` prints "Output closed: cleaning up before exiting"
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** low
 **Area:** fail
@@ -54,3 +54,9 @@ Piping to `head` exits 141 after cleaning up, as today. The notice is printed or
 **Decision needed:**
 - Keep exit 141 and cleanup, drop the notice for closed output only (recommended: other CLIs are quiet here, and the notice isn't actionable).
 - Keep as is and close as wontfix.
+
+### Decided, 2026-10-21
+
+The maintainer chose: **drop the notice for closed output.** Exit code 141 and the cleanup stay; nothing is printed when stdout closes. Notices for signals (Ctrl+C, SIGTERM) are unchanged. Spec story 89 is updated if it names the notice.
+
+**Acceptance criteria:** the brief's two, silent case.

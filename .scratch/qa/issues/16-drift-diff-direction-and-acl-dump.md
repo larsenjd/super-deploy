@@ -1,6 +1,6 @@
 # 16: Drift output: the -/+ lines are unlabelled and the reverse of the usual direction, and an ACL change prints the whole ACL
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** enhancement
 **Severity:** low
 **Merged:** 32
@@ -95,3 +95,17 @@ Drift lines are an unlabelled `-`/`+` pair, where `-` is what the target has and
 ### Narrowed, 2026-10-20
 
 ADR-0006 puts privileges, ownership and row-level security outside the system in V1 (`.scratch/super-deploy/issues/28-privileges-out-of-scope.md`). The catalog comparison stops reading ACLs, so the ACL dump, double-escaped role names and the grantor question go away. What remains: label the sides of a difference, or flip them to the git convention, and schema-qualify names. Ignore the grant-specific acceptance criteria.
+
+### Decided, 2026-10-21
+
+The maintainer chose: **label the two sides in words**, dropping bare `-`/`+`. ADR-0006 already removed the grant and ACL parts (see "Narrowed").
+
+- Each difference reads e.g. `table customers: on the target: <line>` / `expected by migrations: <line>`, or for one-sided differences `only on the target:` / `missing from the target:`. The same words are used by `status`, the deploy drift refusal and `mark`.
+- Rehearsal mismatches, which compare a replay with the desired schema, use their own pair of labels: `from the migrations:` / `from the desired schema:`.
+- Object names are schema-qualified and quoted once.
+
+**Acceptance criteria** (replacing the brief's, whose grant criteria are void):
+- [ ] An extra hand-made column shows under `only on the target`, a dropped index under `missing from the target`, a changed column type with both labelled sides (API and CLI seams).
+- [ ] A rehearsal mismatch uses its own labels.
+- [ ] Objects are schema-qualified; a name needing quotes is quoted once.
+- [ ] Existing drift, mark and rehearsal tests pass, updated for the new format.

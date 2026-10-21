@@ -1,6 +1,6 @@
 # 53: Malformed connection strings give misleading errors, and `sslmode=require` prints a raw node-postgres warning
 
-**Status:** ready-for-human
+**Status:** ready-for-agent
 **Category:** bug
 **Severity:** low
 **Area:** fail
@@ -82,3 +82,12 @@ node-postgres treats `sslmode=prefer`, `require` and `verify-ca` as `verify-full
 **Decision needed:**
 - Pass `uselibpqcompat=true` so `sslmode` means what libpq says, and document it (recommended: it matches what users expect from psql).
 - Keep pg's verify-full aliasing, suppress the warning, and document that `require` verifies certificates.
+
+### Decided, 2026-10-21
+
+The maintainer chose: **the libpq meaning of `sslmode`**, as psql uses it.
+
+- Connection strings are passed to node-postgres with `uselibpqcompat=true`, so `require` encrypts without verifying the certificate, `verify-ca` and `verify-full` verify, and no node-postgres warning is printed.
+- The README's real-target section has a short TLS paragraph: what each `sslmode` does, and how to connect to a server with a private CA (`sslrootcert` with `verify-full`).
+
+**Acceptance criteria:** as the brief above, with `require` not verifying the certificate.
