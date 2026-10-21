@@ -41,7 +41,11 @@ in `super-deploy.config.ts` (before any draft or migration exists), then run
 `pnpm exec super-deploy init --adopt <target>`. Its managed schema becomes the
 desired schema and migration `00001-adopt`, which is recorded on that target
 as already deployed. If the database holds anything super-deploy doesn't
-support, nothing is written and every such object is listed.
+support, nothing is written and every such object is listed: that includes
+a `SECURITY DEFINER` routine and objects the deploy role doesn't own (see
+"Permissions"). Grants, policies and row-level security on the target stay
+as they are, left out of the desired schema; adoption says how many grants
+and policies it left.
 
 Functions (or other statements) that use dynamic SQL (`EXECUTE`) or call a
 built-in whose effects escape the transaction (such as `pg_notify`) need an
@@ -56,93 +60,81 @@ overrides like any other.
 
 ## Permissions
 
+super-deploy knows about one role: the deploy role, which it connects to a
+target as, and which owns the managed schema and everything in it. Who else
+may use the database is set up on each target outside super-deploy.
+
 ### What the desired schema declares
 
-The desired schema declares who may use what it defines, and super-deploy
-deploys exactly that:
+No privileges. The desired schema, and every pre-migration script,
+post-migration script and seed data file, refuses grants, revokes,
+`ALTER DEFAULT PRIVILEGES`, roles and role membership, `OWNER TO`, policies,
+`ALTER TABLE ... ENABLE/FORCE ROW LEVEL SECURITY` and `SECURITY DEFINER`
+routines. No override marker gets past these refusals. Every routine runs as
+the role that calls it (`SECURITY INVOKER`, PostgreSQL's default).
 
-- Grants on its objects, e.g. `grant select on orders to app_reader`.
-- `USAGE` on the managed schema, e.g. `grant usage on schema app to app_reader`.
-  A managed schema other than `public` needs this, or no role but the deploy
-  role can reach its objects. `CREATE` and `ALL` on the schema are refused,
-  as are grants on any other schema.
-- Revokes of PostgreSQL's default `PUBLIC` privileges on its objects:
-  `revoke execute on function f() from public` (also procedures),
-  `revoke usage on type t from public` (also domains) and, when the managed
-  schema is `public`, `revoke usage on schema public from public`. Every
-  other `REVOKE` is refused: to take a grant away, remove the `GRANT`.
-
-For example, a `SECURITY DEFINER` function that only `app_writer` may call:
-
-```sql
-create function archive_order(id bigint) returns void
-  language sql security definer set search_path = public, pg_catalog
-  as $$ update orders set archived = true where orders.id = archive_order.id $$;
-
-revoke execute on function archive_order(bigint) from public;
-grant execute on function archive_order(bigint) to app_writer;
-```
-
-Grants are part of the schema: a grant or revoke made by hand on a target,
-including on the managed schema itself, is drift, and `deploy` refuses until
-it is undone (`status` lists it). `rebuild` leaves the managed schema's grants
-exactly as the migrations declare. It can only revoke grants the deploy role
-may revoke: if an administrator owns the managed schema and granted it to
-other roles by hand, `rebuild` fails without changing anything, naming each
-such grant, until the owner revokes them.
+super-deploy never compares, creates, revokes or resets the grants, default
+privileges, policies and row-level security on a target. They are not drift,
+`deploy` succeeds over them, and `init --adopt` leaves them out of the desired
+schema. `rebuild` drops everything in the managed schema, with the grants and
+policies on those objects, and leaves the schema itself, its grants and its
+default privileges as they are.
 
 ### What each target needs set up outside super-deploy
 
-- **Roles and role membership.** super-deploy never creates or drops roles.
-  Every role the desired schema grants to must exist on a target before
-  deploying (`deploy` refuses otherwise); rehearsals create placeholder
-  `NOLOGIN` roles for them.
-- **Database privileges**: `CONNECT` (and `TEMPORARY`, if needed) for the
-  application's roles.
-- **The deploy role's own privileges.** It owns every object it deploys, and
-  a `SECURITY DEFINER` function runs as it. It needs `CREATE` on the database
-  for the first deployment to create the history schema (and the managed
-  schema, if the target lacks it). It should own the managed schema; if an
-  administrator owns it instead, grant the deploy role
-  `usage, create on schema app ... with grant option` (the grant option lets
-  it grant `USAGE` on the schema). These privileges, and the owner's, aren't
-  drift, and `rebuild` and `init --adopt` leave them alone. For
-  `public`, deploy as the database's owner, who owns `public` by default.
-- **Grants on external schemas and their objects** (`externalSchemas` in
-  `super-deploy.config.ts`). A `SECURITY DEFINER` function runs as the deploy
-  role, so that role needs them, not the application's roles. For example,
-  a trigger that copies a user's name from an `auth` schema:
+- **The deploy role.** It must own the managed schema and everything in it,
+  or be a member of the role that owns them (one granted `WITH INHERIT FALSE`
+  doesn't count). `deploy`, `deploy-draft`, `status`, `mark` and
+  `init --adopt` refuse a target where something in the managed schema
+  belongs to another role, listing each object with the `ALTER ... OWNER TO`
+  that fixes it. For `public`, which `pg_database_owner` owns, deploy as the
+  database's owner. The deploy role also needs `CREATE` on the database for
+  the first deployment, which creates the history schema (and the managed
+  schema, if the target lacks it).
+- **The application's roles**, their role membership and their database
+  privileges: `CONNECT` (and `TEMPORARY`, if needed). super-deploy never
+  creates or drops roles.
+- **The application's grants and any policies.** The recommended way is
+  default privileges for the deploy role, so every object a deployment
+  creates is granted automatically. For example, once the managed schema
+  `app` exists, run as the deploy role on each target:
 
   ```sql
-  create function set_author_name() returns trigger
-    language plpgsql security definer set search_path = pg_catalog
-    as $$
-    begin
-      new.author_name := (select u.name from auth.users u where u.id = new.author_id);
-      return new;
-    end
-    $$;
-
-  create trigger posts_set_author_name before insert on posts
-    for each row execute function set_author_name();
-
-  revoke execute on function set_author_name() from public;
+  grant usage on schema app to app_reader, app_writer;
+  alter default privileges for role deploy_role in schema app
+    grant select on tables to app_reader;
+  alter default privileges for role deploy_role in schema app
+    grant select, insert, update, delete on tables to app_writer;
   ```
 
-  Every target then needs, outside super-deploy:
+  Default privileges apply only to objects created afterwards: grant on what
+  already exists too, e.g. `grant select on all tables in schema app to
+  app_reader`.
+
+  Two things to know about grants and policies made by hand:
+
+  - A migration that drops and recreates a table (or another object) loses
+    the grants and policies made on it by hand, and super-deploy can't
+    notice. Default privileges grant the new object again; anything else has
+    to be made again after the deployment.
+  - A migration that changes the type of, or drops, a column a hand-made
+    policy uses fails at deploy: PostgreSQL refuses while the policy depends
+    on the column. Rehearsals can't catch it, because their databases have
+    no hand-made policies. The deployment rolls back and PostgreSQL's error
+    names the policy: drop the policy, deploy, then create it again.
+- **External schemas** (`externalSchemas` in `super-deploy.config.ts`), which
+  must exist on every target (`deploy` refuses otherwise), and grants on them
+  and their objects. Routines run as their caller, so it's the application's
+  roles that need these grants (and the deploy role too, if a migration's
+  scripts fire a trigger that uses them). For example, a
+  PL/pgSQL function `app_writer` calls that reads `auth.users` needs:
 
   ```sql
-  grant usage on schema auth to deploy_role;
-  grant select on auth.users to deploy_role;
+  grant usage on schema auth to app_writer;
+  grant select on auth.users to app_writer;
   ```
 
   Rehearsals have no `auth` schema, so only PL/pgSQL bodies may reference it.
-
-Don't use `ALTER DEFAULT PRIVILEGES` for the deploy role in the managed
-schema (for example `alter default privileges for role deploy_role in schema
-app grant select on tables to app_reader`). The objects a deployment creates
-would get grants that rehearsals don't have, and the next `deploy` refuses
-the target as drifted. Declare the grants in the desired schema instead.
 
 ## Files
 
