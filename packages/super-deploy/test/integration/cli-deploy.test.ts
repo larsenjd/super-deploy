@@ -39,7 +39,7 @@ async function finalizedProject(settings?: string) {
 }
 
 describe("deploy and status", () => {
-  test("status shows what is pending, deploy applies it, and status then shows each attempt, a deploy of nothing as such", async () => {
+  test("status shows what is pending and that drift was checked, deploy applies it, and status then shows each attempt, a deploy of nothing as such", async () => {
     const dir = await finalizedProject();
 
     const before = await runCli(["status", "--target", "dev"], {
@@ -48,7 +48,7 @@ describe("deploy and status", () => {
     expect(before).toMatchObject({
       exitCode: 0,
       stdout:
-        "Target dev: 0 migrations recorded, 1 pending\nPending:\n  00001-add-customers\n",
+        "Target dev: 0 migrations recorded, 1 pending\nDrift: none\nPending:\n  00001-add-customers\n",
       stderr: "",
     });
 
@@ -73,7 +73,7 @@ describe("deploy and status", () => {
     const user = userInfo().username;
     expect(after.stdout).toMatch(
       new RegExp(
-        `^Target dev: 1 migration recorded, 0 pending\nRecent attempts:\n  #2 deploy succeeded, nothing to deploy, by ${user} at \\S+Z\n  #1 deploy succeeded migration 1 by ${user} at \\S+Z\n$`,
+        `^Target dev: 1 migration recorded, 0 pending\nDrift: none\nRecent attempts:\n  #2 deploy succeeded, nothing to deploy, by ${user} at \\S+Z\n  #1 deploy succeeded migration 1 by ${user} at \\S+Z\n$`,
       ),
     );
   });
@@ -132,7 +132,7 @@ describe("deploy and status", () => {
     });
     expect(report).toMatchObject({
       exitCode: 1,
-      stdout: `Target dev: 0 migrations recorded, 1 pending\nDeploy would refuse:\n  ${refusal}\nPending:\n  00001-add-customers\n`,
+      stdout: `Target dev: 0 migrations recorded, 1 pending\nDeploy would refuse:\n  ${refusal}\nDrift: none\nPending:\n  00001-add-customers\n`,
       stderr: preflightFailed,
     });
 
