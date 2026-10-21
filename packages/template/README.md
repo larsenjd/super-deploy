@@ -397,7 +397,10 @@ revokes, `ALTER DEFAULT PRIVILEGES`, roles and role membership, `OWNER TO`,
 `REASSIGN OWNED`, `DROP OWNED`, policies, turning row-level security on or
 off (`ALTER TABLE ... ENABLE ROW LEVEL SECURITY` and the like) and
 `SECURITY DEFINER` routines. No override marker gets past these refusals. Every routine runs as
-the role that calls it (`SECURITY INVOKER`, PostgreSQL's default).
+the role that calls it (`SECURITY INVOKER`, PostgreSQL's default). Each
+refusal says what to do instead: run grants, policies and `ALTER DEFAULT
+PRIVILEGES` on each target as the deploy role, and create roles there (see
+[What each target needs set up outside super-deploy](#what-each-target-needs-set-up-outside-super-deploy)).
 
 super-deploy never compares, creates, revokes or resets the grants, default
 privileges, policies and row-level security on a target. They are not drift,

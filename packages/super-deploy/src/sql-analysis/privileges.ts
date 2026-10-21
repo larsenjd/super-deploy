@@ -19,26 +19,30 @@ import {
 } from "./syntax-tree.ts";
 
 const outside = "set up on targets outside super-deploy";
+const privileges = `privileges and row-level security are ${outside}`;
+const readme = '(see the README, "Permissions")';
 
+// Each reason says why, then what to do instead and where it's documented.
 const reasons = {
-  privileges: `privileges and row-level security are ${outside}`,
-  roles: `roles, like privileges and row-level security, are ${outside}`,
-  ownership: `the deploy role owns everything in the managed schema; privileges and row-level security are ${outside}`,
-  definer: `the routine would run with the deploy role's rights for every role allowed to call it, and privileges and row-level security are ${outside}, so nothing here limits who that is; leave the default, SECURITY INVOKER`,
+  privileges: `${privileges}; remove it and run it on each target instead ${readme}`,
+  defaultPrivileges: `${privileges}; run it on each target as the deploy role, where it grants what every deployment creates ${readme}`,
+  roles: `roles, like privileges and row-level security, are ${outside}; create and grant roles on each target instead ${readme}`,
+  ownership: `the deploy role owns everything in the managed schema, and ${privileges}; remove it: the deploy role owns everything it creates ${readme}`,
+  definer: `the routine would run with the deploy role's rights for every role allowed to call it, and ${privileges}, so nothing here limits who that is; leave the default, SECURITY INVOKER ${readme}`,
 } as const;
 
 /** Statement types refused whatever they say, with the reason. */
 const refusedStatements: Readonly<Record<string, keyof typeof reasons>> = {
   CreatePolicyStmt: "privileges",
   AlterPolicyStmt: "privileges",
-  AlterDefaultPrivilegesStmt: "privileges",
+  AlterDefaultPrivilegesStmt: "defaultPrivileges",
   CreateRoleStmt: "roles",
   AlterRoleStmt: "roles",
   AlterRoleSetStmt: "roles",
   DropRoleStmt: "roles",
-  DropOwnedStmt: "roles",
   AlterOwnerStmt: "ownership",
   ReassignOwnedStmt: "ownership",
+  DropOwnedStmt: "ownership",
 };
 
 const rowSecurityCommands: Readonly<Record<string, string>> = {

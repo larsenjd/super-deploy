@@ -165,6 +165,26 @@ describe("privileges, roles, ownership, row-level security and SECURITY DEFINER"
     expect(found[0]?.message).toMatch(/set up on targets outside super-deploy/);
   });
 
+  test.each(allKinds)(
+    "%s says what to do instead and where it's documented",
+    async (kind) => {
+      const messages = (
+        await check(
+          kind,
+          "grant select on t to reader;\nalter default privileges grant select on tables to reader;\ndrop owned by a;",
+        )
+      ).map(({ message }) => message);
+      expect(messages).toEqual([
+        expect.stringMatching(/remove it and run it on each target instead/),
+        expect.stringMatching(/run it on each target as the deploy role/),
+        expect.stringMatching(/remove it: the deploy role owns everything/),
+      ]);
+      for (const message of messages) {
+        expect(message).toMatch(/\(see the README, "Permissions"\)$/);
+      }
+    },
+  );
+
   test("an override marker can't bypass them", async () => {
     const found = await check(
       "post-migration",

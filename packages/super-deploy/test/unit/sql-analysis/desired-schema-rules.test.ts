@@ -629,6 +629,35 @@ describe("privileges, roles, ownership, row-level security and SECURITY DEFINER"
     );
   });
 
+  const runOnTargets = /remove it and run it on each target instead/;
+  const removeIt = /remove it: the deploy role owns everything it creates/;
+  test.each([
+    ["grant select on t to reader", runOnTargets],
+    ["revoke select on t from reader", runOnTargets],
+    ["create policy p on t using (true)", runOnTargets],
+    ["alter table t enable row level security", runOnTargets],
+    [
+      "alter default privileges grant select on tables to reader",
+      /run it on each target as the deploy role, where it grants what every deployment creates/,
+    ],
+    ["create role r", /create and grant roles on each target/],
+    ["grant reader to writer", /create and grant roles on each target/],
+    ["alter table t owner to r", removeIt],
+    ["reassign owned by a to b", removeIt],
+    ["drop owned by a", removeIt],
+    [
+      "create function f() returns int language sql security definer as $$ select 1 $$",
+      /leave the default, SECURITY INVOKER/,
+    ],
+  ])(
+    "%s says what to do instead and where it's documented",
+    async (sql, next) => {
+      const [found] = await violations(`${sql};`);
+      expect(found?.message).toMatch(next);
+      expect(found?.message).toMatch(/\(see the README, "Permissions"\)$/);
+    },
+  );
+
   test("an override marker can't bypass them", async () => {
     const found = await violations(
       "-- OVERRIDE SUPER-DEPLOY REFUSAL: the app needs it\ngrant select on t to reader;",
