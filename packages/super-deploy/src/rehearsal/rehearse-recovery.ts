@@ -34,10 +34,11 @@ export async function rehearseRecovery(
   project: Project,
   input: RecoveryRehearsalInput,
 ): Promise<{ readonly serverVersion: string }> {
-  const { rehearsal, managedSchema } = project.config;
+  const { config } = project;
+  const { rehearsal, managedSchema } = config;
   const build = async (session: Session, units: readonly ReplayUnit[]) => {
     await ensureManagedSchema(session, managedSchema);
-    await replay(session, units, managedSchema);
+    await replay(session, units, config);
   };
   return withThrowawayDatabase(
     rehearsal,

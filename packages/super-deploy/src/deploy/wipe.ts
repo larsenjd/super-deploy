@@ -6,7 +6,8 @@
 //
 // The drops use CASCADE, so objects in other schemas that depend on managed
 // ones are dropped too: a view on a managed table, a foreign key to one, a
-// column of a managed type (with its data). `rebuild` lists them in its
+// column of a managed type, a table inheriting from a managed table or typed
+// with a managed composite type (those two with their data). `rebuild` lists them in its
 // confirmation first (`dependentsOutside`), so the person typing YES has
 // seen exactly what goes outside the managed schema. `init --adopt` names
 // them too: rehearsals lack them, so migrations touching what they use fail
@@ -93,7 +94,8 @@ export async function wipeManagedSchema(
  * What wiping `managedSchema` drops or alters outside it and `historySchema`,
  * described for people and sorted, e.g. `view reporting.customer_names`,
  * `foreign key archive_customer_fk on reporting.orders_archive`, `column
- * reporting.snap.c (with its data)`. Read-only; empty when the target lacks
+ * reporting.snap.c (with its data)`, `table reporting.child (with its
+ * data)` (any table: views and the like hold no data of their own). Read-only; empty when the target lacks
  * the managed schema.
  */
 export async function dependentsOutside(
@@ -152,6 +154,7 @@ outside AS (
 )
 SELECT DISTINCT
        CASE WHEN x.type = 'table column' THEN pg_catalog.format('column %s (with its data)', x.identity)
+            WHEN x.type = 'table' THEN pg_catalog.format('table %s (with its data)', x.identity)
             WHEN x.type = 'table constraint' AND EXISTS (
                    SELECT FROM pg_catalog.pg_constraint c
                     WHERE x.classid = 'pg_catalog.pg_constraint'::regclass AND c.oid = x.objid AND c.contype = 'f')
@@ -320,6 +323,9 @@ export class WipeDropFailedError extends SuperDeployError {
   }
 }
 
+/** How `objectsNotDroppable` names an extension, e.g. `extension citext`. */
+const extensionPrefix = "extension ";
+
 /**
  * rebuild refused before asking: the managed schema holds objects the deploy
  * role can't drop (e.g. an extension a superuser installed, or a member of
@@ -342,12 +348,23 @@ export class CannotWipeError extends SuperDeployError {
       extension === undefined
         ? `${object} (owned by ${owner})`
         : `${object} (a member of extension ${extension}, owned by ${owner})`;
+    // PostgreSQL can't give an extension another owner: only its owner or a
+    // superuser can drop it.
     const owned = objects.filter(({ extension }) => extension === undefined);
+    const extensions = owned
+      .filter(({ object }) => object.startsWith(extensionPrefix))
+      .map(({ object }) => object.slice(extensionPrefix.length));
+    const others = owned.length - extensions.length;
     const members = objects.length - owned.length;
     const advice = [
-      owned.length === 0
+      extensions.length === 0
         ? ""
-        : owned.length === 1
+        : extensions.length === 1
+          ? `Have the extension's owner or a superuser run DROP EXTENSION ${extensions.join(", ")} CASCADE`
+          : `Have the extensions' owners or a superuser run DROP EXTENSION ${extensions.join(", ")} CASCADE`,
+      others === 0
+        ? ""
+        : others === 1
           ? "Drop it, change its owner to the deploy role, or ask its owner to"
           : "Drop them, change their owners to the deploy role, or ask their owners to",
       members === 0
@@ -357,6 +374,9 @@ export class CannotWipeError extends SuperDeployError {
           : "Take them out of their extensions (ALTER EXTENSION ... DROP) or drop the extensions, as their owners",
     ]
       .filter((part) => part !== "")
+      .map((part, i) =>
+        i === 0 ? part : part.charAt(0).toLowerCase() + part.slice(1),
+      )
       .join("; ");
     super(
       `rebuild can't wipe schema ${schema} on target ${target}: the deploy role can't drop ${objects.map(describe).join(", ")}. ${advice}, then run rebuild again (nothing changed)`,

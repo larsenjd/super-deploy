@@ -851,6 +851,9 @@ const statusCommand: CommandDefinition = {
       for (const line of driftListing(report.drift)) {
         context.result(line);
       }
+    } else if (report.drift !== undefined) {
+      // Checked and found none: said, so it reads apart from "not shown".
+      context.result("Drift: none");
     }
     if (report.pending.length > 0) {
       context.result("Pending:");

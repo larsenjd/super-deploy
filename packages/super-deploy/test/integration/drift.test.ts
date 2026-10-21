@@ -254,6 +254,69 @@ create index orders_customer_idx on orders (customer_id);
       },
     ]);
   });
+
+  test("reports a domain made by hand once, with its constraint's line under it", async () => {
+    const { project, database } = await deployedProject();
+    await asDeployRole(
+      server,
+      database,
+      "create domain d_email as text constraint d_email_check check (value like '%@%')",
+    );
+
+    const { drift } = await status(project, { target: "dev" });
+
+    expect(drift).toEqual([
+      {
+        object: "domain public.d_email",
+        change: "extra",
+        differences: [
+          { side: "target", line: expect.stringMatching(/^type: d d_email /) },
+          {
+            side: "target",
+            line: expect.stringMatching(/^constraint: d_email d_email_check /),
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("names a domain's changed constraint with its domain", async () => {
+    const { project, database } = await deployProject(server, {
+      "positive.sql":
+        "create domain positive as integer constraint positive_check check (value > 0);\n",
+    });
+    await finalizeMigration(project, "add positive");
+    await deploy(project, { target: "dev" });
+    await asDeployRole(
+      server,
+      database,
+      `alter domain positive drop constraint positive_check;
+       alter domain positive add constraint positive_check check (value >= 0);`,
+    );
+
+    const { drift } = await status(project, { target: "dev" });
+
+    expect(drift?.map(({ object, change }) => ({ object, change }))).toEqual([
+      {
+        object: "constraint positive_check on domain public.positive",
+        change: "changed",
+      },
+    ]);
+  });
+
+  test("reports a composite type made by hand once, with its attributes' lines under it", async () => {
+    const { project, database } = await deployedProject();
+    await asDeployRole(server, database, "create type pair as (a int, b int)");
+
+    const { drift } = await status(project, { target: "dev" });
+
+    expect(drift?.map(({ object, change }) => ({ object, change }))).toEqual([
+      { object: "composite type public.pair", change: "extra" },
+    ]);
+    expect(
+      drift?.[0]?.differences.map(({ line }) => line.split(":")[0]),
+    ).toEqual(["relation", "type", "column", "column"]);
+  });
 });
 
 describe("deploy", () => {
@@ -289,6 +352,7 @@ describe("deploy", () => {
     expect((error as Error).message).toContain(
       "status --target dev lists the differences",
     );
+    expect((error as Error).message).toContain('see the README, "Drift"');
     expect(
       await server.query(
         `select (select array_agg(number order by number) from deployment_history.migrations) as recorded,
@@ -306,7 +370,7 @@ describe("deploy", () => {
     ]);
   });
 
-  test("refuses a drifted target with nothing pending", async () => {
+  test("refuses a drifted target with nothing pending, saying to undo the change or capture it in a migration and mark it", async () => {
     const { project, database } = await deployedProject();
     await asDeployRole(server, database, "drop table customers");
 
@@ -320,9 +384,8 @@ describe("deploy", () => {
         { object: "table public.customers", change: "missing" },
       ],
     });
-    expect((error as Error).message).not.toContain("mark");
     expect((error as Error).message).toContain(
-      "status --target dev lists the differences",
+      'status --target dev lists the differences). Undo the change on the target, or keep it: add it to the desired schema, draft and finalize a migration, then mark --target dev records that migration as deployed without running it (see the README, "Drift")',
     );
   });
 

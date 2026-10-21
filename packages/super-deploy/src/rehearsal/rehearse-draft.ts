@@ -47,7 +47,7 @@ export async function rehearseDraft(
         draftDatabaseRequest,
         async (replayed) => {
           await ensureManagedSchema(replayed, config.managedSchema);
-          await replay(replayed, units, config.managedSchema);
+          await replay(replayed, units, config);
           await requireSameStructure(replayed, desired, config.managedSchema, {
             subject: (found) =>
               draftMismatchSubject(since, found, config.managedSchema),
