@@ -166,7 +166,12 @@ Added 2026-10-20 from the V1 build, against the same pinned `1.0.0-alpha.59`. Wh
 |---|---|
 | Nested `AND` with `BETWEEN` or row comparisons in a check never converges (F2, upstream #544). | The rehearsal re-diff fails, so `rehearse` and `finalize` refuse the draft. |
 | Changing the base type of a domain a column uses throws in `plan()` (F5). | `differ/pg-delta.ts` wraps it in `DifferError`, so `draft` stops with pg-delta's message. |
+| Changing the type of a column a stored generated column uses generates a bare `ALTER COLUMN … TYPE`, which PostgreSQL refuses: `cannot alter type of a column used by a generated column` (QA 104). | Output kept as generated. `draft` runs its schema change and warns (`rehearsal/schema-change-check.ts`, QA 102); the refusal's `SqlFileFailedError` names the pre-migration fix (`rehearsal/replay.ts`, `nextStep`): drop the generated column there, and the regenerated schema change retypes the column and adds it back. Upstream report below. |
 | A non-transactional action. None seen so far. | `differ/pg-delta.ts` refuses the plan with `DifferError` (ADR-0001). |
+
+**Upstream reports to file** (ready-to-file text; nothing has been posted)
+
+- *Type change of a column used by a stored generated column fails to apply* (QA 104). Against `1.0.0-alpha.59` on PostgreSQL 18: source `create table a (id bigint primary key, price numeric(10,2) not null, qty integer not null, total numeric generated always as (price * qty) stored);`, target the same with `price numeric(6,2)`. The plan is `ALTER TABLE "public"."a" ALTER COLUMN "price" DROP DEFAULT; ALTER TABLE "public"."a" ALTER COLUMN "price" TYPE numeric(6,2) USING "price"::numeric(6,2);`, which PostgreSQL refuses: `ERROR: cannot alter type of a column used by a generated column` (SQLSTATE 0A000), `DETAIL: Column "price" is used by generated column "total".` Expected: the plan drops the dependent generated columns before the type change and adds them back after it, or reports that it can't. The same holds for `qty integer` → `smallint`.
 
 **Shapes of generated SQL that other code relies on**
 

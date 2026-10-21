@@ -275,8 +275,10 @@ export interface DeploymentRollback {
 /**
  * PostgreSQL refused a deploy-time SQL file, in a rehearsal or a deployment.
  * The message adds a next step by SQLSTATE: the target setting behind a lock
- * (55P03) or statement (57014) timeout, and for a data error (classes 22,
- * 23) in a deployment, a Recovery of the failing migration.
+ * (55P03) or statement (57014) timeout, for a data error (classes 22,
+ * 23) in a deployment, a Recovery of the failing migration, and for a type
+ * change a generated column blocks (0A000 with its DETAIL), the
+ * pre-migration fix.
  */
 export class SqlFileFailedError extends SuperDeployError {
   readonly code = "sql-file-failed";
@@ -310,7 +312,7 @@ export class SqlFileFailedError extends SuperDeployError {
         rollback === undefined
           ? undefined
           : `The deployment rolled back: target ${rollback.target} is unchanged, ${rollback.lastRecorded === undefined ? "with no migration recorded" : `still at migration ${rollback.lastRecorded}`}.`,
-        nextStep(failure.sqlState, rollback),
+        nextStep(failure, rollback),
       ]
         .filter((part) => part !== undefined)
         .join(" "),
@@ -336,9 +338,14 @@ function sentence(text: string): string {
 }
 
 function nextStep(
-  sqlState: string | undefined,
+  failure: SqlFileFailure,
   rollback: DeploymentRollback | undefined,
 ): string | undefined {
+  const { sqlState } = failure;
+  const generated = generatedColumnBlocking(failure);
+  if (generated !== undefined) {
+    return `Next: drop generated column "${generated.generated}" in the pre-migration script and run draft again: the schema change then changes the type of "${generated.column}" and adds "${generated.generated}" back (see the README, "Changing the type of a column a generated column uses").`;
+  }
   if (sqlState === "55P03") {
     return `The target's lockTimeout (default ${durationText(targetDefaults.lockTimeoutMs)}) ran out waiting for a lock: retry once whatever held the lock has finished.`;
   }
@@ -357,4 +364,23 @@ function nextStep(
     return `Next: super-deploy recovery --migration ${rollback.migration}, with seed data that reproduces the problem rows in the rehearsal.`;
   }
   return undefined;
+}
+
+/**
+ * The columns in PostgreSQL's refusal to change the type of a column a
+ * stored generated column uses (pg-delta's type change leaves the generated
+ * column in place: research §8), read from its DETAIL.
+ */
+function generatedColumnBlocking(
+  failure: SqlFileFailure,
+): { readonly column: string; readonly generated: string } | undefined {
+  if (failure.sqlState !== "0A000") {
+    return undefined;
+  }
+  const match = /^Column "(.+)" is used by generated column "(.+)"\.$/.exec(
+    failure.detail ?? "",
+  );
+  return match?.[1] === undefined || match[2] === undefined
+    ? undefined
+    : { column: match[1], generated: match[2] };
 }

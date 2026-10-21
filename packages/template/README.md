@@ -580,6 +580,23 @@ alter type money_amount_new rename to money_amount;
 Dropping the old type is destructive, so `finalize` asks you to acknowledge
 it.
 
+## Changing the type of a column a generated column uses
+
+PostgreSQL refuses to change the type of a column that a stored generated
+column uses, and `draft` generates the type change without touching the
+generated column, so `draft` warns and the rehearsal fails with
+`cannot alter type of a column used by a generated column`. Drop the
+generated column in `data-model/draft/pre-migration.sql` and run `draft`
+again: the schema change then changes the type and adds the generated
+column back, which computes it again for every row. For example, for
+`total numeric generated always as (price * qty) stored`:
+
+```sql
+alter table a drop column total;
+```
+
+Dropping a column is destructive, so `finalize` asks you to acknowledge it.
+
 ## Seed data
 
 Seed data goes in `data-model/draft/seed-data.sql`: `INSERT` statements with

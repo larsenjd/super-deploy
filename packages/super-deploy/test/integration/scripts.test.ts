@@ -320,6 +320,58 @@ alter type money_amount_new rename to money_amount;
     ]);
   });
 
+  test("retyping a column a generated column uses: draft and the rehearsal name the pre-migration fix, which deploys with the generated column recomputed", async () => {
+    const table = (price: string) => `create table a (
+  id bigint primary key,
+  price ${price} not null,
+  qty integer not null,
+  total numeric generated always as (price * qty) stored
+);
+`;
+    const { dir, project, database } = await deployProject(server, {
+      "a.sql": table("numeric(10,2)"),
+    });
+    await draft(project, { name: "add a" });
+    await finalize(project);
+    await deploy(project, { target: "dev" });
+    await server.query(
+      "insert into a (id, price, qty) values (1, 2.50, 3)",
+      [],
+      database,
+    );
+    await dir.write("data-model/desired-schema/a.sql", table("numeric(6,1)"));
+    const fix =
+      'drop generated column "total" in the pre-migration script and run draft again: the schema change then changes the type of "price" and adds "total" back (see the README, "Changing the type of a column a generated column uses")';
+
+    // pg-delta retypes the column with the generated column still there,
+    // which PostgreSQL refuses (research §8).
+    const drafted = await draft(project, { name: "narrow price" });
+
+    expect(drafted.shortfalls).toEqual([
+      {
+        kind: "fails",
+        message: expect.stringContaining(fix),
+        differences: [],
+      },
+    ]);
+    const refused = await rehearse(project).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(SqlFileFailedError);
+    expect((refused as SqlFileFailedError).message).toContain(fix);
+
+    await dir.write(
+      "data-model/draft/pre-migration.sql",
+      "alter table a drop column total;\n",
+    );
+    const fixed = await draft(project);
+    await finalize(project, { acknowledgeDestructive: true });
+    await deploy(project, { target: "dev" });
+
+    expect(fixed.shortfalls).toEqual([]);
+    expect(
+      await server.query("select price, total from a", [], database),
+    ).toEqual([{ price: "2.5", total: "7.5" }]);
+  });
+
   test("draft reports what the scripts still need to cover, counting the rows the rehearsal data has", async () => {
     const { dir, project } = await deployProject(server, {
       "customers.sql": `create table customers (
