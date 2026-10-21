@@ -1,4 +1,5 @@
-// `validate [--strict]`: database-free checks for the pre-commit hook.
+// `validate [--strict] [--allow-draft]`: database-free checks for the
+// pre-commit hook and CI.
 // Errors: the migrations index, folder names and numbering, content hashes
 // and the hash chains (migrations and their Recoveries); rule violations in
 // the desired schema, in every finalized migration's and Recovery's
@@ -6,6 +7,11 @@
 // whose schema change is no longer its migration's.
 // Warnings: an unfinalized draft, and desired-schema
 // changes not yet drafted. `strict` turns warnings into failures.
+// Those two are a draft in progress (the codes in `draftInProgress`):
+// `allowDraft` keeps them warnings even under `strict`, so the template's
+// hook lets a draft be committed for review while CI (`--strict` alone)
+// refuses it until it is finalized. Any other warning, such as one a later
+// check adds, still fails under `strict`.
 //
 // Read-only state: git does not store it, so a fresh checkout has writable
 // finalized files. A writable file whose migration still verifies is made
@@ -48,9 +54,20 @@ import { RecoverySchemaChangeEditedError } from "./recovery.ts";
 import { requireOriginalSchemaChange } from "./rehearse.ts";
 
 export interface ValidateOptions {
-  /** Fail on warnings too (the pre-commit hook uses this). */
+  /** Fail on warnings too (the pre-commit hook and CI use this). */
   strict?: boolean;
+  /**
+   * Never fail on a draft in progress: an unfinalized draft and undrafted
+   * desired-schema changes stay warnings, even under `strict`.
+   */
+  allowDraft?: boolean;
 }
+
+/** The warnings `allowDraft` never fails on: a draft in progress. */
+const draftInProgress: ReadonlySet<string> = new Set([
+  "unfinalized-draft",
+  "undrafted-changes",
+]);
 
 export interface ValidationReport {
   /** How many finalized migrations were checked. */
@@ -74,6 +91,7 @@ export async function validate(
   options: ValidateOptions = {},
 ): Promise<ValidationReport> {
   const strict = options.strict ?? false;
+  const allowDraft = options.allowDraft ?? false;
   const { root, paths } = project;
   const integrity = await checkMigrations(root, paths);
   const problems: ValidationProblem[] = [...integrity.problems];
@@ -153,7 +171,10 @@ export async function validate(
   const rules = await ruleProblems(project, draft, integrity);
   problems.push(...rules.problems);
 
-  if (problems.some((p) => p.severity === "error" || strict)) {
+  const fails = (problem: ValidationProblem) =>
+    problem.severity === "error" ||
+    (strict && !(allowDraft && draftInProgress.has(problem.code)));
+  if (problems.some(fails)) {
     throw new ValidationFailedError(problems, strict);
   }
 
