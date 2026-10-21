@@ -315,12 +315,8 @@ export class RecoveryBaseMismatchError extends SuperDeployError {
     recorded: string | undefined,
     baseNumber: number,
   ) {
-    const fix =
-      baseNumber === 0
-        ? "use a target with no recorded migrations"
-        : `run rebuild --to ${baseNumber} first`;
     super(
-      `The Recovery draft of migration ${migration} runs on top of ${base ?? "no recorded migration"}, but target ${target} is at ${recorded ?? "no recorded migration"}: ${fix}`,
+      `The Recovery draft of migration ${migration} runs on top of ${base ?? "no recorded migration"}, but target ${target} is at ${recorded ?? "no recorded migration"}: run rebuild --to ${baseNumber} first`,
     );
     this.target = target;
     this.migration = migration;

@@ -1274,6 +1274,90 @@ const losingAdapter = `{
   },
 }`;
 
+/** Runs guarded command `args` at a terminal and types YES; returns what it showed first. */
+async function confirmed(args: string[], dir: TestProject): Promise<string> {
+  const terminal = spawnTerminal(args, { cwd: dir.root });
+  const shown = await terminal.waitFor("Type YES");
+  terminal.type(`YES${keys.enter}`);
+  expect(await terminal.exited).toBe(0);
+  return shown;
+}
+
+const recordedState = `select (select count(*)::int from deployment_history.migrations) as migrations,
+    (select count(*)::int from deployment_history.deployed_draft) as drafts,
+    (select count(*)::int from pg_class where relnamespace = 'public'::regnamespace) as relations`;
+
+unix("rebuild --to 0", () => {
+  test("resets a target holding a first draft, deployed before any migration, to no migrations, so deploy-draft runs again", async () => {
+    const { config, database } = deployConfig(server);
+    const dir = await createTestProject({
+      config,
+      files: { "data-model/desired-schema/customers.sql": customers("") },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await draft(project, { name: "add customers" });
+    } finally {
+      await project.close();
+    }
+    await confirmed(["disposable", "--target", "dev", "--set", "yes"], dir);
+    await confirmed(["deploy-draft", "--target", "dev"], dir);
+
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).toContain(
+      "the target holds draft add-customers (deployed by attempt #2 before any migration, without seed data), not a finalized migration: reset it with rebuild --to 0",
+    );
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "0"],
+      { cwd: dir.root },
+    );
+    const shown = await terminal.waitFor(
+      "Type YES to wipe target dev and replay no migrations",
+    );
+    expect(boxLines(shown).join(" ")).toContain(
+      "Drops everything in schema public, the recorded migrations, deployed draft add-customers, in one transaction, and replays no migrations",
+    );
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor("Rebuilt dev with no migrations");
+    expect(await terminal.exited).toBe(0);
+    expect(await server.query(recordedState, [], database)).toEqual([
+      { migrations: 0, drafts: 0, relations: 0 },
+    ]);
+
+    await confirmed(["deploy-draft", "--target", "dev"], dir);
+    expect(await server.query(recordedState, [], database)).toEqual([
+      { migrations: 0, drafts: 1, relations: 2 },
+    ]);
+  });
+
+  test("lets a Recovery draft of migration 1 be tried again on a target at migration 1", async () => {
+    const { dir, database } = await deployedProject();
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await recovery(project, { migration: 1 });
+    } finally {
+      await project.close();
+    }
+
+    const refused = spawnTerminal(["deploy-draft", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    await refused.waitFor(
+      "Error: The Recovery draft of migration 00001-add-customers runs on top of no recorded migration, but target dev is at 00001-add-customers: run rebuild --to 0 first",
+    );
+    expect(await refused.exited).toBe(1);
+
+    await confirmed(["rebuild", "--target", "dev", "--to", "0"], dir);
+    await confirmed(["deploy-draft", "--target", "dev"], dir);
+    expect(await server.query(recordedState, [], database)).toEqual([
+      { migrations: 0, drafts: 1, relations: 2 },
+    ]);
+  });
+});
+
 unix("deploy-draft's lost COMMIT", () => {
   test.each([
     ["after", "succeeded", "settled as succeeded: its draft is recorded", true],
@@ -1342,6 +1426,33 @@ unix("from the menu", () => {
         database,
       ),
     ).toEqual([{ name: "Ada" }]);
+  });
+
+  test("rebuild offers no migrations below migration 1", async () => {
+    const { dir, database } = await deployedProject();
+    const terminal = spawnTerminal([], { cwd: dir.root });
+
+    await terminal.waitFor("quit");
+    await terminal.chooseMenuItem("rebuild");
+    await terminal.waitFor("The target to use");
+    terminal.type(keys.enter);
+    const offered = await terminal.waitFor("(none: no migrations)");
+    // The screen up to the match: migration 1 is listed above it.
+    expect(offered).toContain("00001-add-customers");
+    terminal.type("none");
+    await terminal.waitFor("(none: no migrations)");
+    terminal.type(keys.enter);
+    await terminal.waitFor(
+      "Type YES to wipe target dev and replay no migrations",
+    );
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor("Rebuilt dev with no migrations");
+    await terminal.waitFor("quit");
+    terminal.type(keys.escape);
+    expect(await terminal.exited).toBe(0);
+    expect(await server.query(recordedState, [], database)).toEqual([
+      { migrations: 0, drafts: 0, relations: 0 },
+    ]);
   });
 
   test("rebuild offers the migrations newest first", async () => {

@@ -373,10 +373,7 @@ export function describeHeldDraft(
     base === undefined
       ? "before any migration"
       : `on top of ${migrationFolderName(base.number, base.name)}`;
-  const reset =
-    draft.baseMigration === undefined
-      ? "rebuild --to N"
-      : `rebuild --to ${draft.baseMigration}`;
+  const reset = `rebuild --to ${draft.baseMigration ?? 0}`;
   const flag = holder.disposable
     ? ""
     : `flag it disposable again (disposable --target ${holder.name} --set yes), then `;

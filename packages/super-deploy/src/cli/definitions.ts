@@ -100,6 +100,11 @@ export interface MigrationChoice {
 export interface MigrationOption extends OptionBase {
   readonly kind: "migration";
   migrations(project: Project): Promise<readonly MigrationChoice[]>;
+  /**
+   * When set, 0 (no migrations) is a valid value too, and the menu offers it
+   * below migration 1 with this label. Only rebuild's `--to` takes it.
+   */
+  readonly zero?: string;
 }
 
 /** One of `choices`. */
@@ -962,9 +967,10 @@ const rebuildCommand: CommandDefinition = {
     {
       name: "to",
       kind: "migration",
-      description: "The last migration to replay",
+      description: "The last migration to replay, or 0 for none",
       required: true,
       migrations: indexedMigrations,
+      zero: "(none: no migrations)",
     },
   ],
   async run(project, values, context) {
@@ -973,7 +979,9 @@ const rebuildCommand: CommandDefinition = {
       to: Number(values.to),
     });
     context.result(
-      `Rebuilt ${result.target} with ${plural(result.deployed.length, "migration")}: ${result.deployed.map(describeMigration).join(", ")}`,
+      result.deployed.length === 0
+        ? `Rebuilt ${result.target} with no migrations`
+        : `Rebuilt ${result.target} with ${plural(result.deployed.length, "migration")}: ${result.deployed.map(describeMigration).join(", ")}`,
     );
   },
 };

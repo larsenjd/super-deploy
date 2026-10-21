@@ -6,7 +6,9 @@
 // timeouts): drop everything in the managed schema (deploy/wipe.ts; the
 // schema itself, its grants and default privileges stay), delete the
 // recorded migrations and any deployed draft from the history schema, then
-// run migrations 1 to N exactly as a deployment does, recording each as
+// run migrations 1 to N exactly as a deployment does (none for N = 0, QA
+// 164: a target holding a draft deployed before any migration has no other
+// way back), recording each as
 // deployed by this attempt (each as its newest variant, like a deployment to
 // a new target; the confirmation and result name the Recovery each runs as,
 // QA 173). Seed data is never loaded. The attempt log and
@@ -73,7 +75,7 @@ import {
 export interface RebuildOptions {
   /** The target's name in config. */
   target: string;
-  /** The migration to rebuild up to (inclusive). */
+  /** The migration to rebuild up to (inclusive); 0 replays none. */
   to: number;
 }
 
@@ -100,7 +102,7 @@ interface RebuildPlan {
  * No option skips that.
  *
  * Refuses before asking: TargetNotDisposableError; UnknownMigrationError when
- * the repo has no finalized migration `to`; CannotWipeError when the managed
+ * `to` isn't 0 and the repo has no finalized migration `to`; CannotWipeError when the managed
  * schema holds something the deploy role can't drop. After YES, rolled back:
  * TargetChangedError when what it drops outside the managed schema changed
  * meanwhile; WipeDropFailedError when PostgreSQL refuses a drop all the same;
@@ -119,7 +121,10 @@ export async function rebuild(
       requireDisposable("rebuild", view);
       const target = view.target.name;
       const migrations = await verifiedMigrations(root, paths);
-      if (!migrations.some((migration) => migration.number === options.to)) {
+      if (
+        options.to !== 0 &&
+        !migrations.some((migration) => migration.number === options.to)
+      ) {
         throw new UnknownMigrationError(options.to, migrations.at(-1)?.number);
       }
       const withUnits = await readMigrationsWithUnits(root, migrations);
@@ -134,7 +139,11 @@ export async function rebuild(
           ...newestVariant(migration),
         }));
       const range =
-        options.to === 1 ? "migration 1" : `migrations 1-${options.to}`;
+        options.to === 0
+          ? "no migrations"
+          : options.to === 1
+            ? "migration 1"
+            : `migrations 1-${options.to}`;
       const wiped = [
         `everything in schema ${config.managedSchema}`,
         "the recorded migrations",
@@ -151,7 +160,11 @@ export async function rebuild(
       return {
         action: `Wipe target ${target} and replay ${range}`,
         details: [
-          `Drops ${wiped.join(", ")}, then deploys in one transaction:`,
+          ...(replayed.length === 0
+            ? [
+                `Drops ${wiped.join(", ")}, in one transaction, and replays no migrations`,
+              ]
+            : [`Drops ${wiped.join(", ")}, then deploys in one transaction:`]),
           ...replayed.map(
             (migration) =>
               `  ${describeMigration(replayedMigration(migration))}`,

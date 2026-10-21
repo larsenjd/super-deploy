@@ -152,7 +152,12 @@ export function parseInvocation(
         `Option --${option.name} must be one of ${option.choices.join(", ")}. ${hint}`,
       );
     }
-    if (option.kind === "migration" && !/^0*[1-9]\d*$/.test(String(value))) {
+    if (
+      option.kind === "migration" &&
+      !(option.zero === undefined ? /^0*[1-9]\d*$/ : /^\d+$/).test(
+        String(value),
+      )
+    ) {
       throw new UsageError(
         `Option --${option.name} must be a migration number, e.g. 3 or 00003. ${hint}`,
       );

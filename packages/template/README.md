@@ -701,7 +701,9 @@ draft-finalize-deploy path:
   `deploy-draft` refuse it, and `status` doesn't check it for drift, until
   `rebuild` resets it.
 - **`rebuild --target X --to N`** resets a disposable target to migration
-  N, in one transaction. It drops everything in the managed schema, with
+  N, in one transaction. N may be 0: it then replays no migrations, which
+  resets a target holding a draft deployed before any migration (a first
+  draft, or a Recovery draft of migration 1) so you can try it again. It drops everything in the managed schema, with
   `CASCADE`. The confirmation lists what in the managed schema no recorded
   migration created (what `status` reports as only on the target, from a
   throwaway replica of the recorded migrations), up to 10 objects. Objects
@@ -718,7 +720,8 @@ draft-finalize-deploy path:
   its newest Recovery if it has one; the confirmation and the result name
   it, as in `00002-require-city (Recovery 1)`. It never loads seed data, and keeps
   the attempt log and the disposable flag. In the menu, `--to` is a list
-  with the newest migration preselected.
+  with the newest migration preselected and "no migrations" (0) below
+  migration 1.
 - **`mark --target X`** records the target's next pending migration as
   deployed, without running it. Use it when someone has already made that
   migration's changes on the target by hand. It works on any target, but
