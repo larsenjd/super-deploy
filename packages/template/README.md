@@ -491,7 +491,8 @@ name, and hashes of the desired schema and the schema change `draft`
 generated, so `rehearse` can tell whether running `draft` again would help.
 `schema-change.generated.sql` is a copy of the schema change as `draft`
 generated it. If you edit `schema-change.sql` anyway, `rehearse` and
-`finalize` warn that it was edited by hand. `finalize` records the edit in the migration's
+`finalize` warn that it was edited by hand, and `deploy-draft` says so before
+asking for YES. `finalize` records the edit in the migration's
 `metadata.json` and writes `HAND-EDITED.md` into the migration, with the diff
 from the generated schema change to yours, so reviewers see it; `validate`
 lists such migrations as a notice, which `--strict` doesn't fail on.
@@ -701,7 +702,10 @@ draft-finalize-deploy path:
   finalize. The target must have no pending migrations (a Recovery draft of
   migration N needs the target at N-1). The draft's pre-migration script,
   schema change and post-migration script run in one transaction, without a
-  rehearsal first. `--with-seed` loads the draft's seed data first, which
+  rehearsal first. Before asking for YES it refuses a draft generated from
+  an older desired schema (run `draft` again), and its confirmation says so
+  when `schema-change.sql` was edited by hand since `draft` generated it.
+  `--with-seed` loads the draft's seed data first, which
   may clash with data already on the target. The target then records that
   it holds the draft, not a migration: `deploy`, `mark` and another
   `deploy-draft` refuse it, and `status` doesn't check it for drift, until
