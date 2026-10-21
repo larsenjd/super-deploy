@@ -4,7 +4,9 @@
 // transaction's ROLLBACK and is released explicitly (or when the session
 // closes). Every command that changes a target takes it: deploy, mark,
 // rebuild, deploy-draft, disposable and init --adopt. Contention fails at
-// once, naming the holder's running attempt.
+// once, naming the holder's running attempt and what its server process is
+// doing (pg_stat_activity), so a user can tell a live command from a dead
+// CLI's statement still running, and how to cancel that.
 //
 // Advisory locks are per database, so the key only has to tell projects
 // apart that share one database with different history schemas.
@@ -78,21 +80,38 @@ export async function lockHolder(
   const unsigned = BigInt.asUintN(64, key);
   // A bigint key shows in pg_locks as classid = high 32 bits, objid = low 32
   // bits, objsubid = 1.
-  const { rows } = await session.query<{ pid: number }>(
-    `SELECT pid FROM pg_locks
-      WHERE locktype = 'advisory' AND granted AND objsubid = 1
-        AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
-        AND classid = $1::bigint::oid AND objid = $2::bigint::oid
+  // pg_stat_activity hides another role's state and query (state is null)
+  // unless the session's role has pg_read_all_stats.
+  const { rows } = await session.query<{
+    pid: number;
+    state: string | null;
+    query_start: Date | null;
+    query: string | null;
+  }>(
+    `SELECT l.pid, a.state, a.query_start, a.query
+       FROM pg_locks l LEFT JOIN pg_stat_activity a ON a.pid = l.pid
+      WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 1
+        AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+        AND l.classid = $1::bigint::oid AND l.objid = $2::bigint::oid
       LIMIT 1`,
     [(unsigned >> 32n).toString(), (unsigned & 0xffffffffn).toString()],
   );
-  const pid = rows[0]?.pid;
-  if (pid === undefined) {
-    return { pid: undefined, attempt: undefined };
+  const [row] = rows;
+  if (row === undefined) {
+    return { pid: undefined, attempt: undefined, activity: undefined };
   }
+  const { pid } = row;
   const attempt = await readRunningAttemptOf(session, historySchema, pid);
   return {
     pid,
+    activity:
+      row.state === null
+        ? undefined
+        : {
+            state: row.state,
+            statementStartedAt: row.query_start ?? undefined,
+            statement: row.query ?? "",
+          },
     attempt:
       attempt === undefined
         ? undefined
@@ -109,6 +128,11 @@ export async function lockHolder(
 export interface LockHolder {
   /** The server process holding the lock. */
   readonly pid: number | undefined;
+  /**
+   * What that process is doing, from `pg_stat_activity`: undefined when the
+   * holder is gone or the session's role may not see it.
+   */
+  readonly activity: LockHolderActivity | undefined;
   /** The running attempt that process recorded, if one is found. */
   readonly attempt:
     | {
@@ -120,6 +144,16 @@ export interface LockHolder {
     | undefined;
 }
 
+/** A lock holder's server process as `pg_stat_activity` shows it. */
+export interface LockHolderActivity {
+  /** `active`, `idle in transaction`, ... */
+  readonly state: string;
+  /** When its current statement started (its last one, unless active). */
+  readonly statementStartedAt: Date | undefined;
+  /** That statement's text, as the server tracks it (truncated to track_activity_query_size). */
+  readonly statement: string;
+}
+
 /** Who holds a lock, briefly: "attempt #N", or "another session" when the holder recorded no running attempt. */
 export function lockHolderName(holder: LockHolder): string {
   return holder.attempt === undefined
@@ -129,10 +163,12 @@ export function lockHolderName(holder: LockHolder): string {
 
 /**
  * Who holds a lock, in full: "attempt #N (deploy by ana, started <time>,
- * server process P)", or "another session (server process P)".
+ * server process P, active, statement started <time>: ALTER TABLE ...)", or
+ * "another session (server process P, ...)". So a user can tell a live
+ * command from a dead CLI's statement still running on the server.
  */
 export function describeLockHolder(holder: LockHolder): string {
-  const { attempt, pid } = holder;
+  const { attempt, pid, activity } = holder;
   const details = [
     ...(attempt === undefined
       ? []
@@ -141,9 +177,31 @@ export function describeLockHolder(holder: LockHolder): string {
           `started ${attempt.startedAt.toISOString()}`,
         ]),
     ...(pid === undefined ? [] : [`server process ${pid}`]),
+    ...(activity === undefined ? [] : [describeActivity(activity)]),
   ];
   const name = lockHolderName(holder);
   return details.length === 0 ? name : `${name} (${details.join(", ")})`;
+}
+
+/** The longest statement text a lock holder's description quotes. */
+const statementLength = 200;
+
+/** "active, statement started <time>: <statement on one line>" */
+function describeActivity(activity: LockHolderActivity): string {
+  const { state, statementStartedAt, statement } = activity;
+  const oneLine = statement.replace(/\s+/g, " ").trim();
+  const text =
+    oneLine.length > statementLength
+      ? `${oneLine.slice(0, statementLength)}...`
+      : oneLine;
+  const started =
+    statementStartedAt === undefined
+      ? []
+      : [
+          `${state === "active" ? "statement" : "last statement"} started ${statementStartedAt.toISOString()}`,
+        ];
+  const description = [state, ...started].join(", ");
+  return text === "" ? description : `${description}: ${text}`;
 }
 
 /**
@@ -156,8 +214,15 @@ export class TargetLockedError extends SuperDeployError {
   readonly holder: LockHolder;
 
   constructor(target: string, holder: LockHolder) {
+    // A CLI killed mid-statement leaves its server process running until the
+    // server notices (target.ts's client connection check, where the
+    // platform has one): the user can end it once they know it is dead.
+    const cancel =
+      holder.pid === undefined
+        ? ""
+        : `, or, if it is known to be dead, end it with select pg_cancel_backend(${holder.pid})`;
     super(
-      `Target ${target} is locked by ${describeLockHolder(holder)}; try again when it has finished`,
+      `Target ${target} is locked by ${describeLockHolder(holder)}; try again when it has finished${cancel}`,
     );
     this.target = target;
     this.holder = holder;
