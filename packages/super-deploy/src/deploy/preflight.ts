@@ -10,6 +10,9 @@
 //     member of their owner (deploy/ownership.ts)
 //   - the deploy role is not superuser and holds none of the predefined roles
 //     that reach outside the database (a warning, never a refusal)
+//   - the objects the pending migrations (or draft) drop and create again
+//     carry no grants, revokes or policies made by hand that default
+//     privileges won't give back (deploy/recreated-privileges.ts; a warning)
 //   - what the target's history schema records matches the repo, and the
 //     target holds no draft (deploy-draft's), which is not a migration
 // Each history mismatch's message ends with the way out: a recorded migration
@@ -24,6 +27,7 @@
 import type { Session } from "../adapters/types.ts";
 import { plural, SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
+import type { ReplayUnit } from "../rehearsal/replay.ts";
 import {
   type FinalizedMigration,
   indexFileName,
@@ -44,6 +48,7 @@ import {
   objectsNotOwned,
 } from "./ownership.ts";
 import { lastRecordedNumber } from "./pending.ts";
+import { recreatedPrivilegeWarnings } from "./recreated-privileges.ts";
 
 /** One way the target's recorded history disagrees with the repo. */
 export interface HistoryMismatch {
@@ -85,7 +90,11 @@ export interface PreflightFindings {
   readonly notOwned: readonly NotOwnedObject[];
   /** Recorded migrations that don't match the repo, by number. Refuses a deployment. */
   readonly historyMismatches: readonly HistoryMismatch[];
-  /** Why the deploy role is more privileged than a deployment needs. Never refuses. */
+  /**
+   * Why the deploy role is more privileged than a deployment needs, then
+   * each object the pending units drop and create again whose hand-made
+   * grants, revokes or policies on the target will be lost. Never refuses.
+   */
   readonly warnings: readonly string[];
 }
 
@@ -113,6 +122,11 @@ export interface PreflightInput {
   readonly migrations: readonly FinalizedMigration[];
   /** What the target records, in number order. */
   readonly recorded: readonly RecordedMigration[];
+  /**
+   * What the deployment would run, in order: each pending migration's
+   * variant, or a draft (and its seed data).
+   */
+  readonly pending: readonly { readonly unit: ReplayUnit }[];
 }
 
 /** Runs every check on `session` (read-only queries, no transaction). */
@@ -138,7 +152,14 @@ export async function preflightChecks(
         ).disposable,
       },
     ),
-    warnings: await deployRoleWarnings(session, input.targetName),
+    warnings: [
+      ...(await deployRoleWarnings(session, input.targetName)),
+      ...(await recreatedPrivilegeWarnings(
+        session,
+        project.config.managedSchema,
+        input.pending.map(({ unit }) => unit),
+      )),
+    ],
   };
 }
 

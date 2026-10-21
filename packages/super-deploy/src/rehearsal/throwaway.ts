@@ -78,7 +78,11 @@ export async function requirePostgres18(
 
 /**
  * Session settings pinned identically in rehearsals and deployments, as
- * `SET LOCAL` statements for the start of a transaction.
+ * `SET LOCAL` statements for the start of a transaction. `row_security` off
+ * (as `pg_dump` does) makes a statement that a target's hand-made policy
+ * would filter fail instead of silently skipping rows: on a table with
+ * `FORCE ROW LEVEL SECURITY` the policies apply to its owner, the deploy
+ * role (ticket 182). Elsewhere the owner bypasses them anyway.
  */
 export function pinnedSettings(managedSchema: string): string[] {
   return [
@@ -87,6 +91,7 @@ export function pinnedSettings(managedSchema: string): string[] {
     "SET LOCAL DateStyle TO 'ISO, YMD'",
     "SET LOCAL IntervalStyle TO 'postgres'",
     "SET LOCAL check_function_bodies TO on",
+    "SET LOCAL row_security TO off",
   ];
 }
 
@@ -170,8 +175,13 @@ function externalHint(
  * contain. ...`.
  */
 export function externalSchemaExplanation(schemas: readonly string[]): string {
+  return `${missingFromRehearsals(schemas)}. Only PL/pgSQL bodies may reference external schemas: views, defaults, foreign keys, triggers, LANGUAGE sql and BEGIN ATOMIC bodies, and PL/pgSQL variable declarations bind their references at CREATE`;
+}
+
+/** `external schema "auth", which rehearsals don't contain`. */
+export function missingFromRehearsals(schemas: readonly string[]): string {
   const names = schemas.map((schema) => `"${schema}"`).join(", ");
-  return `external schema ${names}, which rehearsals don't contain. Only PL/pgSQL bodies may reference external schemas: views, defaults, foreign keys, triggers, LANGUAGE sql and BEGIN ATOMIC bodies, and PL/pgSQL variable declarations bind their references at CREATE`;
+  return `external schema ${names}, which rehearsals don't contain`;
 }
 
 /**

@@ -66,7 +66,7 @@ export async function rehearseDeployment(
         });
       }
       if (input.pending.length > 0) {
-        await replay(replica, input.pending, managedSchema);
+        await replay(replica, input.pending, project.config);
         const snapshot = await input.snapshot();
         await withThrowawayDatabase(
           rehearsal,
