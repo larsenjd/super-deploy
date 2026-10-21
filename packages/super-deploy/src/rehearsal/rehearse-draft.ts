@@ -2,6 +2,12 @@
 // (and again in another valid order, to prove the result doesn't depend on
 // order); replay every finalized migration plus the draft into another;
 // require the same structure from both (rehearsal/same-structure.ts).
+//
+// A mismatch says "run draft again" only when that can help: when the
+// desired schema changed since `draft` generated the schema change. When it
+// hasn't, re-drafting regenerates the same schema change, so the message
+// names what does cause it (draftMismatchSubject): a hand edit of the schema
+// change, or else the draft's scripts or seed data.
 import type { Project } from "../project.ts";
 import type { ParsedStatement } from "../sql-analysis/index.ts";
 import { loadDesiredSchemaCheckingOrder } from "./order-independence.ts";
@@ -22,6 +28,7 @@ export async function rehearseDraft(
   project: Project,
   desiredSchema: readonly ParsedStatement[],
   units: readonly ReplayUnit[],
+  since: SinceDraft,
 ): Promise<DraftRehearsal> {
   const { config } = project;
   return withThrowawayDatabase(
@@ -35,10 +42,40 @@ export async function rehearseDraft(
         async (replayed) => {
           await ensureManagedSchema(replayed, config.managedSchema);
           await replay(replayed, units, config.managedSchema);
-          await requireSameStructure(replayed, desired, config.managedSchema);
+          await requireSameStructure(
+            replayed,
+            desired,
+            config.managedSchema,
+            draftMismatchSubject(since),
+          );
           return { serverVersion: await replayed.serverVersion() };
         },
       );
     },
   );
+}
+
+/** What changed since `draft` last generated the schema change. */
+export interface SinceDraft {
+  /** The desired schema's hash differs from the one `draft` stored (or none is stored). */
+  readonly desiredSchemaChanged: boolean;
+  /**
+   * The schema change's project-relative path when it differs from the one
+   * `draft` wrote; undefined when it doesn't, or no hash of it is stored.
+   */
+  readonly editedSchemaChange: string | undefined;
+}
+
+/**
+ * The opening of a draft rehearsal's mismatch, or undefined for the default
+ * ("run draft again"), which is right when the desired schema changed.
+ */
+export function draftMismatchSubject(since: SinceDraft): string | undefined {
+  if (since.desiredSchemaChanged) {
+    return undefined;
+  }
+  if (since.editedSchemaChange !== undefined) {
+    return `The rehearsal does not match the desired schema: ${since.editedSchemaChange} was edited by hand since draft generated it, and the edited schema change doesn't produce the desired schema (run draft again to regenerate it)`;
+  }
+  return "The rehearsal does not match the desired schema, and running draft again won't change that: the desired schema hasn't changed since draft, so the pre-migration script, post-migration script or seed data cause the difference (a column renamed in the pre-migration script needs its NOT NULL constraint renamed too: see the README, \"Renaming a column\")";
 }

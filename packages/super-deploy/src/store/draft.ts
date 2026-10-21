@@ -1,7 +1,9 @@
-// The one draft: draft/draft.json holds its name (editable) and the hash of
+// The one draft: draft/draft.json holds its name (editable), the hash of
 // the desired schema it was generated from (written by `draft`, used by
-// `validate` to warn about undrafted changes); draft/schema-change.sql is the
-// generated schema change.
+// `validate` to warn about undrafted changes) and the hash of the schema
+// change `draft` wrote (so a rehearsal mismatch can name a hand edit; drafts
+// written before it existed have none, and count as not edited);
+// draft/schema-change.sql is the generated schema change.
 //
 // A Recovery draft (created by `recovery --migration N`) has
 // `"recoveryOf": N` in draft.json and the name of migration N; its
@@ -22,7 +24,7 @@ import { join } from "node:path";
 import { SuperDeployError } from "../errors.ts";
 import { isSqlFile } from "./desired-schema.ts";
 import { normaliseDraftName } from "./draft-name.ts";
-import { normaliseLineEndings } from "./hashing.ts";
+import { fileHash, normaliseLineEndings } from "./hashing.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";
 import {
   type FinalizedMigration,
@@ -114,6 +116,8 @@ export interface DraftMetadata {
   readonly name: string;
   /** store/hashing.ts desiredSchemaHash() of the desired schema `draft` last generated from. */
   readonly desiredSchemaHash?: string | undefined;
+  /** store/hashing.ts fileHash() of the schema-change.sql `draft` last wrote. */
+  readonly schemaChangeHash?: string | undefined;
   /** For a Recovery draft: the number of the migration it recovers. */
   readonly recoveryOf?: number | undefined;
 }
@@ -156,6 +160,10 @@ export async function readDraft(
     typeof parsed.desiredSchemaHash === "string"
       ? parsed.desiredSchemaHash
       : undefined;
+  const schemaChangeHash =
+    "schemaChangeHash" in parsed && typeof parsed.schemaChangeHash === "string"
+      ? parsed.schemaChangeHash
+      : undefined;
   const recoveryOf = "recoveryOf" in parsed ? parsed.recoveryOf : undefined;
   if (
     recoveryOf !== undefined &&
@@ -173,16 +181,21 @@ export async function readDraft(
   return {
     name: normaliseDraftName(parsed.name),
     desiredSchemaHash: hash,
+    schemaChangeHash,
     ...(recoveryOf === undefined ? {} : { recoveryOf }),
   };
 }
 
+/** Writes draft.json, with the hash of `schemaChange`, and the schema change. */
 export async function writeDraft(
   paths: ProjectPaths,
-  metadata: DraftMetadata,
+  metadata: Omit<DraftMetadata, "schemaChangeHash">,
   schemaChange: string,
 ): Promise<void> {
-  await writeDraftMetadata(paths, metadata);
+  await writeDraftMetadata(paths, {
+    ...metadata,
+    schemaChangeHash: fileHash(schemaChange),
+  });
   await writeFile(paths.draftSchemaChange, schemaChange);
 }
 
@@ -194,7 +207,7 @@ export async function writeDraftMetadata(
   await mkdir(paths.draft, { recursive: true });
   await writeFile(
     paths.draftMetadata,
-    `${JSON.stringify({ name: metadata.name, desiredSchemaHash: metadata.desiredSchemaHash, recoveryOf: metadata.recoveryOf }, null, 2)}\n`,
+    `${JSON.stringify({ name: metadata.name, desiredSchemaHash: metadata.desiredSchemaHash, schemaChangeHash: metadata.schemaChangeHash, recoveryOf: metadata.recoveryOf }, null, 2)}\n`,
   );
 }
 

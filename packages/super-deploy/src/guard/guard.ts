@@ -244,17 +244,24 @@ export class NotConfirmedError extends SuperDeployError {
 }
 
 /**
- * The target's recorded migrations or disposable flag changed between showing
- * them and taking the lock. Nothing changed; run the command again.
+ * What was shown before YES changed by the time the command ran: the
+ * target's recorded migrations, deployed draft or disposable flag (checked
+ * under the lock), or what the command itself showed, e.g. what `rebuild`
+ * drops outside the managed schema. Nothing changed; run the command again.
  */
 export class TargetChangedError extends SuperDeployError {
   readonly code = "target-changed";
   readonly command: GuardedCommand;
   readonly target: string;
 
-  constructor(command: GuardedCommand, target: string) {
+  /** `changed` says what changed, e.g. `what it drops outside schema public`. */
+  constructor(
+    command: GuardedCommand,
+    target: string,
+    changed = "its recorded migrations, deployed draft or disposable flag",
+  ) {
     super(
-      `Target ${target} changed while ${command} waited for YES (its recorded migrations, deployed draft or disposable flag): nothing changed; run ${command} again to see the new details`,
+      `Target ${target} changed while ${command} waited for YES (${changed}): nothing changed; run ${command} again to see the new details`,
     );
     this.command = command;
     this.target = target;

@@ -21,7 +21,10 @@ finalized (see
 Nothing else is needed: `super-deploy.config.ts` runs a private PostgreSQL 18
 server in `.super-deploy/postgres` (gitignored). It provides the throwaway
 databases that rehearsals use and the local `dev` target, and starts on a free
-port whenever a command needs it.
+port whenever a command needs it. `dev` is deployed as the role `deployer`,
+which owns the `dev` database and isn't a superuser, like a real target's
+deploy role (see [Permissions](#permissions)); the server's superuser
+`super_deploy` only sets the server up and runs the rehearsals.
 
 1. Describe the schema you want as `CREATE` statements in `.sql` files under
    `data-model/desired-schema/` (any file names and folders). See
@@ -200,7 +203,8 @@ Each entry in `targets` is one target:
 
 - `adapter`: required. How to connect to the target:
   `postgres.target("<database>")` for a database on the private embedded
-  server, or `postgresTarget(...)` for an existing server (see
+  server (created on first use, owned by and deployed as the role
+  `deployer`), or `postgresTarget(...)` for an existing server (see
   [Adding a real target](#adding-a-real-target)).
 - `lockTimeout`: how long a statement waits for a lock on the target before
   failing (PostgreSQL's `lock_timeout`). A deployment that hits it rolls back
@@ -334,7 +338,8 @@ default privileges as they are.
   schema, if the target lacks it).
 - **The application's roles**, their role membership and their database
   privileges: `CONNECT` (and `TEMPORARY`, if needed). super-deploy never
-  creates or drops roles.
+  creates or drops roles, apart from `deployer` on its private embedded
+  server.
 - **The application's grants and any policies.** The recommended way is
   default privileges for the deploy role, so every object a deployment
   creates is granted automatically. For example, once the managed schema
@@ -399,9 +404,11 @@ just before the pre-migration script (see [Seed data](#seed-data)). It is
 never run by a deployment.
 
 No other file in a draft or migration is run. `draft.json` holds the draft's
-name. `draft`, `rehearse`, `finalize` and `validate` warn about any other
-file in the draft folder, such as a misnamed `post-migrate.sql`, naming it
-and the files a draft holds; `finalize` still copies it into the migration.
+name, and hashes of the desired schema and the schema change `draft`
+generated, so `rehearse` can tell whether running `draft` again would help.
+`draft`, `rehearse`, `finalize` and `validate` warn about any other file in
+the draft folder, such as a misnamed `post-migrate.sql`, naming it and the
+files a draft holds; `finalize` still copies it into the migration.
 
 Finalized migrations are read-only and hashed: never edit them.
 `super-deploy validate` checks their hashes, and `pnpm precommit` runs
@@ -605,9 +612,15 @@ draft-finalize-deploy path:
   `rebuild` resets it.
 - **`rebuild --target X --to N`** resets a disposable target to migration
   N, in one transaction. It drops everything in the managed schema, with
-  `CASCADE`, so objects in other schemas that depend on it are dropped too.
-  The managed schema itself stays, with its owner, grants and default
-  privileges. Then it deletes the target's record of migrations and of any
+  `CASCADE`, so objects in other schemas that depend on it are dropped too:
+  a view on a managed table, a foreign key to one, a column of a managed
+  type (with its data). The confirmation lists each of them under "Also
+  drops, outside schema ...", and if that list changes while it waits for
+  `YES`, rebuild refuses without changing anything. It refuses before
+  asking when the managed schema holds something the deploy role can't
+  drop, such as an extension a superuser installed, naming each object and
+  its owner. The managed schema itself stays, with its owner, grants and
+  default privileges. Then it deletes the target's record of migrations and of any
   deployed draft, and runs migrations 1 to N as a deployment does, each as
   its newest Recovery if it has one. It never loads seed data, and keeps
   the attempt log and the disposable flag. In the menu, `--to` is a list

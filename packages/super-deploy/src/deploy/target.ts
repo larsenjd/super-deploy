@@ -6,7 +6,7 @@ import type { DatabaseRequest, Session } from "../adapters/types.ts";
 import { AdapterError } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { SuperDeployError } from "../errors.ts";
-import type { GuardedCommand } from "../guard/guard.ts";
+import type { GuardedCommand, TargetView } from "../guard/guard.ts";
 import { InterruptedError } from "../interruption.ts";
 import type { Project } from "../project.ts";
 import { adapterCall, requirePostgres18 } from "../rehearsal/throwaway.ts";
@@ -126,6 +126,16 @@ export class UnknownTargetError extends SuperDeployError {
     );
     this.target = target;
     this.known = known;
+  }
+}
+
+/** A guarded command's precondition: throws TargetNotDisposableError unless the view shows the target disposable. */
+export function requireDisposable(
+  command: GuardedCommand,
+  view: TargetView,
+): void {
+  if (!view.disposable) {
+    throw new TargetNotDisposableError(command, view.target.name);
   }
 }
 

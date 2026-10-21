@@ -39,7 +39,7 @@ async function emptyDirectory(name = "my-shop"): Promise<string> {
 }
 
 describe("init", () => {
-  test("a freshly initialised project drafts, finalizes and deploys to dev with no other setup", async () => {
+  test("a freshly initialised project drafts, finalizes and deploys to dev with no other setup, and no warnings", async () => {
     const root = await emptyDirectory();
     await init({ directory: root });
     await mkdir(join(root, "data-model", "desired-schema"), {
@@ -47,27 +47,61 @@ describe("init", () => {
     });
     await writeFile(
       join(root, "data-model", "desired-schema", "customers.sql"),
-      "create table customers (id bigint primary key, name text not null);\n",
+      `create table customers (id bigint primary key, name text not null);
+create view customer_names as select name from customers;
+create function customer_count() returns bigint
+  language sql stable
+  return (select count(*) from customers);
+`,
     );
 
     const project = await loadProject({ cwd: root });
     try {
       await draft(project, { name: "add customers" });
       await finalize(project);
-      const deployed = await deploy(project, { target: "dev" });
+      const warnings: string[] = [];
+      const deployed = await deploy(project, {
+        target: "dev",
+        onWarning: (warning) => warnings.push(warning),
+      });
       expect(deployed.deployed.map((m) => m.folder)).toEqual([
         "00001-add-customers",
       ]);
+      expect(warnings).toEqual([]);
 
       const report = await status(project, { target: "dev" });
       expect(report.recorded.map((m) => m.number)).toEqual([1]);
       expect(report.pending).toEqual([]);
+      expect(report.preflight.warnings).toEqual([]);
       const session = await project.config.targets.dev?.adapter.connect();
       try {
         const tables = await session?.query(
-          "select table_name from information_schema.tables where table_schema = 'public'",
+          "select table_name from information_schema.tables where table_schema = 'public' order by 1",
         );
-        expect(tables?.rows).toEqual([{ table_name: "customers" }]);
+        expect(tables?.rows).toEqual([
+          { table_name: "customer_names" },
+          { table_name: "customers" },
+        ]);
+        expect((await session?.query("select customer_count()"))?.rows).toEqual(
+          [{ customer_count: "0" }],
+        );
+        // dev deploys as a role that isn't a superuser, holds no other role
+        // and owns the dev database.
+        const role = await session?.query(
+          `select r.rolsuper,
+                  array(select m.roleid::regrole::text from pg_auth_members m where m.member = r.oid) as member_of,
+                  d.datname, pg_get_userbyid(d.datdba) = r.rolname as owns_database
+             from pg_roles r, pg_database d
+            where r.rolname = current_user and d.datname = current_database()`,
+        );
+        expect(role?.rows).toEqual([
+          {
+            rolsuper: false,
+            member_of: [],
+            datname: "dev",
+            owns_database: true,
+          },
+        ]);
       } finally {
         await session?.close();
       }

@@ -66,7 +66,10 @@ describe("rehearse", () => {
     const error = await rehearse(project).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(RehearsalMismatchError);
-    const { differences } = error as RehearsalMismatchError;
+    const { differences, subject } = error as RehearsalMismatchError;
+    expect(subject).toBe(
+      "The rehearsal does not match the desired schema; run draft again",
+    );
     expect(differences).toContain(
       'pg-delta: ALTER TABLE "public"."customers" ADD COLUMN "email" text;',
     );
@@ -74,6 +77,69 @@ describe("rehearse", () => {
       expect.stringMatching(/^catalog: \+ column: customers\.email text /),
     );
     expect(await server.databases()).toEqual(before);
+  });
+
+  test("a mismatch re-drafting can't fix says the scripts or seed data cause it, not run draft again", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(server),
+      files: { "data-model/desired-schema/customers.sql": customers },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    await finalizeMigration(project, "Add customers");
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      customers.replace("name text", "full_name text"),
+    );
+    // The README's rename, without the NOT NULL constraint's rename.
+    await dir.write(
+      "data-model/draft/pre-migration.sql",
+      "alter table customers rename column name to full_name;\n",
+    );
+    await draft(project, { name: "Rename name" });
+
+    const error = await rehearse(project).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RehearsalMismatchError);
+    expect((error as RehearsalMismatchError).subject).toBe(
+      "The rehearsal does not match the desired schema, and running draft again won't change that: the desired schema hasn't changed since draft, so the pre-migration script, post-migration script or seed data cause the difference (a column renamed in the pre-migration script needs its NOT NULL constraint renamed too: see the README, \"Renaming a column\")",
+    );
+  });
+
+  test("a mismatch after a hand edit of the schema change says it was edited by hand", async () => {
+    const { dir, project } = await draftedProject();
+    const file = "data-model/draft/schema-change.sql";
+    await dir.write(
+      file,
+      `${await dir.read(file)}\ncreate index customers_name_idx on public.customers (name);\n`,
+    );
+
+    const error = await rehearse(project).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RehearsalMismatchError);
+    expect((error as RehearsalMismatchError).subject).toBe(
+      "The rehearsal does not match the desired schema: data-model/draft/schema-change.sql was edited by hand since draft generated it, and the edited schema change doesn't produce the desired schema (run draft again to regenerate it)",
+    );
+  });
+
+  test("a draft written before the schema-change hash existed counts as not edited by hand", async () => {
+    const { dir, project } = await draftedProject();
+    const metadata = "data-model/draft/draft.json";
+    const { schemaChangeHash: _, ...older } = JSON.parse(
+      await dir.read(metadata),
+    );
+    await dir.write(metadata, JSON.stringify(older));
+    const file = "data-model/draft/schema-change.sql";
+    await dir.write(
+      file,
+      `${await dir.read(file)}\ncreate index customers_name_idx on public.customers (name);\n`,
+    );
+
+    const error = await rehearse(project).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RehearsalMismatchError);
+    expect((error as RehearsalMismatchError).subject).toContain(
+      "the pre-migration script, post-migration script or seed data cause the difference",
+    );
   });
 
   test("our own catalog comparison catches what pg-delta misses: a named NOT NULL constraint", async () => {
