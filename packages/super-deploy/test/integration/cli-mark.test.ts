@@ -251,6 +251,31 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
     ]);
   });
 
+  test("refuses without asking a target whose recorded history differs from the project's, which status reports as drift not checked", async () => {
+    const { dir, database } = await pendingProject();
+    await server.query(
+      "update deployment_history.migrations set content_hash = 'edited' where number = 1",
+      [],
+      database,
+    );
+
+    const terminal = spawnTerminal(["mark", "--target", "dev"], {
+      cwd: dir.root,
+    });
+
+    await terminal.waitFor(
+      "Error: Target dev's recorded migrations don't match the project's: the target records migration 00001-add-customers with content hash edited",
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).toContain(
+      "Drift: not checked (the recorded history doesn't match the project's migrations)\n",
+    );
+  });
+
   test("checks the replica again under the lock: a target changed while waiting for YES is refused", async () => {
     const { dir, database } = await pendingProject();
     await server.query(orders, [], database);

@@ -743,7 +743,11 @@ const statusCommand: CommandDefinition = {
         context.result(`  ${refusal}`);
       }
     }
-    if (report.driftNotChecked === "history-mismatch") {
+    if (report.driftNotChecked === "deployed-draft") {
+      context.result(
+        `Drift: not checked (the target holds deployed draft ${report.draft?.name}; rebuild resets it)`,
+      );
+    } else if (report.driftNotChecked === "history-mismatch") {
       context.result(
         "Drift: not checked (the recorded history doesn't match the project's migrations)",
       );
