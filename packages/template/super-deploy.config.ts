@@ -3,11 +3,17 @@ import { embeddedPostgres } from "super-deploy/embedded-postgres";
 
 // Every setting, with its default, is in "Configuration" in README.md.
 
-// A private PostgreSQL 18 server in .super-deploy/postgres (gitignored). It
-// provides the throwaway databases rehearsals need and the local `dev` target,
-// and starts on a free port whenever a command needs it.
-const postgres = embeddedPostgres({
-  dataDir: new URL(".super-deploy/postgres/", import.meta.url),
+// Two private PostgreSQL 18 servers in .super-deploy (gitignored), each
+// started whenever a command needs it. The local `dev` target is a database
+// on the first, which listens on a fixed port so you can connect to it (see
+// "Connecting to dev" in README.md). The second provides the throwaway
+// databases rehearsals need, on a free port.
+export const devServer = embeddedPostgres({
+  dataDir: new URL(".super-deploy/dev/", import.meta.url),
+  port: 54329,
+});
+const rehearsalServer = embeddedPostgres({
+  dataDir: new URL(".super-deploy/rehearsal/", import.meta.url),
 });
 
 // A real target (QA, production) connects to an existing PostgreSQL 18
@@ -17,9 +23,9 @@ const postgres = embeddedPostgres({
 // environment variable QA_DATABASE_URL only when a command uses `qa`.
 export default defineConfig({
   postgresVersion: 18,
-  rehearsal: postgres.rehearsal,
+  rehearsal: rehearsalServer.rehearsal,
   targets: {
-    dev: { adapter: postgres.target("dev") },
+    dev: { adapter: devServer.target("dev") },
     // qa: { adapter: postgresTarget({ env: "QA_DATABASE_URL" }) },
   },
 });

@@ -1,6 +1,8 @@
 // `init`: scaffold a project from the template bundled in the library
-// package (no network fetch). The result is ready to use: its config runs a
-// private embedded PostgreSQL 18 for rehearsals and the `dev` target.
+// package (no network fetch). The result is ready to use: its config runs
+// private embedded PostgreSQL 18 servers, one for the `dev` target and one
+// for rehearsals. `dev`'s listens on a fixed port, so it is always at the same
+// URL: init writes one that is free when it runs in place of the template's.
 //
 // `init --adopt <target>` doesn't scaffold: it needs the target's connection
 // from config, so it runs in a project initialised (and configured) already,
@@ -9,7 +11,9 @@
 import { constants, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
+import { freePort } from "../adapters/ports.ts";
 import { SuperDeployError } from "../errors.ts";
+import { configFileName } from "../project.ts";
 import {
   libraryPackageDirectory,
   renamedOnInit,
@@ -58,6 +62,11 @@ export async function init(options: InitOptions = {}): Promise<InitResult> {
         root,
       );
       await writeFile(target, manifest, { flag: "wx" });
+    } else if (to === configFileName) {
+      const config = await readFile(join(source, from), "utf8");
+      await writeFile(target, withDevPort(config, await freePort()), {
+        flag: "wx",
+      });
     } else {
       await copyFile(join(source, from), target, constants.COPYFILE_EXCL);
     }
@@ -92,6 +101,11 @@ function projectManifest(text: string, root: string): string {
     }
   }
   return `${JSON.stringify(result, null, 2)}\n`;
+}
+
+/** The template's config with `port` as its `dev` server's port. */
+function withDevPort(config: string, port: number): string {
+  return config.replace(/^(\s*port: )\d+,$/m, `$1${port},`);
 }
 
 /** An npm package name from a folder name: lowercase, URL-safe characters only. */
