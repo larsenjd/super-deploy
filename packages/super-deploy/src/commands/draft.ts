@@ -35,7 +35,13 @@ import {
   type Override,
 } from "../sql-analysis/index.ts";
 import { asSqlFiles, readDesiredSchemaFiles } from "../store/desired-schema.ts";
-import { readDraft, schemaChangeHeader, writeDraft } from "../store/draft.ts";
+import {
+  readDraft,
+  schemaChangeHeader,
+  type UnknownDraftFile,
+  unknownDraftFiles,
+  writeDraft,
+} from "../store/draft.ts";
 import { normaliseDraftName } from "../store/draft-name.ts";
 import { desiredSchemaHash } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
@@ -75,6 +81,8 @@ export interface DraftResult {
    * the affected rows in the rehearsal data. Advisory; empty when none.
    */
   readonly toCover: readonly ScriptCoverage[];
+  /** Files in the draft folder that a draft doesn't hold: they never run (store/draft.ts). */
+  readonly unknownFiles: readonly UnknownDraftFile[];
 }
 
 export async function draft(
@@ -189,6 +197,7 @@ export async function draft(
     schemaChangePath: paths.draftSchemaChange,
     statements: planned,
     toCover,
+    unknownFiles: await unknownDraftFiles(project.root, paths),
   };
 }
 

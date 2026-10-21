@@ -221,7 +221,11 @@ export {
   SqlRuleViolationError,
 } from "./sql-analysis/index.ts";
 export type { Override } from "./sql-analysis/overrides.ts";
-export { InvalidDraftError, NoDraftError } from "./store/draft.ts";
+export {
+  InvalidDraftError,
+  NoDraftError,
+  type UnknownDraftFile,
+} from "./store/draft.ts";
 export {
   InvalidDraftNameError,
   maxDraftNameLength,

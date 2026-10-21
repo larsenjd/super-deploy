@@ -17,7 +17,11 @@ import type {
   LockWarning,
   Override,
 } from "../sql-analysis/index.ts";
-import { draftMetadataFileName } from "../store/draft.ts";
+import {
+  draftMetadataFileName,
+  type UnknownDraftFile,
+  unknownDraftFiles,
+} from "../store/draft.ts";
 import {
   chainHash,
   type HashedFile,
@@ -90,6 +94,12 @@ export interface FinalizeResult {
   readonly destructive: readonly DestructiveStatement[];
   /** Statements that rewrite or scan an existing table while holding its lock (project-relative paths in the new migration folder). */
   readonly warnings: readonly LockWarning[];
+  /**
+   * Files the draft folder held that a draft doesn't (project-relative paths
+   * in the draft folder): they never run, yet are copied like the rest
+   * (store/draft.ts).
+   */
+  readonly unknownFiles: readonly UnknownDraftFile[];
 }
 
 /**
@@ -116,6 +126,7 @@ export async function finalize(
     },
   );
   const { destructive, warnings } = rehearsed.analysis;
+  const unknownFiles = await unknownDraftFiles(root, paths);
   const target = await finalizedPlace(project, rehearsed);
   const { path } = target;
   // Draft files are named by project-relative path; once finalized they are
@@ -187,6 +198,7 @@ export async function finalize(
     recovery: migration === undefined ? undefined : target.number,
     destructive: destructive.map(finalized),
     warnings: warnings.map(finalized),
+    unknownFiles,
   };
 }
 

@@ -12,14 +12,28 @@
 // The copy's header comment says so (recoverySchemaChange) instead of the
 // generated one's "run draft again"; its statements are migration N's,
 // unchanged, and the migration's own hashed file is never touched.
+//
+// A draft holds only draftFileNames. Anything else in its folder (a misnamed
+// script such as `post-migrate.sql`, or notes) never runs, yet finalize
+// copies it into the migration, so `draft`, `rehearse`, `finalize` and
+// `validate` warn about each one (unknownDraftFiles) and carry on: the
+// maintainer chose a warning over a refusal (QA 44).
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SuperDeployError } from "../errors.ts";
+import { isSqlFile } from "./desired-schema.ts";
 import { normaliseDraftName } from "./draft-name.ts";
 import { fileHash, normaliseLineEndings } from "./hashing.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";
-import { type FinalizedMigration, schemaChangeFileName } from "./migrations.ts";
+import {
+  type FinalizedMigration,
+  listFiles,
+  postMigrationFileName,
+  preMigrationFileName,
+  schemaChangeFileName,
+  seedDataFileName,
+} from "./migrations.ts";
 
 /** The header comment `draft` writes at the top of the schema change. */
 export const schemaChangeHeader = [
@@ -62,6 +76,41 @@ export async function writeRecoverySchemaChange(
 
 /** The draft's own metadata file; never copied into the finalized migration. */
 export const draftMetadataFileName = "draft.json";
+
+/** Every file a draft may hold: its metadata, then its SQL in the order it runs. */
+export const draftFileNames: readonly string[] = [
+  draftMetadataFileName,
+  seedDataFileName,
+  preMigrationFileName,
+  schemaChangeFileName,
+  postMigrationFileName,
+];
+
+/** A file in the draft folder that isn't one of draftFileNames. */
+export interface UnknownDraftFile {
+  /** Project-relative path. */
+  readonly file: string;
+  /** Names the file and the files a draft holds; for a `.sql` file, says it will not run. */
+  readonly message: string;
+}
+
+/** The files under the draft folder that a draft doesn't hold; none without a draft. */
+export async function unknownDraftFiles(
+  root: string,
+  paths: ProjectPaths,
+): Promise<UnknownDraftFile[]> {
+  const holds = `a draft holds ${draftFileNames.slice(0, -1).join(", ")} and ${draftFileNames.at(-1)}`;
+  return (await listFiles(paths.draft))
+    .filter((path) => !draftFileNames.includes(path))
+    .map((path) => {
+      const file = projectRelative(root, join(paths.draft, path));
+      const runs = isSqlFile(path) ? ", so it will not run" : "";
+      return {
+        file,
+        message: `${file} is not one of a draft's files${runs} (${holds})`,
+      };
+    });
+}
 
 export interface DraftMetadata {
   readonly name: string;
