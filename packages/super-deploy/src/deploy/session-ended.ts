@@ -5,13 +5,17 @@
 // or, inside the deploy transaction, as a file PostgreSQL refused.
 //
 // Which errors count:
-// - `sessionEnding` (errors.ts): SQLSTATE 57P01-57P05 and 25P03 are the server ending
-//   the session; class 08, or an error with no SQLSTATE at all (node-postgres
-//   reports a dropped connection so), is a lost connection. Either way
-//   nothing the session had not committed survives. The deploy-time SQL
-//   runner (rehearsal/replay.ts) passes these on unwrapped, since they are no
-//   refusal of the file, and a lost COMMIT is told apart by them
-//   (deploy/engine.ts, CommitOutcomeUnknownError).
+// - `sessionEnding` (errors.ts): SQLSTATE 57P01-57P05 and 25P03 are the
+//   server ending the session; class 08, or an error with no SQLSTATE at all
+//   (node-postgres reports a dropped connection so), is a lost connection.
+//   Either way nothing the session had not committed survives. The
+//   deploy-time SQL runner (rehearsal/replay.ts) passes these on unwrapped,
+//   since they are no refusal of the file, and a lost COMMIT is told apart
+//   by them (deploy/engine.ts, CommitOutcomeUnknownError).
+//
+// A command that changes a target in autocommit (`disposable`'s one UPDATE)
+// is reported as having changed nothing if its session ends during that
+// statement, though the server may have run it.
 // - Lock (55P03) and statement (57014) timeouts outside a deploy-time file
 //   (the drift check, adoption's reads) become TargetTimeoutError, naming the
 //   target's setting. Inside a file they stay SqlFileFailedError.

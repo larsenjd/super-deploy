@@ -311,8 +311,8 @@ export async function commitRecorded(
   try {
     await session.execute("COMMIT");
   } catch (error) {
-    // Refused by the server (or interrupted, which lets a COMMIT finish):
-    // known to have rolled back.
+    // Refused by the server, or never sent (interrupted first): known not
+    // to have committed.
     if (sessionEnding(error) === undefined) {
       throw error;
     }
