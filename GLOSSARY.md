@@ -58,7 +58,7 @@ _Avoid_: Scratch database, sandbox
 The single database schema the system owns and keeps in line with the desired schema.
 
 **External schema**:
-A schema outside the managed schema that routines in the desired schema may refer to, but which the system neither creates nor reproduces in rehearsals.
+A schema outside the managed schema that routines in the desired schema may refer to, but which the system neither creates, nor reproduces in rehearsals, nor checks for on targets: the DBA sets it up.
 
 **History schema**:
 The schema the system keeps inside each target to record which migrations it has run, every deployment attempt, and whether it is disposable.

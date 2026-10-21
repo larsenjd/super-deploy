@@ -1,14 +1,21 @@
 // An embedded-postgres adapter: a private PostgreSQL 18 server in a project
-// folder (e.g. `.super-deploy/postgres`, gitignored) that provides rehearsal
-// databases and local targets such as `dev`. Imported as
-// `super-deploy/embedded-postgres`; `embedded-postgres` itself is an optional
-// peer dependency, loaded only when the server is first needed (importing it
-// installs process exit and signal hooks).
+// folder that provides rehearsal databases, local targets such as `dev`, or
+// both. Imported as `super-deploy/embedded-postgres`; `embedded-postgres`
+// itself is an optional peer dependency, loaded only when the server is first
+// needed (importing it installs process exit and signal hooks).
 //
-// The server starts on a free port when a command first needs it and stops
-// when the project is closed. If the data directory's server is already
-// running (another command, or a test harness), the adapter attaches to it
-// and leaves it running.
+// The generated config runs two (packages/template/super-deploy.config.ts):
+// one for `dev` in `.super-deploy/dev` on a fixed `port`, so users and their
+// apps connect to `dev` at a known URL, and one for rehearsals in
+// `.super-deploy/rehearsal` on a free port, so a rehearsal never creates a
+// database next to `dev` (ticket 06).
+//
+// The server starts when a command first needs it, on its `port` or else a
+// free one, and stops when the project is closed. A `port` something else
+// listens on fails the start with an AdapterError naming it and the setting.
+// If the data directory's server is already running (another command, or a
+// test harness), the adapter attaches to it, on whatever port it has, and
+// leaves it running.
 //
 // The server's superuser `super_deploy` sets the server up and runs the
 // rehearsal databases. A target (`target(database)`) is deployed as the
@@ -29,7 +36,6 @@
 import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
-import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type EmbeddedPostgresServer from "embedded-postgres";
@@ -40,6 +46,7 @@ import {
   rehearsalOver,
   targetOver,
 } from "./node-postgres.ts";
+import { freePort, localHost as host, portInUse } from "./ports.ts";
 import type { DeploymentAdapter, RehearsalAdapter } from "./types.ts";
 import { AdapterError } from "./types.ts";
 
@@ -49,6 +56,12 @@ export interface EmbeddedPostgresOptions {
    * absolute path or a file URL (e.g. `new URL(".super-deploy/postgres", import.meta.url)`).
    */
   dataDir: string | URL;
+  /**
+   * The port the server listens on, on 127.0.0.1, so its databases are always
+   * at the same URL. If something else listens there, starting the server
+   * fails. Default: a free port, picked each time the server starts.
+   */
+  port?: number;
 }
 
 export interface EmbeddedPostgres {
@@ -76,7 +89,6 @@ const user = "super_deploy";
 const password = "super_deploy";
 const deployRole = "deployer";
 const deployRolePassword = "deployer";
-const host = "127.0.0.1";
 
 // Creates the deploy role unless it exists. Another process may create it
 // meanwhile, so losing that race is not an error.
@@ -139,7 +151,18 @@ export function embeddedPostgres(
       });
     }
     for (let attempt = 1; ; attempt++) {
-      const candidate = await freePort();
+      if (options.port !== undefined && (await portInUse(options.port))) {
+        // Perhaps this data directory's server, started by another process
+        // meanwhile.
+        const other = await runningPort(dataDir);
+        if (other !== undefined) {
+          return other;
+        }
+        throw new AdapterError(
+          `Embedded PostgreSQL can't start in ${dataDir}: port ${options.port} on ${host} is in use by another program. Stop that program, or set another \`port\` in embeddedPostgres({ ... }) in super-deploy.config.ts`,
+        );
+      }
+      const candidate = options.port ?? (await freePort());
       const server = new EmbeddedPostgresClass({
         ...serverOptions(candidate),
         postgresFlags: pgFlags,
@@ -355,21 +378,4 @@ function isAlive(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
-}
-
-function freePort(): Promise<number> {
-  return new Promise((resolvePort, reject) => {
-    const probe = createServer();
-    probe.once("error", reject);
-    probe.listen(0, host, () => {
-      const address = probe.address();
-      probe.close(() => {
-        if (address !== null && typeof address === "object") {
-          resolvePort(address.port);
-        } else {
-          reject(new Error("Could not find a free port"));
-        }
-      });
-    });
-  });
 }
