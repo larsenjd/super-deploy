@@ -51,7 +51,8 @@ test("recovery, rehearse, finalize, validate and unfinalize report Recoveries", 
   expect(await cli(["recovery", "--migration", "00002"])).toEqual({
     exitCode: 0,
     stdout:
-      "Created a Recovery draft of migration 00002-require-email in data-model/draft (it becomes Recovery 1 when finalized)\n",
+      "Created a Recovery draft of migration 00002-require-email in data-model/draft (it becomes Recovery 1 when finalized)\n" +
+      "Next: fix its scripts, add seed data that reproduces the failure, then rehearse, finalize and deploy\n",
     stderr: "",
   });
   expect(await cli(["recovery", "--migration", "1"])).toEqual({

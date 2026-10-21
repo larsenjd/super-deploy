@@ -60,7 +60,10 @@ export async function rehearseDeployment(
         target: input.targetConfig,
       });
       if (drift.length > 0) {
-        throw new DriftError(input.targetConfig.name, drift);
+        throw new DriftError(input.targetConfig.name, drift, {
+          command: "deploy",
+          pending: input.pending.length,
+        });
       }
       if (input.pending.length > 0) {
         await replay(replica, input.pending, managedSchema);

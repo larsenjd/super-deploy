@@ -149,6 +149,8 @@ describe("recovery", () => {
 
 const backfill =
   "update customers set email = 'unknown@example.com' where email is null;\n";
+/** `backfill` as replay sends it: statement by statement, without the semicolon. */
+const backfillStatement = backfill.replace(/;\n$/, "");
 const nullEmail = "insert into customers (id, email) values (7, null);\n";
 const recovery1 = `${migration2}/recoveries/recovery-1`;
 
@@ -363,14 +365,14 @@ describe("deploying with Recoveries", () => {
       status(setup.project, { target: "qa" }),
     );
 
-    expect(devReplica).toContain(backfill);
-    expect(qaReplica).not.toContain(backfill);
+    expect(devReplica).toContain(backfillStatement);
+    expect(qaReplica).not.toContain(backfillStatement);
     expect(qaReplica.some((sql) => sql.includes("SET NOT NULL"))).toBe(true);
     // deploy's replica of qa (up to date) replays its recorded original too.
     const later = await rehearsalSqlOf(() =>
       deploy(setup.project, { target: "qa" }),
     );
-    expect(later).not.toContain(backfill);
+    expect(later).not.toContain(backfillStatement);
   });
 });
 
@@ -451,7 +453,7 @@ describe("the deploy pre-flight", () => {
         number: 2,
         reason: "recovery",
         message:
-          "the target records migration 00002-require-email with Recovery 1, which the repo doesn't have",
+          "the target records migration 00002-require-email with Recovery 1, which the repo doesn't have: restore 00002-require-email/recoveries/recovery-1 (and index.json) from version control (a migration a target has recorded must never change, so put new changes in a new migration)",
       },
     ]);
     expect(report.drift).toBeUndefined();
@@ -469,7 +471,7 @@ describe("the deploy pre-flight", () => {
       { number: 2, reason: "recovery" },
     ]);
     expect(report.preflight.historyMismatches[0]?.message).toMatch(
-      /^the target records migration 00002-require-email Recovery 1 with chain hash [0-9a-f]{64}, but the repo's is [0-9a-f]{64}$/,
+      /^the target records migration 00002-require-email Recovery 1 with chain hash [0-9a-f]{64}, but the repo's is [0-9a-f]{64}: restore 00002-require-email\/recoveries\/recovery-1 \(and index\.json\) from version control \(a migration a target has recorded must never change, so put new changes in a new migration\)$/,
     );
   });
 });

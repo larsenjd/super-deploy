@@ -775,7 +775,10 @@ const statusCommand: CommandDefinition = {
     }
     if (report.drift !== undefined && report.drift.length > 0) {
       // Exit 1, so a scheduled status alerts on drift.
-      throw new DriftError(report.target, report.drift);
+      throw new DriftError(report.target, report.drift, {
+        command: "status",
+        pending: report.pending.length,
+      });
     }
   },
 };
@@ -800,6 +803,9 @@ const recoveryCommand: CommandDefinition = {
     });
     context.result(
       `Created a Recovery draft of migration ${result.folder} in ${context.displayPath(result.draftPath)} (it becomes Recovery ${result.recovery} when finalized)`,
+    );
+    context.result(
+      "Next: fix its scripts, add seed data that reproduces the failure, then rehearse, finalize and deploy",
     );
   },
 };
