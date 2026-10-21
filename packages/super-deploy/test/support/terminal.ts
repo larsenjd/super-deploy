@@ -12,7 +12,11 @@ export const keys = {
   down: "\x1b[B",
   up: "\x1b[A",
   ctrlC: "\x03",
+  ctrlD: "\x04",
 } as const;
+
+/** The escape sequence that shows the terminal's cursor again. */
+export const showCursor = "\x1b[?25h";
 
 const menuTitle = "What do you want to do?";
 const menuFooter = "Up/Down to move, Enter to run, Escape to leave";
@@ -22,6 +26,8 @@ const maxMenuMoves = 50;
 export interface Terminal {
   /** Everything shown so far, without escape sequences. */
   readonly screen: string;
+  /** Everything written so far, escape sequences included. */
+  readonly output: string;
   /** Types into the terminal. */
   type(text: string): void;
   /**
@@ -115,6 +121,9 @@ export function spawnTerminal(
   return {
     get screen() {
       return screen();
+    },
+    get output() {
+      return raw;
     },
     type: (text) => pty.write(text),
     async waitFor(text, timeoutMs) {

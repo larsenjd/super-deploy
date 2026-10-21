@@ -17,6 +17,7 @@ import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import { readSeededUnit, seededFiles } from "../rehearsal/seed-data.ts";
 import {
+  describeViolation,
   desiredSchemaAnalysis,
   type Override,
   type RuleViolation,
@@ -336,7 +337,7 @@ async function ruleProblems(
     problems.push({
       severity: "error",
       code: "sql-rule-violation",
-      message: `${violation.file}:${violation.line}: ${violation.message} [${violation.rule}]`,
+      message: describeViolation(violation),
       path: violation.file,
       line: violation.line,
       rule: violation.rule,

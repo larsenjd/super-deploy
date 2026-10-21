@@ -13,6 +13,7 @@ export {
   type AdoptedFile,
   type AdoptionOptions,
   adoptedDesiredSchema,
+  isSequenceStatement,
 } from "./adoption.ts";
 export {
   type OverrideCandidate,
@@ -34,6 +35,7 @@ export {
 export {
   catalogObjectFinding,
   isAlreadyInstalled,
+  serialColumnFinding,
   virtualGeneratedColumnFinding,
 } from "./desired-schema-rules.ts";
 export {
@@ -116,4 +118,8 @@ export async function desiredSchemaAnalysis(
   }
   return { statements: ordering.statements, overrides };
 }
-export { type RuleViolation, SqlRuleViolationError } from "./rules.ts";
+export {
+  describeViolation,
+  type RuleViolation,
+  SqlRuleViolationError,
+} from "./rules.ts";

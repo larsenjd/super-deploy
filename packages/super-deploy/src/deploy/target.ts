@@ -2,6 +2,7 @@
 // deployment adapter (only when a command actually touches it), check the
 // server, and read the locale its rehearsals must match.
 
+import { ConnectionStringError } from "../adapters/node-postgres.ts";
 import type { DatabaseRequest, Session } from "../adapters/types.ts";
 import { AdapterError } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
@@ -34,13 +35,23 @@ export function targetTimeouts(target: ResolvedTarget): string[] {
 /**
  * Opens a session to `target` through its adapter and refuses a server that
  * isn't PostgreSQL 18. Every call is one `adapter.connect()`; a deployment
- * calls it twice (see deploy/engine.ts for which session is which).
+ * calls it twice (see deploy/engine.ts for which session is which). A
+ * connection-string problem is reported as the target's own ("Target qa has
+ * no connection string"): the adapter doesn't know the target's name.
  */
 export async function connectTarget(target: ResolvedTarget): Promise<Session> {
   const session = await adapterCall(
     `The deployment adapter of target ${target.name}`,
     "connect",
-    () => target.adapter.connect(),
+    async () => {
+      try {
+        return await target.adapter.connect();
+      } catch (error) {
+        throw error instanceof ConnectionStringError
+          ? error.about(`Target ${target.name}`)
+          : error;
+      }
+    },
   );
   try {
     await requirePostgres18(session, `Target ${target.name}`);

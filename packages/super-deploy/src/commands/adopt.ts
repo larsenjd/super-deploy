@@ -6,9 +6,11 @@
 // Adoption needs the target's connection, so it runs in a project that is
 // already initialised (`init`, then the target added to
 // super-deploy.config.ts) and still empty: no finalized migrations, no draft
-// and no desired-schema SQL files. The target must record no migrations, and
-// its deploy role must own the managed schema and everything in it
-// (deploy/ownership.ts), checked before anything is rehearsed.
+// and no desired-schema SQL files. The target must record no migrations and
+// have the managed schema (a missing one is almost always a mistyped
+// managedSchema; an existing empty one is adopted), and its deploy role must
+// own that schema and everything in it (deploy/ownership.ts), all checked
+// before anything is rehearsed.
 //
 // Steps, and what each one guarantees:
 //   1. Read the target (never writing to it): pg-delta generates the
@@ -19,8 +21,10 @@
 //      written (ADR-0006); the result counts the grants and policies.
 //   2. Refuse, listing everything at once, if anything there is unsupported:
 //      objects a desired schema can't create at all (the catalog check's
-//      `other` kind, and virtual generated columns, which pg-delta renders
-//      STORED), every desired-schema rule (or ordering) violation in
+//      `other` kind, an extension once for all its members; virtual
+//      generated columns, which pg-delta renders STORED; serial columns,
+//      once each, though the differ renders a sequence and its OWNED BY),
+//      every desired-schema rule (or ordering) violation in
 //      the generated files, and, when those pass, every object the files
 //      don't reproduce exactly (loaded on a throwaway database and compared
 //      with the target like the drift check). Nothing is written before
@@ -49,7 +53,7 @@ import {
   CommitOutcomeUnknownError,
   withLockedTarget,
 } from "../deploy/engine.ts";
-import { readRecordedMigrations } from "../deploy/history.ts";
+import { readRecordedMigrations, schemaExists } from "../deploy/history.ts";
 import { markNextPending, readMarkableMigrations } from "../deploy/mark.ts";
 import { requireOwnership } from "../deploy/ownership.ts";
 import {
@@ -73,6 +77,7 @@ import {
   adoptedDesiredSchema,
   catalogObjectFinding,
   desiredSchemaAnalysis,
+  isSequenceStatement,
   type OverrideCandidate,
   type OverrideNeeded,
   oneLine,
@@ -81,6 +86,7 @@ import {
   type RuleContext,
   type SqlFile,
   SqlRuleViolationError,
+  serialColumnFinding,
   virtualGeneratedColumnFinding,
   withOverrideMarkers,
 } from "../sql-analysis/index.ts";
@@ -154,9 +160,10 @@ export interface LeftOnTarget {
 
 /**
  * Refuses with UnknownTargetError, AdoptConflictError (the project or the
- * target isn't empty), NotOwnedError (the deploy role doesn't own the
- * managed schema or something in it) or AdoptUnsupportedError (listing
- * everything V1 doesn't support) before writing anything.
+ * target isn't empty, or the target has no managed schema), NotOwnedError
+ * (the deploy role doesn't own the managed schema or something in it) or
+ * AdoptUnsupportedError (listing everything V1 doesn't support) before
+ * writing anything.
  */
 export async function adopt(
   project: Project,
@@ -282,6 +289,11 @@ async function readTarget(
         `it already records ${recorded.length} migration${recorded.length === 1 ? "" : "s"} in its history schema "${config.historySchema}"`,
       ]);
     }
+    if (!(await schemaExists(session, config.managedSchema))) {
+      throw new AdoptConflictError(target.name, [
+        `its managed schema "${config.managedSchema}" does not exist (check managedSchema in super-deploy.config.ts)`,
+      ]);
+    }
     // Later migrations alter what is adopted: the deploy role must own it.
     await requireOwnership(session, target.name, config.managedSchema);
     // The differ reads definitions that wait for table locks: never longer
@@ -292,6 +304,7 @@ async function readTarget(
         .join(";\n"),
     );
     const request = await targetDatabaseRequest(session);
+    const serials = await serialColumns(session, config.managedSchema);
     const statements = await withThrowawayDatabase(
       config.rehearsal,
       request,
@@ -317,6 +330,14 @@ async function readTarget(
         settings: targetTimeouts(target),
       })
     ).flatMap(unsupportedFact);
+    const serial = serialColumnFinding();
+    unsupported.push(
+      ...serials.map(({ column }) => ({
+        object: `serial column ${column}`,
+        rule: serial.rule,
+        reason: serial.message,
+      })),
+    );
     const candidates = withOverrides
       ? await overrideCandidates(sqlFiles(project, files), context)
       : [];
@@ -325,6 +346,7 @@ async function readTarget(
       project,
       withCheckingMarkers(project, files, candidates),
       context,
+      serials.map((serial) => serial.sequence),
     );
     unsupported.push(...analysed.unsupported);
     if (unsupported.length > 0) {
@@ -451,6 +473,32 @@ async function columnOrder(
   return Object.fromEntries(rows.map((row) => [row.table, row.columns]));
 }
 
+/**
+ * The managed schema's serial columns: each sequence a table column owns
+ * (pg_depend deptype 'a'; an identity column's is 'i'), with the column as
+ * `schema.table.column`. OWNED BY keeps both in one schema.
+ */
+async function serialColumns(
+  session: Session,
+  managedSchema: string,
+): Promise<{ sequence: string; column: string }[]> {
+  const { rows } = await session.query<{ sequence: string; column: string }>(
+    `SELECT s.relname AS sequence,
+            pg_catalog.format('%s.%s.%s', n.nspname, t.relname, a.attname) AS column
+       FROM pg_catalog.pg_depend d
+       JOIN pg_catalog.pg_class s ON s.oid = d.objid AND s.relkind = 'S'
+       JOIN pg_catalog.pg_namespace n ON n.oid = s.relnamespace
+       JOIN pg_catalog.pg_class t ON t.oid = d.refobjid
+       JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
+      WHERE d.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+        AND d.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass
+        AND d.deptype = 'a' AND n.nspname = $1
+      ORDER BY 2`,
+    [managedSchema],
+  );
+  return rows;
+}
+
 /** One reason per candidate, in order; an empty answer cancels. */
 async function askReasons(
   project: Project,
@@ -550,11 +598,15 @@ const notReproduced: Readonly<Record<DriftChange, string>> = {
     "The desired schema generated from the target creates it differently",
 };
 
-/** The generated files through the desired-schema rules and ordering. */
+/**
+ * The generated files through the desired-schema rules and ordering. The
+ * statements about `serialSequences` aren't listed: their serial column is.
+ */
 async function analyse(
   project: Project,
   files: readonly AdoptedFile[],
   context: RuleContext,
+  serialSequences: readonly string[],
 ): Promise<{
   statements: readonly ParsedStatement[];
   unsupported: UnsupportedObject[];
@@ -569,14 +621,17 @@ async function analyse(
     if (!(error instanceof SqlRuleViolationError)) {
       throw error;
     }
-    return {
-      statements: [],
-      unsupported: error.violations.map((violation) => ({
-        object: firstLine(violation.statement) || violation.file,
-        rule: violation.rule,
-        reason: violation.message,
-      })),
-    };
+    const unsupported: UnsupportedObject[] = [];
+    for (const violation of error.violations) {
+      if (!(await isSequenceStatement(violation.statement, serialSequences))) {
+        unsupported.push({
+          object: firstLine(violation.statement) || violation.file,
+          rule: violation.rule,
+          reason: violation.message,
+        });
+      }
+    }
+    return { statements: [], unsupported };
   }
 }
 
@@ -640,7 +695,8 @@ async function undoAdoption(
 
 /**
  * `init --adopt` needs a project with no migrations, draft or desired
- * schema yet, and a target that records no migrations; nothing was written.
+ * schema yet, and a target that records no migrations and has the managed
+ * schema; nothing was written.
  */
 export class AdoptConflictError extends SuperDeployError {
   readonly code = "adopt-conflict";
@@ -649,7 +705,9 @@ export class AdoptConflictError extends SuperDeployError {
   readonly reasons: readonly string[];
 
   constructor(target: string, reasons: readonly string[]) {
-    super(`Cannot adopt target ${target}: ${reasons.join("; ")}`);
+    super(
+      `Cannot adopt target ${target}: ${reasons.join("; ")}. Nothing was written`,
+    );
     this.target = target;
     this.reasons = reasons;
   }

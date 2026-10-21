@@ -2,7 +2,9 @@
 // attempt as abandoned, releases the target lock, drops throwaway databases
 // and exits with the signal's code, promptly even when Ctrl+C also stopped the
 // project's own embedded server. A process killed outright leaves its attempt
-// running, and the next `status` settles it.
+// running, and the next `status` settles it. A `status` while a deployment
+// holds the target names the holder and leaves drift unchecked.
+import { userInfo } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli, spawnCli, waitForFile } from "../support/cli.ts";
@@ -209,6 +211,35 @@ describe.each([
     });
   },
 );
+
+test("status during a deployment names the holder, leaves drift unchecked and exits 0", async () => {
+  const { dir, marker } = await finalizedProject();
+  const cli = spawnCli(["deploy", "--target", "dev"], {
+    cwd: dir.root,
+    env: { TEST_STALL: "transaction", TEST_MARKER: marker },
+  });
+  try {
+    await waitForFile(marker);
+
+    const result = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(
+      new RegExp(
+        `^Locked by attempt #1 \\(deploy by ${userInfo().username}, started \\S+, server process \\d+\\)$`,
+        "m",
+      ),
+    );
+    expect(result.stdout).toContain(
+      "Drift: not checked (the target is locked by attempt #1)\n",
+    );
+  } finally {
+    cli.signal("SIGTERM");
+    await cli.result;
+  }
+});
 
 test("a deployment killed outright leaves its attempt running, and the next status settles it as abandoned", async () => {
   const { dir, database, marker } = await finalizedProject();

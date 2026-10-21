@@ -56,6 +56,15 @@ async function linkDependencies(root: string): Promise<void> {
   }
 }
 
+/** This process's environment without Git's and Husky's own variables (as when run from a hook). */
+function gitEnv(): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) => !name.startsWith("GIT_") && name !== "HUSKY",
+    ),
+  );
+}
+
 /** Runs a devDependency's bin script (by path within its package) in `root`. */
 function runTool(root: string, bin: string, args: readonly string[]) {
   const result = spawnSync(
@@ -74,9 +83,12 @@ describe("init", () => {
     const root = await emptyDirectory();
     const initialised = await runCli(["init"], { cwd: root });
     expect(initialised).toMatchObject({ exitCode: 0, stderr: "" });
-    expect(initialised.stdout).toMatch(
-      /^Initialised a super-deploy project in \.\n/,
+    const [first, next] = initialised.stdout.split("\n");
+    expect(first).toBe(
+      `Initialised a super-deploy project in ${realpathSync(root)}`,
     );
+    // Not a Git repo yet: Git first, so that pnpm install installs the hook.
+    expect(next).toMatch(/^Next: git init, then pnpm install\b/);
     await linkDependencies(root);
 
     // The template's precommit: biome check && tsc --noEmit && super-deploy validate --strict
@@ -136,11 +148,7 @@ describe("init", () => {
         { mode: 0o755 },
       );
       const env: NodeJS.ProcessEnv = {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(
-            ([name]) => !name.startsWith("GIT_") && name !== "HUSKY",
-          ),
-        ),
+        ...gitEnv(),
         PATH: `${bin}:${process.env.PATH}`,
       };
       const run = (command: string, args: readonly string[]) =>
@@ -171,6 +179,19 @@ describe("init", () => {
       ).toBe("precommit");
     },
   );
+
+  test("in a Git repo already, the next steps start with pnpm install", async () => {
+    const root = await emptyDirectory();
+    expect(
+      spawnSync("git", ["init", "--quiet"], {
+        cwd: dirname(root),
+        env: gitEnv(),
+      }).status,
+    ).toBe(0);
+    const initialised = await runCli(["init"], { cwd: root });
+    expect(initialised).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(initialised.stdout.split("\n")[1]).toMatch(/^Next: pnpm install\b/);
+  });
 
   test("refuses to overwrite existing files (exit 1)", async () => {
     const root = await emptyDirectory();

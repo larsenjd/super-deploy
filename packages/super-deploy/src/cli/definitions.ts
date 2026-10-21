@@ -2,7 +2,8 @@
 // flags, parse.ts) and the interactive menu (menu.ts). Each command's `run`
 // calls the exported API function and prints its result. To add a command,
 // define it here and append it to `commands`.
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { AdoptUnsupportedError, adopt } from "../commands/adopt.ts";
 import { deploy } from "../commands/deploy.ts";
 import { deployDraft } from "../commands/deploy-draft.ts";
@@ -205,6 +206,18 @@ export function needsProject(
   );
 }
 
+/** True if `directory` or a folder above it has a `.git` (a folder, or a file in linked worktrees). */
+function insideGitWorkTree(directory: string): boolean {
+  for (let folder = directory; ; folder = dirname(folder)) {
+    if (existsSync(join(folder, ".git"))) {
+      return true;
+    }
+    if (dirname(folder) === folder) {
+      return false;
+    }
+  }
+}
+
 /** A command refused to go ahead (exit 1). */
 export class RefusedError extends Error {
   override name = "RefusedError";
@@ -248,11 +261,16 @@ const initCommand: DirectoryCommandDefinition = {
   ],
   async run(directory, _values, context) {
     const result = await init({ directory });
+    // The absolute path: init runs in the working directory, which
+    // displayPath would show as ".".
+    context.result(`Initialised a super-deploy project in ${result.root}`);
+    // Git before pnpm install, as the template README says: Husky installs
+    // the pre-commit hook only into an existing repo.
+    const install = insideGitWorkTree(result.root)
+      ? "pnpm install"
+      : "git init, then pnpm install";
     context.result(
-      `Initialised a super-deploy project in ${context.displayPath(result.root)}`,
-    );
-    context.result(
-      "Next: pnpm install, add CREATE statements under data-model/desired-schema/, then run draft",
+      `Next: ${install}, add CREATE statements under data-model/desired-schema/, then run draft`,
     );
   },
   projectMode: {
@@ -698,6 +716,20 @@ const statusCommand: CommandDefinition = {
     context.result(
       `Target ${report.target}${report.disposable ? " (disposable)" : ""}: ${plural(report.recorded.length, "migration")} recorded, ${report.pending.length} pending`,
     );
+    // Who holds the target lock: attempt #N, or another session when the
+    // holder recorded no running attempt.
+    const attempt = report.lockedBy?.attempt;
+    const holder =
+      attempt === undefined ? "another session" : `attempt #${attempt.id}`;
+    if (report.lockedBy !== undefined) {
+      const details =
+        attempt === undefined
+          ? ""
+          : `${attempt.command} by ${attempt.osUser}, started ${attempt.startedAt.toISOString()}, `;
+      context.result(
+        `Locked by ${holder} (${details}server process ${report.lockedBy.pid})`,
+      );
+    }
     const refusals = [
       ...preflight.missingExternalSchemas.map(
         (schema) => `external schema "${schema}" does not exist`,
@@ -711,11 +743,13 @@ const statusCommand: CommandDefinition = {
         context.result(`  ${refusal}`);
       }
     }
-    if (report.drift === undefined) {
+    if (report.driftNotChecked === "history-mismatch") {
       context.result(
         "Drift: not checked (the recorded history doesn't match the project's migrations)",
       );
-    } else if (report.drift.length > 0) {
+    } else if (report.driftNotChecked === "target-locked") {
+      context.result(`Drift: not checked (the target is locked by ${holder})`);
+    } else if (report.drift !== undefined && report.drift.length > 0) {
       // `-` lines are on the target only, `+` lines what its recorded migrations produce.
       context.result(
         "Drift (the target differs from its recorded migrations):",

@@ -6,6 +6,11 @@
 import { relative } from "node:path";
 import { settleCleanups } from "../interruption.ts";
 import type { Project } from "../project.ts";
+import { RehearsalMismatchError } from "../rehearsal/same-structure.ts";
+import {
+  describeViolation,
+  SqlRuleViolationError,
+} from "../sql-analysis/index.ts";
 import type {
   CommandContext,
   CommandDefinition,
@@ -101,10 +106,20 @@ function commandContext(io: CliIo): CommandContext {
   };
 }
 
-/** One `Error:` line; with `debug`, every stack trace and cause too. */
+/**
+ * One `Error:` line; with `debug`, every stack trace and cause too. An error
+ * listing several rule violations or rehearsal differences prints each on a
+ * line of its own first, and a summary as its `Error:` line.
+ */
 export function describeError(error: unknown, debug: boolean): string {
-  const message = error instanceof Error ? error.message : String(error);
-  const lines = [`Error: ${message.replace(/\s*\n\s*/g, " ")}`];
+  const listing = listedDetails(error);
+  const message =
+    listing?.summary ??
+    (error instanceof Error ? error.message : String(error));
+  const lines = [
+    ...(listing?.details ?? []),
+    `Error: ${message.replace(/\s*\n\s*/g, " ")}`,
+  ];
   if (debug) {
     for (let cause: unknown = error; cause !== undefined; ) {
       lines.push(
@@ -117,4 +132,23 @@ export function describeError(error: unknown, debug: boolean): string {
     }
   }
   return `${lines.join("\n")}\n`;
+}
+
+/** The lines an error lists and the summary after them, when it lists more than one. */
+function listedDetails(
+  error: unknown,
+): { details: readonly string[]; summary: string } | undefined {
+  if (error instanceof SqlRuleViolationError && error.violations.length > 1) {
+    return {
+      details: error.violations.map(describeViolation),
+      summary: `${error.violations.length} SQL rule violations (listed above)`,
+    };
+  }
+  if (error instanceof RehearsalMismatchError && error.differences.length > 1) {
+    return {
+      details: error.differences,
+      summary: `${error.subject} (${error.differences.length} differences, listed above)`,
+    };
+  }
+  return undefined;
 }
