@@ -30,6 +30,7 @@ export {
   AdoptConflictError,
   type AdoptOptions,
   type AdoptResult,
+  AdoptTimedOutError,
   AdoptUnsupportedError,
   adopt,
   type LeftOnTarget,

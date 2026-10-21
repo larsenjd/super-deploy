@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedConfig } from "../config/config.ts";
 import {
+  isTimeoutState,
   type TargetTimeoutSettings,
   timeoutThatRanOut,
 } from "../deploy/target.ts";
@@ -453,13 +454,12 @@ function nextStep(
   if (forced !== undefined) {
     return `Next: table "${forced}" has FORCE ROW LEVEL SECURITY on the target, so its policies apply to the deploy role and would hide rows from this migration: turn it off while deploying (ALTER TABLE ... NO FORCE ROW LEVEL SECURITY, then FORCE again afterwards), or move the work out of the migration.`;
   }
-  const timeout =
-    target === undefined ? undefined : timeoutThatRanOut(target, sqlState);
-  if (timeout !== undefined) {
-    const setting = `T${timeout.setting.slice(1)}`;
-    return timeout.lock
-      ? `${setting} ran out waiting for a lock: retry once whatever held the lock has finished, or ${timeout.change}.`
-      : `${setting} cancelled the statement: retry once whatever held it up has finished, or ${timeout.change}.`;
+  if (target !== undefined && isTimeoutState(sqlState)) {
+    const { setting, change } = timeoutThatRanOut(target, sqlState);
+    const subject = `T${setting.slice(1)}`;
+    return sqlState === "55P03"
+      ? `${subject} ran out waiting for a lock: retry once whatever held the lock has finished, or ${change}.`
+      : `${subject} cancelled the statement: retry once whatever held it up has finished, or ${change}.`;
   }
   if (
     rollback !== undefined &&
