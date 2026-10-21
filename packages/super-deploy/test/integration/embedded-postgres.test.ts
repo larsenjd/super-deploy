@@ -3,7 +3,6 @@
 // always at a known URL, and one server shared by every client of its data
 // directory (ticket 14).
 import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -21,6 +20,7 @@ import {
 import { embeddedDeployRole } from "../support/deploy.ts";
 import {
   freePort,
+  holdPort,
   serverRunning,
   startTestServer,
   type TestServer,
@@ -31,20 +31,6 @@ async function tempDataDir(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "super-deploy-test-embedded-"));
   onTestFinished(() => rm(root, { recursive: true, force: true }));
   return join(root, "data");
-}
-
-/** Listens on a free port of 127.0.0.1 until the test finishes. */
-async function occupiedPort(): Promise<number> {
-  const holder: Server = createServer();
-  await new Promise<void>((resolve) => holder.listen(0, "127.0.0.1", resolve));
-  onTestFinished(
-    () => new Promise<void>((resolve) => holder.close(() => resolve())),
-  );
-  const address = holder.address();
-  if (address === null || typeof address !== "object") {
-    throw new Error("no port");
-  }
-  return address.port;
 }
 
 describe("embeddedPostgres with a port", () => {
@@ -70,7 +56,7 @@ describe("embeddedPostgres with a port", () => {
   });
 
   test("a configured port that something else listens on fails naming the port and the setting", async () => {
-    const port = await occupiedPort();
+    const port = await holdPort();
     const server = embeddedPostgres({ dataDir: await tempDataDir(), port });
     onTestFinished(() => server.stop());
 

@@ -8,17 +8,27 @@
 // registered as clients.
 //
 // Also helpers for a project's own server (`serverRunning`, `stopServerOn`,
-// `onStoppedServer`), which run `pg_ctl` outside the adapter's lease.
+// `onStoppedServer`), which run `pg_ctl` outside the adapter's lease, and for
+// ports (`freePort`, `holdPort`).
+//
+// Test support may not import src/ (biome's noRestrictedImports), so what
+// runs a server outside the adapter mirrors src/adapters: `pgCtl` finds
+// pg_ctl as embedded-server.ts's postgresBinaries does, `onStoppedServer`
+// starts it as startServer does (its log file and options) and logs in as
+// embedded-postgres.ts's superuser, `serverRunning` judges a pid as
+// server-lease.ts's isAlive does, and `freePort` picks a port as ports.ts's
+// does. Change them together.
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { createServer } from "node:net";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import pg from "pg";
 import { embeddedPostgres } from "super-deploy/embedded-postgres";
+import { onTestFinished } from "vitest";
 
 export interface TestServer {
   /** The embedded server's data directory; pass it to `embeddedPostgres({ dataDir })`. */
@@ -93,7 +103,7 @@ export async function startTestServer(): Promise<TestServer> {
 
 /**
  * Whether a server runs on `dataDir`: its `postmaster.pid` names a live
- * process.
+ * process (EPERM: alive, as another user's).
  */
 export async function serverRunning(dataDir: string): Promise<boolean> {
   const pid = await readFile(join(dataDir, "postmaster.pid"), "utf8").then(
@@ -106,8 +116,8 @@ export async function serverRunning(dataDir: string): Promise<boolean> {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
@@ -164,6 +174,30 @@ export async function freePort(): Promise<number> {
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   const address = probe.address();
   await new Promise<void>((resolve) => probe.close(() => resolve()));
+  if (address === null || typeof address !== "object") {
+    throw new Error("no port");
+  }
+  return address.port;
+}
+
+/**
+ * Listens on `port` of 127.0.0.1 (default: a free one) until the test
+ * finishes, so no server can take it, and returns it. A port something else
+ * already listens on is left to that.
+ */
+export async function holdPort(port = 0): Promise<number> {
+  const holder: Server = createServer();
+  const held = await new Promise<boolean>((resolve) => {
+    holder.once("error", () => resolve(false));
+    holder.listen(port, "127.0.0.1", () => resolve(true));
+  });
+  if (!held) {
+    return port;
+  }
+  onTestFinished(
+    () => new Promise<void>((resolve) => holder.close(() => resolve())),
+  );
+  const address = holder.address();
   if (address === null || typeof address !== "object") {
     throw new Error("no port");
   }

@@ -12,7 +12,6 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import pg from "pg";
@@ -27,6 +26,7 @@ import {
   status,
 } from "super-deploy";
 import { describe, expect, onTestFinished, test, vi } from "vitest";
+import { holdPort } from "../support/postgres.ts";
 
 /** This library's package folder, posix-style. */
 const libraryFolder = join(import.meta.dirname, "..", "..")
@@ -49,20 +49,6 @@ async function queryAt(url: string, sql: string): Promise<unknown[]> {
     return (await client.query(sql)).rows;
   } finally {
     await client.end();
-  }
-}
-
-/** Listens on `port` of 127.0.0.1 until the test finishes, unless something already does. */
-async function holdPort(port: number): Promise<void> {
-  const holder = createServer();
-  const listening = await new Promise<boolean>((resolve) => {
-    holder.once("error", () => resolve(false));
-    holder.listen(port, "127.0.0.1", () => resolve(true));
-  });
-  if (listening) {
-    onTestFinished(
-      () => new Promise<void>((resolve) => holder.close(() => resolve())),
-    );
   }
 }
 

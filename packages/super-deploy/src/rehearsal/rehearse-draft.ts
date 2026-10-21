@@ -71,7 +71,7 @@ export interface SinceDraft {
  * The opening of a draft rehearsal's mismatch, or undefined for the default
  * ("run draft again"), which is right when the desired schema changed.
  */
-export function draftMismatchSubject(since: SinceDraft): string | undefined {
+function draftMismatchSubject(since: SinceDraft): string | undefined {
   if (since.desiredSchemaChanged) {
     return undefined;
   }
