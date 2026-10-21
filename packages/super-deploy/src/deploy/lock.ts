@@ -120,6 +120,32 @@ export interface LockHolder {
     | undefined;
 }
 
+/** Who holds a lock, briefly: "attempt #N", or "another session" when the holder recorded no running attempt. */
+export function lockHolderName(holder: LockHolder): string {
+  return holder.attempt === undefined
+    ? "another session"
+    : `attempt #${holder.attempt.id}`;
+}
+
+/**
+ * Who holds a lock, in full: "attempt #N (deploy by ana, started <time>,
+ * server process P)", or "another session (server process P)".
+ */
+export function describeLockHolder(holder: LockHolder): string {
+  const { attempt, pid } = holder;
+  const details = [
+    ...(attempt === undefined
+      ? []
+      : [
+          `${attempt.command} by ${attempt.osUser}`,
+          `started ${attempt.startedAt.toISOString()}`,
+        ]),
+    ...(pid === undefined ? [] : [`server process ${pid}`]),
+  ];
+  const name = lockHolderName(holder);
+  return details.length === 0 ? name : `${name} (${details.join(", ")})`;
+}
+
 /** Another command holds the target's lock (deploy, mark, rebuild, deploy-draft, disposable). */
 export class TargetLockedError extends SuperDeployError {
   readonly code = "target-locked";
@@ -127,15 +153,8 @@ export class TargetLockedError extends SuperDeployError {
   readonly holder: LockHolder;
 
   constructor(target: string, holder: LockHolder) {
-    const { attempt, pid } = holder;
-    const who =
-      attempt !== undefined
-        ? `attempt #${attempt.id} (${attempt.command} by ${attempt.osUser}, started ${attempt.startedAt.toISOString()})`
-        : pid !== undefined
-          ? `another session (server process ${pid})`
-          : "another session";
     super(
-      `Target ${target} is locked by ${who}; try again when it has finished`,
+      `Target ${target} is locked by ${describeLockHolder(holder)}; try again when it has finished`,
     );
     this.target = target;
     this.holder = holder;

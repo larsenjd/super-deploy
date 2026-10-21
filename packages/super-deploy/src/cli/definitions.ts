@@ -21,6 +21,7 @@ import { status } from "../commands/status.ts";
 import { unfinalize } from "../commands/unfinalize.ts";
 import { ValidationFailedError, validate } from "../commands/validate.ts";
 import type { AttemptRecord, RecordedMigration } from "../deploy/history.ts";
+import { describeLockHolder, lockHolderName } from "../deploy/lock.ts";
 import { MarkMismatchError } from "../deploy/mark.ts";
 import { notOwnedMessage } from "../deploy/ownership.ts";
 import { historySchemaNotCreatableMessage } from "../deploy/preflight.ts";
@@ -699,19 +700,8 @@ const statusCommand: CommandDefinition = {
     context.result(
       `Target ${report.target}${report.disposable ? " (disposable)" : ""}: ${plural(report.recorded.length, "migration")} recorded, ${report.pending.length} pending`,
     );
-    // Who holds the target lock: attempt #N, or another session when the
-    // holder recorded no running attempt.
-    const attempt = report.lockedBy?.attempt;
-    const holder =
-      attempt === undefined ? "another session" : `attempt #${attempt.id}`;
     if (report.lockedBy !== undefined) {
-      const details =
-        attempt === undefined
-          ? ""
-          : `${attempt.command} by ${attempt.osUser}, started ${attempt.startedAt.toISOString()}, `;
-      context.result(
-        `Locked by ${holder} (${details}server process ${report.lockedBy.pid})`,
-      );
+      context.result(`Locked by ${describeLockHolder(report.lockedBy)}`);
     }
     const refusals = [
       ...preflight.missingExternalSchemas.map(
@@ -741,8 +731,13 @@ const statusCommand: CommandDefinition = {
       context.result(
         "Drift: not checked (the recorded history doesn't match the project's migrations)",
       );
-    } else if (report.driftNotChecked === "target-locked") {
-      context.result(`Drift: not checked (the target is locked by ${holder})`);
+    } else if (
+      report.driftNotChecked === "target-locked" &&
+      report.lockedBy !== undefined
+    ) {
+      context.result(
+        `Drift: not checked (the target is locked by ${lockHolderName(report.lockedBy)})`,
+      );
     } else if (report.drift !== undefined && report.drift.length > 0) {
       // `-` lines are on the target only, `+` lines what its recorded migrations produce.
       context.result(
