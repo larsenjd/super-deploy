@@ -44,7 +44,7 @@ import {
 } from "./history.ts";
 import { pendingMigrations } from "./pending.ts";
 import type { HistoryMismatch } from "./preflight.ts";
-import { historyMismatches } from "./preflight.ts";
+import { heldDraft, historyMismatches } from "./preflight.ts";
 import { targetDatabaseRequest } from "./target.ts";
 
 /**
@@ -74,7 +74,14 @@ export function nextToMark(
 ): MigrationWithUnit {
   const mismatches = historyMismatches(migrations, recorded, draft);
   if (mismatches.length > 0) {
-    throw new HistoryMismatchError(targetName, mismatches);
+    const onlyDraft =
+      draft !== undefined &&
+      mismatches.every((mismatch) => mismatch.reason === "draft");
+    throw new HistoryMismatchError(
+      targetName,
+      mismatches,
+      onlyDraft ? heldDraft(draft, recorded) : undefined,
+    );
   }
   const [next] = pendingMigrations(migrations, recorded);
   if (next === undefined) {
@@ -196,6 +203,9 @@ export class NothingToMarkError extends SuperDeployError {
 /**
  * What the target records disagrees with the project's migrations (see
  * HistoryMismatch), so no faithful replica of it can be built. Nothing changed.
+ * When the only mismatch is a deployed draft (`heldDraft`, its description),
+ * the recorded migrations themselves match, so the message leads with the
+ * draft instead.
  */
 export class HistoryMismatchError extends SuperDeployError {
   readonly code = "history-mismatch";
@@ -203,9 +213,15 @@ export class HistoryMismatchError extends SuperDeployError {
   /** Never empty. */
   readonly mismatches: readonly HistoryMismatch[];
 
-  constructor(target: string, mismatches: readonly HistoryMismatch[]) {
+  constructor(
+    target: string,
+    mismatches: readonly HistoryMismatch[],
+    heldDraft?: string,
+  ) {
     super(
-      `Target ${target}'s recorded migrations don't match the project's: ${mismatches.map((m) => m.message).join("; ")}`,
+      heldDraft === undefined
+        ? `Target ${target}'s recorded migrations don't match the project's: ${mismatches.map((m) => m.message).join("; ")}`
+        : `Target ${target} holds ${heldDraft}`,
     );
     this.target = target;
     this.mismatches = mismatches;
