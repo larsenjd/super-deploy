@@ -10,6 +10,7 @@
 // finished, unknown), unless the output was closed.
 import { relative } from "node:path";
 import { AdoptUnsupportedError } from "../commands/adopt.ts";
+import { ValidationFailedError } from "../commands/validate.ts";
 import { CommitOutcomeUnknownError } from "../deploy/engine.ts";
 import { NotOwnedError } from "../deploy/ownership.ts";
 import {
@@ -177,7 +178,8 @@ function commandContext(io: CliIo): CommandContext {
  * One `Error:` line; with `debug`, every stack trace and cause too. An error
  * listing several rule violations or rehearsal differences, or adoption's
  * refusal, prints each item on a line of its own first, and a summary that
- * names none of them as its `Error:` line.
+ * names none of them as its `Error:` line. `validate`'s failure is that
+ * summary alone: the command has listed its problems.
  */
 export function describeError(error: unknown, debug: boolean): string {
   const listing = listedDetails(error);
@@ -224,6 +226,10 @@ function listedDetails(
       preflightRefusals(error.findings).length > 1)
   ) {
     return { details: error.details, summary: error.summary };
+  }
+  if (error instanceof ValidationFailedError) {
+    // The validate command has listed every problem already.
+    return { details: [], summary: error.summary };
   }
   if (error instanceof SqlRuleViolationError && error.violations.length > 1) {
     return {

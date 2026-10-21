@@ -166,7 +166,9 @@ export async function checkMigrations(
 /**
  * Reports a finalized folder (`shownPath`) whose files no longer hash to what
  * the index records (`matches` resolves false), or that holds a file that
- * isn't valid UTF-8.
+ * isn't valid UTF-8. The mismatch gives the way back: Git, then `validate`,
+ * which makes the restored files read-only again. The hash covers the whole
+ * folder, so it can't say which file changed or was added.
  */
 async function checkContentHash(
   shownPath: string,
@@ -178,7 +180,7 @@ async function checkContentHash(
     if (!(await matches())) {
       problem(
         "content-hash-mismatch",
-        `${shownPath} was changed after it was finalized (its content hash does not match ${indexPath})`,
+        `${shownPath} was changed after it was finalized (its content hash does not match ${indexPath}): restore it from Git (\`git checkout HEAD -- ${shownPath}\`, and delete any file added to it), then run validate, which makes it read-only again. To change what a finalized migration does, finalize a new migration, or a Recovery for the targets where it failed`,
         shownPath,
       );
     }

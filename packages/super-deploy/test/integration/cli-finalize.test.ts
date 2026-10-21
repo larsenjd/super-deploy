@@ -91,7 +91,7 @@ describe("validate", () => {
     expect(strict.stdout).toBe("");
     expect(strict.stderr.trimEnd().split("\n")).toEqual([
       "warning: Draft add-customers is not finalized yet",
-      "Error: Validation failed with 1 warning (--strict): Draft add-customers is not finalized yet",
+      "Error: Validation failed with 1 warning (--strict) (listed above)",
     ]);
   });
 
@@ -208,7 +208,7 @@ describe("validate", () => {
     expect(result.stdout).toContain("--allow-draft");
   });
 
-  test("lists every error and exits 1 when a finalized migration was edited", async () => {
+  test("lists every error once, with the way back, and exits 1 when a finalized migration was edited", async () => {
     const dir = await draftedProject();
     expect((await runCli(["finalize"], { cwd: dir.root })).exitCode).toBe(0);
     const file = "data-model/migrations/00001-add-customers/schema-change.sql";
@@ -219,8 +219,10 @@ describe("validate", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr.trimEnd().split("\n")).toEqual([
-      "error: data-model/migrations/00001-add-customers was changed after it was finalized (its content hash does not match data-model/migrations/index.json)",
-      expect.stringMatching(/^Error: Validation failed with 1 error: /),
+      expect.stringMatching(
+        /^error: data-model\/migrations\/00001-add-customers was changed after it was finalized .*: restore it from Git \(`git checkout HEAD -- data-model\/migrations\/00001-add-customers`/,
+      ),
+      "Error: Validation failed with 1 error (listed above)",
     ]);
   });
 });

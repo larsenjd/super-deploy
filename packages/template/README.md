@@ -954,6 +954,14 @@ one, restore its original folder and `data-model/migrations/index.json`
 from Git, then run `pnpm exec super-deploy validate` to make the restored
 files read-only again.
 
+If a finalized migration (or Recovery) was edited, had a file added, or had
+its `desired-schema/` snapshot changed, `validate`, `status` and `deploy`
+refuse it as `changed after it was finalized`. Restore its folder from Git
+(`git checkout HEAD -- data-model/migrations/00002-add-orders`, and delete
+any file you added to it), then run `pnpm exec super-deploy validate`, which
+makes it read-only again. To change what the migration does, finalize a new
+migration, or a Recovery for the targets where it failed.
+
 ## Disposable targets and the guarded commands
 
 A disposable target is one flagged as safe to wipe and experiment on, with
