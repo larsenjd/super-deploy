@@ -11,7 +11,6 @@
     "cli"
   ],
   "license": "MIT",
-  "author": "Jonathan Larsen",
   "homepage": "https://github.com/larsenjd/super-deploy/tree/main/packages/super-deploy#readme",
   "repository": {
     "type": "git",
