@@ -1,6 +1,6 @@
 // The override marker through draft, finalize and validate (API and CLI
 // seams). The marker rules themselves are covered at the SQL-analysis seam.
-import { draft, finalize, loadProject, validate } from "super-deploy";
+import { draft, finalize, loadProject, validate } from "superdeploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";

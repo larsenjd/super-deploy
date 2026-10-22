@@ -384,7 +384,7 @@ A real target connects to an existing PostgreSQL 18 server with
 name of the environment variable holding its connection string:
 
 ```ts
-import { defineConfig, postgresTarget } from "super-deploy";
+import { defineConfig, postgresTarget } from "superdeploy";
 
 export default defineConfig({
   // ...

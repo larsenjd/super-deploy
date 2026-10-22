@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { ConfigError, loadProject, ProjectNotFoundError } from "super-deploy";
+import { ConfigError, loadProject, ProjectNotFoundError } from "superdeploy";
 import { describe, expect, test } from "vitest";
 import { createTestProject, embeddedConfig } from "../support/project.ts";
 
@@ -8,8 +8,8 @@ import { createTestProject, embeddedConfig } from "../support/project.ts";
 const unusedServer = { dataDir: "/nonexistent/super-deploy-config-test" };
 
 function configWith(settings: string): string {
-  return `import { defineConfig } from "super-deploy";
-import { embeddedPostgres } from "super-deploy/embedded-postgres";
+  return `import { defineConfig } from "superdeploy";
+import { embeddedPostgres } from "superdeploy/embedded-postgres";
 
 const postgres = embeddedPostgres({ dataDir: ${JSON.stringify(unusedServer.dataDir)} });
 
@@ -36,7 +36,7 @@ async function loadError(config: string): Promise<ConfigError> {
 async function nativeLoadError(
   root: string,
 ): Promise<{ configError: boolean; code: unknown; message: string }> {
-  const script = `import { ConfigError, loadProject } from "super-deploy";
+  const script = `import { ConfigError, loadProject } from "superdeploy";
 const error = await loadProject().then(() => new Error("loaded"), (e) => e);
 process.stdout.write(JSON.stringify({ configError: error instanceof ConfigError, code: error.code, message: error.message }));`;
   const { stdout } = await promisify(execFile)(
@@ -163,7 +163,7 @@ describe("loadProject", () => {
 
   test("refuses a config without a rehearsal adapter", async () => {
     const error = await loadError(
-      `import { defineConfig } from "super-deploy";\nexport default defineConfig({ postgresVersion: 18 } as never);\n`,
+      `import { defineConfig } from "superdeploy";\nexport default defineConfig({ postgresVersion: 18 } as never);\n`,
     );
 
     expect(error.setting).toBe("rehearsal");

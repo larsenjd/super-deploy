@@ -1,4 +1,4 @@
-import { InvalidDraftNameError, normaliseDraftName } from "super-deploy";
+import { InvalidDraftNameError, normaliseDraftName } from "superdeploy";
 import { describe, expect, test } from "vitest";
 
 describe("normaliseDraftName", () => {

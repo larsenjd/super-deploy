@@ -8,8 +8,8 @@ import {
   loadProject,
   type Project,
   type Session,
-} from "super-deploy";
-import { embeddedPostgres } from "super-deploy/embedded-postgres";
+} from "superdeploy";
+import { embeddedPostgres } from "superdeploy/embedded-postgres";
 import type { TestServer } from "./postgres.ts";
 import { createTestProject, type TestProject } from "./project.ts";
 
@@ -82,7 +82,7 @@ export function roleName(prefix = "reader"): string {
  * in `otherTargets`.
  */
 export function asDeployerPreamble(database: string, role: string): string {
-  return `import { postgresTarget } from "super-deploy";
+  return `import { postgresTarget } from "superdeploy";
 const asDeployer = {
   async connect() {
     const url = new URL(await postgres.connectionString(${JSON.stringify(database)}));
@@ -103,7 +103,7 @@ const asDeployer = {
 export function asSuperuser(database: string): string {
   return `{
   async connect(options) {
-    const { postgresTarget } = await import("super-deploy");
+    const { postgresTarget } = await import("superdeploy");
     return postgresTarget({
       connectionString: await postgres.connectionString(${JSON.stringify(database)}),
     }).connect(options);
@@ -122,8 +122,8 @@ export function deployConfig(
   options: DeployConfigOptions = {},
 ): { config: string; database: string } {
   const database = options.database ?? targetDatabaseName();
-  const config = `import { defineConfig } from "super-deploy";
-import { embeddedPostgres } from "super-deploy/embedded-postgres";
+  const config = `import { defineConfig } from "superdeploy";
+import { embeddedPostgres } from "superdeploy/embedded-postgres";
 
 const postgres = embeddedPostgres({ dataDir: ${JSON.stringify(server.dataDir)} });
 const real = postgres.target(${JSON.stringify(database)});

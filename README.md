@@ -1,6 +1,6 @@
 # super-deploy
 
-Immutable, all-or-nothing PostgreSQL 18 migrations generated from a desired schema. To use it, see the [package README](packages/super-deploy/README.md): `pnpm dlx super-deploy init` creates a project.
+Immutable, all-or-nothing PostgreSQL 18 migrations generated from a desired schema. To use it, see the [package README](packages/super-deploy/README.md): `pnpm dlx superdeploy init` creates a project.
 
 ## Repository layout
 

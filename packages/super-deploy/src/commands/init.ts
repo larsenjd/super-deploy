@@ -89,10 +89,10 @@ function projectManifest(text: string, root: string): string {
   };
   for (const field of ["dependencies", "devDependencies"] as const) {
     const dependencies = result[field] as Record<string, string> | undefined;
-    if (dependencies?.["super-deploy"] !== undefined) {
+    if (dependencies?.superdeploy !== undefined) {
       result[field] = {
         ...dependencies,
-        "super-deploy": toolVersion,
+        superdeploy: toolVersion,
       };
     }
   }

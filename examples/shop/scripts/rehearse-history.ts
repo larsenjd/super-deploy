@@ -17,7 +17,7 @@ import {
   type Project,
   type ResolvedTarget,
   status,
-} from "super-deploy";
+} from "superdeploy";
 
 const targetName = "history-rehearsal";
 

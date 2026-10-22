@@ -17,7 +17,7 @@ import {
   status,
   TargetTimeoutError,
   validate,
-} from "super-deploy";
+} from "superdeploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   asDeployerPreamble,

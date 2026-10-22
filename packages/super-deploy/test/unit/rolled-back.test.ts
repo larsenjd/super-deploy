@@ -1,4 +1,4 @@
-import { type TargetRollback, TargetSessionEndedError } from "super-deploy";
+import { type TargetRollback, TargetSessionEndedError } from "superdeploy";
 import { expect, test } from "vitest";
 
 // Every report of a rolled-back transaction (a refused file, an ended

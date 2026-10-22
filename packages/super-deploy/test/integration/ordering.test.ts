@@ -7,7 +7,7 @@ import {
   OrderDependenceError,
   rehearse,
   SqlRuleViolationError,
-} from "super-deploy";
+} from "superdeploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject, embeddedConfig } from "../support/project.ts";
@@ -28,8 +28,8 @@ afterAll(async () => {
  * leak off, so a test can create a draft first.
  */
 function orderSensitiveConfig(onBetaFirst: string): string {
-  return `import { defineConfig } from "super-deploy";
-import { embeddedPostgres } from "super-deploy/embedded-postgres";
+  return `import { defineConfig } from "superdeploy";
+import { embeddedPostgres } from "superdeploy/embedded-postgres";
 
 const postgres = embeddedPostgres({ dataDir: ${JSON.stringify(server.dataDir)} });
 

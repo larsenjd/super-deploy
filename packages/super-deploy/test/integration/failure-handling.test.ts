@@ -11,7 +11,7 @@ import {
   TargetLockedError,
   TargetSessionEndedError,
   TargetTimeoutError,
-} from "super-deploy";
+} from "superdeploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   attemptLog,

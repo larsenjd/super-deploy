@@ -27,7 +27,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import pg from "pg";
-import { embeddedPostgres } from "super-deploy/embedded-postgres";
+import { embeddedPostgres } from "superdeploy/embedded-postgres";
 import { onTestFinished, vi } from "vitest";
 
 export interface TestServer {

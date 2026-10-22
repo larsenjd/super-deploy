@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { toolVersion } from "super-deploy";
+import { toolVersion } from "superdeploy";
 import { expect, test } from "vitest";
 
 test("the library reports its own package's version", async () => {

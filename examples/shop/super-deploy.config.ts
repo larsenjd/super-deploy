@@ -1,5 +1,5 @@
-import { defineConfig } from "super-deploy";
-import { embeddedPostgres } from "super-deploy/embedded-postgres";
+import { defineConfig } from "superdeploy";
+import { embeddedPostgres } from "superdeploy/embedded-postgres";
 
 // A private PostgreSQL 18 server in .super-deploy/postgres (gitignored). It
 // provides the throwaway databases rehearsals need and the local `dev` target,

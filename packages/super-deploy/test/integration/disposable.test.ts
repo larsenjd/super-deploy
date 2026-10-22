@@ -2,7 +2,7 @@
 // `disposable`, but it has no answer callback and nothing skips the guard:
 // in CI (or without a terminal) it refuses before touching the target. Its
 // behaviour at a terminal is tested in cli-guard.test.ts.
-import { disposable, TerminalRequiredError } from "super-deploy";
+import { disposable, TerminalRequiredError } from "superdeploy";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { deployProject } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";

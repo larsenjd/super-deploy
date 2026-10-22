@@ -2,7 +2,7 @@
 // can call it, but nothing skips the guard: in CI (or without a terminal) it
 // refuses before touching the target. Its behaviour at a terminal is tested
 // in cli-mark.test.ts.
-import { mark, TerminalRequiredError } from "super-deploy";
+import { mark, TerminalRequiredError } from "superdeploy";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { deployProject } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";

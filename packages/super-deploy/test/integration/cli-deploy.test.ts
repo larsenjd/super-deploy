@@ -374,7 +374,7 @@ describe("deploy and status", () => {
   test("a target without a connection string fails with exit code 1, naming the target", async () => {
     const dir = await createTestProject({
       config: deployConfig(server, {
-        preamble: 'import { postgresTarget } from "super-deploy";',
+        preamble: 'import { postgresTarget } from "superdeploy";',
         otherTargets:
           "qa: { adapter: postgresTarget({ connectionString: process.env.SUPER_DEPLOY_TEST_UNSET_URL as string }) },",
       }).config,

@@ -2,7 +2,7 @@
 // them, but they have no answer callback and nothing skips the guard: in CI
 // they refuse before touching the target. Their behaviour at a terminal is
 // tested in cli-deploy-draft-rebuild.test.ts.
-import { deployDraft, rebuild, TerminalRequiredError } from "super-deploy";
+import { deployDraft, rebuild, TerminalRequiredError } from "superdeploy";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { deployProject } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";

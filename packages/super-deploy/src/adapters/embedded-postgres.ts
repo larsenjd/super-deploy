@@ -1,6 +1,6 @@
 // An embedded-postgres adapter: a private PostgreSQL 18 server in a project
 // folder that provides rehearsal databases, local targets such as `dev`, or
-// both. Imported as `super-deploy/embedded-postgres`; `embedded-postgres`
+// both. Imported as `superdeploy/embedded-postgres`; `embedded-postgres`
 // itself is an optional peer dependency, whose binaries are found only when
 // the server is first needed (`embedded-server.ts`).
 //

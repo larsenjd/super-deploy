@@ -1,5 +1,5 @@
-import { defineConfig } from "super-deploy";
-import { embeddedPostgres } from "super-deploy/embedded-postgres";
+import { defineConfig } from "superdeploy";
+import { embeddedPostgres } from "superdeploy/embedded-postgres";
 
 // Every setting, with its default, is in "Configuration" in README.md.
 
@@ -18,7 +18,7 @@ const rehearsalServer = embeddedPostgres({
 
 // A real target (QA, production) connects to an existing PostgreSQL 18
 // server. To add one, replace the first import with
-//   import { defineConfig, postgresTarget } from "super-deploy";
+//   import { defineConfig, postgresTarget } from "superdeploy";
 // and uncomment `qa` below. Its connection string is read from the
 // environment variable QA_DATABASE_URL only when a command uses `qa`.
 export default defineConfig({
