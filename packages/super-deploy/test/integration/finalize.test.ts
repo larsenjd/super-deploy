@@ -11,6 +11,7 @@ import {
   MigrationIntegrityError,
   rehearse,
   SuperDeployError,
+  toolVersion,
   validate,
 } from "super-deploy";
 import {
@@ -101,7 +102,7 @@ describe("finalize", () => {
       await dir.read("data-model/migrations/00001-add-customers/metadata.json"),
     );
     expect(metadata).toEqual({
-      tool: { name: "super-deploy", version: "0.0.0" },
+      tool: { name: "super-deploy", version: toolVersion },
       differ: {
         name: "@supabase/pg-delta",
         version: "1.0.0-alpha.59 (engine 0.3.0)",

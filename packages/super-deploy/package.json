@@ -1,8 +1,26 @@
 {
   "name": "super-deploy",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Immutable, all-or-nothing PostgreSQL 18 migrations generated from a desired schema.",
+  "keywords": [
+    "postgresql",
+    "postgres",
+    "migrations",
+    "schema",
+    "database",
+    "cli"
+  ],
+  "license": "MIT",
+  "author": "Jonathan Larsen",
+  "homepage": "https://github.com/larsenjd/super-deploy/tree/main/packages/super-deploy#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/larsenjd/super-deploy.git",
+    "directory": "packages/super-deploy"
+  },
+  "bugs": {
+    "url": "https://github.com/larsenjd/super-deploy/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=24"
@@ -34,7 +52,8 @@
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
-    "precommit": "biome check && pnpm run duplicates && tsc --noEmit && vitest run --project unit"
+    "precommit": "biome check && pnpm run duplicates && tsc --noEmit && vitest run --project unit",
+    "prepack": "node scripts/build.ts"
   },
   "dependencies": {
     "@clack/core": "1.5.1",

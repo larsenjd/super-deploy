@@ -24,6 +24,7 @@ import {
   loadProject,
   rehearse,
   status,
+  toolVersion,
 } from "super-deploy";
 import { describe, expect, onTestFinished, test, vi } from "vitest";
 import { holdPort } from "../support/postgres.ts";
@@ -218,7 +219,7 @@ create function customer_count() returns bigint
     expect(await devPort(root)).not.toBe(templatePort);
   });
 
-  test("the project is named after its folder and depends on this library, not the workspace", async () => {
+  test("the project is named after its folder and depends on this library's published version, not the workspace", async () => {
     const root = await emptyDirectory("My Shop");
     const result = await init({ directory: root });
     expect(result.root).toBe(root);
@@ -229,9 +230,7 @@ create function customer_count() returns bigint
     expect(manifest.name).toBe("my-shop");
     expect(manifest.private).toBe(true);
     expect(manifest.description).toBeUndefined();
-    expect(manifest.devDependencies["super-deploy"]).toBe(
-      `link:${libraryFolder}`,
-    );
+    expect(manifest.devDependencies["super-deploy"]).toBe(toolVersion);
     expect(manifest.scripts.precommit).toBe(
       "biome check && tsc --noEmit && super-deploy validate --strict --allow-draft",
     );

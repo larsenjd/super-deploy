@@ -10,16 +10,16 @@
 
 import { constants, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { freePort } from "../adapters/ports.ts";
 import { SuperDeployError } from "../errors.ts";
 import { configFileName } from "../project.ts";
 import {
-  libraryPackageDirectory,
   renamedOnInit,
   templateDirectory,
   templateFiles,
 } from "../store/template.ts";
+import { toolVersion } from "../version.ts";
 
 export interface InitOptions {
   /** The folder to scaffold into, created if missing. Default `process.cwd()`. */
@@ -76,13 +76,9 @@ export async function init(options: InitOptions = {}): Promise<InitResult> {
 
 /**
  * The template's package.json made the project's own: named after its
- * folder, and depending on the library that ran init instead of the
- * workspace (`workspace:*` means nothing outside the super-deploy repo).
- *
- * The library isn't published in V1 (REFINEMENTS.md, "Publishing"), so the
- * dependency is a `link:` to this library's folder, which installs offline
- * and never resolves an unrelated package from the registry. Once published
- * it becomes the exact version (`toolVersion`).
+ * folder, and depending on the exact published version of the library that
+ * ran init instead of the workspace (`workspace:*` means nothing outside the
+ * super-deploy repo).
  */
 function projectManifest(text: string, root: string): string {
   const manifest = JSON.parse(text) as Record<string, unknown>;
@@ -96,7 +92,7 @@ function projectManifest(text: string, root: string): string {
     if (dependencies?.["super-deploy"] !== undefined) {
       result[field] = {
         ...dependencies,
-        "super-deploy": `link:${libraryPackageDirectory.split(sep).join("/").replace(/\/$/, "")}`,
+        "super-deploy": toolVersion,
       };
     }
   }

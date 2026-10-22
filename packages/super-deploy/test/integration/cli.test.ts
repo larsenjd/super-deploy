@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { toolVersion } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
@@ -49,7 +50,7 @@ describe("help", () => {
 
     expect(result).toMatchObject({
       exitCode: 0,
-      stdout: "super-deploy 0.0.0\n",
+      stdout: `super-deploy ${toolVersion}\n`,
       stderr: "",
     });
   });

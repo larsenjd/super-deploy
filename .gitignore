@@ -2,3 +2,6 @@
 node_modules/
 dist/
 *.tsbuildinfo
+# The template package's embedded PostgreSQL data, when its commands run in
+# place (its own ignore file is project.gitignore, which init renames).
+packages/template/.super-deploy/

@@ -44,12 +44,10 @@ async function linkDependencies(root: string): Promise<void> {
       name === "super-deploy"
         ? packageDir
         : realpathSync(join(templateDir, "node_modules", ...name.split("/")));
-    if (name !== "super-deploy") {
-      const { version } = JSON.parse(
-        await readFile(join(installed, "package.json"), "utf8"),
-      );
-      expect(`${name}@${spec}`).toBe(`${name}@${version}`);
-    }
+    const { version } = JSON.parse(
+      await readFile(join(installed, "package.json"), "utf8"),
+    );
+    expect(`${name}@${spec}`).toBe(`${name}@${version}`);
     const link = join(root, "node_modules", ...name.split("/"));
     await mkdir(dirname(link), { recursive: true });
     await symlink(installed, link, "junction");

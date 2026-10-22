@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** The library package's own folder (holding its package.json). */
-export const libraryPackageDirectory = fileURLToPath(
+const libraryPackageDirectory = fileURLToPath(
   new URL("../../", import.meta.url),
 );
 
@@ -22,10 +22,12 @@ export function isTemplateContent(name: string): boolean {
 /**
  * Template files stored under another name, because under their real name
  * they would change how the workspace treats the template package (a
- * pnpm-workspace.yaml would make it a workspace root of its own). Template
- * path to project path.
+ * pnpm-workspace.yaml would make it a workspace root of its own), or be left
+ * out of the published library (npm and pnpm never pack a .gitignore).
+ * Template path to project path.
  */
 export const renamedOnInit: Readonly<Record<string, string>> = {
+  "project.gitignore": ".gitignore",
   "project.pnpm-workspace.yaml": "pnpm-workspace.yaml",
 };
 

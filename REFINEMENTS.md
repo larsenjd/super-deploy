@@ -140,9 +140,9 @@ Also refused, though the spec's first list didn't name them: temporary tables an
 
 ## Publishing
 
-**V1:** Not published. The library is used from the workspace (the example and template packages). Planned shape once published: public npm package (name to be confirmed free on npm), MIT licence, versioned with Changesets, `0.x` until migration file formats and the history schema layout are stable. Until the first release the history schema layout stays version 1 and changes in place, because no real target has it yet; from the first release on, every change to its columns raises `historyLayoutVersion` (`deploy/history.ts`) and ships an upgrade step for targets on the older layout.
+**V1:** Published to npm as `super-deploy`, MIT licence, starting at `0.1.0`, released by hand (README.md, "Releasing"). `init` writes the exact version as the new project's dependency. Stays `0.x` until migration file formats and the history schema layout are stable. From the first release on, every change to the history schema's columns raises `historyLayoutVersion` (`deploy/history.ts`) and ships an upgrade step for targets on the older layout. Planned: versioning and changelogs with Changesets, and publishing from CI with provenance.
 
-**Revisit when:** V1 is complete.
+**Revisit when:** a second person releases, or releases become frequent enough that hand-written changelogs are missed.
 
 ## Virtual generated columns
 
