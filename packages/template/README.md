@@ -785,7 +785,8 @@ $$;
   that changes the same object.
 - It applies to the one statement after it, and needs a reason: a marker
   without one, written any other way, or not directly before a statement is
-  refused.
+  refused. For a routine, that is the `CREATE` statement: a marker inside
+  the body, next to the `EXECUTE`, is refused.
 - It overrides only those two refusals. A marker before a statement that
   breaks any other rule (`COMMIT` in a script, privileges, unsupported
   objects, ...) doesn't get it past them, and a marker before a statement

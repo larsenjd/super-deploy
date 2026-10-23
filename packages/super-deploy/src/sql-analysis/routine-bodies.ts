@@ -70,7 +70,7 @@ export function plpgsqlFindings(
       },
     ];
   }
-  const firstLine = bodyFirstLine(statement, body);
+  const firstLine = bodyFirstLine(statement, defElemString(body));
   const findings: RuleFinding[] = [];
   const visit = (value: unknown, lineno: number): void => {
     if (Array.isArray(value)) {
@@ -265,7 +265,7 @@ export function sqlBodyFindings(
     // PostgreSQL itself refuses an unparseable body at CREATE.
     return [];
   }
-  const line = bodyFirstLine(statement, body);
+  const line = bodyFirstLine(statement, text);
   const bytes = Buffer.from(text, "utf8");
   return unique([
     ...privilegeFindings(
@@ -282,10 +282,33 @@ export function sqlBodyFindings(
   ]);
 }
 
-/** The file line where a routine's string body starts. */
-function bodyFirstLine(statement: ParsedStatement, body: unknown): number {
-  const text = defElemString(body);
-  const index = text === undefined ? -1 : statement.text.indexOf(text);
+/** A routine's string body (`AS $$...$$` or `AS '...'`) and the file line it starts on. */
+export function stringBody(
+  statement: ParsedStatement,
+): { text: string; line: number } | undefined {
+  const routine = unwrap(statement.node, "CreateFunctionStmt");
+  const text = defElemString(
+    defElems(routine?.options).find((option) => option.name === "as")?.arg,
+  );
+  return text === undefined
+    ? undefined
+    : { text, line: bodyFirstLine(statement, text) };
+}
+
+/**
+ * The file line where a routine's string body starts: found as written,
+ * dollar-quoted or single-quoted with its quotes doubled.
+ */
+function bodyFirstLine(
+  statement: ParsedStatement,
+  text: string | undefined,
+): number {
+  const index =
+    text === undefined
+      ? -1
+      : ([text, text.replaceAll("'", "''")]
+          .map((written) => statement.text.indexOf(written))
+          .find((found) => found >= 0) ?? -1);
   if (index < 0) {
     return statement.line;
   }

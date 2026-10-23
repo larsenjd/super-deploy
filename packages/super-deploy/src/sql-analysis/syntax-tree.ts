@@ -183,6 +183,8 @@ export interface Token {
   readonly start: number;
   readonly end: number;
   readonly text: string;
+  /** e.g. `SQL_COMMENT`, `IDENT`, `ASCII_40` for `(`. */
+  readonly tokenName: string;
 }
 
 /** How a token changes the parenthesis depth. */

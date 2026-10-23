@@ -6,8 +6,12 @@
 //
 // PostgreSQL 18's parser leaves leading comments out of statement locations,
 // so markers are read from the raw text between statements. libpg-query's
-// scanner finds the comments, so text inside strings and dollar-quoted
-// bodies never counts.
+// scanner finds the comments, so text inside strings never counts. A routine
+// body is a string too, but a marker written there is the natural mistake
+// (next to the EXECUTE it means to allow), so each body is scanned on its
+// own and a marker in it is reported as misplaced, never applied (as is one
+// in a BEGIN ATOMIC body, which is part of the statement); a body
+// violation's hint names the CREATE statement's line for the same reason.
 //
 // Overrides are recorded by object identity (what the statement creates or
 // changes, e.g. `function load_orders(text)`), so a regenerated schema change
@@ -22,11 +26,12 @@ import {
   type SqlFile,
 } from "./parse.ts";
 import { statementFacts } from "./references.ts";
+import { stringBody } from "./routine-bodies.ts";
 import { ruleCatalogue, ruleDefinition } from "./rule-catalogue.ts";
 import type { RuleFinding } from "./rule-types.ts";
 import type { RuleViolation } from "./rules.ts";
 import { objectTypeName, statementName } from "./statement-names.ts";
-import { isObject, statementBody } from "./syntax-tree.ts";
+import { isObject, statementBody, type Token } from "./syntax-tree.ts";
 
 /** One accepted override: a marker and the risk rules it overrode. */
 export interface Override {
@@ -44,8 +49,48 @@ export interface Override {
 export const markerPrefix = "-- OVERRIDE SUPER-DEPLOY REFUSAL:";
 
 const exactForm = `"${markerPrefix} <reason>"`;
-/** An unmarked risk-rule violation's hint (applyMarker). */
-const overrideHint = `If the statement is safe, override the refusal with ${exactForm} on the line before it`;
+/**
+ * An unmarked risk-rule violation's hint (applyMarker). A violation on a
+ * line of its own (inside a routine body, say) names the statement's first
+ * line: a marker written next to the construct would never count.
+ */
+function overrideHint(
+  statement: ParsedStatement,
+  violation: RuleViolation,
+): string {
+  const where =
+    violation.line === statement.line
+      ? "it"
+      : `${statementHead(statement)} (line ${statement.line})`;
+  return `If the statement is safe, override the refusal with ${exactForm} on the line before ${where}`;
+}
+
+/** The longest statement head (statementHead) before it falls back to the first line. */
+const headLength = 60;
+
+/**
+ * A statement as messages name it: its text up to the first `(` token, e.g.
+ * `` `create function f` `` (a name on the next line included), or its
+ * first line when that runs long.
+ */
+function statementHead(statement: ParsedStatement): string {
+  const paren = scanSync(statement.text).tokens.find(
+    (token) => token.text === "(",
+  );
+  const oneLine = (text: string) => text.trim().replace(/\s+/g, " ");
+  const toParen = oneLine(
+    Buffer.from(statement.text, "utf8")
+      .subarray(0, paren?.start)
+      .toString("utf8"),
+  );
+  const [firstLine = ""] = statement.text.split(/\r?\n/);
+  return `\`${toParen.length <= headLength ? toParen : oneLine(firstLine)}\``;
+}
+
+/** A misplaced marker inside a routine's CREATE statement (its body, usually). */
+const inRoutine = (statement: ParsedStatement): string =>
+  `An override marker inside a routine has no effect: put it on its own line before the statement that creates the routine, ${statementHead(statement)} (line ${statement.line})`;
+
 const lookalike = /override\s+super-deploy\s+refusal/i;
 /** The marker's form before ticket 24; no longer a marker, but hinted at. */
 const oldFormPrefix = "-- OVERRIDE DANGEROUS COMMAND";
@@ -79,13 +124,16 @@ export function scanMarkers(
   const ends = statements.map(
     (statement) => statement.offset + Buffer.byteLength(statement.text),
   );
-  /** The statement a comment on its own line directly before it applies to. */
-  const markedStatement = (start: number, line: number): number | undefined => {
-    const next = statements.findIndex((statement) => statement.offset > start);
-    const inside = statements.some(
+  /** The statement holding a byte offset, if any. */
+  const containing = (start: number): ParsedStatement | undefined =>
+    statements.find(
       (statement, index) =>
         statement.offset <= start && start < (ends[index] ?? 0),
     );
+  /** The statement a comment on its own line directly before it applies to. */
+  const markedStatement = (start: number, line: number): number | undefined => {
+    const next = statements.findIndex((statement) => statement.offset > start);
+    const inside = containing(start) !== undefined;
     const lineStart = bytes.lastIndexOf(0x0a, start - 1) + 1;
     const ownLine = /^[ \t]*$/.test(
       bytes.subarray(lineStart, start).toString("utf8"),
@@ -94,10 +142,10 @@ export function scanMarkers(
       ? undefined
       : next;
   };
-  const comments = scanSync(file.text).tokens.filter(
-    (token) =>
-      token.tokenName === "SQL_COMMENT" || token.tokenName === "C_COMMENT",
-  );
+  const violation = (line: number, rule: string, message: string): void => {
+    violations.push({ file: file.path, line, statement: "", rule, message });
+  };
+  const comments = scanSync(file.text).tokens.filter(isComment);
   for (const comment of comments) {
     const line = lineAtByte(bytes, comment.start);
     if (!lookalike.test(comment.text)) {
@@ -109,14 +157,12 @@ export function scanMarkers(
       }
       continue;
     }
-    const violation = (rule: string, message: string): void => {
-      violations.push({ file: file.path, line, statement: "", rule, message });
-    };
     const match = /^-- OVERRIDE SUPER-DEPLOY REFUSAL:(.*)$/.exec(
       comment.text.replace(/\r$/, ""),
     );
     if (match === null) {
       violation(
+        line,
         "override-malformed",
         `Malformed override marker: write it exactly as ${exactForm}, on the line before the statement`,
       );
@@ -125,6 +171,7 @@ export function scanMarkers(
     const reason = (match[1] ?? "").trim();
     if (reason === "") {
       violation(
+        line,
         "override-without-reason",
         `The override marker needs a reason: ${exactForm}`,
       );
@@ -132,15 +179,49 @@ export function scanMarkers(
     }
     const next = markedStatement(comment.start, line);
     if (next === undefined || markers.has(next)) {
+      const holder = containing(comment.start);
       violation(
+        line,
         "override-misplaced",
-        "The override marker must be on its own line, directly before the statement it applies to",
+        holder?.nodeType === "CreateFunctionStmt"
+          ? inRoutine(holder)
+          : "The override marker must be on its own line, directly before the statement it applies to",
       );
       continue;
     }
     markers.set(next, { line, reason });
   }
+  for (const statement of statements) {
+    for (const line of bodyMarkerLines(statement)) {
+      violation(line, "override-misplaced", inRoutine(statement));
+    }
+  }
+  violations.sort((a, b) => a.line - b.line);
   return { markers, oldForms, violations };
+}
+
+/** Lines of the comments in a routine's string body that look like a marker. */
+function bodyMarkerLines(statement: ParsedStatement): number[] {
+  const body = stringBody(statement);
+  if (body === undefined || !lookalike.test(body.text)) {
+    return [];
+  }
+  let tokens: readonly Token[];
+  try {
+    tokens = scanSync(body.text).tokens;
+  } catch {
+    // The scanner throws on a body it can't read (an unterminated quote);
+    // the body rules report its syntax error.
+    return [];
+  }
+  const bytes = Buffer.from(body.text, "utf8");
+  return tokens
+    .filter((token) => isComment(token) && lookalike.test(token.text))
+    .map((token) => body.line - 1 + lineAtByte(bytes, token.start));
+}
+
+function isComment(token: Token): boolean {
+  return token.tokenName === "SQL_COMMENT" || token.tokenName === "C_COMMENT";
 }
 
 const overridableRules = ruleCatalogue
@@ -217,12 +298,15 @@ export function applyMarker(
 ): { violations: RuleViolation[]; override?: Override } {
   const marker = scan.markers.get(index);
   if (marker === undefined) {
-    const hint = scan.oldForms.has(index)
-      ? `Hint: the override marker is now ${exactForm}`
-      : overrideHint;
+    const hintFor = (violation: RuleViolation): string =>
+      scan.oldForms.has(index)
+        ? `Hint: the override marker is now ${exactForm}`
+        : overrideHint(statement, violation);
     return {
       violations: violations.map((violation) =>
-        isOverridable(violation.rule) ? { ...violation, hint } : violation,
+        isOverridable(violation.rule)
+          ? { ...violation, hint: hintFor(violation) }
+          : violation,
       ),
     };
   }

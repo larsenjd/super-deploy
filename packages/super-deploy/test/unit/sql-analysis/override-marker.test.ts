@@ -100,9 +100,55 @@ describe("refusals say how to override them", () => {
     expect(violation?.message).toBe(
       "EXECUTE (dynamic SQL) is not allowed in PL/pgSQL bodies: SQL built at run time can't be checked by the rules",
     );
-    expect(violation?.hint).toBe(overrideHint);
+    const hint = overrideHint.replace(
+      "before it",
+      "before `create function load_staging` (line 4)",
+    );
+    expect(violation?.hint).toBe(hint);
     expect(describeViolation(violation as RuleViolation)).toContain(
-      `run time can't be checked by the rules. ${overrideHint} [plpgsql-dynamic-sql]`,
+      `run time can't be checked by the rules. ${hint} [plpgsql-dynamic-sql]`,
+    );
+  });
+
+  test("a refusal inside a routine body hints at the line before the CREATE statement", async () => {
+    const violations = await checkRules(
+      {
+        path: desiredPath,
+        text: `create function f(source text) returns void
+language plpgsql as $$
+begin
+  execute format('select 1 from %s', source);
+end
+$$;
+`,
+      },
+      "desired-schema",
+    );
+    expect(violations.map((v) => [v.line, v.rule, v.hint])).toEqual([
+      [
+        4,
+        "plpgsql-dynamic-sql",
+        'If the statement is safe, override the refusal with "-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>" on the line before `create function f` (line 1)',
+      ],
+    ]);
+  });
+
+  test("the hint names a CREATE statement whose name is on its second line", async () => {
+    const [violation] = await checkRules(
+      {
+        path: desiredPath,
+        text: `create or replace function
+  "load(all)"(source text) returns void language plpgsql as $$
+begin
+  execute source;
+end
+$$;
+`,
+      },
+      "desired-schema",
+    );
+    expect(violation?.hint).toContain(
+      'on the line before `create or replace function "load(all)"` (line 1)',
     );
   });
 
@@ -223,20 +269,115 @@ $$;`;
     ]);
   });
 
-  test("ignores marker text inside a string or a routine body", async () => {
+  test("ignores marker text inside a string, in a routine body or not", async () => {
     expect(
       await broken(`create function f() returns text language plpgsql as $$
 begin
-  -- OVERRIDE SUPER-DEPLOY REFUSAL: not a marker
-  return '-- OVERRIDE SUPER-DEPLOY REFUSAL: nor this';
+  return '-- OVERRIDE SUPER-DEPLOY REFUSAL: not a marker';
 end
 $$;
+comment on function f() is '-- OVERRIDE SUPER-DEPLOY REFUSAL: nor this';
 `),
     ).toEqual([]);
   });
 
-  test("accepts indentation before the marker", async () => {
-    expect(await broken(`  ${marker}\n${dynamic}\n`)).toEqual([]);
+  const markedBody = `create function f(source text) returns void
+language plpgsql as $$
+begin
+  -- OVERRIDE SUPER-DEPLOY REFUSAL: loads tables named by the caller
+  execute format('select 1 from %s', source);
+end
+$$;
+`;
+  const inRoutine =
+    "An override marker inside a routine has no effect: put it on its own line before the statement that creates the routine, `create function f` (line 1)";
+
+  /** [line, rule] of every violation, in line order. */
+  const inLineOrder = (violations: readonly RuleViolation[]) =>
+    violations
+      .map((v): [number, string] => [v.line, v.rule])
+      .sort(([a], [b]) => a - b);
+
+  test.each([
+    ["a dollar-quoted body", markedBody, 4],
+    [
+      "a single-quoted body",
+      `create function f() returns void
+language plpgsql as '
+begin
+  ${marker}
+  execute ''select 1'';
+end
+';
+`,
+      4,
+    ],
+  ])(
+    "refuses a marker inside %s, saying it goes before the CREATE statement",
+    async (_, text, line) => {
+      const violations = await checkRules(
+        { path: desiredPath, text },
+        "desired-schema",
+      );
+      expect(inLineOrder(violations)).toEqual([
+        [line, "override-misplaced"],
+        [line + 1, "plpgsql-dynamic-sql"],
+      ]);
+      expect(
+        violations.find((v) => v.rule === "override-misplaced")?.message,
+      ).toBe(inRoutine);
+    },
+  );
+
+  test("refuses a marker inside a BEGIN ATOMIC body, saying it goes before the CREATE statement", async () => {
+    const violations = await checkRules(
+      {
+        path: desiredPath,
+        text: `create function f() returns int language sql
+begin atomic
+  ${marker}
+  select 1;
+end;
+`,
+      },
+      "desired-schema",
+    );
+    expect(inLineOrder(violations)).toEqual([[3, "override-misplaced"]]);
+    expect(violations[0]?.message).toBe(inRoutine);
+  });
+
+  test.each([
+    ["spaces before the marker", `  ${marker}\n${dynamic}\n`],
+    ["a tab before the marker", `\t${marker}\n${dynamic}\n`],
+    ["trailing whitespace after the marker", `${marker} \t\n${dynamic}\n`],
+    [
+      "an indented marker and statement",
+      `  ${marker}\n${dynamic.replaceAll(/^/gm, "  ")}\n`,
+    ],
+    [
+      "CRLF line endings",
+      `${marker}\r\n${dynamic.replaceAll("\n", "\r\n")}\r\n`,
+    ],
+  ])("accepts %s", async (_, text) => {
+    expect(await broken(text)).toEqual([]);
+  });
+
+  test("with CRLF line endings, a marker inside a routine body and the hint give the right lines", async () => {
+    const text = markedBody.replaceAll("\n", "\r\n");
+    const violations = await checkRules(
+      { path: desiredPath, text },
+      "desired-schema",
+    );
+    expect(inLineOrder(violations)).toEqual([
+      [4, "override-misplaced"],
+      [5, "plpgsql-dynamic-sql"],
+    ]);
+    expect(
+      violations.find((v) => v.rule === "plpgsql-dynamic-sql")?.hint,
+    ).toContain("on the line before `create function f` (line 1)");
+    expect(
+      await broken(`${marker}\r\n${text.replace(/^.*OVERRIDE.*\r\n/m, "")}`),
+    ).toEqual([]);
   });
 
   test("refuses a marker on a statement that breaks no rule", async () => {
