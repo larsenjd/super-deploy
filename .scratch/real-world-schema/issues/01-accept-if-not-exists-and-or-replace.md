@@ -6,7 +6,7 @@ Found on a real-world schema: 171 `desired-schema-statement` violations from the
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] These forms are accepted in desired-schema files, with no warning: `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `CREATE MATERIALIZED VIEW IF NOT EXISTS`, `CREATE OR REPLACE VIEW`, `CREATE OR REPLACE FUNCTION` / `PROCEDURE`, `CREATE OR REPLACE TRIGGER` (the `redefinition` call sites in `desired-schema-rules.ts`).
 - [ ] Nothing else becomes allowed. `ALTER TABLE IF EXISTS` stays refused, with its current message reworded to stand alone. A statement refused for another reason (`CREATE SCHEMA IF NOT EXISTS`, `CREATE EXTENSION IF NOT EXISTS`) is still refused for that reason.
