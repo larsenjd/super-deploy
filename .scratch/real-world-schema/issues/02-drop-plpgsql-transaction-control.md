@@ -11,7 +11,7 @@ Found on a real-world schema: 3 `plpgsql-transaction-control` violations.
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] `plpgsql-transaction-control` is removed from `sql-analysis/rule-catalogue.ts` and from the PL/pgSQL body checks in `sql-analysis/routine-bodies.ts`, for both rule sets.
 - [ ] A desired-schema procedure whose body has `COMMIT` and `ROLLBACK` is accepted, drafts, rehearses and deploys (API seam).
