@@ -49,7 +49,7 @@ const definitions = {
   ],
   "call-statement": [
     "transaction",
-    "CALL can run a procedure that ends the deploy transaction",
+    "CALL runs a user-defined procedure, whose COMMIT or ROLLBACK fails inside the deploy transaction",
   ],
   "do-statement": [
     "transaction",

@@ -396,7 +396,7 @@ function classify(statement: ParsedStatement): Classification {
   if (type === "CallStmt") {
     return refuse(
       "call-statement",
-      "CALL is not allowed: a procedure can end the deploy transaction, and deploy-time SQL may not call user-defined routines",
+      "CALL is not allowed: deploy-time SQL may not call user-defined routines, and a procedure that commits or rolls back fails inside the deploy transaction",
     );
   }
   if (type === "DoStmt") {

@@ -6,7 +6,7 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 
 **V1:** Deploy-time SQL may not `CALL` procedures, run `DO` blocks, or call any function outside `pg_catalog`. Built-in functions are allowed except a denylist of ones with effects that escape the transaction (e.g. `setval`, `pg_notify`, advisory locks, `dblink*`, `lo_export`, signal/admin functions). Defining functions, procedures and triggers in the desired schema is allowed. Triggers firing from DML in scripts is accepted and documented.
 
-**Why narrow:** A procedure that commits ends the deploy transaction; a function can cause effects a rollback cannot undo. The parser cannot see inside routine bodies.
+**Why narrow:** A procedure that commits fails inside the deploy transaction (`invalid transaction termination`); a function can cause effects a rollback cannot undo. The parser cannot see inside routine bodies.
 
 **Revisit when:** Real projects need to reuse logic in scripts (e.g. a backfill function). Options: allow calling functions declared in the desired schema whose bodies pass the same rules, or allow only `IMMUTABLE`/`STABLE` user functions. Name-based matching also misses operators, casts and defaults, so consider pairing the parser with a restricted deploy role as a backstop. Routine bodies may `COMMIT` and `ROLLBACK` (a procedure is never run at deploy time), so allowing `CALL` means refusing procedures that do.
 
