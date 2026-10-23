@@ -106,6 +106,30 @@ describe("allowed in the desired schema", () => {
       "CREATE EXTENSION IF NOT EXISTS plpgsql",
       "create extension if not exists plpgsql",
     ],
+    // Re-runnable forms change nothing: the desired schema loads into an
+    // empty schema, and ordering refuses a second definition (duplicate-object).
+    ["CREATE TABLE IF NOT EXISTS", "create table if not exists t (a int)"],
+    [
+      "CREATE INDEX IF NOT EXISTS",
+      "create index if not exists t_a_idx on t (a)",
+    ],
+    [
+      "CREATE MATERIALIZED VIEW IF NOT EXISTS",
+      "create materialized view if not exists mv as select 1 as a",
+    ],
+    ["CREATE OR REPLACE VIEW", "create or replace view v as select 1 as a"],
+    [
+      "CREATE OR REPLACE FUNCTION",
+      "create or replace function f() returns int language sql as $$ select 1 $$",
+    ],
+    [
+      "CREATE OR REPLACE PROCEDURE",
+      "create or replace procedure p() language sql as $$ select 1 $$",
+    ],
+    [
+      "CREATE OR REPLACE TRIGGER",
+      "create or replace trigger tr before insert on t for each row execute function f()",
+    ],
     [
       "names qualified with the managed schema or pg_catalog",
       "create view public.v as select pg_catalog.lower(b)::pg_catalog.text from public.t",
@@ -436,7 +460,17 @@ describe("refused statements and clauses", () => {
     [
       "ALTER TABLE IF EXISTS",
       "alter table if exists t add constraint t_a_check check (a > 0)",
-      /^ALTER TABLE IF EXISTS is not allowed.*exactly once/,
+      /^ALTER TABLE IF EXISTS is not allowed in the desired schema: the desired schema defines every table it alters/,
+    ],
+    [
+      "CREATE SCHEMA IF NOT EXISTS, refused as CREATE SCHEMA",
+      "create schema if not exists s",
+      /^CREATE SCHEMA is not allowed in the desired schema/,
+    ],
+    [
+      "CREATE EXTENSION IF NOT EXISTS other than plpgsql, refused as the extension",
+      "create extension if not exists pgcrypto",
+      /^Extensions other than plpgsql are not supported in V1/,
     ],
     [
       "COMMENT ON SCHEMA",
@@ -452,36 +486,6 @@ describe("refused statements and clauses", () => {
       "COMMENT ON SERVER, worded as in SQL",
       "comment on server s is 'x'",
       /^COMMENT ON SERVER is not allowed/,
-    ],
-    [
-      "CREATE OR REPLACE VIEW",
-      "create or replace view v as select 1 as a",
-      /^CREATE OR REPLACE VIEW is not allowed.*exactly once/,
-    ],
-    [
-      "CREATE OR REPLACE FUNCTION",
-      "create or replace function f() returns int language sql as $$ select 1 $$",
-      /^CREATE OR REPLACE FUNCTION is not allowed/,
-    ],
-    [
-      "CREATE OR REPLACE PROCEDURE",
-      "create or replace procedure p() language sql as $$ select 1 $$",
-      /^CREATE OR REPLACE PROCEDURE is not allowed/,
-    ],
-    [
-      "CREATE OR REPLACE TRIGGER",
-      "create or replace trigger tr before insert on t for each row execute function f()",
-      /^CREATE OR REPLACE TRIGGER is not allowed/,
-    ],
-    [
-      "CREATE TABLE IF NOT EXISTS",
-      "create table if not exists t (a int)",
-      /^CREATE TABLE IF NOT EXISTS is not allowed/,
-    ],
-    [
-      "CREATE INDEX IF NOT EXISTS",
-      "create index if not exists t_a_idx on t (a)",
-      /^CREATE INDEX IF NOT EXISTS is not allowed/,
     ],
     [
       "CREATE INDEX CONCURRENTLY",

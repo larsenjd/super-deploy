@@ -118,7 +118,7 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 
 Also refused, though the spec's first list didn't name them: temporary tables and views; table inheritance and typed tables (`CREATE TABLE ... OF type`); range types and base types; procedural languages and routines in languages other than `sql` and `plpgsql`; routine options such as `WINDOW` and `SUPPORT`; view options other than `security_invoker`, `security_barrier` and `check_option`; custom conversions, transforms and access methods. Physical storage settings have their own entry below.
 
-`IF NOT EXISTS` and `OR REPLACE` are not refinements: they stay refused for good (ADR-0002).
+`IF NOT EXISTS` and `OR REPLACE` are not refinements: they are no longer refused, and change nothing (ADR-0002).
 
 **Why narrow:** Each adds differ coverage, rehearsal-parity or transaction-safety work that V1 does not need.
 

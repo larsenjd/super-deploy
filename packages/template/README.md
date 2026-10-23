@@ -242,9 +242,13 @@ super-deploy (see [Permissions](#permissions)).
   taken yet (`orders_total_check1`), so the name could depend on the order
   the files load in, and differ between rehearsals and targets. Unnamed
   ones are refused as `[unnamed-index]` and `[unnamed-constraint]`.
-- **Define each object exactly once**: no `IF NOT EXISTS`, `OR REPLACE` or
-  `ALTER TABLE IF EXISTS`, so no definition can silently replace or skip
-  another depending on load order.
+- **Define each object exactly once**: a second statement creating the same
+  object is refused as `[duplicate-object]`, so no definition can silently
+  replace or skip another depending on load order. The desired schema always
+  loads into an empty schema, so `IF NOT EXISTS` and `OR REPLACE` change
+  nothing there and are accepted: a schema written to be re-runnable loads
+  as it is. `ALTER TABLE IF EXISTS` is still refused: the desired schema
+  defines every table it alters.
 - **One managed schema**: no `CREATE SCHEMA`. super-deploy creates the
   managed schema (`managedSchema`, see [Project settings](#project-settings))
   itself. Write object names unqualified (or qualified with the managed

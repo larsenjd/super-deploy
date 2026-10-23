@@ -5,5 +5,5 @@ Every SQL file that can run during a deployment (generated schema changes as wel
 ## Consequences
 
 - The desired schema has its own, narrower rule set: only `CREATE` and `COMMENT` statements for supported object types, plus `ALTER TABLE ... ADD CONSTRAINT` (needed for circular foreign keys). `GRANT`, `REVOKE` and row-level security were allowed until ADR-0006 put privileges outside the system.
-- `IF NOT EXISTS` and `OR REPLACE` are refused permanently, not just in V1: the desired schema defines each object exactly once and always loads into an empty schema, so these clauses could only hide a second definition whose winner depends on load order.
+- The desired schema defines each object exactly once and always loads into an empty schema. `IF NOT EXISTS` and `OR REPLACE` are accepted and change nothing: ordering's `duplicate-object` rule (ADR-0004) refuses a second definition of an object whatever its clauses, so they cannot hide one. They were refused until a real-world schema, written to be re-runnable, showed the refusal cost more than it protected.
 - Things the parser cannot see (code inside extensions, event triggers) need other backstops.

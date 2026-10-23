@@ -3,6 +3,11 @@
 // a reason. Kept apart from the deploy-time rules, which share only the
 // splitter, the syntax-tree helpers and the side-effect denylist.
 //
+// `IF NOT EXISTS` and `OR REPLACE` are accepted and ignored: the desired
+// schema loads into an empty schema, and ordering refuses a second
+// definition of an object whatever its clauses (`duplicate-object`).
+// `ALTER TABLE IF EXISTS` stays refused.
+//
 // The template README's "What the desired schema supports" lists every
 // refusal for users: a new one needs a line there and a row in
 // test/unit/sql-analysis/readme-desired-schema.test.ts.
@@ -70,10 +75,6 @@ function storageParameters(node: Json): string {
   return `: ${parameters.join(", ")}`;
 }
 
-const redefinition = (clause: string): RuleFinding =>
-  notAllowed(
-    `${clause} is not allowed in the desired schema: define each object exactly once, so no definition can silently replace or skip another depending on load order`,
-  );
 const tablespaces = unsupported(
   "Tablespaces are not supported: storage layout differs between targets and rehearsals",
 );
@@ -326,9 +327,6 @@ function checkTable(node: Json): RuleFinding[] {
   if (list(node.options).length > 0) {
     findings.push(v1("Table storage parameters", storageParameters(node)));
   }
-  if (node.if_not_exists === true) {
-    findings.push(redefinition("CREATE TABLE IF NOT EXISTS"));
-  }
   // CREATE TABLE ... (LIKE) is refused by ordering (`table-like`).
   for (const element of list(node.tableElts)) {
     const column = unwrap(element, "ColumnDef");
@@ -416,9 +414,6 @@ const viewOptions = new Set([
 
 function checkView(node: Json): RuleFinding[] {
   const findings = persistence(isObject(node.view) ? node.view : {}, "views");
-  if (node.replace === true) {
-    findings.push(redefinition("CREATE OR REPLACE VIEW"));
-  }
   for (const { name } of defElems(node.options)) {
     if (!viewOptions.has(name)) {
       findings.push(unsupported(`View option ${name} is not supported in V1`));
@@ -437,9 +432,6 @@ function checkMaterializedView(node: Json): RuleFinding[] {
   }
   const into = isObject(node.into) ? node.into : {};
   const findings: RuleFinding[] = [];
-  if (node.if_not_exists === true) {
-    findings.push(redefinition("CREATE MATERIALIZED VIEW IF NOT EXISTS"));
-  }
   if (into.tableSpaceName !== undefined) {
     findings.push(tablespaces);
   }
@@ -466,9 +458,6 @@ function checkIndex(node: Json): RuleFinding[] {
   if (node.tableSpace !== undefined) {
     findings.push(tablespaces);
   }
-  if (node.if_not_exists === true) {
-    findings.push(redefinition("CREATE INDEX IF NOT EXISTS"));
-  }
   return findings;
 }
 
@@ -493,10 +482,6 @@ function checkRoutine(
   context: RuleContext,
 ): RuleFinding[] {
   const findings: RuleFinding[] = [];
-  const kind = node.is_procedure === true ? "PROCEDURE" : "FUNCTION";
-  if (node.replace === true) {
-    findings.push(redefinition(`CREATE OR REPLACE ${kind}`));
-  }
   const options = defElems(node.options);
   for (const { name } of options) {
     if (!routineOptions.has(name)) {
@@ -525,9 +510,6 @@ function checkRoutine(
 
 function checkTrigger(node: Json): RuleFinding[] {
   const findings: RuleFinding[] = [];
-  if (node.replace === true) {
-    findings.push(redefinition("CREATE OR REPLACE TRIGGER"));
-  }
   if (node.isconstraint === true) {
     findings.push(v1("Constraint triggers"));
   }
@@ -558,7 +540,11 @@ function checkAlterTable(node: Json): RuleFinding[] {
     );
   }
   if (node.missing_ok === true) {
-    findings.push(redefinition("ALTER TABLE IF EXISTS"));
+    findings.push(
+      notAllowed(
+        "ALTER TABLE IF EXISTS is not allowed in the desired schema: the desired schema defines every table it alters, so write ALTER TABLE without IF EXISTS",
+      ),
+    );
   }
   for (const command of commands) {
     findings.push(...constraintFindings([command.def]));

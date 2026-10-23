@@ -1,7 +1,7 @@
 // Desired-schema rules through the programmatic API: refusals stop draft
 // before any database work, declared external schemas are honoured in
 // PL/pgSQL bodies, and objects that bind at CREATE to an external schema fail
-// in rehearsal with a hint.
+// in rehearsal with a hint. IF NOT EXISTS and OR REPLACE change nothing.
 import {
   DesiredSchemaLoadError,
   draft,
@@ -138,5 +138,32 @@ create materialized view mv as select n() as n;
 
     expect(result.statements).toEqual([]);
     expect(dir.exists("data-model/migrations/00001-nothing")).toBe(true);
+  });
+
+  test("IF NOT EXISTS and OR REPLACE draft the same schema change as the plain statements", async () => {
+    const rerunnable = `create table if not exists t (id int constraint t_pkey primary key, a int);
+create index if not exists t_a_idx on t (a);
+create or replace function plus_one(x int) returns int language sql immutable return x + 1;
+create or replace view v as select plus_one(a) as b from t;
+create materialized view if not exists mv as select b from v;
+create or replace procedure add_row(x int) language sql as $$ insert into t (id, a) values (x, x) $$;
+create or replace function touch() returns trigger language plpgsql as $$ begin return new; end $$;
+create or replace trigger t_touch before insert on t for each row execute function touch();
+`;
+    const schemaChange = async (sql: string) => {
+      const { dir, project } = await projectWith({
+        "data-model/desired-schema/schema.sql": sql,
+      });
+      await draft(project, { name: "rerunnable" });
+      return dir.read("data-model/draft/schema-change.sql");
+    };
+
+    const withClauses = await schemaChange(rerunnable);
+    const plain = await schemaChange(
+      rerunnable.replace(/ (if not exists|or replace)/g, ""),
+    );
+
+    expect(withClauses).toEqual(plain);
+    expect(plain).toContain("CREATE TRIGGER t_touch");
   });
 });
