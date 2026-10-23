@@ -77,6 +77,7 @@
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
     "embedded-postgres": "18.4.0-beta.17",
+    "embedded-postgres-16": "npm:embedded-postgres@16.14.0-beta.17",
     "jscpd": "5.4.1",
     "typescript": "7.0.2",
     "vite": "8.3.4",

@@ -20,6 +20,11 @@
 // targets outside super-deploy (ADR-0006), so they are never drift and a
 // rehearsal never compares them. A comment on a policy goes with its policy.
 //
+// A target older than 18 (postgresVersion's escape hatch, ADR-0007) reads as
+// 18 would in the two ways adoption needs: a default statistics target is
+// `-1` before 17 (NULL since), and before 18 a NOT NULL column has no
+// `<table>_<column>_not_null` constraint, so one is read for each.
+//
 // Binding facts (opt-in) record what each object is bound to: pg_depend
 // edges (the overload a view or default calls, the table a function body
 // reads) and the index each foreign key uses. The order-independence check
@@ -27,6 +32,7 @@
 import { inTransaction } from "../adapters/transaction.ts";
 import type { Session } from "../adapters/types.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
+import { generatedName } from "../sql-analysis/generated-names.ts";
 import type { CatalogReference } from "../sql-analysis/index.ts";
 
 const describe = (classTable: string, oid: string, sub = "0") =>
@@ -58,7 +64,7 @@ const queries: Readonly<Record<string, string>> = {
       || ' default=' || coalesce(pg_get_expr(d.adbin, d.adrelid), '-')
       || ' collation=' || coalesce(nullif(a.attcollation, 0)::regcollation::text, '-')
       || ' storage=' || a.attstorage::text || ' compression=' || coalesce(nullif(a.attcompression::text, ''), '-')
-      || ' stattarget=' || coalesce(a.attstattarget::text, '-') || ' local=' || a.attislocal
+      || ' stattarget=' || coalesce(nullif(a.attstattarget, -1)::text, '-') || ' local=' || a.attislocal
       || case when c.relkind = 'c' then ' position=' || row_number() over (partition by a.attrelid order by a.attnum) else '' end
     from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
     left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
@@ -187,6 +193,15 @@ const bindingQueries: Readonly<Record<string, string>> = {
     where n.nspname = $1 and k.contype = 'f'`,
 };
 
+/**
+ * Before PostgreSQL 18: each table's NOT NULL columns, as the table (its
+ * address) and the column, for the constraints 18 would record.
+ */
+const notNullColumns = `
+  select ${address("pg_class", "c.oid")}, c.relname, a.attname, quote_ident(a.attname) as quoted
+  from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = $1 and a.attnum > 0 and not a.attisdropped and a.attnotnull and c.relkind in ('r','p')`;
+
 export interface CatalogFact {
   /** e.g. `relation`, `column`, `depends`. */
   readonly kind: string;
@@ -224,7 +239,13 @@ export async function catalogFacts(
   schema: string,
   options: CatalogFactOptions = {},
 ): Promise<CatalogFact[]> {
-  const read: { kind: string; key: string; line: string }[] = [];
+  const read: {
+    kind: string;
+    key: string;
+    line: string;
+    /** For a NOT NULL constraint read before 18: its name; `key` is its table's. */
+    notNull?: string;
+  }[] = [];
   const objects = new Map<string, string>();
   const all = options.bindings ? { ...queries, ...bindingQueries } : queries;
   await inTransaction(
@@ -240,6 +261,27 @@ export async function catalogFacts(
           read.push({ kind, key: addressKey(row), line: row.line });
         }
       }
+      const version = await session.query<{ version: number }>(
+        "select current_setting('server_version_num')::int as version",
+      );
+      if ((version.rows[0]?.version ?? 0) < 180000) {
+        const columns = await session.query<
+          ObjectAddress & { relname: string; attname: string; quoted: string }
+        >(
+          `select class::oid::text as class, obj::oid::text as obj, sub::int4 as sub, relname, attname, quoted
+           from (${notNullColumns}) as columns(class, obj, sub, relname, attname, quoted)`,
+          [schema],
+        );
+        for (const row of columns.rows) {
+          const name = generatedName(row.relname, row.attname, "not_null");
+          read.push({
+            kind: "constraint",
+            key: addressKey(row),
+            line: `${row.relname} ${name} n NOT NULL ${row.quoted} deferrable=false deferred=false validated=true`,
+            notNull: name,
+          });
+        }
+      }
       for (const [key, object] of await describeObjects(
         session,
         read.map(({ key }) => key),
@@ -253,11 +295,15 @@ export async function catalogFacts(
       ...(options.settings ?? []),
     ].join(";\n"),
   );
-  const facts = read.map(({ kind, key, line }) => ({
-    kind,
-    object: objects.get(key) ?? key,
-    line,
-  }));
+  const facts = read.map(({ kind, key, line, notNull }) => {
+    const object = objects.get(key) ?? key;
+    return {
+      kind,
+      object:
+        notNull === undefined ? object : `constraint ${notNull} on ${object}`,
+      line,
+    };
+  });
   return facts.sort((a, b) => compare(factLine(a), factLine(b)));
 }
 

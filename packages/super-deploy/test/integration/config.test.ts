@@ -102,6 +102,29 @@ describe("loadProject", () => {
     );
   });
 
+  test("has no warnings for PostgreSQL 18", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(unusedServer),
+    });
+
+    const project = await loadProject({ cwd: dir.root });
+
+    expect(project.warnings).toEqual([]);
+  });
+
+  test("accepts another PostgreSQL version, warning that it is unsupported", async () => {
+    const dir = await createTestProject({
+      config: configWith("postgresVersion: 16,"),
+    });
+
+    const project = await loadProject({ cwd: dir.root });
+
+    expect(project.config.postgresVersion).toBe(16);
+    expect(project.warnings).toEqual([
+      "postgresVersion 16 is unsupported: super-deploy is built and tested for PostgreSQL 18. It is an escape hatch for adopting a database; migrations are generated and rehearsed on 18 and may not run on 16",
+    ]);
+  });
+
   test("fails when there is no config in the directory or any parent", async () => {
     const dir = await createTestProject();
 
@@ -111,8 +134,17 @@ describe("loadProject", () => {
   });
 
   test.each([
-    ["postgresVersion: 17,", "postgresVersion", "must be 18"],
-    ["", "postgresVersion", "must be 18"],
+    [
+      'postgresVersion: "18",',
+      "postgresVersion",
+      "must be a PostgreSQL major version such as 18",
+    ],
+    [
+      "postgresVersion: 16.4,",
+      "postgresVersion",
+      "must be a PostgreSQL major version such as 18",
+    ],
+    ["", "postgresVersion", "must be a PostgreSQL major version such as 18"],
     [
       "postgresVersion: 18, managedSchema: 'My Schema',",
       "managedSchema",

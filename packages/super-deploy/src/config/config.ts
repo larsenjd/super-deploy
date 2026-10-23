@@ -20,8 +20,11 @@ export interface TargetConfig {
 }
 
 export interface SuperDeployConfig {
-  /** Must be 18. */
-  postgresVersion: 18;
+  /**
+   * The PostgreSQL major version every target runs. Only 18 is supported;
+   * another is an escape hatch for adopting a database (ADR-0007).
+   */
+  postgresVersion: number;
   /** Provides throwaway databases for rehearsals. */
   rehearsal: RehearsalAdapter;
   /** Named targets, e.g. `dev`, `qa`, `prod`. */
@@ -49,6 +52,11 @@ export interface ResolvedTarget {
   readonly lockTimeoutSet: boolean;
   readonly statementTimeoutMs: number | undefined;
   readonly connectTimeoutMs: number;
+  /**
+   * The PostgreSQL major version its server must run: the config's
+   * postgresVersion. Default 18, for a target built by hand.
+   */
+  readonly postgresVersion?: number;
 }
 
 /** A target's timeouts when its config sets none; no statement timeout by default. */
@@ -58,12 +66,12 @@ export const targetDefaults = {
   connectTimeoutMs: 10_000,
 } as const satisfies Omit<
   ResolvedTarget,
-  "name" | "adapter" | "lockTimeoutSet"
+  "name" | "adapter" | "lockTimeoutSet" | "postgresVersion"
 >;
 
 /** A validated configuration with every default applied. */
 export interface ResolvedConfig {
-  readonly postgresVersion: 18;
+  readonly postgresVersion: number;
   readonly rehearsal: RehearsalAdapter;
   readonly targets: Readonly<Record<string, ResolvedTarget>>;
   readonly managedSchema: string;
@@ -99,10 +107,15 @@ export function resolveConfig(raw: unknown): ResolvedConfig {
   }
   rejectUnknown(raw, settings, "");
 
-  if (raw.postgresVersion !== 18) {
+  const postgresVersion = raw.postgresVersion;
+  if (
+    typeof postgresVersion !== "number" ||
+    !Number.isInteger(postgresVersion) ||
+    postgresVersion < 1
+  ) {
     throw invalid(
       "postgresVersion",
-      `must be 18 (the only supported PostgreSQL version), got ${describe(raw.postgresVersion)}`,
+      `must be a PostgreSQL major version such as 18, got ${describe(postgresVersion)}`,
     );
   }
   if (!hasMethod(raw.rehearsal, "createDatabase")) {
@@ -194,12 +207,13 @@ export function resolveConfig(raw: unknown): ResolvedConfig {
         connectTimeoutMs:
           duration(value.connectTimeout, `${path}.connectTimeout`) ??
           targetDefaults.connectTimeoutMs,
+        postgresVersion,
       };
     }
   }
 
   return {
-    postgresVersion: 18,
+    postgresVersion,
     rehearsal: raw.rehearsal as RehearsalAdapter,
     targets,
     managedSchema,

@@ -295,7 +295,11 @@ settings; super-deploy refuses any other.
 
 ### Project settings
 
-- `postgresVersion`: required, and must be `18`.
+- `postgresVersion`: required: the PostgreSQL major version every target
+  runs. Only `18` is supported. Another version is an escape hatch for
+  adopting a database on an older server (see
+  [Adopting from an older PostgreSQL](#adopting-from-an-older-postgresql)),
+  and every command warns about it.
 - `rehearsal`: required. Provides the throwaway databases rehearsals use.
   The generated config uses a private embedded server of its own
   (`rehearsalServer.rehearsal`). `postgresRehearsal({ env: "REHEARSAL_DATABASE_URL" })`,
@@ -509,6 +513,19 @@ answer cancels the adoption, writing nothing. Without a terminal (in CI, for
 example) adoption refuses them, listed apart from anything it doesn't
 support, saying to run it in a terminal. `finalize` and `validate` show these
 overrides like any other.
+
+### Adopting from an older PostgreSQL
+
+super-deploy supports PostgreSQL 18 only, but it can adopt a database on an
+older server, such as 16, so you can move its schema to PostgreSQL 18. Set
+`postgresVersion` to the old server's major version (say `16`), then run
+`init --adopt <target>` as above. Every command warns that the version is
+unsupported, and every target must then run that version. The rehearsal
+server stays on PostgreSQL 18. Once adopted, set `postgresVersion` back to
+`18` and deploy to your PostgreSQL 18 targets. Migrations are generated and
+rehearsed on 18, so deploying them to the old server isn't supported: it
+might work, but nothing checks that it does. Adoption refuses an old server
+whose schema doesn't read back the same on 18.
 
 ### Starting an adoption over
 

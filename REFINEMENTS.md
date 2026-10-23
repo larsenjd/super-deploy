@@ -74,6 +74,14 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 
 **Revisit when:** Privileges come back into scope, or there is demand for triggers that read tables the application's roles can't (for example an `auth` schema). Options: allow `SECURITY DEFINER` together with the one `REVOKE EXECUTE ... FROM PUBLIC` it needs, and compare only that.
 
+## PostgreSQL versions other than 18
+
+**V1:** PostgreSQL 18 only. `postgresVersion` may name another major version as an unsupported escape hatch for adopting a database on an older server: every command warns, each target must run that version, and rehearsals stay on 18. Only two catalog differences are smoothed over (a default statistics target of `-1` before 17, and the NOT NULL constraints 18 records). See ADR-0007.
+
+**Why narrow:** Migrations are generated, ordered and rehearsed on 18, by a parser and differ built for 18. Supporting another version means rehearsing on it, handling every catalog difference in drift and adoption, and running the test suite on it.
+
+**Revisit when:** Teams need to keep deploying to a server older than 18. Options: rehearse on the target's own version, record that version in each migration, and run the integration suite against each supported version.
+
 ## Extensions
 
 **V1:** The desired schema may only use `plpgsql`, the one extension installed in every database. Every other `CREATE EXTENSION` is refused.

@@ -114,6 +114,24 @@ describe("usage errors", () => {
   });
 });
 
+describe("config warnings", () => {
+  test("an unsupported postgresVersion is warned about once on stderr, and the command still runs", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(server).replace(
+        "postgresVersion: 18",
+        "postgresVersion: 16",
+      ),
+    });
+
+    const result = await runCli(["validate"], { cwd: dir.root });
+
+    expect(result.exitCode).toBe(0);
+    expect(oneLine(result.stderr)).toEqual([
+      expect.stringMatching(/^warning: postgresVersion 16 is unsupported: /),
+    ]);
+  });
+});
+
 describe("draft", () => {
   test("creates the draft, prints the result on stdout and exits 0", async () => {
     const dir = await createTestProject({

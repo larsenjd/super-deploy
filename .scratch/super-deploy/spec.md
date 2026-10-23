@@ -137,7 +137,7 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 93. As an integrator, I want every command available as a typed function with callbacks for questions and typed errors, so that I can embed the tool in my own scripts.
 94. As an integrator, I want to supply my own adapters for connecting to targets and providing throwaway databases, so that the tool works with my secrets manager, IAM tokens, tunnels or CI servers.
 95. As an integrator, I want commands to connect only to the targets they touch, so that a command that doesn't touch production never needs its credentials.
-96. As a developer, I want the tool to refuse a server that isn't PostgreSQL 18, so that rehearsals and targets always match.
+96. As a developer, I want the tool to refuse a server that isn't PostgreSQL 18, so that rehearsals and targets always match. (Narrowed by ADR-0007: `postgresVersion` may name an older version, unsupported, to adopt a database; targets must then run that version.)
 97. As a contributor, I want the repo's scripts to be TypeScript run by pnpm and the CI to run on Windows, macOS and Linux, so that the tool works the same everywhere.
 98. As a DBA, I want grants, default privileges, policies and row-level security I set up on a target by hand never compared, reset or counted as drift, so that I can give the application's roles access the way each target needs.
 99. As a developer, I want a grant, policy or `SECURITY DEFINER` routine refused in every file super-deploy deploys, saying that privileges and row-level security are set up on targets outside super-deploy, so that I know where they belong.
@@ -155,7 +155,7 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 
 **Project and configuration** (Q56, Q59)
 - A typed `super-deploy.config.ts` at the project root, found by walking up from the working directory, loaded with Node's built-in TypeScript support (no `enum`/`namespace`).
-- Settings: `postgresVersion` (required, must be 18), `rehearsal` adapter (required), `targets` (each: deployment adapter, `lockTimeout` default 5s, optional `statementTimeout`, `connectTimeout` default 10s), `managedSchema` (default `public`), `historySchema` (default `deployment_history`), `externalSchemas` (default none), `directory` (default `data-model`).
+- Settings: `postgresVersion` (required, 18; another version is an unsupported escape hatch for adoption, ADR-0007), `rehearsal` adapter (required), `targets` (each: deployment adapter, `lockTimeout` default 5s, optional `statementTimeout`, `connectTimeout` default 10s), `managedSchema` (default `public`), `historySchema` (default `deployment_history`), `externalSchemas` (default none), `directory` (default `data-model`).
 - Never in config: credentials, the disposable flag, migration state.
 
 **Adapters** (Q19, consumer-implemented interfaces)
@@ -301,7 +301,7 @@ There is no production code yet. Reusable prior art from the prototype branches 
 
 Everything recorded in `REFINEMENTS.md`, including: calling user-defined functions or procedures in scripts; enums; non-transactional operations and out-of-band index builds; tolerating drift; a Recovery replacing the schema change; seed data that persists across rehearsals; extensions other than `plpgsql`; partitioned tables; virtual generated columns; other refused object types; assertion directives; size-aware lock warnings; proving (rather than sampling) order independence; automatic SQL formatting; managing roles, ownership, grants, default privileges, policies and row-level security; `SECURITY DEFINER` routines; publishing to npm.
 
-Also out of scope: managing more than one schema; PostgreSQL versions other than 18; creating or dropping roles on targets.
+Also out of scope: managing more than one schema; PostgreSQL versions other than 18 (except adopting from one, ADR-0007); creating or dropping roles on targets.
 
 ## Further Notes
 

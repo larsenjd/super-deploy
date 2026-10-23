@@ -86,6 +86,9 @@ export async function runCommand(
     values = prepared.values;
     if (prepared.values !== undefined) {
       const context = commandContext(io);
+      for (const warning of project?.warnings ?? []) {
+        context.warn(`warning: ${warning}`);
+      }
       if (project === undefined) {
         if (command.needsProject !== false) {
           throw new Error(`${command.name} needs a project`);

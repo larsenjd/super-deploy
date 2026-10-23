@@ -51,7 +51,7 @@ export async function withThrowawayDatabase<T>(
       () => database.connect(),
     );
     try {
-      await requirePostgres18(session, "The rehearsal server");
+      await requirePostgresVersion(session, "The rehearsal server");
       return await use(session);
     } finally {
       await session.close().catch(() => {});
@@ -65,14 +65,18 @@ export async function withThrowawayDatabase<T>(
   }
 }
 
-/** Refuses a session whose server isn't PostgreSQL 18. */
-export async function requirePostgres18(
+/**
+ * Refuses a session whose server isn't PostgreSQL `postgresVersion` (a
+ * target's, from the config), or 18 when there is none (the rehearsal server).
+ */
+export async function requirePostgresVersion(
   session: Session,
   source: string,
+  postgresVersion?: number,
 ): Promise<void> {
   const version = await session.serverVersion();
-  if (/^(\d+)/.exec(version)?.[1] !== "18") {
-    throw new UnsupportedServerError(source, version);
+  if (/^(\d+)/.exec(version)?.[1] !== String(postgresVersion ?? 18)) {
+    throw new UnsupportedServerError(source, version, postgresVersion);
   }
 }
 
@@ -266,14 +270,19 @@ export class DesiredSchemaLoadError extends SuperDeployError {
   }
 }
 
-/** An adapter connected to a server that isn't PostgreSQL 18. */
+/**
+ * An adapter connected to a server that isn't the PostgreSQL version
+ * required: a target's postgresVersion other than 18 is named as such.
+ */
 export class UnsupportedServerError extends SuperDeployError {
   readonly code = "unsupported-server";
   readonly serverVersion: string;
 
-  constructor(source: string, serverVersion: string) {
+  constructor(source: string, serverVersion: string, postgresVersion?: number) {
     super(
-      `${source} is PostgreSQL ${serverVersion}, but super-deploy requires PostgreSQL 18`,
+      postgresVersion === undefined || postgresVersion === 18
+        ? `${source} is PostgreSQL ${serverVersion}, but super-deploy requires PostgreSQL 18`
+        : `${source} is PostgreSQL ${serverVersion}, but postgresVersion is ${postgresVersion}`,
     );
     this.serverVersion = serverVersion;
   }

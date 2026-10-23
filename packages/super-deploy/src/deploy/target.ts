@@ -34,7 +34,7 @@ import { SuperDeployError } from "../errors.ts";
 import type { GuardedCommand, TargetView } from "../guard/guard.ts";
 import { InterruptedError } from "../interruption.ts";
 import type { Project } from "../project.ts";
-import { adapterCall, requirePostgres18 } from "../rehearsal/throwaway.ts";
+import { adapterCall, requirePostgresVersion } from "../rehearsal/throwaway.ts";
 
 /** The configured target called `name`, or UnknownTargetError. */
 export function resolveTarget(project: Project, name: string): ResolvedTarget {
@@ -118,8 +118,8 @@ export function timeoutRanOut(
 
 /**
  * Opens a session to `target` through its adapter and refuses a server that
- * isn't PostgreSQL 18, then sets what ends its session once its client is
- * gone (see the header). Every call is one `adapter.connect()`; a deployment calls it
+ * isn't its PostgreSQL version (the config's postgresVersion), then sets
+ * what ends its session once its client is gone (see the header). Every call is one `adapter.connect()`; a deployment calls it
  * twice (see deploy/engine.ts for which session is which). The
  * adapter is handed the target's connectTimeout and `signal`; a connect that
  * fails once `signal` has aborted is InterruptedError. A connection-string
@@ -150,7 +150,11 @@ export async function connectTarget(
     },
   );
   try {
-    await requirePostgres18(session, `Target ${target.name}`);
+    await requirePostgresVersion(
+      session,
+      `Target ${target.name}`,
+      target.postgresVersion,
+    );
     await session.query(checkClientConnection);
   } catch (error) {
     await session.close().catch(() => {});
@@ -187,6 +191,9 @@ $$`;
 export async function targetDatabaseRequest(
   session: Session,
 ): Promise<DatabaseRequest> {
+  // Before PostgreSQL 17 the ICU locale is daticulocale (ADR-0007).
+  const major = Number(/^\d+/.exec(await session.serverVersion())?.[0]);
+  const localeColumn = major < 17 ? "daticulocale" : "datlocale";
   const { rows } = await session.query<{
     encoding: string;
     provider: string;
@@ -194,7 +201,7 @@ export async function targetDatabaseRequest(
     locale: string | null;
   }>(
     `SELECT pg_encoding_to_char(encoding) AS encoding, datlocprovider::text AS provider,
-            datcollate AS collate, datlocale AS locale
+            datcollate AS collate, ${localeColumn} AS locale
        FROM pg_database WHERE datname = current_database()`,
   );
   const [row] = rows;

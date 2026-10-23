@@ -34,6 +34,8 @@ export interface Project {
   readonly configPath: string;
   readonly config: ResolvedConfig;
   readonly paths: ProjectPaths;
+  /** Warnings about the config itself, e.g. an unsupported postgresVersion. */
+  readonly warnings: readonly string[];
   /** The interruption signal the project was loaded with, if any. */
   readonly signal: AbortSignal | undefined;
   /** Closes every adapter (dropping leftover throwaway databases, releasing embedded servers: the last client stops one). */
@@ -95,10 +97,21 @@ export async function loadProject(
     configPath,
     config,
     paths: projectPaths(root, config.directory),
+    warnings: configWarnings(config),
     signal: options.signal,
     close,
     [Symbol.asyncDispose]: close,
   };
+}
+
+/** The warning for a postgresVersion other than 18 (ADR-0007). */
+function configWarnings(config: ResolvedConfig): string[] {
+  const version = config.postgresVersion;
+  return version === 18
+    ? []
+    : [
+        `postgresVersion ${version} is unsupported: super-deploy is built and tested for PostgreSQL 18. It is an escape hatch for adopting a database; migrations are generated and rehearsed on 18 and may not run on ${version}`,
+      ];
 }
 
 /**
