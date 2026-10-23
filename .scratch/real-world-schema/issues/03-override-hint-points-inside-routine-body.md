@@ -20,7 +20,7 @@ Indentation itself is fine: spaces, tabs, CRLF and trailing whitespace around a 
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] When the refused construct is inside a routine body (the finding has its own line), the hint names the statement and its first line: "…on the line before `create function f` (line 1)". The violation keeps the construct's own line.
 - [ ] A comment inside a routine body that looks like a marker is reported as `override-misplaced`, at its line, saying the marker goes on the line before the statement that creates the routine.
