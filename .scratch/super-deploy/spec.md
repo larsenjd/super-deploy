@@ -65,7 +65,7 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 38. As a developer, I want explicit values into identity columns refused, so that sequences never fall behind and collide.
 39. As a developer, I want enums, partitioning, extensions other than `plpgsql`, `serial` columns, `NOT ENFORCED` constraints, virtual generated columns and other unsupported object types refused with a clear reason, so that I know V1's limits up front.
 40. As a developer, I want every index and constraint to require an explicit name, so that names never depend on load order.
-41. As a developer, I want PL/pgSQL bodies checked for dynamic SQL, transaction control and denylisted calls, so that routines can't smuggle in what scripts are forbidden.
+41. As a developer, I want PL/pgSQL bodies checked for dynamic SQL and denylisted calls, so that routines can't smuggle in what scripts are forbidden. `COMMIT` and `ROLLBACK` in a body are allowed: no deploy-time SQL can run them (scripts refuse `CALL`, `DO` and calls to user-defined functions, and a trigger runs a function, which never commits), and if one did run in the deploy transaction PostgreSQL would raise `invalid transaction termination` and the deployment would roll back.
 42. As a developer, I want to override super-deploy's refusal of a single statement with `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>` on the line before it, so that a justified exception is possible but always visible.
 43. As a reviewer, I want every override listed in the migration's metadata, `finalize` output and `validate` report, so that exceptions are never hidden.
 44. As a developer, I want overrides to be impossible for transaction-breaking rules, so that the core guarantee can't be overridden.
@@ -191,7 +191,7 @@ It runs identically on Windows, macOS and Linux, from a terminal menu, from flag
 - References: only the managed schema, the script's own temp tables, and `pg_catalog` for reading.
 - Per file kind: pre-migration scripts may use DDL and DML; post-migration scripts DML only; seed data `INSERT` with column lists only.
 
-**Rules: PL/pgSQL bodies** (Q29): refuse `EXECUTE`, `COMMIT`/`ROLLBACK`, denylisted calls and references to undeclared schemas.
+**Rules: PL/pgSQL bodies** (Q29): refuse `EXECUTE`, denylisted calls and references to undeclared schemas. `COMMIT`/`ROLLBACK` are allowed (story 41; `research/transactional-hazards.md` §4.6, §4.7).
 
 **Override marker** (Q24, Q30): `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>` on the line before one statement, reason required. Recorded by object identity so it survives regeneration. Only risk rules (dynamic SQL, denylisted functions) can be overridden, never transaction-breaking rules. Every override appears in migration metadata, `finalize` output and `validate`.
 

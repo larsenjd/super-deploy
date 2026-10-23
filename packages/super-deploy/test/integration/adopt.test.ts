@@ -119,6 +119,14 @@ create index orders_customer_idx on orders (customer_id);
 create view big_orders as select id, total from orders where total > 100;
 create function order_count(c bigint) returns bigint language sql stable
   as $$ select count(*) from orders where customer_id = c $$;
+create procedure purge_orders() language plpgsql as $$
+begin
+  loop
+    delete from orders where id in (select id from orders limit 1000);
+    exit when not found;
+    commit;
+  end loop;
+end $$;
 comment on table customers is 'People who order';
 grant select on customers to adopt_reader;
 insert into customers (name) values ('Ada');
@@ -170,8 +178,9 @@ describe("adopt", () => {
         defaultPrivileges: 0,
       });
       expect(result.dependentsOutside).toEqual([]);
-      // Two tables, a view and a function: indexes and identity sequences go with their table.
-      expect(result.objects).toBe(4);
+      // Two tables, a view, a function and a procedure that commits: indexes
+      // and identity sequences go with their table.
+      expect(result.objects).toBe(5);
       expect(result.warning).toBeUndefined();
       const written = await readdir(dir.path("data-model/desired-schema"));
       expect(written.filter((file) => file.endsWith(".sql")).sort()).toEqual(
@@ -480,8 +489,8 @@ describe("adopt", () => {
   test("asks no reason while anything else is refused, never uses one for it, and says which it will ask for", async () => {
     const { project } = await adoptableProject(`${loaders}
       create type mood as enum ('sad', 'happy');
-      create procedure batch() language plpgsql
-        as $$ begin execute 'select 1'; commit; end $$;
+      create function batch() returns void language plpgsql
+        as $$ begin execute 'select 1'; revoke all on staging from public; end $$;
     `);
     try {
       let asked = 0;
@@ -499,10 +508,7 @@ describe("adopt", () => {
         expect.arrayContaining([
           { object: "type public.mood", rule: "unsupported-object" },
           { object: "function public.batch()", rule: "plpgsql-dynamic-sql" },
-          {
-            object: "function public.batch()",
-            rule: "plpgsql-transaction-control",
-          },
+          { object: "function public.batch()", rule: "unsupported-object" },
         ]),
       );
       expect(objects).toHaveLength(3);

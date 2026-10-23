@@ -927,18 +927,6 @@ describe("PL/pgSQL bodies", () => {
       /^EXECUTE/,
     ],
     [
-      "COMMIT",
-      "  commit;",
-      "plpgsql-transaction-control",
-      /^COMMIT is not allowed in PL\/pgSQL bodies: it would end the deployment's transaction/,
-    ],
-    [
-      "ROLLBACK",
-      "  rollback;",
-      "plpgsql-transaction-control",
-      /^ROLLBACK is not allowed/,
-    ],
-    [
       "denylisted call in PERFORM",
       "  perform setval('s', 1);",
       "denylisted-call",
@@ -1032,10 +1020,28 @@ describe("PL/pgSQL bodies", () => {
   });
 
   test("report lines from the start of the body, wherever the statement starts", async () => {
-    const sql = `-- header\n\ncreate procedure p()\nlanguage plpgsql\nas $body$\nbegin\n  insert into t (a) values (1);\n  commit;\nend\n$body$;`;
+    const sql = `-- header\n\ncreate procedure p()\nlanguage plpgsql\nas $body$\nbegin\n  insert into t (a) values (1);\n  perform setval('s', 1);\nend\n$body$;`;
     expect(await violations(sql)).toMatchObject([
-      { line: 8, rule: "plpgsql-transaction-control" },
+      { line: 8, rule: "denylisted-call" },
     ]);
+  });
+
+  test("allow COMMIT and ROLLBACK in a procedure: no deploy-time SQL can run them", async () => {
+    const sql = `create procedure purge_in_batches()
+language plpgsql as $$
+begin
+  loop
+    delete from t where id in (select id from t limit 1000);
+    exit when not found;
+    if exists (select from t where id < 0) then
+      rollback;
+      return;
+    end if;
+    commit;
+  end loop;
+end
+$$;`;
+    expect(await violations(sql)).toEqual([]);
   });
 
   test("allow late-bound references to the managed schema, pg_catalog and declared external schemas", async () => {

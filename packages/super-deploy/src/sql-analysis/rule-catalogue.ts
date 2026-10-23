@@ -47,10 +47,6 @@ const definitions = {
     "transaction",
     "Transaction control would end or alter the deploy transaction",
   ],
-  "plpgsql-transaction-control": [
-    "transaction",
-    "COMMIT or ROLLBACK inside a PL/pgSQL body",
-  ],
   "call-statement": [
     "transaction",
     "CALL can run a procedure that ends the deploy transaction",

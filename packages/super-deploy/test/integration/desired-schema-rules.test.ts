@@ -1,15 +1,18 @@
 // Desired-schema rules through the programmatic API: refusals stop draft
 // before any database work, declared external schemas are honoured in
 // PL/pgSQL bodies, and objects that bind at CREATE to an external schema fail
-// in rehearsal with a hint. IF NOT EXISTS and OR REPLACE change nothing.
+// in rehearsal with a hint. IF NOT EXISTS and OR REPLACE change nothing. A
+// procedure may commit and roll back.
 import {
   DesiredSchemaLoadError,
+  deploy,
   draft,
   finalize,
   loadProject,
   SqlRuleViolationError,
 } from "superdeploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { deployProject, finalizeMigration } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject, embeddedConfig } from "../support/project.ts";
 
@@ -165,5 +168,31 @@ create or replace trigger t_touch before insert on t for each row execute functi
 
     expect(withClauses).toEqual(plain);
     expect(plain).toContain("CREATE TRIGGER t_touch");
+  });
+
+  test("a procedure that commits and rolls back drafts, rehearses and deploys, and commits when the application calls it", async () => {
+    const { project, database } = await deployProject(server, {
+      "jobs.sql": `create table job_log (id int constraint job_log_pkey primary key);
+
+create procedure log_in_batches(total int, batch int) language plpgsql as $$
+begin
+  for i in 1..total loop
+    insert into job_log (id) values (i);
+    if i % batch = 0 then
+      commit;
+    end if;
+  end loop;
+  rollback;
+end $$;
+`,
+    });
+
+    await finalizeMigration(project, "jobs");
+    await deploy(project, { target: "dev" });
+    await server.query("call log_in_batches(5, 2)", [], database);
+
+    expect(
+      await server.query("select id from job_log order by id", [], database),
+    ).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]);
   });
 });

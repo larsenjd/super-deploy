@@ -58,40 +58,32 @@ async function broken(text: string, kind: "desired-schema" = "desired-schema") {
 
 const marker = "-- OVERRIDE SUPER-DEPLOY REFUSAL: justified";
 
-describe("transaction-breaking rules are never overridden", () => {
-  test("COMMIT in a PL/pgSQL body still fails, and the marker is reported as unable to override it", async () => {
-    const violations = await checkRules(
-      {
-        path: desiredPath,
-        text: `${marker}
-create procedure batch() language plpgsql as $$
-begin
-  commit;
-end
-$$;
-`,
-      },
-      "desired-schema",
-    );
-    expect(violations.map((v) => [v.line, v.rule])).toEqual([
-      [4, "plpgsql-transaction-control"],
+describe("only risk rules are overridden", () => {
+  const pre = "data-model/draft/pre-migration.sql";
+
+  test("CALL in a script still fails, and the marker is reported as unable to override it", async () => {
+    const analysis = await analyseMigration([
+      { path: pre, kind: "pre-migration", text: `${marker}\ncall batch();\n` },
+    ]);
+    expect(analysis.violations.map((v) => [v.line, v.rule])).toEqual([
+      [2, "call-statement"],
       [1, "override-unused"],
     ]);
-    expect(violations[1]?.message).toBe(
-      "The override marker cannot override plpgsql-transaction-control: only risk rules (denylisted-call, plpgsql-dynamic-sql) can be overridden",
+    expect(analysis.violations[1]?.message).toBe(
+      "The override marker cannot override call-statement: only risk rules (denylisted-call, plpgsql-dynamic-sql) can be overridden",
     );
   });
 
-  test("a statement with both kinds keeps its transaction violation but overrides its risk one", async () => {
+  test("a statement with both kinds keeps its other violation but overrides its risk one", async () => {
     const text = `${marker}
 create function mixed() returns void language plpgsql as $$
 begin
   execute 'select 1';
-  commit;
+  delete from other.t;
 end
 $$;
 `;
-    expect(await broken(text)).toEqual([[5, "plpgsql-transaction-control"]]);
+    expect(await broken(text)).toEqual([[5, "undeclared-schema"]]);
   });
 });
 
@@ -133,7 +125,7 @@ describe("refusals say how to override them", () => {
         text: `create table t (id bigint primary key) tablespace fast;
 create procedure batch() language plpgsql as $$
 begin
-  commit;
+  delete from other.t;
 end
 $$;
 `,
@@ -142,7 +134,7 @@ $$;
     );
     expect(violations.map((v) => v.rule)).toEqual([
       "unsupported-object",
-      "plpgsql-transaction-control",
+      "undeclared-schema",
     ]);
     for (const violation of violations) {
       expect(violation.message).not.toContain("OVERRIDE");
@@ -401,23 +393,25 @@ $$;`;
     },
   );
 
-  test("COMMIT in a routine body created by a pre-migration script is refused", async () => {
-    const analysis = await analyseMigration([
-      {
-        path: "data-model/draft/pre-migration.sql",
-        kind: "pre-migration",
-        text: `create procedure batch() language plpgsql as $$
+  test.each(["schema-change", "pre-migration"] as const)(
+    "COMMIT and ROLLBACK in a procedure created by a %s are accepted",
+    async (kind) => {
+      const analysis = await analyseMigration([
+        {
+          path: `data-model/draft/${kind}.sql`,
+          kind,
+          text: `create procedure batch() language plpgsql as $$
 begin
   commit;
+  rollback;
 end
 $$;
 `,
-      },
-    ]);
-    expect(analysis.violations.map((v) => [v.line, v.rule])).toEqual([
-      [3, "plpgsql-transaction-control"],
-    ]);
-  });
+        },
+      ]);
+      expect(analysis.violations).toEqual([]);
+    },
+  );
 
   test("a PL/pgSQL body may reference declared external schemas", async () => {
     const text = `create function count_legacy() returns bigint language plpgsql as $$

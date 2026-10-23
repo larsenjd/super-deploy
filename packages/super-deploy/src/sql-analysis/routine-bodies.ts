@@ -1,10 +1,17 @@
 // Routine bodies held as strings, which the main parse leaves unparsed.
 //
 // PL/pgSQL bodies (spec "Rules: PL/pgSQL bodies") are parsed with
-// libpg-query's PL/pgSQL parser: EXECUTE, COMMIT/ROLLBACK, denylisted calls
-// and references to undeclared schemas are refused. The embedded SQL is text,
-// so each expression is parsed again with the SQL parser. Declared external
-// schemas are allowed here and only here.
+// libpg-query's PL/pgSQL parser: EXECUTE, denylisted calls and references to
+// undeclared schemas are refused. The embedded SQL is text, so each
+// expression is parsed again with the SQL parser. Declared external schemas
+// are allowed here and only here.
+//
+// COMMIT and ROLLBACK are allowed (a batch procedure committing in chunks):
+// no deploy-time SQL can run them. Scripts refuse CALL, DO and calls to
+// user-defined functions, a trigger runs a function, and a function never
+// ends a transaction. Run inside the deploy transaction anyway, they raise
+// `invalid transaction termination` and the deployment rolls back
+// (research/transactional-hazards.md §4.6, §4.7).
 //
 // LANGUAGE sql string bodies get the same denylist and schema checks.
 // PostgreSQL validates them at CREATE, but like PL/pgSQL bodies it resolves
@@ -118,20 +125,6 @@ function plpgsqlNodeFindings(
         line,
       },
     ];
-  }
-  for (const [key, word] of [
-    ["PLpgSQL_stmt_commit", "COMMIT"],
-    ["PLpgSQL_stmt_rollback", "ROLLBACK"],
-  ] as const) {
-    if (key in object) {
-      return [
-        {
-          rule: "plpgsql-transaction-control",
-          message: `${word} is not allowed in PL/pgSQL bodies: it would end the deployment's transaction`,
-          line,
-        },
-      ];
-    }
   }
   const datatype = object.datatype;
   if (isObject(datatype) && typeof object.lineno === "number") {

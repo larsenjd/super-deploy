@@ -19,7 +19,7 @@
 //   (privileges.ts).
 // - `outside-managed-schema`, `undeclared-schema`: schema rules (schemas.ts).
 // - `denylisted-call`: a built-in whose effects escape the transaction.
-// - `plpgsql-dynamic-sql`, `plpgsql-transaction-control`: PL/pgSQL bodies.
+// - `plpgsql-dynamic-sql`: EXECUTE in a PL/pgSQL body.
 
 import { denylistFindings } from "./denylist.ts";
 import type { ParsedStatement } from "./parse.ts";

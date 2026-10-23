@@ -787,7 +787,7 @@ $$;
   without one, written any other way, or not directly before a statement is
   refused.
 - It overrides only those two refusals. A marker before a statement that
-  breaks any other rule (transaction control, privileges, unsupported
+  breaks any other rule (`COMMIT` in a script, privileges, unsupported
   objects, ...) doesn't get it past them, and a marker before a statement
   that breaks no rule is refused as unused.
 - An overridden `EXECUTE` runs SQL the rules never see, privilege

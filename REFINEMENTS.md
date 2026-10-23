@@ -8,7 +8,7 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 
 **Why narrow:** A procedure that commits ends the deploy transaction; a function can cause effects a rollback cannot undo. The parser cannot see inside routine bodies.
 
-**Revisit when:** Real projects need to reuse logic in scripts (e.g. a backfill function). Options: allow calling functions declared in the desired schema whose bodies pass the same rules, or allow only `IMMUTABLE`/`STABLE` user functions. Name-based matching also misses operators, casts and defaults, so consider pairing the parser with a restricted deploy role as a backstop.
+**Revisit when:** Real projects need to reuse logic in scripts (e.g. a backfill function). Options: allow calling functions declared in the desired schema whose bodies pass the same rules, or allow only `IMMUTABLE`/`STABLE` user functions. Name-based matching also misses operators, casts and defaults, so consider pairing the parser with a restricted deploy role as a backstop. Routine bodies may `COMMIT` and `ROLLBACK` (a procedure is never run at deploy time), so allowing `CALL` means refusing procedures that do.
 
 **Research:** `.scratch/super-deploy/research/transactional-hazards.md` §2, §4, open questions 4–5.
 
