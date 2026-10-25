@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (one snapshot reader), 02 (multi-file diffs)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Finalize writes `desired-schema.diff` at the top of the migration folder, and no snapshot folder. It is the diff from the newest snapshot (the empty schema for migration 1) to the current desired schema, and is empty when the desired schema didn't change.
 - [ ] Before anything is written or made read-only, finalize applies the diff to the newest snapshot and stops with an internal error, writing nothing, unless the result is exactly the current desired schema (line endings aside).

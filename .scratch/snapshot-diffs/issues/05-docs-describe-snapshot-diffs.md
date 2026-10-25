@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 (migrations store their snapshot as `desired-schema.diff`)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] The template README describes a migration's snapshot as a diff from the previous one wherever it mentions the snapshot folder: the migration layout, `unfinalize`, `restore-schema`, and what an edited migration looks like.
 - [ ] The code map names the snapshot reader and where the diff format lives.
