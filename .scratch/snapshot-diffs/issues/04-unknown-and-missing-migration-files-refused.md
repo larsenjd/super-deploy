@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 (`desired-schema.diff` becomes a required file, and the example must already be in the new form)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] A file outside a migration folder's allowed set throws `UnknownMigrationFileError` (`unknown-migration-file`) naming its project-relative path. This includes dotfiles such as `.DS_Store`, a stray note, and a leftover snapshot folder from 0.3.0.
 - [ ] A missing schema change, `metadata.json` or `desired-schema.diff` throws `MissingMigrationFileError` (`missing-migration-file`) naming its project-relative path.

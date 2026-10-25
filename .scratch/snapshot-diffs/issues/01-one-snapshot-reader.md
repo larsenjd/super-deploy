@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] `draft`, `rehearse` (of the draft and of a finalized migration), `validate`, the deploy-time rule checks, `deploy`'s rehearsal, `unfinalize` and `restore-schema` all get snapshots from the reader. Nothing else reads a migration's snapshot.
 - [ ] The reader gives the snapshot of the newest migration, of any given migration, and of every migration in a history in one pass. Commands that need several snapshots (`validate` checking every migration's rules) use the one-pass form.

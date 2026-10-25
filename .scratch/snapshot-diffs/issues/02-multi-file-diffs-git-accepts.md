@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Writing a diff between two sets of files (path and text) gives `--- a/<path>` / `+++ b/<path>` headers, `/dev/null` on one side for an added or deleted file, three lines of context, files in path order, `\ No newline at end of file` where needed, and an empty diff when the sets are equal.
 - [ ] Line endings are normalised to LF before diffing, so CRLF alone is never a change.
