@@ -15,7 +15,12 @@ import {
 } from "superdeploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { deployProject } from "../support/deploy.ts";
-import { gitApply, readFiles, writeFiles } from "../support/git-apply.ts";
+import {
+  type Files,
+  gitApply,
+  readFiles,
+  writeFiles,
+} from "../support/git-apply.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
 let server: TestServer;
@@ -150,6 +155,16 @@ async function history() {
 
 const scrambled = { "other/junk.sql": "create table junk (id int);\n" };
 
+/** The desired-schema files `command` gives back after they were replaced with `scrambled`. */
+async function givenBack(
+  root: string,
+  command: () => Promise<unknown>,
+): Promise<Files> {
+  await setDesiredSchema(root, scrambled);
+  await command();
+  return readFiles(join(root, desiredSchema));
+}
+
 describe("a history of migrations stored as diffs", () => {
   test("each migration's diff, applied with git apply to the previous desired schema, gives its own; a migration that changes only scripts has an empty diff", async () => {
     const { dir, folders, schemas } = await history();
@@ -171,11 +186,11 @@ describe("a history of migrations stored as diffs", () => {
     const { dir, project, schemas } = await history();
 
     for (let index = stages.length - 1; index >= 0; index--) {
-      await setDesiredSchema(dir.root, scrambled);
-      await unfinalize(project, { acknowledgeOverwrite: true });
       expect({
         index,
-        files: await readFiles(dir.path(desiredSchema)),
+        files: await givenBack(dir.root, () =>
+          unfinalize(project, { acknowledgeOverwrite: true }),
+        ),
       }).toEqual({
         index,
         files: schemas[index],
@@ -221,11 +236,12 @@ describe("a history of migrations stored as diffs", () => {
 
   test("restore-schema resets the desired schema to exactly the newest snapshot", async () => {
     const { dir, project, schemas } = await history();
-    await setDesiredSchema(dir.root, scrambled);
 
-    await restoreSchema(project, { acknowledgeOverwrite: true });
-
-    expect(await readFiles(dir.path(desiredSchema))).toEqual(schemas[3]);
+    expect(
+      await givenBack(dir.root, () =>
+        restoreSchema(project, { acknowledgeOverwrite: true }),
+      ),
+    ).toEqual(schemas[3]);
   });
 
   test("validate passes the history, and reports a desired schema that differs from the newest snapshot", async () => {
@@ -260,21 +276,21 @@ describe("a history of migrations stored as diffs", () => {
     const diff = await dir.read(`${migrations}/${folder}/desired-schema.diff`);
 
     expect(await gitApply({}, diff)).toEqual({ "customers.sql": customers });
-    await setDesiredSchema(dir.root, scrambled);
-    await unfinalize(project, { acknowledgeOverwrite: true });
-    expect(await readFiles(dir.path(desiredSchema))).toEqual({
-      "customers.sql": customers,
-    });
+    expect(
+      await givenBack(dir.root, () =>
+        unfinalize(project, { acknowledgeOverwrite: true }),
+      ),
+    ).toEqual({ "customers.sql": customers });
     await finalize(project);
     expect(await dir.read(`${migrations}/index.json`)).toBe(index);
     expect(await dir.read(`${migrations}/${folder}/desired-schema.diff`)).toBe(
       diff,
     );
-    await setDesiredSchema(dir.root, scrambled);
-    await restoreSchema(project, { acknowledgeOverwrite: true });
-    expect(await readFiles(dir.path(desiredSchema))).toEqual({
-      "customers.sql": customers,
-    });
+    expect(
+      await givenBack(dir.root, () =>
+        restoreSchema(project, { acknowledgeOverwrite: true }),
+      ),
+    ).toEqual({ "customers.sql": customers });
   });
 
   test("deploy rehearses the history against the newest snapshot and deploys it", async () => {

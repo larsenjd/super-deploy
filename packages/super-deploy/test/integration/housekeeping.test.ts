@@ -332,6 +332,35 @@ describe("unfinalize", () => {
     expect(await dir.read(`${migration}/HAND-EDITED.md`)).toBe(report);
   });
 
+  test("a hand edit with a carriage return before each CRLF line ending is reported as the edit alone, and finalizing again recreates the migration", async () => {
+    const { dir, project } = await draftedProject();
+    const file = "data-model/draft/schema-change.sql";
+    const generated = await dir.read(file);
+    const [first = "", ...rest] = generated.split("\n");
+    await dir.write(
+      file,
+      [first, "-- reviewed by hand", ...rest].join("\r\r\n"),
+    );
+    const finalized = await finalize(project);
+    expect(finalized.handEdited).toBe(file);
+    const migration = "data-model/migrations/00001-add-customers";
+    const index = await dir.read("data-model/migrations/index.json");
+    const report = await dir.read(`${migration}/HAND-EDITED.md`);
+    expect(report).not.toContain("\r");
+    expect(report.match(/^(?!--- |\+\+\+ )[-+].*$/gm)).toEqual([
+      "+-- reviewed by hand",
+    ]);
+
+    await unfinalize(project);
+    expect(await dir.read("data-model/draft/schema-change.generated.sql")).toBe(
+      generated,
+    );
+    await finalize(project);
+
+    expect(await dir.read("data-model/migrations/index.json")).toBe(index);
+    expect(await dir.read(`${migration}/HAND-EDITED.md`)).toBe(report);
+  });
+
   test("only takes the newest migration, keeping earlier ones and their chain", async () => {
     const { dir, project } = await finalizedProject();
     const first = await dir.read("data-model/migrations/index.json");

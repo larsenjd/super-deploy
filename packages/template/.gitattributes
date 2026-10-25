@@ -2,3 +2,7 @@
 # every checkout so files never show up as changed on Windows.
 *.sql text eol=lf
 *.json text eol=lf
+# A snapshot's diff is stored byte for byte: a line in it can end in a
+# carriage return of the desired schema's own, which converting line endings
+# would lose without changing the migration's hash.
+desired-schema.diff -text

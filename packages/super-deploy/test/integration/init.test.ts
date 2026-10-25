@@ -3,6 +3,7 @@
 // project's own .super-deploy folder, one for the dev target on the port
 // init wrote into the config and one for the rehearsal databases on a free
 // port, both stopped by project.close().
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   mkdir,
@@ -13,7 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import pg from "pg";
 import {
   deploy,
@@ -27,6 +28,7 @@ import {
   toolVersion,
 } from "superdeploy";
 import { describe, expect, onTestFinished, test, vi } from "vitest";
+import { gitInstalled } from "../support/git-apply.ts";
 import { holdPort } from "../support/postgres.ts";
 
 /** This library's package folder, posix-style. */
@@ -281,6 +283,46 @@ create function customer_count() returns bigint
     expect(ignored).toMatch(/^\.super-deploy\/$/m);
     expect(ignored).toMatch(/^node_modules\/$/m);
   });
+
+  test.skipIf(!gitInstalled)(
+    "git keeps a desired-schema diff's carriage returns, even with core.autocrlf",
+    async () => {
+      const root = await emptyDirectory();
+      await init({ directory: root });
+      const diffPath =
+        "data-model/migrations/00001-add-customers/desired-schema.diff";
+      // A file ending in a bare carriage return gives a line ending in CRLF.
+      const diff = [
+        "diff --git a/a.sql b/a.sql",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/a.sql",
+        "@@ -0,0 +1,2 @@",
+        "+one",
+        "+two\r",
+        "\\ No newline at end of file",
+        "",
+      ].join("\n");
+      await mkdir(join(root, dirname(diffPath)), { recursive: true });
+      await writeFile(join(root, diffPath), diff);
+      const git = (...args: string[]) => {
+        const run = spawnSync(
+          "git",
+          ["-c", "core.autocrlf=true", "-c", "core.safecrlf=false", ...args],
+          { cwd: root, encoding: "utf8" },
+        );
+        expect(run.status, run.stderr).toBe(0);
+        return run.stdout;
+      };
+
+      git("init", "--quiet");
+      git("add", "--all");
+      expect(git("show", `:${diffPath}`)).toBe(diff);
+      await rm(join(root, diffPath));
+      git("checkout", "--", diffPath);
+      expect(await readFile(join(root, diffPath), "utf8")).toBe(diff);
+    },
+  );
 
   test("the config's commented-out real target, once uncommented, reads its variable only when that target is used", async () => {
     const root = await emptyDirectory();

@@ -1,1 +1,3 @@
 * text=auto eol=lf
+# A snapshot's diff is stored byte for byte (see packages/template/.gitattributes).
+desired-schema.diff -text

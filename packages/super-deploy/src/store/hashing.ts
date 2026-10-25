@@ -1,8 +1,11 @@
 // Hashing for finalized migrations and desired-schema snapshots. Identical on
 // every OS: files must be UTF-8 without a byte-order mark, and line endings
-// are normalised (CRLF to LF, normaliseLineEndings) before hashing, so a
-// checkout that converted line endings still verifies. Everything else,
-// including whitespace, counts.
+// are normalised before hashing (normaliseLineEndings: any run of carriage
+// returns just before a line feed collapses into the line feed), so a
+// checkout that converted line endings still verifies. Normalising twice
+// changes nothing, so a text normalised already can be normalised again.
+// Everything else counts, including whitespace and any other carriage
+// return.
 //
 //   file hash      sha256(normalised text)
 //   content hash   sha256(manifest), where the manifest is
@@ -60,11 +63,7 @@ export function sha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-/**
- * Line endings normalised to LF: every carriage return just before a line
- * feed goes, a stray one before a CRLF too, so normalising twice changes
- * nothing.
- */
+/** Line endings normalised to LF: any run of "\r" before a "\n" collapses into it. */
 export function normaliseLineEndings(text: string): string {
   return text.replace(/\r+\n/g, "\n");
 }

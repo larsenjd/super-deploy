@@ -21,9 +21,20 @@
 // says whose diff it is.
 //
 // Lines keep their "\n", so a missing newline at the end is a difference too
-// and shows as `\ No newline at end of file`. The longest common subsequence
-// is computed after trimming the common start and end, so its table is only
-// as large as the edited region.
+// and shows as `\ No newline at end of file`.
+//
+// Line endings are normalised once (normaliseLineEndings, which normalising
+// again leaves alone): filesDiff and applyFilesDiff both normalise the files
+// they are given, so the writer diffs exactly what the applier rebuilds. The
+// diff itself is read as written, since a line in it can end in a carriage
+// return of its file's own (a file ending in a bare "\r"). Only a diff whose
+// first line ends in CRLF is normalised, once: as written, that line, a
+// section header, never ends in a carriage return, so a checkout converted
+// the diff's line endings to CRLF. Projects mark the diff `-text` in
+// .gitattributes, so git never converts it.
+//
+// The longest common subsequence is computed after trimming the common start
+// and end, so its table is only as large as the edited region.
 
 import { type HashedFile, normaliseLineEndings } from "./hashing.ts";
 import { comparePaths } from "./layout.ts";
@@ -272,9 +283,8 @@ function gitPath(name: string): string {
  * The files from applying `diff`, a filesDiff, to `files`, strictly: every
  * context and removed line must be where its hunk says, with no fuzz and no
  * offset search; an added file must not be there yet, and a deleted file must
- * be removed whole. The files' line endings are normalised first, so
- * a snapshot's files, which are normalised already, are taken as they are,
- * and so is the diff (asWritten). Sorted by path.
+ * be removed whole. The files' line endings are normalised first; the
+ * diff's are read as written (see the header). Sorted by path.
  * Throws FilesDiffDoesNotApplyError naming the file whose section failed.
  */
 export function applyFilesDiff(
@@ -282,7 +292,7 @@ export function applyFilesDiff(
   files: readonly HashedFile[],
 ): HashedFile[] {
   const result = normalised(files);
-  for (const section of fileSections(asWritten(diff))) {
+  for (const section of fileSections(undoCrlfCheckout(diff))) {
     const doesNotApply = () => new FilesDiffDoesNotApplyError(section.path);
     const before = result.get(section.path);
     if ((before === undefined) !== (section.change === "added")) {
@@ -303,15 +313,8 @@ export function applyFilesDiff(
     .map(([path, text]) => ({ path, text }));
 }
 
-/**
- * `diff` with the line endings filesDiff wrote. Its lines are read as they
- * are, carriage returns and all, since the files it was written from were
- * normalised already. Only a checkout that converted it to CRLF is undone
- * (with core.autocrlf, git converts every line of a file without carriage
- * returns and none of one with any): its first line, a section header, never
- * ends with a carriage return as written.
- */
-function asWritten(diff: string): string {
+/** `diff`, with its line endings normalised when its first line shows a checkout converted them to CRLF. */
+function undoCrlfCheckout(diff: string): string {
   return /^[^\n]*\r\n/.test(diff) ? normaliseLineEndings(diff) : diff;
 }
 
