@@ -269,6 +269,7 @@ export {
 } from "./store/integrity.ts";
 export type { ProjectPaths } from "./store/layout.ts";
 export { NoMigrationError, UnknownMigrationError } from "./store/migrations.ts";
+export { SnapshotDiffDoesNotApplyError } from "./store/unified-diff.ts";
 export type {
   DriftChange,
   DriftDifference,

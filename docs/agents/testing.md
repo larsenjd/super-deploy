@@ -13,7 +13,7 @@ From `packages/super-deploy`:
 
 ## Every test
 
-- Import the library by package name, `superdeploy` and `superdeploy/embedded-postgres`, so a test reaches only the public API. Vitest and tsconfig `paths` alias both to `src/`, so the API seam needs no build. SQL-analysis tests may also import `src/sql-analysis/index.ts`.
+- Import the library by package name, `superdeploy` and `superdeploy/embedded-postgres`, so a test reaches only the public API. Vitest and tsconfig `paths` alias both to `src/`, so the API seam needs no build. SQL-analysis tests may also import `src/sql-analysis/index.ts`, and the diff module's tests (`test/unit/unified-diff.test.ts`) `src/store/unified-diff.ts`.
 - Each PostgreSQL server a test starts has a free port and a unique temp data dir, and the test stops it: other worktrees run their suites on the same machine. `startTestServer` does all three.
 - Tests within a file run one at a time: `createTestProject` cleans up through the global `onTestFinished`, which can't tell concurrent tests apart, so under `test.concurrent` one test deletes another's project.
 

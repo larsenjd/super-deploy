@@ -77,10 +77,11 @@
                     "group": [
                       "**/src/**",
                       "!**/src/sql-analysis/index.ts",
+                      "!**/src/store/unified-diff.ts",
                       "**/dist/**",
                       "superdeploy/**"
                     ],
-                    "message": "Unit tests reach src/ only through src/sql-analysis/index.ts (or the package name superdeploy)."
+                    "message": "Unit tests reach src/ only through src/sql-analysis/index.ts and src/store/unified-diff.ts (or the package name superdeploy)."
                   }
                 ]
               }
