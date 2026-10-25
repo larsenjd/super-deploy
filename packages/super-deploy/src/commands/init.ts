@@ -14,6 +14,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { freePort } from "../adapters/ports.ts";
 import { SuperDeployError } from "../errors.ts";
 import { configFileName } from "../project.ts";
+import { comparePaths } from "../store/layout.ts";
 import {
   renamedOnInit,
   templateDirectory,
@@ -44,9 +45,7 @@ export async function init(options: InitOptions = {}): Promise<InitResult> {
     from,
     to: renamedOnInit[from] ?? from,
   }));
-  const files = copies
-    .map((copy) => copy.to)
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const files = copies.map((copy) => copy.to).sort(comparePaths);
 
   const conflicts = files.filter((file) => existsSync(join(root, file)));
   if (conflicts.length > 0) {

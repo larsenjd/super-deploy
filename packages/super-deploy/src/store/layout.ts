@@ -44,3 +44,12 @@ export function projectPaths(root: string, directory: string): ProjectPaths {
 export function projectRelative(root: string, path: string): string {
   return relative(root, path).split(sep).join("/");
 }
+
+/**
+ * Orders two paths (or names) by UTF-16 code unit, as `sort()` does, never by
+ * locale: every list of files, and so every content hash and diff, has one
+ * order on every machine.
+ */
+export function comparePaths(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}

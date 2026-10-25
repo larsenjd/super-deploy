@@ -48,7 +48,7 @@ import {
   type HashedFile,
   normaliseLineEndings,
 } from "./hashing.ts";
-import { type ProjectPaths, projectRelative } from "./layout.ts";
+import { comparePaths, type ProjectPaths, projectRelative } from "./layout.ts";
 
 export const indexFileName = "index.json";
 export const metadataFileName = "metadata.json";
@@ -334,7 +334,7 @@ export async function listFiles(folder: string): Promise<string[]> {
   return (await readFolder(folder, true))
     .filter((entry) => entry.isFile())
     .map((entry) => projectRelative(folder, join(entry.parentPath, entry.name)))
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    .sort(comparePaths);
 }
 
 /**

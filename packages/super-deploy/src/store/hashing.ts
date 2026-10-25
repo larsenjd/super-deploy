@@ -28,6 +28,7 @@
 
 import { createHash } from "node:crypto";
 import { SuperDeployError } from "../errors.ts";
+import { comparePaths } from "./layout.ts";
 
 /** A file to hash: its path relative to the folder being hashed (forward slashes) and its text. */
 export interface HashedFile {
@@ -70,7 +71,7 @@ export function fileHash(text: string): string {
 
 function fileLines(files: readonly HashedFile[]): string {
   return [...files]
-    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    .sort((a, b) => comparePaths(a.path, b.path))
     .map((file) => `file ${JSON.stringify(file.path)} ${fileHash(file.text)}\n`)
     .join("");
 }

@@ -22,9 +22,10 @@ import {
   migrationContentHash,
   recoveryContentHash,
 } from "./hashing.ts";
-import { type ProjectPaths, projectRelative } from "./layout.ts";
+import { comparePaths, type ProjectPaths, projectRelative } from "./layout.ts";
 import {
   deployTimeFileKinds,
+  type FinalizedFolderKind,
   type FinalizedMigration,
   type FinalizedRecovery,
   type IndexEntry,
@@ -65,16 +66,19 @@ export async function checkMigrations(
       ...(path === undefined ? {} : { path }),
     });
   };
-  /** Reports each of a folder's file errors; true if it has none. */
-  const holdsItsFiles = (errors: readonly MigrationFileError[]) => {
-    for (const error of errors) {
-      fileErrors.push(error);
-      problem(error.code, error.message, error.file);
-    }
-    return errors.length === 0;
-  };
   const display = (absolute: string) => projectRelative(root, absolute);
   const indexPath = display(join(paths.migrations, indexFileName));
+  const findings: Findings = {
+    indexPath,
+    problem,
+    holdsItsFiles(errors) {
+      for (const error of errors) {
+        fileErrors.push(error);
+        problem(error.code, error.message, error.file);
+      }
+      return errors.length === 0;
+    },
+  };
 
   const index = await readIndex(paths);
   if (!index.ok) {
@@ -164,11 +168,12 @@ export async function checkMigrations(
       );
       continue;
     }
-    if (holdsItsFiles(await migrationFileErrors(root, path, migrationFiles))) {
+    if (
+      findings.holdsItsFiles(await folderFileErrors(root, path, migrationFiles))
+    ) {
       await checkContentHash(
         display(path),
-        indexPath,
-        problem,
+        findings,
         async () =>
           migrationContentHash(
             entry.folder,
@@ -176,16 +181,7 @@ export async function checkMigrations(
           ) === entry.contentHash,
       );
     }
-    recoveries.push(
-      ...(await checkRecoveries(
-        root,
-        entry,
-        path,
-        indexPath,
-        problem,
-        holdsItsFiles,
-      )),
-    );
+    recoveries.push(...(await checkRecoveries(root, entry, path, findings)));
   }
 
   for (const [, folder] of [...onDisk].sort(([a], [b]) => a - b)) {
@@ -201,10 +197,19 @@ export async function checkMigrations(
 
 type Problem = (code: string, message: string, path?: string) => void;
 
+/** Where the checks of one run report what they find. */
+interface Findings {
+  /** The index, project-relative, as messages name it. */
+  readonly indexPath: string;
+  readonly problem: Problem;
+  /** Reports each of a folder's file errors; true if it has none. */
+  readonly holdsItsFiles: (errors: readonly MigrationFileError[]) => boolean;
+}
+
 /** The files a finalized folder of one kind holds: every file it can have, and those it must. */
 interface FolderFiles {
-  /** `migration` or `Recovery`, for messages. */
-  readonly kind: string;
+  /** For messages. */
+  readonly kind: FinalizedFolderKind;
   readonly allowed: readonly string[];
   readonly required: readonly string[];
   /** A subfolder it can have, checked on its own (a migration's Recoveries). */
@@ -241,13 +246,13 @@ const recoveryFiles: FolderFiles = {
  * have and doesn't, in name order. Checked before the content hash, which
  * covers the whole folder and so can't say which file is wrong.
  */
-async function migrationFileErrors(
+async function folderFileErrors(
   root: string,
   folder: string,
   files: FolderFiles,
 ): Promise<MigrationFileError[]> {
   const entries = (await readFolder(folder)).sort((a, b) =>
-    a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    comparePaths(a.name, b.name),
   );
   const shown = (name: string) => projectRelative(root, join(folder, name));
   const holds = [
@@ -281,8 +286,7 @@ async function migrationFileErrors(
  */
 async function checkContentHash(
   shownPath: string,
-  indexPath: string,
-  problem: Problem,
+  { indexPath, problem }: Findings,
   matches: () => Promise<boolean>,
 ): Promise<void> {
   try {
@@ -303,17 +307,16 @@ async function checkContentHash(
 
 /**
  * A migration's Recoveries: the index's entries against the folders under
- * `<migration>/recoveries/`, their content hashes and their chain (which
- * starts from the migration's chain hash). Problems go to `problem`.
+ * `<migration>/recoveries/`, their files, content hashes and their chain
+ * (which starts from the migration's chain hash). Reports to `findings`.
  */
 async function checkRecoveries(
   root: string,
   entry: IndexEntry,
   migrationPath: string,
-  indexPath: string,
-  problem: Problem,
-  holdsItsFiles: (errors: readonly MigrationFileError[]) => boolean,
+  findings: Findings,
 ): Promise<FinalizedRecovery[]> {
+  const { indexPath, problem } = findings;
   const display = (absolute: string) => projectRelative(root, absolute);
   const folder = join(migrationPath, recoveriesFolderName);
   const entries = await readFolder(folder);
@@ -372,11 +375,12 @@ async function checkRecoveries(
       );
       continue;
     }
-    if (holdsItsFiles(await migrationFileErrors(root, path, recoveryFiles))) {
+    if (
+      findings.holdsItsFiles(await folderFileErrors(root, path, recoveryFiles))
+    ) {
       await checkContentHash(
         display(path),
-        indexPath,
-        problem,
+        findings,
         async () =>
           recoveryContentHash(
             entry.folder,
@@ -386,7 +390,7 @@ async function checkRecoveries(
       );
     }
   }
-  for (const name of [...onDisk].sort()) {
+  for (const name of [...onDisk].sort(comparePaths)) {
     const path = display(join(folder, name));
     problem(
       "migration-unindexed",
@@ -473,7 +477,11 @@ export class UnknownMigrationFileError extends SuperDeployError {
   /** Project-relative path with forward slashes. */
   readonly file: string;
 
-  constructor(file: string, kind: string, holds: readonly string[]) {
+  constructor(
+    file: string,
+    kind: FinalizedFolderKind,
+    holds: readonly string[],
+  ) {
     super(
       `${file} does not belong in a finalized ${kind}, which holds only ${joined(holds)}: move it out of the folder, then run validate`,
     );
@@ -487,7 +495,7 @@ export class MissingMigrationFileError extends SuperDeployError {
   /** Project-relative path with forward slashes. */
   readonly file: string;
 
-  constructor(file: string, kind: string) {
+  constructor(file: string, kind: FinalizedFolderKind) {
     super(
       `${file} is missing; every ${kind} has one, as finalize writes it: restore it from Git (\`git checkout HEAD -- ${file}\`), then run validate`,
     );

@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { comparePaths } from "./layout.ts";
 
 /** The library package's own folder (holding its package.json). */
 const libraryPackageDirectory = fileURLToPath(
@@ -59,5 +60,5 @@ export async function templateFiles(directory: string): Promise<string[]> {
     }
   };
   await walk(directory, "");
-  return files.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return files.sort(comparePaths);
 }

@@ -26,6 +26,7 @@
 // as large as the edited region.
 
 import { type HashedFile, normaliseLineEndings } from "./hashing.ts";
+import { comparePaths } from "./layout.ts";
 
 const context = 3;
 const noNewline = "\\ No newline at end of file";
@@ -198,7 +199,9 @@ export function filesDiff(
 ): string {
   const before = normalised(from);
   const after = normalised(to);
-  const paths = [...new Set([...before.keys(), ...after.keys()])].sort();
+  const paths = [...new Set([...before.keys(), ...after.keys()])].sort(
+    comparePaths,
+  );
   const out = paths.flatMap((path) =>
     fileSection(path, before.get(path), after.get(path)),
   );
@@ -222,25 +225,34 @@ function fileSection(
   if (before !== undefined && after !== undefined && hunks.length === 0) {
     return [];
   }
-  const a = gitPath(`a/${path}`);
-  const b = gitPath(`b/${path}`);
-  // git ends a name holding a space with a tab, so it can't be read as a date.
-  const tab = path.includes(" ") ? "\t" : "";
-  return [
-    `diff --git ${a} ${b}`,
-    ...(before === undefined
-      ? [newFileMode]
+  const change: FileSection["change"] =
+    before === undefined
+      ? "added"
       : after === undefined
+        ? "deleted"
+        : "changed";
+  return [
+    `diff --git ${gitPath(`a/${path}`)} ${gitPath(`b/${path}`)}`,
+    ...(change === "added"
+      ? [newFileMode]
+      : change === "deleted"
         ? [deletedFileMode]
         : []),
     // An empty file added or deleted has no hunks, and no --- and +++ lines.
-    ...(hunks.length === 0
-      ? []
-      : [
-          `--- ${before === undefined ? devNull : a + tab}`,
-          `+++ ${after === undefined ? devNull : b + tab}`,
-          ...hunks,
-        ]),
+    ...(hunks.length === 0 ? [] : [...fileHeaders(path, change), ...hunks]),
+  ];
+}
+
+/** The `---` and `+++` lines of `path`'s section, with `/dev/null` for the side it is missing from. */
+function fileHeaders(
+  path: string,
+  change: FileSection["change"],
+): [string, string] {
+  // git ends a name holding a space with a tab, so it can't be read as a date.
+  const tab = path.includes(" ") ? "\t" : "";
+  return [
+    `--- ${change === "added" ? devNull : gitPath(`a/${path}`) + tab}`,
+    `+++ ${change === "deleted" ? devNull : gitPath(`b/${path}`) + tab}`,
   ];
 }
 
@@ -285,7 +297,7 @@ export function applyFilesDiff(
     }
   }
   return [...result]
-    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .sort(([a], [b]) => comparePaths(a, b))
     .map(([path, text]) => ({ path, text }));
 }
 
@@ -327,10 +339,8 @@ function fileSections(diff: string): FileSection[] {
     const hunks: Hunk[] = [];
     if (lines[index]?.startsWith("--- ")) {
       // The --- and +++ lines say again what the section's header said.
-      const tab = path.includes(" ") ? "\t" : "";
-      const a = change === "added" ? devNull : gitPath(`a/${path}`) + tab;
-      const b = change === "deleted" ? devNull : gitPath(`b/${path}`) + tab;
-      if (lines[index] !== `--- ${a}` || lines[index + 1] !== `+++ ${b}`) {
+      const [fromHeader, toHeader] = fileHeaders(path, change);
+      if (lines[index] !== fromHeader || lines[index + 1] !== toHeader) {
         throw doesNotApply();
       }
       index += 2;
