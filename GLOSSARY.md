@@ -16,6 +16,10 @@ _Avoid_: Pending migration, WIP migration
 A numbered, finalized step from one version of the schema to the next. It never changes once finalized.
 _Avoid_: Changeset, revision
 
+**Snapshot**:
+The desired schema as it stood when a migration was finalized, kept with that migration.
+_Avoid_: Desired-schema state, checkpoint
+
 **Schema change**:
 The part of a migration the system generates from the difference between schemas, never edited by hand.
 _Avoid_: Diff, generated migration
