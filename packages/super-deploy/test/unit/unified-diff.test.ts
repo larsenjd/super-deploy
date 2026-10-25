@@ -2,27 +2,13 @@
 // diff module's own seam (database-free): what the writer writes, that the
 // applier gives back exactly the files it was written from, and that `git
 // apply` reads it the same way.
-import { spawnSync } from "node:child_process";
-import {
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join, sep } from "node:path";
-import { describe, expect, onTestFinished, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
   applyFilesDiff,
   FilesDiffDoesNotApplyError,
   filesDiff,
 } from "../../src/store/unified-diff.ts";
-
-interface Files {
-  readonly [path: string]: string;
-}
+import { type Files, gitApply, gitInstalled } from "../support/git-apply.ts";
 
 function asFiles(files: Files) {
   return Object.entries(files).map(([path, text]) => ({ path, text }));
@@ -326,8 +312,6 @@ describe("applyFilesDiff", () => {
   );
 });
 
-const gitInstalled = spawnSync("git", ["--version"]).status === 0;
-
 describe.skipIf(!gitInstalled)("git apply", () => {
   // Windows can't name a file with a quote, a backslash or a tab.
   const onThisDisk = histories.filter(
@@ -341,36 +325,8 @@ describe.skipIf(!gitInstalled)("git apply", () => {
   test.each(onThisDisk)(
     "gives the same files after $name",
     async ({ before, after }) => {
-      const dir = await mkdtemp(join(tmpdir(), "super-deploy-diff-"));
-      onTestFinished(() => rm(dir, { recursive: true, force: true }));
-      for (const [path, text] of Object.entries(before)) {
-        await mkdir(dirname(join(dir, path)), { recursive: true });
-        await writeFile(join(dir, path), text);
-      }
-      // Outside a repository, git apply patches the files in its working directory.
-      const applied = spawnSync("git", ["apply", "-"], {
-        cwd: dir,
-        input: filesDiff(asFiles(before), asFiles(after)),
-        encoding: "utf8",
-      });
-      expect(applied.stderr).toBe("");
-      expect(applied.status).toBe(0);
-      const files: Record<string, string> = {};
-      for (const entry of await readdir(dir, {
-        recursive: true,
-        withFileTypes: true,
-      })) {
-        if (entry.isFile()) {
-          const path = join(entry.parentPath, entry.name);
-          files[
-            path
-              .slice(dir.length + 1)
-              .split(sep)
-              .join("/")
-          ] = await readFile(path, "utf8");
-        }
-      }
-      expect(files).toEqual(after);
+      const diff = filesDiff(asFiles(before), asFiles(after));
+      expect(await gitApply(before, diff)).toEqual(after);
     },
   );
 });

@@ -1,10 +1,11 @@
 // `validate [--strict] [--allow-draft]`: database-free checks for the
 // pre-commit hook and CI.
 // Errors: the migrations index, folder names and numbering, unknown and
-// missing files in finalized folders, content hashes and the hash chains (migrations and their Recoveries); rule violations in
-// the desired schema, in every finalized migration's and Recovery's
-// deploy-time files and seed data, and in the draft's; a Recovery draft
-// whose schema change is no longer its migration's.
+// missing files in finalized folders, content hashes and the hash chains
+// (migrations and their Recoveries); rule violations in the desired schema,
+// in every finalized migration's and Recovery's deploy-time files and seed
+// data, and in the draft's; a Recovery draft whose schema change is no
+// longer its migration's.
 // Warnings: an unfinalized draft, a file in the draft folder that a draft
 // doesn't hold (store/draft.ts), desired-schema changes not yet drafted, and
 // desired-schema routines whose bodies name its objects without a schema
@@ -20,9 +21,9 @@
 // was rehearsed, and its HAND-EDITED.md is for reviewers.
 //
 // Snapshots come from the snapshot reader (store/snapshots.ts), and only once
-// the migrations verify. The rules read every migration's in one forward
-// pass, checking each migration between its predecessor's snapshot and its
-// own.
+// the migrations verify: every migration's, rebuilt once in one forward pass
+// for both the undrafted-changes check and the rules, which check each
+// migration between its predecessor's snapshot and its own.
 //
 // Read-only state: git does not store it, so a fresh checkout has writable
 // finalized files. A writable file whose migration still verifies is made
@@ -67,7 +68,7 @@ import {
   schemaChangeFileName,
   writableFiles,
 } from "../store/migrations.ts";
-import { readSnapshot, readSnapshots } from "../store/snapshots.ts";
+import { type MigrationSnapshots, readSnapshots } from "../store/snapshots.ts";
 import { analyseReplayUnit } from "./check-rules.ts";
 import { RecoverySchemaChangeEditedError } from "./recovery.ts";
 import { requireOriginalSchemaChange } from "./rehearse.ts";
@@ -151,6 +152,11 @@ export async function validate(
       ...(await recoveryDraftProblems(project, draft.recoveryOf, integrity)),
     );
   }
+  // Every snapshot, in one pass, and only once the migrations verify.
+  const snapshots =
+    integrity.problems.length === 0
+      ? await readSnapshots(root, integrity.migrations)
+      : [];
   const covering = draft?.recoveryOf === undefined ? draft : undefined;
   try {
     const current = desiredSchemaHash(
@@ -175,9 +181,7 @@ export async function validate(
         );
       }
     } else if (integrity.problems.length === 0) {
-      const snapshot = desiredSchemaHash(
-        (await readSnapshot(root, integrity.migrations)).files,
-      );
+      const snapshot = desiredSchemaHash(snapshots.at(-1)?.after.files ?? []);
       if (snapshot !== current) {
         warn(
           "undrafted-changes",
@@ -198,7 +202,7 @@ export async function validate(
     });
   }
 
-  const rules = await ruleProblems(project, draft, integrity);
+  const rules = await ruleProblems(project, draft, snapshots);
   problems.push(...rules.problems);
 
   const fails = (problem: ValidationProblem) =>
@@ -273,15 +277,16 @@ async function recoveryDraftProblems(
 
 /**
  * Rule violations as errors, and the overrides accepted: every finalized
- * migration's and Recovery's deploy-time files and seed data (only when the
- * migrations verify, so the files are the ones finalized), the desired
- * schema, and the draft's files. A Recovery runs its migration's schema
- * change, which is checked (and its overrides listed) with the migration.
+ * migration's and Recovery's deploy-time files and seed data (`snapshots`
+ * has them only when the migrations verify, so the files are the ones
+ * finalized), the desired schema, and the draft's files. A Recovery runs its
+ * migration's schema change, which is checked (and its overrides listed)
+ * with the migration.
  */
 async function ruleProblems(
   project: Project,
   draft: DraftMetadata | undefined,
-  integrity: IntegrityReport,
+  snapshots: readonly MigrationSnapshots[],
 ): Promise<{ problems: ValidationProblem[]; overrides: Override[] }> {
   const { root, paths, config } = project;
   const violations: RuleViolation[] = [];
@@ -304,44 +309,34 @@ async function ruleProblems(
   const notSchemaChange = (file: string) =>
     posix.basename(file) !== schemaChangeFileName;
   try {
-    let previous: readonly SqlFile[] = [];
-    // The snapshots on either side of each migration, for a Recovery draft.
-    const around = new Map<
-      number,
-      { before: readonly SqlFile[]; after: readonly SqlFile[] }
-    >();
-    if (integrity.problems.length === 0) {
-      for (const step of await readSnapshots(root, integrity.migrations)) {
-        const { migration } = step;
-        const before = step.before.sqlFiles;
-        const own = step.after.sqlFiles;
-        const context = { ...rules, schemas: [before, own] };
+    for (const step of snapshots) {
+      const { migration } = step;
+      const before = step.before.sqlFiles;
+      const own = step.after.sqlFiles;
+      const context = { ...rules, schemas: [before, own] };
+      collect(
+        await analyseReplayUnit(
+          seededFiles(
+            await readSeededUnit(root, migration.path, migration.folder),
+          ),
+          context,
+        ),
+      );
+      for (const recovery of migration.recoveries) {
         collect(
           await analyseReplayUnit(
             seededFiles(
-              await readSeededUnit(root, migration.path, migration.folder),
+              await readSeededUnit(
+                root,
+                recovery.path,
+                `${migration.folder} ${recovery.folder}`,
+                migration.path,
+              ),
             ),
             context,
           ),
+          notSchemaChange,
         );
-        for (const recovery of migration.recoveries) {
-          collect(
-            await analyseReplayUnit(
-              seededFiles(
-                await readSeededUnit(
-                  root,
-                  recovery.path,
-                  `${migration.folder} ${recovery.folder}`,
-                  migration.path,
-                ),
-              ),
-              context,
-            ),
-            notSchemaChange,
-          );
-        }
-        around.set(migration.number, { before, after: own });
-        previous = own;
       }
     }
     const desired = await readDesiredSchema(root, paths.desiredSchema);
@@ -367,17 +362,21 @@ async function ruleProblems(
     // a Recovery draft against its migration's snapshots. A Recovery draft's
     // copy of the schema change is the migration's (checked with it) unless
     // edited, which recoveryDraftProblems reports.
-    const draftSides =
+    const recovered =
       draft?.recoveryOf === undefined
-        ? { before: previous, after: desired }
-        : around.get(draft.recoveryOf);
+        ? undefined
+        : snapshots[draft.recoveryOf - 1];
+    const draftSides: readonly (readonly SqlFile[])[] | undefined =
+      draft?.recoveryOf === undefined
+        ? [snapshots.at(-1)?.after.sqlFiles ?? [], desired]
+        : recovered && [recovered.before.sqlFiles, recovered.after.sqlFiles];
     if (draft !== undefined && draftSides !== undefined) {
       collect(
         await analyseReplayUnit(
           seededFiles(
             await readSeededUnit(root, paths.draft, `draft ${draft.name}`),
           ),
-          { ...rules, schemas: [draftSides.before, draftSides.after] },
+          { ...rules, schemas: draftSides },
         ),
         draft.recoveryOf === undefined ? undefined : notSchemaChange,
       );

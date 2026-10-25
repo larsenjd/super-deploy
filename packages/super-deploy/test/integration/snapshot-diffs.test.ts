@@ -2,18 +2,8 @@
 // read them: finalize writes desired-schema.diff, and unfinalize,
 // restore-schema, validate and deploy get the developer's files and
 // behaviour back across a history of several migrations.
-import { execFile } from "node:child_process";
-import {
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { promisify } from "node:util";
+import { readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import {
   deploy,
   draft,
@@ -23,15 +13,9 @@ import {
   ValidationFailedError,
   validate,
 } from "superdeploy";
-import {
-  afterAll,
-  beforeAll,
-  describe,
-  expect,
-  onTestFinished,
-  test,
-} from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { deployProject } from "../support/deploy.ts";
+import { gitApply, readFiles, writeFiles } from "../support/git-apply.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
 let server: TestServer;
@@ -133,37 +117,6 @@ function desiredSchemas(): Record<string, string>[] {
   return schemas;
 }
 
-/** Every file under the project's desired-schema folder, by relative path. */
-async function filesIn(root: string, folder: string) {
-  const absolute = join(root, folder);
-  const entries = await readdir(absolute, {
-    recursive: true,
-    withFileTypes: true,
-  });
-  const files: Record<string, string> = {};
-  for (const entry of entries.filter((e) => e.isFile())) {
-    const path = join(entry.parentPath, entry.name);
-    files[
-      path
-        .slice(absolute.length + 1)
-        .split("\\")
-        .join("/")
-    ] = await readFile(path, "utf8");
-  }
-  return files;
-}
-
-/** Writes each of `files` at its path under `folder`. */
-async function writeFiles(
-  folder: string,
-  files: Readonly<Record<string, string>>,
-) {
-  for (const [path, text] of Object.entries(files)) {
-    await mkdir(dirname(join(folder, path)), { recursive: true });
-    await writeFile(join(folder, path), text);
-  }
-}
-
 /** Replaces the desired-schema folder's contents with `files`. */
 async function setDesiredSchema(
   root: string,
@@ -203,15 +156,11 @@ describe("a history of migrations stored as diffs", () => {
 
     expect(await dir.read(`${folders[2]}/desired-schema.diff`)).toBe("");
     for (const [index, folder] of folders.entries()) {
-      const work = await mkdtemp(join(tmpdir(), "snapshot-diff-"));
-      onTestFinished(() => rm(work, { recursive: true, force: true }));
-      await writeFiles(work, schemas[index - 1] ?? {});
-      await promisify(execFile)(
-        "git",
-        ["apply", "--allow-empty", dir.path(`${folder}/desired-schema.diff`)],
-        { cwd: work },
-      );
-      expect({ folder, files: await filesIn(work, ".") }).toEqual({
+      const diff = await dir.read(`${folder}/desired-schema.diff`);
+      expect({
+        folder,
+        files: await gitApply(schemas[index - 1] ?? {}, diff),
+      }).toEqual({
         folder,
         files: schemas[index],
       });
@@ -224,7 +173,10 @@ describe("a history of migrations stored as diffs", () => {
     for (let index = stages.length - 1; index >= 0; index--) {
       await setDesiredSchema(dir.root, scrambled);
       await unfinalize(project, { acknowledgeOverwrite: true });
-      expect({ index, files: await filesIn(dir.root, desiredSchema) }).toEqual({
+      expect({
+        index,
+        files: await readFiles(dir.path(desiredSchema)),
+      }).toEqual({
         index,
         files: schemas[index],
       });
@@ -273,7 +225,7 @@ describe("a history of migrations stored as diffs", () => {
 
     await restoreSchema(project, { acknowledgeOverwrite: true });
 
-    expect(await filesIn(dir.root, desiredSchema)).toEqual(schemas[3]);
+    expect(await readFiles(dir.path(desiredSchema))).toEqual(schemas[3]);
   });
 
   test("validate passes the history, and reports a desired schema that differs from the newest snapshot", async () => {
