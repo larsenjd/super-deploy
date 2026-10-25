@@ -135,9 +135,8 @@ describe("validate", () => {
     await chmod(added.dir.path(folder), 0o755);
     await added.dir.write(`${folder}/notes.txt`, "why we did this\n");
     const edited = await finalizedProject();
-    await edited.tamper(
-      `${folder}/desired-schema/customers.sql`,
-      (text) => `${text}-- edited\n`,
+    await edited.tamper(`${folder}/desired-schema.diff`, (text) =>
+      text.replace("bigint", "integer"),
     );
 
     for (const { project } of [added, edited]) {
@@ -151,7 +150,7 @@ describe("validate", () => {
     for (const file of [
       "schema-change.sql",
       "metadata.json",
-      "desired-schema/customers.sql",
+      "desired-schema.diff",
     ]) {
       await tamper(`${folder}/${file}`, (text) =>
         text.replaceAll("\n", "\r\n"),

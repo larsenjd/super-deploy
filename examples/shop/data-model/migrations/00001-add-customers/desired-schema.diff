@@ -1,0 +1,10 @@
+diff --git a/customers.sql b/customers.sql
+new file mode 100644
+--- /dev/null
++++ b/customers.sql
+@@ -0,0 +1,5 @@
++create table customers (
++  id bigint primary key,
++  name text not null,
++  email text not null
++);

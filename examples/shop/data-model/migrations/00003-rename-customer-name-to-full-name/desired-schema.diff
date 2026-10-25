@@ -1,0 +1,10 @@
+diff --git a/customers.sql b/customers.sql
+--- a/customers.sql
++++ b/customers.sql
+@@ -1,5 +1,5 @@
+ create table customers (
+   id bigint primary key,
+-  name text not null,
++  full_name text not null,
+   email text not null
+ );

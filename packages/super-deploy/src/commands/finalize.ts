@@ -1,7 +1,11 @@
 // `finalize`: rehearse the draft, then freeze it as the next numbered
-// migration: the draft's files, metadata and a desired-schema snapshot,
-// read-only, hashed and chained in the index. A Recovery draft becomes its
-// migration's next Recovery (store/migrations.ts) instead.
+// migration: the draft's files, metadata and its snapshot of the desired
+// schema, `desired-schema.diff`, the diff from the newest migration's
+// snapshot (store/snapshots.ts, ADR-0008), read-only, hashed and chained in
+// the index. Before anything is written, the diff is applied to that
+// snapshot and must give back exactly the desired schema that was
+// rehearsed. A Recovery draft becomes its migration's next Recovery
+// (store/migrations.ts) instead, with no snapshot.
 //
 // Nothing locks the project's files between commands, so another command
 // (discard-draft, draft, a second finalize) can change the draft while the
@@ -53,9 +57,10 @@ import {
   recoveriesFolderName,
   recoveryFolderName,
   schemaChangeFileName,
-  snapshotFolderName,
+  snapshotDiffFileName,
   writeIndex,
 } from "../store/migrations.ts";
+import { readSnapshot, snapshotDiff } from "../store/snapshots.ts";
 import { parserName, parserVersion, toolVersion } from "../version.ts";
 import { type RehearsedDraft, rehearseCurrentDraft } from "./rehearse.ts";
 
@@ -185,10 +190,18 @@ export async function finalize(
   };
   const files: HashedFile[] = [
     ...draftFiles.filter((file) => target.fromDraft(file.path)),
-    ...rehearsed.desiredSchema.map((file) => ({
-      path: `${snapshotFolderName}/${file.path}`,
-      text: file.text,
-    })),
+    ...(rehearsed.recoveryOf === undefined
+      ? [
+          {
+            path: snapshotDiffFileName,
+            text: snapshotDiff(
+              await readSnapshot(root, rehearsed.migrations),
+              rehearsed.desiredSchema,
+              projectRelative(root, path),
+            ),
+          },
+        ]
+      : []),
     { path: metadataFileName, text: `${JSON.stringify(metadata, null, 2)}\n` },
     ...(handEdit === undefined
       ? []
@@ -324,7 +337,7 @@ async function finalizedPlace(
     };
   }
   // A Recovery holds the draft's scripts and seed data, never the schema
-  // change (always its migration's) or a desired-schema snapshot.
+  // change (always its migration's) or a snapshot.
   const number = migration.recoveries.length + 1;
   const folder = recoveryFolderName(number);
   const recoveries = join(migration.path, recoveriesFolderName);

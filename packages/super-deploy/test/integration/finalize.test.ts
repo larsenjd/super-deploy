@@ -72,7 +72,7 @@ async function filesUnder(folder: string): Promise<string[]> {
 }
 
 describe("finalize", () => {
-  test("freezes the draft as migration 00001-add-customers with a desired-schema snapshot", async () => {
+  test("freezes the draft as migration 00001-add-customers with its desired schema as a diff from the empty schema", async () => {
     const { dir, project } = await draftedProject();
     const schemaChange = await dir.read("data-model/draft/schema-change.sql");
 
@@ -82,13 +82,24 @@ describe("finalize", () => {
     const folder = "data-model/migrations/00001-add-customers";
     expect(result.path).toBe(dir.path(folder));
     expect(await filesUnder(dir.path(folder))).toEqual([
-      "desired-schema/customers.sql",
+      "desired-schema.diff",
       "metadata.json",
       "schema-change.sql",
     ]);
     expect(await dir.read(`${folder}/schema-change.sql`)).toBe(schemaChange);
-    expect(await dir.read(`${folder}/desired-schema/customers.sql`)).toBe(
-      customers,
+    expect(await dir.read(`${folder}/desired-schema.diff`)).toBe(
+      [
+        "diff --git a/customers.sql b/customers.sql",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/customers.sql",
+        "@@ -0,0 +1,4 @@",
+        "+create table customers (",
+        "+  id bigint primary key,",
+        "+  name text not null",
+        "+);",
+        "",
+      ].join("\n"),
     );
     expect(dir.exists("data-model/draft")).toBe(false);
   });
@@ -254,7 +265,7 @@ describe("a schema change edited by hand", () => {
     );
     expect(await filesUnder(dir.path(folder))).toEqual([
       "HAND-EDITED.md",
-      "desired-schema/customers.sql",
+      "desired-schema.diff",
       "metadata.json",
       "schema-change.sql",
     ]);
@@ -269,7 +280,7 @@ describe("a schema change edited by hand", () => {
     expect(result.handEdited).toBeUndefined();
     expect(result.metadata).not.toHaveProperty("schemaChangeEditedByHand");
     expect(await filesUnder(result.path)).toEqual([
-      "desired-schema/customers.sql",
+      "desired-schema.diff",
       "metadata.json",
       "schema-change.sql",
     ]);

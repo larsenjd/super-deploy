@@ -1,9 +1,9 @@
 // `unfinalize [--acknowledge-overwrite]`: move the newest migration back into
 // the draft to fix a mistake that hasn't shipped. The draft gets the
-// migration's files (writable again, metadata.json and the snapshot left
-// out), and the desired schema is reset to the snapshot frozen with it (from
-// the snapshot reader, store/snapshots.ts), so the draft is up to date and
-// finalizing again reproduces the migration.
+// migration's files (writable again, metadata.json and desired-schema.diff
+// left out), and the desired schema is reset to the migration's snapshot,
+// rebuilt by the snapshot reader (store/snapshots.ts), so the draft is up to
+// date and finalizing again reproduces the migration, diff included.
 // Whether a target already recorded the migration is the developer's call:
 // unfinalize doesn't check targets (QA 107 decided against it), so it asks
 // nothing about them. It warns before anything moves instead: inside the

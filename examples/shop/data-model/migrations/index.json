@@ -2,35 +2,35 @@
   "migrations": [
     {
       "folder": "00001-add-customers",
-      "contentHash": "d0ac0401d9eb956e645d1e670b10cd3e0d81147723841b6ee0a105cc7c3a9844",
-      "chainHash": "cb59c32ab292cd316e5f3de3bc4f7089b8eab36867fa02f3ea4de2bf3cc7277a"
+      "contentHash": "da6bc9703ed1e3aaab0c9be96541f6fdb492d9d2cb08b90fd6cd9c40ba3a0911",
+      "chainHash": "eb19b839ba292f78d87ebd1addde48b1069e3ed67c25744a8716e1b30a8d6c45"
     },
     {
       "folder": "00002-add-orders",
-      "contentHash": "42a7c390a0ccf4637048b32ca531de2c4b7316df1b3a14931bc9dfe135b705da",
-      "chainHash": "7362e4e652690c36bd3ec300a180a5b9fe62363736baca4f31931f4beb16220e"
+      "contentHash": "69775c2a218771e2499cf1cef5f55618f704c1b77f0308fa3c4f56d2731cd700",
+      "chainHash": "76000fc09efe93b62a03cd588bbe1ba71409deca6d9c3e3818b81fbac32d6057"
     },
     {
       "folder": "00003-rename-customer-name-to-full-name",
-      "contentHash": "42d7f9e31a3c7b4af2f976aa5bd065c3ae4aee8d1d9a7b6224c16fbc6cc5c62d",
-      "chainHash": "c248795b1b901ad7dcfce31bdcaa0f31fcbdd574794048038c15e756736f6658"
+      "contentHash": "bd4e1fb173e46a1998194b5649e80b12fcfc618eb18aae4c0ab2028f5d37e342",
+      "chainHash": "3c56c84f3a209313a278a9b53a6e78ce503783f0cfb04b0eba485ed8a56686fc"
     },
     {
       "folder": "00004-unique-customer-emails",
-      "contentHash": "ef5a4736f5659903872f6c8c7748b702e2d8b5afbad6f67d4c0feb582d8a0ad5",
-      "chainHash": "14086f2ba0ae17b906cc43b33ede3387ef5c158f5c9b97b298de3ed5fbe9e887",
+      "contentHash": "a13893b9c2f127cc986728e2ab1695f6350c2e26f459b9560596cbe7295ad15b",
+      "chainHash": "dc3a69c6db8a07de505a8e99ee39af58058da1d8ac1fead6a917322fd3ea2630",
       "recoveries": [
         {
           "folder": "recovery-1",
-          "contentHash": "cf81126b67de8a078ba0a3b31be87c96bca59dd041a866758d0eadc582c5132e",
-          "chainHash": "6e5f1729a808b9f11446506fdbde3892a54e8fc893a3957ecd8dfee9c8062831"
+          "contentHash": "5cb62e8fffbe648754684ccba76a9d328e78a348b80dc24fa894febca4597a35",
+          "chainHash": "e10f8536b452c676c562cb49a564be95c87e94409a8c44e0d60a96e8d8efe692"
         }
       ]
     },
     {
       "folder": "00005-add-loyalty-accounts",
-      "contentHash": "f38a86fcd079fedd1afb886cae12ed4a301b455c0b20f2ae74c0ec0d495629dd",
-      "chainHash": "86284fdb6d0a68eb3a3c4d5c00982b045267d8ecbd95b6022a01056636cc21ac"
+      "contentHash": "e9957ac89db83fa6e2cc76e25977753d7333f3440789811953166858dcfaeb39",
+      "chainHash": "843fa7f5bada37d99b14b9a56fc9104b173210e18b5da1a6a0af99b3db3cfc80"
     }
   ]
 }

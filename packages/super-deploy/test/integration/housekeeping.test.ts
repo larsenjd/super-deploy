@@ -226,9 +226,9 @@ describe("restore-schema", () => {
   test("refuses to restore from migrations that fail their integrity check", async () => {
     const { dir, project } = await finalizedProject();
     const snapshot =
-      "data-model/migrations/00001-add-customers/desired-schema/customers.sql";
+      "data-model/migrations/00001-add-customers/desired-schema.diff";
     await chmod(dir.path(snapshot), 0o644);
-    await dir.write(snapshot, orders);
+    await dir.write(snapshot, "");
     await dir.write(customersFile, `${customers}-- edited\n`);
 
     await expect(

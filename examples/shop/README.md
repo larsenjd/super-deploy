@@ -33,8 +33,11 @@ rehearsals use and the local `dev` target.
     rehearsals (optional). It is kept as a record and never loaded again.
   - `metadata.json`: tool versions, any acknowledged destructive statements,
     and any overrides.
-  - `desired-schema/`: a snapshot of the desired schema when the migration
-    was finalized.
+  - `desired-schema.diff`: the migration's snapshot of the desired schema,
+    stored as the change from the previous migration's in the format `git
+    diff` writes. Migration 1's adds every file; a migration that didn't
+    change the desired schema has an empty one. super-deploy rebuilds any
+    snapshot by applying the diffs in order.
   - `recoveries/recovery-K/`: replacement scripts and seed data for targets
     that haven't run the migration yet.
 - `data-model/migrations/index.json`: every migration's and Recovery's content

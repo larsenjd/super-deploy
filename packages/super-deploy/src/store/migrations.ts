@@ -10,7 +10,9 @@
 //       metadata.json               tool, differ, parser and rehearsal server versions
 //       HAND-EDITED.md              (only when schema-change.sql was edited by hand)
 //                                   the diff from the generated one (store/hand-edit.ts)
-//       desired-schema/**/*.sql     snapshot of the desired schema at finalize
+//       desired-schema.diff         the desired schema at finalize (its snapshot), as a
+//                                   git-style diff from the previous migration's snapshot;
+//                                   empty when it didn't change (store/snapshots.ts)
 //       recoveries/                 (optional) the migration's Recoveries
 //         recovery-1/               Recovery 1: replacement scripts and seed data
 //           pre-migration.sql       (optional) replaces the migration's
@@ -60,8 +62,11 @@ export const postMigrationFileName = "post-migration.sql";
  * loaded again.
  */
 export const seedDataFileName = "seed-data.sql";
-/** The desired-schema snapshot inside each migration folder. */
-export const snapshotFolderName = "desired-schema";
+/**
+ * A migration's snapshot of the desired schema: the diff from the previous
+ * migration's (store/snapshots.ts, ADR-0008).
+ */
+export const snapshotDiffFileName = "desired-schema.diff";
 /**
  * The deploy-time SQL files of a migration, in the order they run; each is
  * optional except the schema change. Seed data is not here: it never runs
