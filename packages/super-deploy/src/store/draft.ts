@@ -16,17 +16,17 @@
 // unchanged, and the migration's own hashed file is never touched.
 //
 // A draft holds only draftFileNames, and a Recovery draft only
-// recoveryDraftFileNames: its metadata, its copy of the schema change and
-// the files a Recovery replaces. Anything else in its folder (a misnamed
-// script such as `post-migrate.sql`, notes, or a Recovery draft's
-// schema-change.generated.sql) never runs. `draft`,
-// `rehearse` and `validate` warn about each one (unknownDraftFiles) and carry
-// on: the maintainer chose a warning over a refusal while the draft is being
-// written (QA 44). `draft` and `rehearse` report them through
-// `onUnknownFile` before any check or rehearsal: a misnamed backfill is often
-// why the rehearsal then fails. `finalize` refuses the first one
-// (UnknownDraftFileError, refuseUnknownDraftFiles) before anything else,
-// since a finalized migration or Recovery can't hold it (store/integrity.ts).
+// recoveryDraftFileNames: its metadata, its copy of the schema change and the
+// files a Recovery replaces. Anything else in its folder (a misnamed script
+// such as `post-migrate.sql`, notes, or a Recovery draft's
+// schema-change.generated.sql) never runs. `draft`, `rehearse` and `validate`
+// warn about each one (unknownDraftFiles) and carry on: the maintainer chose a
+// warning over a refusal while the draft is being written (QA 44). `draft` and
+// `rehearse` report them through `onUnknownFile` before any check or rehearsal:
+// a misnamed backfill is often why the rehearsal then fails. `finalize` refuses
+// the first one (UnknownDraftFileError, refuseUnknownDraftFiles) before
+// anything else, since a finalized migration or Recovery can't hold it
+// (store/integrity.ts).
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
