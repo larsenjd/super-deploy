@@ -16,8 +16,8 @@ import { dirname, join, sep } from "node:path";
 import { describe, expect, onTestFinished, test } from "vitest";
 import {
   applyFilesDiff,
+  FilesDiffDoesNotApplyError,
   filesDiff,
-  SnapshotDiffDoesNotApplyError,
 } from "../../src/store/unified-diff.ts";
 
 interface Files {
@@ -32,10 +32,7 @@ function asFiles(files: Files) {
 function roundTrip(before: Files, after: Files): Files {
   const diff = filesDiff(asFiles(before), asFiles(after));
   return Object.fromEntries(
-    applyFilesDiff(diff, asFiles(before), "migration 3").map((file) => [
-      file.path,
-      file.text,
-    ]),
+    applyFilesDiff(diff, asFiles(before)).map((file) => [file.path, file.text]),
   );
 }
 
@@ -291,26 +288,40 @@ describe("applyFilesDiff", () => {
       "",
     ].join("\n");
     expect(() =>
-      applyFilesDiff(diff, asFiles({ "a.sql": "one\ntwo\n" }), "migration 3"),
-    ).toThrow(SnapshotDiffDoesNotApplyError);
+      applyFilesDiff(diff, asFiles({ "a.sql": "one\ntwo\n" })),
+    ).toThrow(FilesDiffDoesNotApplyError);
+  });
+
+  test("refuses a line past the end of a file's hunks, naming that file", () => {
+    const diff = [
+      "diff --git a/a.sql b/a.sql",
+      "--- a/a.sql",
+      "+++ b/a.sql",
+      "@@ -1 +1 @@",
+      "-one",
+      "+1",
+      " two",
+      "diff --git a/b.sql b/b.sql",
+      "deleted file mode 100644",
+      "",
+    ].join("\n");
+    expect(() =>
+      applyFilesDiff(diff, asFiles({ "a.sql": "one\ntwo\n", "b.sql": "" })),
+    ).toThrow(expect.objectContaining({ file: "a.sql" }));
   });
 
   test.each(doesNotApply)(
-    "refuses $name, naming the migration and the file",
+    "refuses $name, naming the file",
     ({ before, after, appliedTo }) => {
       const diff = filesDiff(asFiles(before), asFiles(after));
       let thrown: unknown;
       try {
-        applyFilesDiff(diff, asFiles(appliedTo), "migration 3");
+        applyFilesDiff(diff, asFiles(appliedTo));
       } catch (error) {
         thrown = error;
       }
-      expect(thrown).toBeInstanceOf(SnapshotDiffDoesNotApplyError);
-      expect(thrown).toMatchObject({
-        code: "snapshot-diff-does-not-apply",
-        migration: "migration 3",
-        file: "a.sql",
-      });
+      expect(thrown).toBeInstanceOf(FilesDiffDoesNotApplyError);
+      expect(thrown).toMatchObject({ file: "a.sql" });
     },
   );
 });

@@ -16,18 +16,28 @@
 // Rebuilt files have LF line endings, which is how they were hashed and
 // compared all along.
 //
-// A rebuilt file has no place on disk, so as SQL analysis input it is named
-// after the diff it came from: `<migration>/desired-schema.diff/<path>`.
+// A rebuilt file has no place on disk, so as SQL analysis input, and in
+// SnapshotDiffDoesNotApplyError, it is named after the diff it came from:
+// `<migration>/desired-schema.diff/<path>`.
+//
+// Finalize's diff (snapshotDiff) is applied before it is written: one that
+// rebuilds another schema, or doesn't apply at all, is a bug in super-deploy,
+// never a user error.
 //
 // The migrations given must have passed the integrity check
 // (store/integrity.ts), in order from migration 1.
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { SuperDeployError } from "../errors.ts";
 import type { SqlFile } from "../sql-analysis/index.ts";
-import { type HashedFile, normaliseLineEndings } from "./hashing.ts";
+import type { HashedFile } from "./hashing.ts";
 import { projectRelative } from "./layout.ts";
 import { type FinalizedMigration, snapshotDiffFileName } from "./migrations.ts";
-import { applyFilesDiff, filesDiff } from "./unified-diff.ts";
+import {
+  applyFilesDiff,
+  FilesDiffDoesNotApplyError,
+  filesDiff,
+} from "./unified-diff.ts";
 
 export interface Snapshot {
   /** The desired-schema files, relative to the desired-schema folder, sorted, with LF line endings. */
@@ -37,7 +47,7 @@ export interface Snapshot {
 }
 
 /** The snapshot before migration 1. */
-export const emptySnapshot: Snapshot = { files: [], sqlFiles: [] };
+const emptySnapshot: Snapshot = { files: [], sqlFiles: [] };
 
 /**
  * The snapshot of the newest of `migrations`, the empty schema when there
@@ -68,12 +78,20 @@ export async function readSnapshots(
   let before = emptySnapshot;
   for (const migration of migrations) {
     const diffPath = join(migration.path, snapshotDiffFileName);
-    const files = applyFilesDiff(
-      await readFile(diffPath, "utf8"),
-      before.files,
-      projectRelative(root, migration.path),
-    );
     const named = projectRelative(root, diffPath);
+    let files: HashedFile[];
+    try {
+      files = applyFilesDiff(await readFile(diffPath, "utf8"), before.files);
+    } catch (error) {
+      if (!(error instanceof FilesDiffDoesNotApplyError)) {
+        throw error;
+      }
+      throw new SnapshotDiffDoesNotApplyError(
+        projectRelative(root, migration.path),
+        error.file === undefined ? named : `${named}/${error.file}`,
+        { cause: error },
+      );
+    }
     const after = {
       files,
       sqlFiles: files.map((file) => ({
@@ -96,8 +114,9 @@ export function isSnapshotPath(path: string): boolean {
  * The snapshot diff a new migration stores: from `previous`, the newest
  * migration's snapshot, to `desiredSchema`. Throws (a bug, not a user error)
  * unless applying it to `previous` gives back exactly `desiredSchema`, line
- * endings aside, so a diff that doesn't rebuild the schema is never
- * finalized. `migration` names the new migration in that error.
+ * endings aside: when it rebuilds another schema, and when it doesn't apply
+ * at all. So a diff that doesn't rebuild the schema is never finalized.
+ * `migration` names the new migration in that error.
  */
 export function snapshotDiff(
   previous: Snapshot,
@@ -105,21 +124,47 @@ export function snapshotDiff(
   migration: string,
 ): string {
   const diff = filesDiff(previous.files, desiredSchema);
-  const rebuilt = applyFilesDiff(diff, previous.files, migration);
-  const expected = [...desiredSchema].sort((a, b) =>
-    a.path < b.path ? -1 : 1,
-  );
-  if (
-    rebuilt.length !== expected.length ||
-    rebuilt.some(
-      (file, i) =>
-        file.path !== expected[i]?.path ||
-        file.text !== normaliseLineEndings(expected[i].text),
-    )
-  ) {
-    throw new Error(
+  const bug = (options?: ErrorOptions) =>
+    new Error(
       `Bug in super-deploy: the desired-schema diff of ${migration} doesn't rebuild the desired schema, so nothing was finalized`,
+      options,
     );
+  let rebuilt: HashedFile[];
+  try {
+    rebuilt = applyFilesDiff(diff, previous.files);
+  } catch (error) {
+    throw error instanceof FilesDiffDoesNotApplyError
+      ? bug({ cause: error })
+      : error;
+  }
+  if (filesDiff(rebuilt, desiredSchema) !== "") {
+    throw bug();
   }
   return diff;
+}
+
+/**
+ * A migration's desired-schema diff doesn't apply to the snapshot before it.
+ * The integrity check refuses a diff edited on its own, so this is a bug in
+ * super-deploy, or a migration folder and index.json edited together.
+ */
+export class SnapshotDiffDoesNotApplyError extends SuperDeployError {
+  readonly code = "snapshot-diff-does-not-apply";
+  /** Project-relative path of the migration folder. */
+  readonly migration: string;
+  /**
+   * Project-relative: the diff, then the snapshot file whose section failed,
+   * as a rebuilt file is named (`<migration>/desired-schema.diff/<path>`);
+   * the diff alone when a section header can't be read, so names no file.
+   */
+  readonly file: string;
+
+  constructor(migration: string, file: string, options?: ErrorOptions) {
+    super(
+      `The desired-schema diff of ${migration} doesn't apply to the snapshot before it, at ${file}`,
+      options,
+    );
+    this.migration = migration;
+    this.file = file;
+  }
 }

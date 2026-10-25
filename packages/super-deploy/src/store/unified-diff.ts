@@ -13,16 +13,18 @@
 // record it), then `--- a/<path>` and `+++ b/<path>` with `/dev/null` for the
 // missing side. There are no `index` lines: nothing reads them. Paths are
 // quoted as git quotes them, but with characters outside ASCII written as
-// they are, as git writes them with core.quotePath off. Applying is strict, with no fuzz and no
-// offset search, because the diff is applied only to the snapshot it was
-// written from: a hunk that doesn't match is a bug, not a merge.
+// they are, as git writes them with core.quotePath off. Applying is strict,
+// with no fuzz and no offset search, because the diff is applied only to the
+// files it was written from: a hunk that doesn't match is a bug, not a
+// merge. This module knows nothing of migrations: a diff that doesn't apply
+// throws FilesDiffDoesNotApplyError naming the file, and store/snapshots.ts
+// says whose diff it is.
 //
 // Lines keep their "\n", so a missing newline at the end is a difference too
 // and shows as `\ No newline at end of file`. The longest common subsequence
 // is computed after trimming the common start and end, so its table is only
 // as large as the edited region.
 
-import { SuperDeployError } from "../errors.ts";
 import { type HashedFile, normaliseLineEndings } from "./hashing.ts";
 
 const context = 3;
@@ -259,17 +261,15 @@ function gitPath(name: string): string {
  * context and removed line must be where its hunk says, with no fuzz and no
  * offset search; an added file must not be there yet, and a deleted file must
  * be removed whole. Line endings are normalised first. Sorted by path.
- * `migration` names the migration whose diff this is in the error.
+ * Throws FilesDiffDoesNotApplyError naming the file whose section failed.
  */
 export function applyFilesDiff(
   diff: string,
   files: readonly HashedFile[],
-  migration: string,
 ): HashedFile[] {
   const result = normalised(files);
-  for (const section of fileSections(normaliseLineEndings(diff), migration)) {
-    const doesNotApply = () =>
-      new SnapshotDiffDoesNotApplyError(migration, section.path);
+  for (const section of fileSections(normaliseLineEndings(diff))) {
+    const doesNotApply = () => new FilesDiffDoesNotApplyError(section.path);
     const before = result.get(section.path);
     if ((before === undefined) !== (section.change === "added")) {
       throw doesNotApply();
@@ -303,18 +303,21 @@ interface Hunk {
   readonly to: readonly string[];
 }
 
-/** The sections of `diff`; a line that doesn't belong in one makes that section's file fail. */
-function fileSections(diff: string, migration: string): FileSection[] {
+/**
+ * The sections of `diff`; a line that doesn't belong in one makes that
+ * section's file fail, and a section header that can't be read fails with no
+ * file.
+ */
+function fileSections(diff: string): FileSection[] {
   const lines = diff === "" ? [] : diff.replace(/\n$/, "").split("\n");
   const sections: FileSection[] = [];
   let index = 0;
   while (index < lines.length) {
     const path = diffGitPath(lines[index] ?? "");
     if (path === undefined) {
-      throw new SnapshotDiffDoesNotApplyError(migration, undefined);
+      throw new FilesDiffDoesNotApplyError(undefined);
     }
-    const doesNotApply = () =>
-      new SnapshotDiffDoesNotApplyError(migration, path);
+    const doesNotApply = () => new FilesDiffDoesNotApplyError(path);
     index++;
     let change: FileSection["change"] = "changed";
     if (lines[index] === newFileMode || lines[index] === deletedFileMode) {
@@ -365,6 +368,10 @@ function fileSections(diff: string, migration: string): FileSection[] {
         const first = Number(header[1]);
         hunks.push({ start: fromCount === 0 ? first : first - 1, from, to });
       }
+    }
+    // Anything but the next section's header belongs to this section.
+    if (index < lines.length && !lines[index]?.startsWith("diff --git ")) {
+      throw doesNotApply();
     }
     if (hunks.length === 0 && change === "changed") {
       throw doesNotApply();
@@ -458,22 +465,17 @@ export function unapplyUnifiedDiff(diff: string, to: string): string {
 }
 
 /**
- * A migration's desired-schema diff doesn't apply to the snapshot before it.
- * The integrity check refuses a diff edited on its own, so this is a bug in
- * this module, or a migration folder and index.json edited together.
+ * A filesDiff doesn't apply to the files it was applied to. Its callers say
+ * whose diff it is (SnapshotDiffDoesNotApplyError, store/snapshots.ts).
  */
-export class SnapshotDiffDoesNotApplyError extends SuperDeployError {
-  readonly code = "snapshot-diff-does-not-apply";
-  /** The migration, as the caller named it. */
-  readonly migration: string;
-  /** The file whose section failed, relative to the desired-schema folder; undefined when the diff has no readable section header. */
+export class FilesDiffDoesNotApplyError extends Error {
+  /** The path of the file whose section failed; undefined when a section header can't be read. */
   readonly file: string | undefined;
 
-  constructor(migration: string, file: string | undefined) {
+  constructor(file: string | undefined) {
     super(
-      `The desired-schema diff of ${migration} doesn't apply${file === undefined ? "" : ` to ${file}`}`,
+      `The diff doesn't apply${file === undefined ? ": a section header can't be read" : ` to ${file}`}`,
     );
-    this.migration = migration;
     this.file = file;
   }
 }
