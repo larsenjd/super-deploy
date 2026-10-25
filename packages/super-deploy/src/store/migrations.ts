@@ -99,6 +99,9 @@ export const deployTimeFileKinds: Readonly<Record<string, DeployTimeKind>> = {
   [seedDataFileName]: "seed-data",
 };
 
+/** The two kinds of finalized folder, as messages name them. */
+export type FinalizedFolderKind = "migration" | "Recovery";
+
 export const maxMigrationNumber = 99_999;
 
 /** The folder inside a migration folder that holds its Recoveries. */

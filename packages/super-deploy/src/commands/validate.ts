@@ -143,7 +143,7 @@ export async function validate(
       display(paths.draft),
     );
   }
-  for (const unknown of await unknownDraftFiles(root, paths)) {
+  for (const unknown of await unknownDraftFiles(root, paths, draft)) {
     warn("unknown-draft-file", unknown.message, unknown.file);
   }
   if (draft?.recoveryOf !== undefined) {

@@ -11,6 +11,7 @@ import {
   SqlRuleViolationError,
   type UnknownDraftFile,
   UnknownDraftFileError,
+  validate,
 } from "superdeploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { deployProject } from "../support/deploy.ts";
@@ -801,6 +802,39 @@ alter table customers alter column phone set not null;
     await expect(finalize(project)).rejects.toMatchObject({
       constructor: UnknownDraftFileError,
       file: "data-model/draft/notes.md",
+    });
+    expect(
+      dir.exists("data-model/migrations/00001-add-customers/recoveries"),
+    ).toBe(false);
+  });
+
+  test("a Recovery draft holds its own files: a normal draft's generated schema change is warned about, and finalize refuses it", async () => {
+    const { dir, project } = await withFirstMigration();
+    await recovery(project, { migration: 1 });
+    const generated = "data-model/draft/schema-change.generated.sql";
+    await dir.write(generated, "select 1;\n");
+    const reported = unknownFilesReported();
+
+    await rehearse(project, reported.option("rehearse"));
+    const report = await validate(project);
+    const error = await finalize(project).catch((e: unknown) => e);
+
+    const message = expect.stringContaining(
+      `${generated} is not one of a Recovery draft's files, so it will not run`,
+    );
+    expect(reported.by).toEqual({
+      rehearse: [{ file: generated, message }],
+    });
+    expect(report.problems).toContainEqual({
+      severity: "warning",
+      code: "unknown-draft-file",
+      message,
+      path: generated,
+    });
+    expect(error).toBeInstanceOf(UnknownDraftFileError);
+    expect(error).toMatchObject({
+      code: "unknown-draft-file",
+      file: generated,
     });
     expect(
       dir.exists("data-model/migrations/00001-add-customers/recoveries"),

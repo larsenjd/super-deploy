@@ -15,8 +15,11 @@
 // generated one's "run draft again"; its statements are migration N's,
 // unchanged, and the migration's own hashed file is never touched.
 //
-// A draft holds only draftFileNames. Anything else in its folder (a misnamed
-// script such as `post-migrate.sql`, or notes) never runs. `draft`,
+// A draft holds only draftFileNames, and a Recovery draft only
+// recoveryDraftFileNames: its metadata, its copy of the schema change and
+// the files a Recovery replaces. Anything else in its folder (a misnamed
+// script such as `post-migrate.sql`, notes, or a Recovery draft's
+// schema-change.generated.sql) never runs. `draft`,
 // `rehearse` and `validate` warn about each one (unknownDraftFiles) and carry
 // on: the maintainer chose a warning over a refusal while the draft is being
 // written (QA 44). `draft` and `rehearse` report them through
@@ -24,8 +27,6 @@
 // why the rehearsal then fails. `finalize` refuses the first one
 // (UnknownDraftFileError, refuseUnknownDraftFiles) before anything else,
 // since a finalized migration or Recovery can't hold it (store/integrity.ts).
-// A Recovery draft holds the same names; finalize copies only its scripts and
-// seed data.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -35,11 +36,13 @@ import { normaliseDraftName } from "./draft-name.ts";
 import { normaliseLineEndings } from "./hashing.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";
 import {
+  type FinalizedFolderKind,
   type FinalizedMigration,
   listFiles,
   postMigrationFileName,
   preMigrationFileName,
   readIfPresent,
+  recoveryFileNames,
   schemaChangeFileName,
   seedDataFileName,
 } from "./migrations.ts";
@@ -106,7 +109,24 @@ export const draftFileNames: readonly string[] = [
   postMigrationFileName,
 ];
 
-/** A file in the draft folder that isn't one of draftFileNames. */
+/**
+ * Every file a Recovery draft may hold, in draftFileNames' order: its
+ * metadata, its copy of the schema change, and the files a Recovery replaces.
+ * It has no generated copy: its schema change is never generated.
+ */
+const recoveryDraftFileNames: readonly string[] = draftFileNames.filter(
+  (name) =>
+    name === draftMetadataFileName ||
+    name === schemaChangeFileName ||
+    recoveryFileNames.includes(name),
+);
+
+/** What `draft` finalizes as: a migration, or for a Recovery draft a Recovery. */
+function finalizedAs(draft: DraftMetadata | undefined): FinalizedFolderKind {
+  return draft?.recoveryOf === undefined ? "migration" : "Recovery";
+}
+
+/** A file in the draft folder that the draft doesn't hold (draftFileNames, or recoveryDraftFileNames). */
 export interface UnknownDraftFile {
   /** Project-relative path. */
   readonly file: string;
@@ -127,30 +147,39 @@ export interface UnknownDraftFileOptions {
 export async function reportUnknownDraftFiles(
   root: string,
   paths: ProjectPaths,
+  draft: DraftMetadata | undefined,
   options: UnknownDraftFileOptions,
 ): Promise<void> {
   if (options.onUnknownFile === undefined) {
     return;
   }
-  for (const file of await unknownDraftFiles(root, paths)) {
+  for (const file of await unknownDraftFiles(root, paths, draft)) {
     options.onUnknownFile(file);
   }
 }
 
-/** The files under the draft folder that a draft doesn't hold; none without a draft. */
+/**
+ * The files under the draft folder that `draft` (its metadata, if it has
+ * any) doesn't hold; none without a draft folder.
+ */
 export async function unknownDraftFiles(
   root: string,
   paths: ProjectPaths,
+  draft: DraftMetadata | undefined,
 ): Promise<UnknownDraftFile[]> {
-  const holds = `a draft holds ${draftFileNames.slice(0, -1).join(", ")} and ${draftFileNames.at(-1)}`;
+  const [names, kind] =
+    finalizedAs(draft) === "Recovery"
+      ? [recoveryDraftFileNames, "a Recovery draft"]
+      : [draftFileNames, "a draft"];
+  const holds = `${kind} holds ${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
   return (await listFiles(paths.draft))
-    .filter((path) => !draftFileNames.includes(path))
+    .filter((path) => !names.includes(path))
     .map((path) => {
       const file = projectRelative(root, join(paths.draft, path));
       const runs = isSqlFile(path) ? ", so it will not run" : "";
       return {
         file,
-        message: `${file} is not one of a draft's files${runs} (${holds})`,
+        message: `${file} is not one of ${kind}'s files${runs} (${holds})`,
       };
     });
 }
@@ -159,10 +188,11 @@ export async function unknownDraftFiles(
 export async function refuseUnknownDraftFiles(
   root: string,
   paths: ProjectPaths,
+  draft: DraftMetadata | undefined,
 ): Promise<void> {
-  const [unknown] = await unknownDraftFiles(root, paths);
+  const [unknown] = await unknownDraftFiles(root, paths, draft);
   if (unknown !== undefined) {
-    throw new UnknownDraftFileError(unknown);
+    throw new UnknownDraftFileError(unknown, finalizedAs(draft));
   }
 }
 
@@ -283,9 +313,9 @@ export class UnknownDraftFileError extends SuperDeployError {
   /** Project-relative path with forward slashes. */
   readonly file: string;
 
-  constructor(unknown: UnknownDraftFile) {
+  constructor(unknown: UnknownDraftFile, finalizedAs: FinalizedFolderKind) {
     super(
-      `${unknown.message}: a finalized migration can't hold it, so rename it to one of those or move it out of the draft folder, then finalize again`,
+      `${unknown.message}: a finalized ${finalizedAs} can't hold it, so rename it to one of those or move it out of the draft folder, then finalize again`,
     );
     this.file = unknown.file;
   }

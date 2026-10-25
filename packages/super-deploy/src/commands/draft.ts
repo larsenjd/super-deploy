@@ -124,7 +124,7 @@ export async function draft(
   }
 
   const { config, paths } = project;
-  await reportUnknownDraftFiles(project.root, paths, options);
+  await reportUnknownDraftFiles(project.root, paths, existing, options);
   const files = await readDesiredSchemaFiles(project.root, paths.desiredSchema);
   const { statements, overrides, unqualifiedNames } =
     await desiredSchemaAnalysis(

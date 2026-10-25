@@ -38,6 +38,7 @@ import type {
 import {
   draftMetadataFileName,
   generatedSchemaChangeFileName,
+  readDraft,
   refuseUnknownDraftFiles,
 } from "../store/draft.ts";
 import { handEditReport, handEditReportFileName } from "../store/hand-edit.ts";
@@ -144,7 +145,7 @@ export async function finalize(
   options: FinalizeOptions = {},
 ): Promise<FinalizeResult> {
   const { root, paths } = project;
-  await refuseUnknownDraftFiles(root, paths);
+  await refuseUnknownDraftFiles(root, paths, await readDraft(root, paths));
   const draftFiles = await readHashedFiles(root, paths.draft);
   const rehearsed = await rehearseCurrentDraft(project, "finalize", {
     async beforeRehearsal(draft, analysis) {

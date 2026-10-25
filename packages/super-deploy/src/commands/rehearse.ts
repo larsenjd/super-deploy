@@ -141,7 +141,7 @@ export async function rehearseCurrentDraft(
   if (draft === undefined) {
     throw new NoDraftError(action);
   }
-  await reportUnknownDraftFiles(root, paths, hooks);
+  await reportUnknownDraftFiles(root, paths, draft, hooks);
   const { beforeRehearsal } = hooks;
   const migrations = await verifiedMigrations(root, paths);
   if (draft.recoveryOf !== undefined) {
