@@ -6,9 +6,9 @@
 // snapshot → one transaction on the target → close attempt. Pre-flight and
 // drift check run even when nothing is pending. A file failing on the target
 // is reported as a rollback (SqlFileFailedError.rolledBack): the migration
-// the target is still at, and a Recovery for a data error.
+// the target is still at, and a Recovery for a data error. The newest
+// snapshot comes from the snapshot reader (store/snapshots.ts).
 
-import { join } from "node:path";
 import { applyMigrations, withLockedTarget } from "../deploy/engine.ts";
 import { readRecordedMigrations } from "../deploy/history.ts";
 import { pendingMigrations } from "../deploy/pending.ts";
@@ -29,9 +29,8 @@ import {
   replicaUnits,
 } from "../rehearsal/replica.ts";
 import { analyseDesiredSchema } from "../sql-analysis/index.ts";
-import { readDesiredSchema } from "../store/desired-schema.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
-import { snapshotFolderName } from "../store/migrations.ts";
+import { readSnapshot } from "../store/snapshots.ts";
 
 export interface DeployOptions {
   /** The target's name in config. */
@@ -128,13 +127,10 @@ export async function deploy(
         pending: pending.map((migration) => migration.unit),
         snapshot: async () => {
           const newest = deployable.at(-1) as MigrationWithUnit;
-          const files = await readDesiredSchema(
-            root,
-            join(newest.path, snapshotFolderName),
-          );
+          const { sqlFiles } = await readSnapshot(root, migrations);
           return {
             folder: newest.folder,
-            statements: await analyseDesiredSchema(files, {
+            statements: await analyseDesiredSchema(sqlFiles, {
               managedSchema: config.managedSchema,
               externalSchemas: config.externalSchemas,
             }),

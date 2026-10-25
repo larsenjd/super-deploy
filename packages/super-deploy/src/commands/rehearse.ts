@@ -1,6 +1,9 @@
 // `rehearse`: replay every finalized migration plus the draft on a throwaway
 // database and prove the result matches the desired schema, without
-// finalizing anything.
+// finalizing anything. The rules check a draft between the newest
+// migration's snapshot and the desired schema, and a Recovery draft of
+// migration N between the snapshots of N-1 and N; both come from the
+// snapshot reader (store/snapshots.ts).
 import { join, posix } from "node:path";
 import type { Project } from "../project.ts";
 import { rehearseDraft } from "../rehearsal/rehearse-draft.ts";
@@ -22,11 +25,7 @@ import {
   type ParsedStatement,
   type UnqualifiedNameWarning,
 } from "../sql-analysis/index.ts";
-import {
-  asSqlFiles,
-  readDesiredSchema,
-  readDesiredSchemaFiles,
-} from "../store/desired-schema.ts";
+import { asSqlFiles, readDesiredSchemaFiles } from "../store/desired-schema.ts";
 import {
   type DraftMetadata,
   NoDraftError,
@@ -46,10 +45,14 @@ import {
   type FinalizedMigration,
   readNormalisedIfPresent,
   schemaChangeFileName,
-  snapshotFolderName,
   UnknownMigrationError,
 } from "../store/migrations.ts";
-import { newestSnapshot, refuseRuleViolations } from "./check-rules.ts";
+import {
+  type MigrationSnapshots,
+  readSnapshot,
+  readSnapshots,
+} from "../store/snapshots.ts";
+import { refuseRuleViolations } from "./check-rules.ts";
 import { RecoverySchemaChangeEditedError } from "./recovery.ts";
 
 export interface RehearseResult {
@@ -205,7 +208,7 @@ export async function checkDraft(
     },
   );
   const seeded = await readSeededUnit(root, paths.draft, `draft ${draft.name}`);
-  const previous = await newestSnapshot(root, migrations);
+  const previous = (await readSnapshot(root, migrations)).sqlFiles;
   const analysis = await refuseRuleViolations(seededFiles(seeded), {
     managedSchema: config.managedSchema,
     externalSchemas: config.externalSchemas,
@@ -298,15 +301,14 @@ export async function checkRecoveryDraft(
     paths.draft,
     `Recovery draft of ${migration.folder}`,
   );
-  const previous = await newestSnapshot(root, migrations.slice(0, number - 1));
+  const { before, after } = (
+    await readSnapshots(root, migrations.slice(0, number))
+  ).at(-1) as MigrationSnapshots;
   const analysis = await refuseRuleViolations(seededFiles(seeded), {
     managedSchema: config.managedSchema,
     externalSchemas: config.externalSchemas,
-    schemas: [
-      previous,
-      await readDesiredSchema(root, join(migration.path, snapshotFolderName)),
-    ],
-    previous,
+    schemas: [before.sqlFiles, after.sqlFiles],
+    previous: before.sqlFiles,
   });
   return { migration, seeded, analysis };
 }

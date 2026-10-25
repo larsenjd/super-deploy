@@ -1,7 +1,9 @@
 // Deploy-time rules applied to a migration or draft folder, shared by draft,
 // rehearse, finalize and validate. The analysis itself is database-free and
-// lives in sql-analysis/; this module only gathers its inputs from disk.
-import { join, posix } from "node:path";
+// lives in sql-analysis/; this module only gathers its inputs from disk. The
+// snapshots in a rule context come from the snapshot reader
+// (store/snapshots.ts), which its callers use.
+import { posix } from "node:path";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
 import {
   analyseMigration,
@@ -16,12 +18,7 @@ import {
   type SqlFile,
   SqlRuleViolationError,
 } from "../sql-analysis/index.ts";
-import { readDesiredSchema } from "../store/desired-schema.ts";
-import {
-  deployTimeFileKinds,
-  type FinalizedMigration,
-  snapshotFolderName,
-} from "../store/migrations.ts";
+import { deployTimeFileKinds } from "../store/migrations.ts";
 
 export interface MigrationRuleContext {
   readonly managedSchema: string;
@@ -87,17 +84,6 @@ export async function refuseRuleViolations(
     throw new SqlRuleViolationError(analysis.violations);
   }
   return analysis;
-}
-
-/** The desired-schema snapshot of the newest migration (none before migration 1). */
-export async function newestSnapshot(
-  root: string,
-  migrations: readonly FinalizedMigration[],
-): Promise<SqlFile[]> {
-  const newest = migrations.at(-1);
-  return newest === undefined
-    ? []
-    : readDesiredSchema(root, join(newest.path, snapshotFolderName));
 }
 
 async function identityColumnsIn(

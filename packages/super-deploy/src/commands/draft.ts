@@ -6,7 +6,9 @@
 // schema change runs once on the starting point and the result is compared
 // with the desired schema (rehearsal/schema-change-check.ts): what pg-delta
 // can't generate, or generates but PostgreSQL refuses, is reported as a
-// shortfall, and the draft is written all the same.
+// shortfall, and the draft is written all the same. The draft's scripts are
+// checked against the rules between the newest migration's snapshot, from
+// the snapshot reader (store/snapshots.ts), and the desired schema.
 
 import { posix } from "node:path";
 import { differ, type PlannedStatement } from "../differ/index.ts";
@@ -60,9 +62,9 @@ import {
   preMigrationFileName,
   schemaChangeFileName,
 } from "../store/migrations.ts";
+import { readSnapshot } from "../store/snapshots.ts";
 import {
   type MigrationRuleContext,
-  newestSnapshot,
   refuseRuleViolations,
 } from "./check-rules.ts";
 import { RecoveryDraftError } from "./recovery.ts";
@@ -137,7 +139,10 @@ export async function draft(
   const rules: MigrationRuleContext = {
     managedSchema: config.managedSchema,
     externalSchemas: config.externalSchemas,
-    schemas: [await newestSnapshot(project.root, finalized), statements],
+    schemas: [
+      (await readSnapshot(project.root, finalized)).sqlFiles,
+      statements,
+    ],
   };
   // The draft's seed data and hand-written scripts are checked before
   // anything runs them; the schema change is regenerated below and checked

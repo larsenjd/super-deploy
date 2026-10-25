@@ -18,6 +18,7 @@ import {
   recovery,
   rehearse,
   SqlFileFailedError,
+  type SqlRuleViolationError,
   status,
   UnknownMigrationError,
   unfinalize,
@@ -622,5 +623,41 @@ update customers set email = 'unknown@example.com' where email is null and pg_tr
         path: "data-model/draft/post-migration.sql",
       },
     ]);
+  });
+
+  test("checks a Recovery draft of an older migration against the snapshots on either side of it", async () => {
+    // Table a's identity column is only in migration 1's snapshot: migration
+    // 2 drops it, and migration 3 comes after.
+    const { dir, project } = await deployProject(server, {
+      "a.sql":
+        "create table a (id bigint generated always as identity primary key);\n",
+    });
+    await finalizeMigration(project, "add a");
+    await rm(dir.path("data-model/desired-schema/a.sql"));
+    await dir.write("data-model/desired-schema/b.sql", customers);
+    await draft(project, { name: "replace a" });
+    await finalize(project, { acknowledgeDestructive: true });
+    await dir.write(
+      "data-model/desired-schema/c.sql",
+      "create table c (id bigint primary key);\n",
+    );
+    await finalizeMigration(project, "add c");
+    await recovery(project, { migration: 2 });
+    const script = "data-model/draft/pre-migration.sql";
+    await dir.write(script, "insert into a (id) values (1);\n");
+
+    const error = await validate(project).catch((e: unknown) => e);
+    expect(
+      (error as ValidationFailedError).problems
+        .filter((p) => p.severity === "error")
+        .map(({ code, path }) => ({ code, path })),
+    ).toEqual([{ code: "sql-rule-violation", path: script }]);
+    const refusal = await rehearse(project).catch((e: unknown) => e);
+    expect(
+      (refusal as SqlRuleViolationError).violations.map(({ file, rule }) => ({
+        file,
+        rule,
+      })),
+    ).toEqual([{ file: script, rule: "identity-value" }]);
   });
 });

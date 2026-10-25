@@ -1,24 +1,21 @@
 // `restore-schema [--acknowledge-overwrite]`: abandon unfinished edits by
 // resetting the desired schema to the newest migration's snapshot, and delete
-// any draft. Only *.sql files in the desired-schema folder are touched.
+// any draft. Only *.sql files in the desired-schema folder are touched. The
+// snapshot comes from the snapshot reader (store/snapshots.ts).
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Project } from "../project.ts";
 import { acknowledgeOverwrite, type OverwriteOptions } from "../questions.ts";
 import {
   differencesFromSnapshot,
-  readDesiredSchemaFiles,
   restoreFromSnapshot,
   type SnapshotDifferences,
 } from "../store/desired-schema.ts";
 import type { HashedFile } from "../store/hashing.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { projectRelative } from "../store/layout.ts";
-import {
-  exists,
-  NoMigrationError,
-  snapshotFolderName,
-} from "../store/migrations.ts";
+import { exists, NoMigrationError } from "../store/migrations.ts";
+import { readSnapshot } from "../store/snapshots.ts";
 import { draftName } from "./discard-draft.ts";
 
 export type RestoreSchemaOptions = OverwriteOptions;
@@ -43,14 +40,12 @@ export async function restoreSchema(
   options: RestoreSchemaOptions = {},
 ): Promise<RestoreSchemaResult> {
   const { root, paths } = project;
-  const newest = (await verifiedMigrations(root, paths)).at(-1);
+  const migrations = await verifiedMigrations(root, paths);
+  const newest = migrations.at(-1);
   if (newest === undefined) {
     throw new NoMigrationError("restore the desired schema from");
   }
-  const snapshot = await readDesiredSchemaFiles(
-    root,
-    join(newest.path, snapshotFolderName),
-  );
+  const snapshot = (await readSnapshot(root, migrations)).files;
   const pending = await pendingRestore(project, snapshot);
   await acknowledgeOverwrite(options, {
     kind: "acknowledge-overwrite",

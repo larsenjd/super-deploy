@@ -19,6 +19,11 @@
 // (store/hand-edit.ts). Never a failure, even under `strict`: the migration
 // was rehearsed, and its HAND-EDITED.md is for reviewers.
 //
+// Snapshots come from the snapshot reader (store/snapshots.ts), and only once
+// the migrations verify. The rules read every migration's in one forward
+// pass, checking each migration between its predecessor's snapshot and its
+// own.
+//
 // Read-only state: git does not store it, so a fresh checkout has writable
 // finalized files. A writable file whose migration still verifies is made
 // read-only again and listed in `readOnlyRestored`; integrity itself rests
@@ -60,9 +65,9 @@ import { projectRelative } from "../store/layout.ts";
 import {
   makeReadOnly,
   schemaChangeFileName,
-  snapshotFolderName,
   writableFiles,
 } from "../store/migrations.ts";
+import { readSnapshot, readSnapshots } from "../store/snapshots.ts";
 import { analyseReplayUnit } from "./check-rules.ts";
 import { RecoverySchemaChangeEditedError } from "./recovery.ts";
 import { requireOriginalSchemaChange } from "./rehearse.ts";
@@ -171,10 +176,7 @@ export async function validate(
       }
     } else if (integrity.problems.length === 0) {
       const snapshot = desiredSchemaHash(
-        await readDesiredSchemaFiles(
-          root,
-          join(newest.path, snapshotFolderName),
-        ),
+        (await readSnapshot(root, integrity.migrations)).files,
       );
       if (snapshot !== current) {
         warn(
@@ -302,15 +304,18 @@ async function ruleProblems(
   const notSchemaChange = (file: string) =>
     posix.basename(file) !== schemaChangeFileName;
   try {
-    const snapshot = (path: string) =>
-      readDesiredSchema(root, join(path, snapshotFolderName));
-    let previous: SqlFile[] = [];
+    let previous: readonly SqlFile[] = [];
     // The snapshots on either side of each migration, for a Recovery draft.
-    const around = new Map<number, { before: SqlFile[]; after: SqlFile[] }>();
+    const around = new Map<
+      number,
+      { before: readonly SqlFile[]; after: readonly SqlFile[] }
+    >();
     if (integrity.problems.length === 0) {
-      for (const migration of integrity.migrations) {
-        const own = await snapshot(migration.path);
-        const context = { ...rules, schemas: [previous, own] };
+      for (const step of await readSnapshots(root, integrity.migrations)) {
+        const { migration } = step;
+        const before = step.before.sqlFiles;
+        const own = step.after.sqlFiles;
+        const context = { ...rules, schemas: [before, own] };
         collect(
           await analyseReplayUnit(
             seededFiles(
@@ -335,7 +340,7 @@ async function ruleProblems(
             notSchemaChange,
           );
         }
-        around.set(migration.number, { before: previous, after: own });
+        around.set(migration.number, { before, after: own });
         previous = own;
       }
     }

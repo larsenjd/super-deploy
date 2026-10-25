@@ -1,8 +1,9 @@
 // `unfinalize [--acknowledge-overwrite]`: move the newest migration back into
 // the draft to fix a mistake that hasn't shipped. The draft gets the
 // migration's files (writable again, metadata.json and the snapshot left
-// out), and the desired schema is reset to the snapshot frozen with it, so
-// the draft is up to date and finalizing again reproduces the migration.
+// out), and the desired schema is reset to the snapshot frozen with it (from
+// the snapshot reader, store/snapshots.ts), so the draft is up to date and
+// finalizing again reproduces the migration.
 // Whether a target already recorded the migration is the developer's call:
 // unfinalize doesn't check targets (QA 107 decided against it), so it asks
 // nothing about them. It warns before anything moves instead: inside the
@@ -49,11 +50,11 @@ import {
   readIndex,
   recoveriesFolderName,
   schemaChangeFileName,
-  snapshotFolderName,
   UnknownMigrationError,
   writeFiles,
   writeIndex,
 } from "../store/migrations.ts";
+import { isSnapshotPath, readSnapshot } from "../store/snapshots.ts";
 import { draftName } from "./discard-draft.ts";
 import { NoRecoveryError } from "./recovery.ts";
 import {
@@ -116,23 +117,15 @@ export async function unfinalize(
   if (newestRecovery !== undefined) {
     return unfinalizeRecovery(project, options, newest, newestRecovery);
   }
-  const snapshotPrefix = `${snapshotFolderName}/`;
   const files = await readHashedFiles(
     root,
     newest.path,
-    (path) => !isRecoveryPath(path),
+    (path) => !isRecoveryPath(path) && !isSnapshotPath(path),
   );
-  const snapshot = files
-    .filter((file) => file.path.startsWith(snapshotPrefix))
-    .map((file) => ({
-      path: file.path.slice(snapshotPrefix.length),
-      text: file.text,
-    }));
+  const snapshot = (await readSnapshot(root, migrations)).files;
   const draftFiles = files.filter(
     (file) =>
-      !file.path.startsWith(snapshotPrefix) &&
-      file.path !== metadataFileName &&
-      file.path !== handEditReportFileName,
+      file.path !== metadataFileName && file.path !== handEditReportFileName,
   );
   const report = files.find((file) => file.path === handEditReportFileName);
 
