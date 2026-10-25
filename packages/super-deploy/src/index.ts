@@ -264,6 +264,8 @@ export {
 export { InvalidEncodingError } from "./store/hashing.ts";
 export {
   MigrationIntegrityError,
+  MissingMigrationFileError,
+  UnknownMigrationFileError,
   type ValidationProblem,
   type ValidationSeverity,
 } from "./store/integrity.ts";

@@ -1,7 +1,7 @@
 // `validate [--strict] [--allow-draft]`: database-free checks for the
 // pre-commit hook and CI.
-// Errors: the migrations index, folder names and numbering, content hashes
-// and the hash chains (migrations and their Recoveries); rule violations in
+// Errors: the migrations index, folder names and numbering, unknown and
+// missing files in finalized folders, content hashes and the hash chains (migrations and their Recoveries); rule violations in
 // the desired schema, in every finalized migration's and Recovery's
 // deploy-time files and seed data, and in the draft's; a Recovery draft
 // whose schema change is no longer its migration's.

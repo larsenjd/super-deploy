@@ -20,6 +20,8 @@
 //           seed-data.sql           (optional) the Recovery draft's seed data
 //           metadata.json           as for a migration
 //
+// A migration or Recovery folder holds nothing else: the integrity check
+// (store/integrity.ts) refuses any other file and any missing required one.
 // Every file inside a migration folder is read-only. Its content hash
 // (store/hashing.ts) covers every file except those under recoveries/; each
 // Recovery has its own content hash and a chain that starts from its

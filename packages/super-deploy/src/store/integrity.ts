@@ -1,11 +1,21 @@
 // The integrity check of the finalized migrations and their Recoveries:
-// index, folder names, numbering, content hashes, the hash chains and each
-// migration's schema-change.sql. `validate` reports its
-// findings; every command that builds on the migrations (draft, rehearse,
-// finalize) refuses to run while it finds errors.
+// index, folder names, numbering, each folder's files, content hashes and the
+// hash chains. `validate` reports its findings; every command that builds on
+// the migrations (draft, rehearse, finalize) refuses to run while it finds
+// errors.
+//
+// Each migration and Recovery folder holds only the files finalize writes
+// there (migrationFiles, recoveryFiles, built from the store's file-name
+// constants). An entry it can't have (UnknownMigrationFileError) or a file it
+// must have and lacks (MissingMigrationFileError) is found before its content
+// hash is compared, and that hash is then skipped: it covers the whole folder,
+// so it could only say that something changed, not which file. Commands
+// throw the first such error itself (verifiedMigrations), ahead of
+// MigrationIntegrityError; validate lists each one.
 
 import { join } from "node:path";
-import { SuperDeployError } from "../errors.ts";
+import { joined, SuperDeployError } from "../errors.ts";
+import { handEditReportFileName } from "./hand-edit.ts";
 import {
   chainHash,
   InvalidEncodingError,
@@ -14,19 +24,22 @@ import {
 } from "./hashing.ts";
 import { type ProjectPaths, projectRelative } from "./layout.ts";
 import {
-  exists,
+  deployTimeFileKinds,
   type FinalizedMigration,
   type FinalizedRecovery,
   type IndexEntry,
   indexFileName,
   isRecoveryPath,
+  metadataFileName,
   parseMigrationFolderName,
   parseRecoveryFolderName,
   readFolder,
   readHashedFiles,
   readIndex,
   recoveriesFolderName,
+  recoveryFileNames,
   schemaChangeFileName,
+  snapshotDiffFileName,
 } from "./migrations.ts";
 
 export interface IntegrityReport {
@@ -34,6 +47,8 @@ export interface IntegrityReport {
   readonly migrations: readonly FinalizedMigration[];
   /** Errors only. */
   readonly problems: readonly ValidationProblem[];
+  /** The unknown and missing files among `problems`, as errors. */
+  readonly fileErrors: readonly MigrationFileError[];
 }
 
 export async function checkMigrations(
@@ -41,7 +56,8 @@ export async function checkMigrations(
   paths: ProjectPaths,
 ): Promise<IntegrityReport> {
   const problems: ValidationProblem[] = [];
-  const problem = (code: string, message: string, path?: string) => {
+  const fileErrors: MigrationFileError[] = [];
+  const problem: Problem = (code, message, path) => {
     problems.push({
       severity: "error",
       code,
@@ -49,13 +65,21 @@ export async function checkMigrations(
       ...(path === undefined ? {} : { path }),
     });
   };
+  /** Reports each of a folder's file errors; true if it has none. */
+  const holdsItsFiles = (errors: readonly MigrationFileError[]) => {
+    for (const error of errors) {
+      fileErrors.push(error);
+      problem(error.code, error.message, error.file);
+    }
+    return errors.length === 0;
+  };
   const display = (absolute: string) => projectRelative(root, absolute);
   const indexPath = display(join(paths.migrations, indexFileName));
 
   const index = await readIndex(paths);
   if (!index.ok) {
     problem("index-invalid", `${indexPath} ${index.reason}`, indexPath);
-    return { migrations: [], problems };
+    return { migrations: [], problems, fileErrors };
   }
 
   // What is on disk.
@@ -99,7 +123,7 @@ export async function checkMigrations(
         `${indexPath} entry ${expectedNumber} names ${JSON.stringify(entry.folder)}, expected migration ${expectedNumber}`,
         indexPath,
       );
-      return { migrations, problems };
+      return { migrations, problems, fileErrors };
     }
     const path = join(paths.migrations, entry.folder);
     const recoveries: FinalizedRecovery[] = [];
@@ -140,27 +164,27 @@ export async function checkMigrations(
       );
       continue;
     }
-    await checkContentHash(
-      display(path),
-      indexPath,
-      problem,
-      async () =>
-        migrationContentHash(
-          entry.folder,
-          await readHashedFiles(root, path, (file) => !isRecoveryPath(file)),
-        ) === entry.contentHash,
-    );
-    // Every migration has a schema change, even an empty one: finalize
-    // always writes it. A Recovery never holds one (it is its migration's).
-    if (!(await exists(join(path, schemaChangeFileName)))) {
-      problem(
-        "schema-change-missing",
-        `${display(path)} has no ${schemaChangeFileName}; every migration has one, as finalize writes it`,
+    if (holdsItsFiles(await migrationFileErrors(root, path, migrationFiles))) {
+      await checkContentHash(
         display(path),
+        indexPath,
+        problem,
+        async () =>
+          migrationContentHash(
+            entry.folder,
+            await readHashedFiles(root, path, (file) => !isRecoveryPath(file)),
+          ) === entry.contentHash,
       );
     }
     recoveries.push(
-      ...(await checkRecoveries(root, entry, path, indexPath, problem)),
+      ...(await checkRecoveries(
+        root,
+        entry,
+        path,
+        indexPath,
+        problem,
+        holdsItsFiles,
+      )),
     );
   }
 
@@ -172,7 +196,80 @@ export async function checkMigrations(
       path,
     );
   }
-  return { migrations, problems };
+  return { migrations, problems, fileErrors };
+}
+
+type Problem = (code: string, message: string, path?: string) => void;
+
+/** The files a finalized folder of one kind holds: every file it can have, and those it must. */
+interface FolderFiles {
+  /** `migration` or `Recovery`, for messages. */
+  readonly kind: string;
+  readonly allowed: readonly string[];
+  readonly required: readonly string[];
+  /** A subfolder it can have, checked on its own (a migration's Recoveries). */
+  readonly subfolder?: string;
+}
+
+/**
+ * A migration's files: those finalize writes. Every deploy-time file and
+ * seed data come from the store's own list, so a new deploy-time file kind
+ * is allowed here with no second list.
+ */
+const migrationFiles: FolderFiles = {
+  kind: "migration",
+  allowed: [
+    ...Object.keys(deployTimeFileKinds),
+    metadataFileName,
+    snapshotDiffFileName,
+    handEditReportFileName,
+  ],
+  required: [schemaChangeFileName, metadataFileName, snapshotDiffFileName],
+  subfolder: recoveriesFolderName,
+};
+
+/** A Recovery's files: the ones it replaces, and its metadata. */
+const recoveryFiles: FolderFiles = {
+  kind: "Recovery",
+  allowed: [...recoveryFileNames, metadataFileName],
+  required: [metadataFileName],
+};
+
+/**
+ * Each entry of a finalized `folder` it can't have (dotfiles, stray notes and
+ * folders such as a 0.3.0 snapshot folder included), then each file it must
+ * have and doesn't, in name order. Checked before the content hash, which
+ * covers the whole folder and so can't say which file is wrong.
+ */
+async function migrationFileErrors(
+  root: string,
+  folder: string,
+  files: FolderFiles,
+): Promise<MigrationFileError[]> {
+  const entries = (await readFolder(folder)).sort((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+  );
+  const shown = (name: string) => projectRelative(root, join(folder, name));
+  const holds = [
+    ...files.allowed,
+    ...(files.subfolder === undefined ? [] : [`its ${files.subfolder} folder`]),
+  ];
+  const errors: MigrationFileError[] = entries
+    .filter((entry) =>
+      entry.isDirectory()
+        ? entry.name !== files.subfolder
+        : !(entry.isFile() && files.allowed.includes(entry.name)),
+    )
+    .map(
+      (entry) =>
+        new UnknownMigrationFileError(shown(entry.name), files.kind, holds),
+    );
+  for (const name of files.required) {
+    if (!entries.some((entry) => entry.isFile() && entry.name === name)) {
+      errors.push(new MissingMigrationFileError(shown(name), files.kind));
+    }
+  }
+  return errors;
 }
 
 /**
@@ -185,7 +282,7 @@ export async function checkMigrations(
 async function checkContentHash(
   shownPath: string,
   indexPath: string,
-  problem: (code: string, message: string, path?: string) => void,
+  problem: Problem,
   matches: () => Promise<boolean>,
 ): Promise<void> {
   try {
@@ -214,7 +311,8 @@ async function checkRecoveries(
   entry: IndexEntry,
   migrationPath: string,
   indexPath: string,
-  problem: (code: string, message: string, path?: string) => void,
+  problem: Problem,
+  holdsItsFiles: (errors: readonly MigrationFileError[]) => boolean,
 ): Promise<FinalizedRecovery[]> {
   const display = (absolute: string) => projectRelative(root, absolute);
   const folder = join(migrationPath, recoveriesFolderName);
@@ -274,17 +372,19 @@ async function checkRecoveries(
       );
       continue;
     }
-    await checkContentHash(
-      display(path),
-      indexPath,
-      problem,
-      async () =>
-        recoveryContentHash(
-          entry.folder,
-          recovery.folder,
-          await readHashedFiles(root, path),
-        ) === recovery.contentHash,
-    );
+    if (holdsItsFiles(await migrationFileErrors(root, path, recoveryFiles))) {
+      await checkContentHash(
+        display(path),
+        indexPath,
+        problem,
+        async () =>
+          recoveryContentHash(
+            entry.folder,
+            recovery.folder,
+            await readHashedFiles(root, path),
+          ) === recovery.contentHash,
+      );
+    }
   }
   for (const name of [...onDisk].sort()) {
     const path = display(join(folder, name));
@@ -297,12 +397,20 @@ async function checkRecoveries(
   return recoveries;
 }
 
-/** The finalized migrations, or MigrationIntegrityError if the check finds anything wrong. */
+/**
+ * The finalized migrations. If the check finds anything wrong, throws the
+ * first unknown or missing file (UnknownMigrationFileError,
+ * MissingMigrationFileError), else MigrationIntegrityError.
+ */
 export async function verifiedMigrations(
   root: string,
   paths: ProjectPaths,
 ): Promise<readonly FinalizedMigration[]> {
   const report = await checkMigrations(root, paths);
+  const [fileError] = report.fileErrors;
+  if (fileError !== undefined) {
+    throw fileError;
+  }
   if (report.problems.length > 0) {
     throw new MigrationIntegrityError(report.problems);
   }
@@ -323,8 +431,8 @@ export interface ValidationProblem {
    * Stable identifier: `index-invalid`, `invalid-folder-name`,
    * `unexpected-entry`, `migration-missing`, `migration-unindexed`,
    * `migration-renamed`, `numbering-gap`, `invalid-encoding`,
-   * `content-hash-mismatch`, `chain-hash-mismatch`, `schema-change-missing`,
-   * `sql-rule-violation`,
+   * `unknown-migration-file`, `missing-migration-file`,
+   * `content-hash-mismatch`, `chain-hash-mismatch`, `sql-rule-violation`,
    * `recovery-schema-change-edited`, `unknown-migration` (errors);
    * `unfinalized-draft`, `unknown-draft-file`, `undrafted-changes`,
    * `unqualified-routine-names` (warnings); `hand-edited-schema-change`
@@ -358,3 +466,36 @@ export class MigrationIntegrityError extends SuperDeployError {
     this.problems = problems;
   }
 }
+
+/** A finalized migration or Recovery folder holds an entry it can't have. */
+export class UnknownMigrationFileError extends SuperDeployError {
+  readonly code = "unknown-migration-file";
+  /** Project-relative path with forward slashes. */
+  readonly file: string;
+
+  constructor(file: string, kind: string, holds: readonly string[]) {
+    super(
+      `${file} does not belong in a finalized ${kind}, which holds only ${joined(holds)}: move it out of the folder, then run validate`,
+    );
+    this.file = file;
+  }
+}
+
+/** A finalized migration or Recovery folder lacks a file it must have. */
+export class MissingMigrationFileError extends SuperDeployError {
+  readonly code = "missing-migration-file";
+  /** Project-relative path with forward slashes. */
+  readonly file: string;
+
+  constructor(file: string, kind: string) {
+    super(
+      `${file} is missing; every ${kind} has one, as finalize writes it: restore it from Git (\`git checkout HEAD -- ${file}\`), then run validate`,
+    );
+    this.file = file;
+  }
+}
+
+/** An entry of a finalized folder that is unknown or missing. */
+export type MigrationFileError =
+  | UnknownMigrationFileError
+  | MissingMigrationFileError;

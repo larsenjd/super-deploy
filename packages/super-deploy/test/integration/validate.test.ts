@@ -5,6 +5,11 @@ import {
   draft,
   finalize,
   loadProject,
+  MissingMigrationFileError,
+  recovery,
+  restoreSchema,
+  UnknownMigrationFileError,
+  unfinalize,
   ValidationFailedError,
   validate,
 } from "superdeploy";
@@ -130,19 +135,15 @@ describe("validate", () => {
     expect(error.problems).toEqual([changedAfterFinalizing]);
   });
 
-  test("fails the same way when a file was added to a finalized migration or its desired-schema snapshot was edited", async () => {
-    const added = await finalizedProject();
-    await chmod(added.dir.path(folder), 0o755);
-    await added.dir.write(`${folder}/notes.txt`, "why we did this\n");
-    const edited = await finalizedProject();
-    await edited.tamper(`${folder}/desired-schema.diff`, (text) =>
+  test("fails the same way when its desired-schema snapshot was edited", async () => {
+    const { project, tamper } = await finalizedProject();
+    await tamper(`${folder}/desired-schema.diff`, (text) =>
       text.replace("bigint", "integer"),
     );
 
-    for (const { project } of [added, edited]) {
-      const error = await validationError(project);
-      expect(error.problems).toEqual([changedAfterFinalizing]);
-    }
+    const error = await validationError(project);
+
+    expect(error.problems).toEqual([changedAfterFinalizing]);
   });
 
   test("a change only in line endings passes", async () => {
@@ -199,7 +200,6 @@ describe("validate", () => {
 
   test("fails when a migration has no schema-change.sql, even with its index entry rehashed to match", async () => {
     const { dir, project } = await finalizedProject();
-    await chmod(dir.path(folder), 0o755);
     await rm(dir.path(`${folder}/schema-change.sql`));
     await rehashMigration(dir, "00001-add-customers");
 
@@ -208,9 +208,9 @@ describe("validate", () => {
     expect(error.problems).toEqual([
       {
         severity: "error",
-        code: "schema-change-missing",
-        message: `${folder} has no schema-change.sql; every migration has one, as finalize writes it`,
-        path: folder,
+        code: "missing-migration-file",
+        message: `${folder}/schema-change.sql is missing; every migration has one, as finalize writes it: restore it from Git (\`git checkout HEAD -- ${folder}/schema-change.sql\`), then run validate`,
+        path: `${folder}/schema-change.sql`,
       },
     ]);
   });
@@ -239,6 +239,141 @@ describe("validate", () => {
     expect(report.readOnlyRestored).toEqual([`${folder}/schema-change.sql`]);
     const { mode } = await stat(dir.path(`${folder}/schema-change.sql`));
     expect(mode & 0o222).toBe(0);
+  });
+});
+
+/** finalizedProject with Recovery 1 of migration 1, which gains a post-migration script. */
+async function recoveredProject() {
+  const setup = await finalizedProject();
+  await recovery(setup.project, { migration: 1 });
+  await setup.dir.write(
+    "data-model/draft/post-migration.sql",
+    "update customers set name = trim(name);\n",
+  );
+  await finalize(setup.project);
+  return setup;
+}
+const recovery1 = `${folder}/recoveries/recovery-1`;
+
+describe("a file a finalized folder can't have", () => {
+  test("a .DS_Store is refused by name", async () => {
+    const { dir, project } = await finalizedProject();
+    await dir.write(`${folder}/.DS_Store`, "");
+
+    const error = await draft(project, { name: "Add orders" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(UnknownMigrationFileError);
+    expect(error).toMatchObject({
+      code: "unknown-migration-file",
+      file: `${folder}/.DS_Store`,
+      message: expect.stringMatching(
+        new RegExp(
+          `^${folder}/\\.DS_Store does not belong in a finalized migration, which holds only .*metadata\\.json`,
+        ),
+      ),
+    });
+  });
+
+  test("validate names every one, and compares no hash for their folder", async () => {
+    const { dir, project } = await finalizedProject();
+    await dir.write(`${folder}/notes.txt`, "why we did this\n");
+    await dir.write(`${folder}/.DS_Store`, "\u0000\u0001binary");
+
+    const { problems } = await validationError(project);
+
+    expect(problems).toEqual([
+      {
+        severity: "error",
+        code: "unknown-migration-file",
+        message: expect.stringContaining(`${folder}/.DS_Store`),
+        path: `${folder}/.DS_Store`,
+      },
+      {
+        severity: "error",
+        code: "unknown-migration-file",
+        message: expect.stringContaining(`${folder}/notes.txt`),
+        path: `${folder}/notes.txt`,
+      },
+    ]);
+  });
+
+  test("a snapshot folder from 0.3.0 is refused, never read as an empty snapshot", async () => {
+    const { dir, project } = await finalizedProject();
+    await dir.write(`${folder}/desired-schema/customers.sql`, customers);
+
+    await expect(restoreSchema(project)).rejects.toMatchObject({
+      constructor: UnknownMigrationFileError,
+      file: `${folder}/desired-schema`,
+    });
+  });
+
+  test("a stray file in a Recovery is refused by name", async () => {
+    const { dir, project } = await recoveredProject();
+    await dir.write(`${recovery1}/schema-change.sql`, "select 1;\n");
+
+    await expect(unfinalize(project)).rejects.toMatchObject({
+      constructor: UnknownMigrationFileError,
+      file: `${recovery1}/schema-change.sql`,
+      message: expect.stringContaining(
+        "does not belong in a finalized Recovery, which holds only pre-migration.sql, post-migration.sql, seed-data.sql and metadata.json",
+      ),
+    });
+  });
+});
+
+describe("a file a finalized folder must have", () => {
+  test.each(["schema-change.sql", "metadata.json", "desired-schema.diff"])(
+    "a missing %s is refused by name",
+    async (file) => {
+      const { dir, project } = await finalizedProject();
+      await rm(dir.path(`${folder}/${file}`));
+
+      await expect(
+        draft(project, { name: "Add orders" }),
+      ).rejects.toMatchObject({
+        constructor: MissingMigrationFileError,
+        code: "missing-migration-file",
+        file: `${folder}/${file}`,
+        message: expect.stringContaining(
+          `restore it from Git (\`git checkout HEAD -- ${folder}/${file}\`)`,
+        ),
+      });
+      expect((await validationError(project)).problems).toEqual([
+        {
+          severity: "error",
+          code: "missing-migration-file",
+          message: expect.stringContaining(`${folder}/${file} is missing`),
+          path: `${folder}/${file}`,
+        },
+      ]);
+    },
+  );
+
+  test("a Recovery's missing metadata.json is refused by name", async () => {
+    const { dir, project } = await recoveredProject();
+    await rm(dir.path(`${recovery1}/metadata.json`));
+
+    expect((await validationError(project)).problems).toEqual([
+      {
+        severity: "error",
+        code: "missing-migration-file",
+        message: expect.stringContaining(
+          `${recovery1}/metadata.json is missing; every Recovery has one`,
+        ),
+        path: `${recovery1}/metadata.json`,
+      },
+    ]);
+  });
+
+  test("a Recovery needs none of its scripts or seed data", async () => {
+    const { dir, project } = await recoveredProject();
+    await rm(dir.path(`${recovery1}/post-migration.sql`));
+
+    expect((await validationError(project)).problems).toMatchObject([
+      { code: "content-hash-mismatch", path: recovery1 },
+    ]);
   });
 });
 

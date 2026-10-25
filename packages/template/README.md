@@ -1129,13 +1129,24 @@ its original folder and `data-model/migrations/index.json` from Git, then
 run `pnpm exec super-deploy validate` to make the restored files read-only
 again.
 
-If a finalized migration (or Recovery) was edited, had a file added, or had
+If a finalized migration (or Recovery) was edited, or had
 its `desired-schema/` snapshot changed, `validate`, `status` and `deploy`
 refuse it as `changed after it was finalized`. Restore its folder from Git
-(`git checkout HEAD -- data-model/migrations/00002-add-orders`, and delete
-any file you added to it), then run `pnpm exec super-deploy validate`, which
+(`git checkout HEAD -- data-model/migrations/00002-add-orders`), then run
+`pnpm exec super-deploy validate`, which
 makes it read-only again. To change what the migration does, finalize a new
 migration, or a Recovery for the targets where it failed.
+
+Before comparing any hash, every command that checks the finalized
+migrations refuses a file in a migration or Recovery folder that it can't
+have, such as a `.DS_Store`, a note, or a `desired-schema/` folder from
+super-deploy 0.3.0 and earlier, as `unknown-migration-file`
+(`UnknownMigrationFileError`). It refuses a missing file that the folder
+must have as `missing-migration-file` (`MissingMigrationFileError`): a
+migration's `schema-change.sql`, `metadata.json` or `desired-schema.diff`,
+or a Recovery's `metadata.json`. Each names the file: move an unknown file
+out of the folder, or restore a missing one from Git, then run
+`pnpm exec super-deploy validate`.
 
 ## Disposable targets and the guarded commands
 
