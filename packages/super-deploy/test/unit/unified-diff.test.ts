@@ -27,11 +27,16 @@ function numbered(count: number): string {
   return Array.from({ length: count }, (_, index) => `${index + 1}\n`).join("");
 }
 
-/** The edge cases a desired schema's history can hold, from one set of files to the next. */
+/**
+ * The edge cases a desired schema's history can hold, from one set of files
+ * to the next. `before` is a snapshot, so its line endings are normalised;
+ * `rebuilt` is `after` as a snapshot holds it, when that differs.
+ */
 const histories: readonly {
   readonly name: string;
   readonly before: Files;
   readonly after: Files;
+  readonly rebuilt?: Files;
 }[] = [
   {
     name: "a trailing newline removed",
@@ -92,6 +97,28 @@ const histories: readonly {
       "with space.sql": "c\n",
       "tab\there.sql": "d\n",
     },
+  },
+  {
+    name: "a carriage return before a CRLF line ending",
+    before: { "a.sql": "one\ntwo\n" },
+    after: { "a.sql": "one\r\r\n2\r\r\nthree\r\r\n" },
+    rebuilt: { "a.sql": "one\n2\nthree\n" },
+  },
+  {
+    name: "a carriage return inside a line",
+    before: { "a.sql": "one\n" },
+    after: { "a.sql": "one\nt\rwo\n" },
+  },
+  {
+    name: "a carriage return at the end of a file",
+    before: { "a.sql": "one\n" },
+    after: { "a.sql": "one\ntwo\r" },
+  },
+  {
+    name: "LF and CRLF lines mixed",
+    before: { "a.sql": "one\ntwo\n" },
+    after: { "a.sql": "one\r\ntwo\n3\r\nfour\n" },
+    rebuilt: { "a.sql": "one\ntwo\n3\nfour\n" },
   },
 ];
 
@@ -190,9 +217,10 @@ describe("filesDiff", () => {
 
 describe("applyFilesDiff", () => {
   test.each(histories)(
-    "gives back the files after $name",
-    ({ before, after }) => {
-      expect(roundTrip(before, after)).toEqual(after);
+    "gives back the files after $name, line endings aside",
+    ({ before, after, rebuilt = after }) => {
+      expect(roundTrip(before, after)).toEqual(rebuilt);
+      expect(filesDiff(asFiles(rebuilt), asFiles(after))).toBe("");
     },
   );
 
@@ -203,6 +231,15 @@ describe("applyFilesDiff", () => {
         { "a.sql": "one\r\n2\r\n", "b.sql": "b\r\n" },
       ),
     ).toEqual({ "a.sql": "one\n2\n", "b.sql": "b\n" });
+  });
+
+  test("reads a diff a checkout converted to CRLF line endings as it was written", () => {
+    const before = asFiles({ "a.sql": "one\ntwo\n" });
+    const diff = filesDiff(before, asFiles({ "a.sql": "one\n2" }));
+
+    expect(applyFilesDiff(diff.replaceAll("\n", "\r\n"), before)).toEqual(
+      asFiles({ "a.sql": "one\n2" }),
+    );
   });
 
   const twelve = numbered(12);
@@ -324,9 +361,9 @@ describe.skipIf(!gitInstalled)("git apply", () => {
 
   test.each(onThisDisk)(
     "gives the same files after $name",
-    async ({ before, after }) => {
+    async ({ before, after, rebuilt = after }) => {
       const diff = filesDiff(asFiles(before), asFiles(after));
-      expect(await gitApply(before, diff)).toEqual(after);
+      expect(await gitApply(before, diff)).toEqual(rebuilt);
     },
   );
 });

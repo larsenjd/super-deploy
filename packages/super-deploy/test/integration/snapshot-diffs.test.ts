@@ -249,6 +249,34 @@ describe("a history of migrations stored as diffs", () => {
     ]);
   });
 
+  test("a file with a carriage return before a CRLF line ending finalizes, comes back as the snapshot holds it, and finalizes again identically", async () => {
+    const { dir, project } = await deployProject(server, {});
+    await setDesiredSchema(dir.root, {
+      "customers.sql": customers.replaceAll("\n", "\r\r\n"),
+    });
+    await draft(project, { name: "add customers" });
+    const { folder } = await finalize(project);
+    const index = await dir.read(`${migrations}/index.json`);
+    const diff = await dir.read(`${migrations}/${folder}/desired-schema.diff`);
+
+    expect(await gitApply({}, diff)).toEqual({ "customers.sql": customers });
+    await setDesiredSchema(dir.root, scrambled);
+    await unfinalize(project, { acknowledgeOverwrite: true });
+    expect(await readFiles(dir.path(desiredSchema))).toEqual({
+      "customers.sql": customers,
+    });
+    await finalize(project);
+    expect(await dir.read(`${migrations}/index.json`)).toBe(index);
+    expect(await dir.read(`${migrations}/${folder}/desired-schema.diff`)).toBe(
+      diff,
+    );
+    await setDesiredSchema(dir.root, scrambled);
+    await restoreSchema(project, { acknowledgeOverwrite: true });
+    expect(await readFiles(dir.path(desiredSchema))).toEqual({
+      "customers.sql": customers,
+    });
+  });
+
   test("deploy rehearses the history against the newest snapshot and deploys it", async () => {
     const { project } = await history();
 

@@ -50,18 +50,20 @@ export async function readFiles(folder: string): Promise<Files> {
 /**
  * The files `git apply` makes of `files` with `diff` (which may be empty),
  * in a temp folder deleted when the test finishes. Throws with git's message
- * unless git applies it cleanly, with nothing on stderr.
+ * unless git applies it cleanly, with nothing on stderr. Whitespace in the
+ * files' lines, such as a carriage return git counts as trailing, is theirs
+ * to hold, not an error in the diff, so git doesn't warn about it.
  */
 export async function gitApply(files: Files, diff: string): Promise<Files> {
   const dir = await mkdtemp(join(tmpdir(), "super-deploy-git-apply-"));
   onTestFinished(() => rm(dir, { recursive: true, force: true }));
   await writeFiles(dir, files);
   // Outside a repository, git apply patches the files in its working directory.
-  const applied = spawnSync("git", ["apply", "--allow-empty", "-"], {
-    cwd: dir,
-    input: diff,
-    encoding: "utf8",
-  });
+  const applied = spawnSync(
+    "git",
+    ["apply", "--allow-empty", "--whitespace=nowarn", "-"],
+    { cwd: dir, input: diff, encoding: "utf8" },
+  );
   if (applied.status !== 0 || applied.stderr !== "") {
     throw new Error(
       `git apply failed with status ${applied.status}: ${applied.stderr}`,

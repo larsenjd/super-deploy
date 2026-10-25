@@ -272,7 +272,9 @@ function gitPath(name: string): string {
  * The files from applying `diff`, a filesDiff, to `files`, strictly: every
  * context and removed line must be where its hunk says, with no fuzz and no
  * offset search; an added file must not be there yet, and a deleted file must
- * be removed whole. Line endings are normalised first. Sorted by path.
+ * be removed whole. The files' line endings are normalised first, so
+ * a snapshot's files, which are normalised already, are taken as they are,
+ * and so is the diff (asWritten). Sorted by path.
  * Throws FilesDiffDoesNotApplyError naming the file whose section failed.
  */
 export function applyFilesDiff(
@@ -280,7 +282,7 @@ export function applyFilesDiff(
   files: readonly HashedFile[],
 ): HashedFile[] {
   const result = normalised(files);
-  for (const section of fileSections(normaliseLineEndings(diff))) {
+  for (const section of fileSections(asWritten(diff))) {
     const doesNotApply = () => new FilesDiffDoesNotApplyError(section.path);
     const before = result.get(section.path);
     if ((before === undefined) !== (section.change === "added")) {
@@ -299,6 +301,18 @@ export function applyFilesDiff(
   return [...result]
     .sort(([a], [b]) => comparePaths(a, b))
     .map(([path, text]) => ({ path, text }));
+}
+
+/**
+ * `diff` with the line endings filesDiff wrote. Its lines are read as they
+ * are, carriage returns and all, since the files it was written from were
+ * normalised already. Only a checkout that converted it to CRLF is undone
+ * (with core.autocrlf, git converts every line of a file without carriage
+ * returns and none of one with any): its first line, a section header, never
+ * ends with a carriage return as written.
+ */
+function asWritten(diff: string): string {
+  return /^[^\n]*\r\n/.test(diff) ? normaliseLineEndings(diff) : diff;
 }
 
 interface FileSection {
