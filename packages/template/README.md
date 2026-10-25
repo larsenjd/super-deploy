@@ -759,6 +759,15 @@ lists such migrations as a notice, which `--strict` doesn't fail on.
 the draft folder, such as a misnamed `post-migrate.sql`, naming it and the
 files a draft holds; `finalize` still copies it into the migration.
 
+`finalize` also writes `desired-schema.diff` into the migration: its
+snapshot of the desired schema, stored as the change from the previous
+migration's snapshot in the format `git diff` writes, with paths relative to
+`data-model/desired-schema/`. Migration 1's adds every file, and a migration
+that didn't change the desired schema has an empty one, so a migration's
+pull request shows what it changed in the desired schema as one diff, which
+GitHub and editors highlight. super-deploy rebuilds a migration's snapshot
+by applying the diffs in order, from migration 1's.
+
 Finalized migrations are read-only and hashed: never edit them.
 `super-deploy validate` checks their hashes, and `pnpm precommit` runs
 Biome, the type checker and `super-deploy validate --strict --allow-draft`
@@ -1100,13 +1109,16 @@ Three commands throw unfinished work away:
 - `discard-draft` deletes the draft (`data-model/draft/`). The desired
   schema stays as it is, so the next `draft` starts again from it.
 - `restore-schema` resets the desired schema (its `.sql` files) to the
-  newest migration's snapshot, and deletes any draft.
+  newest migration's snapshot, rebuilt from the `desired-schema.diff` files,
+  and deletes any draft. Your files come back with their names, folders,
+  comments and formatting; the ones it rewrites get LF line endings.
 - `unfinalize` moves the newest migration back into the draft, writable
-  again, and resets the desired schema to the snapshot frozen with it, so
-  finalizing again reproduces the migration. When the newest migration has
-  Recoveries, it moves the newest Recovery back into a Recovery draft
-  instead, leaving the desired schema alone. `--recovery-of N` does that for
-  migration N's newest Recovery.
+  again (all but its `metadata.json` and `desired-schema.diff`), and resets
+  the desired schema to the migration's snapshot, so finalizing again
+  reproduces the migration, `desired-schema.diff` included. When the newest
+  migration has Recoveries, it moves the newest Recovery back into a
+  Recovery draft instead, leaving the desired schema alone. `--recovery-of
+  N` does that for migration N's newest Recovery.
 
 Each asks first in a terminal when it would delete or overwrite something:
 a draft, or desired-schema files that differ from the snapshot being
@@ -1129,12 +1141,12 @@ its original folder and `data-model/migrations/index.json` from Git, then
 run `pnpm exec super-deploy validate` to make the restored files read-only
 again.
 
-If a finalized migration (or Recovery) was edited, or had
-its `desired-schema/` snapshot changed, `validate`, `status` and `deploy`
-refuse it as `changed after it was finalized`. Restore its folder from Git
+If a finalized migration (or Recovery) was edited, or had its
+`desired-schema.diff` changed, `validate`, `status` and `deploy` refuse it
+as `changed after it was finalized`. Restore its folder from Git
 (`git checkout HEAD -- data-model/migrations/00002-add-orders`), then run
-`pnpm exec super-deploy validate`, which
-makes it read-only again. To change what the migration does, finalize a new
+`pnpm exec super-deploy validate`, which makes it read-only again. To change
+what the migration does, finalize a new
 migration, or a Recovery for the targets where it failed.
 
 Before comparing any hash, every command that checks the finalized
