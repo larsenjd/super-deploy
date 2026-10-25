@@ -5,10 +5,12 @@ import {
   deploy,
   draft,
   finalize,
+  recovery,
   rehearse,
   SqlFileFailedError,
   SqlRuleViolationError,
   type UnknownDraftFile,
+  UnknownDraftFileError,
 } from "superdeploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { deployProject } from "../support/deploy.ts";
@@ -751,12 +753,25 @@ alter table customers alter column phone set not null;
     });
   });
 
-  test("a misnamed script never runs: draft, rehearse and finalize warn about it, and finalize still copies it", async () => {
+  test("a misnamed script never runs: draft and rehearse warn about it, and finalize refuses it before rehearsing", async () => {
     const { dir, project } = await deployProject(server, {
       "customers.sql": customers,
     });
     await draft(project, { name: "add customers" });
     await dir.write("data-model/draft/post-migrate.sql", "select 1/0;\n");
+    const reported = unknownFilesReported();
+
+    await draft(project, reported.option("draft"));
+    // Fails the rehearsal: it runs before the schema change creates customers.
+    await dir.write(
+      "data-model/draft/pre-migration.sql",
+      "update customers set name = name;\n",
+    );
+    await expect(
+      rehearse(project, reported.option("rehearse")),
+    ).rejects.toThrow(SqlFileFailedError);
+    const error = await finalize(project).catch((e: unknown) => e);
+
     const unknownFiles = [
       {
         file: "data-model/draft/post-migrate.sql",
@@ -765,26 +780,34 @@ alter table customers alter column phone set not null;
         ),
       },
     ];
-
-    const reported = unknownFilesReported();
-
-    await draft(project, reported.option("draft"));
-    await rehearse(project, reported.option("rehearse"));
-    await finalize(project, reported.option("finalize"));
-
     expect(reported.by).toEqual({
       draft: unknownFiles,
       rehearse: unknownFiles,
-      finalize: unknownFiles,
     });
-    expect(
-      await dir.read(
-        "data-model/migrations/00001-add-customers/post-migrate.sql",
-      ),
-    ).toBe("select 1/0;\n");
+    expect(error).toBeInstanceOf(UnknownDraftFileError);
+    expect(error).toMatchObject({
+      code: "unknown-draft-file",
+      file: "data-model/draft/post-migrate.sql",
+      message: expect.stringContaining("data-model/draft/post-migrate.sql"),
+    });
+    expect(dir.exists("data-model/migrations")).toBe(false);
   });
 
-  test("a draft holding only a draft's files warns about none", async () => {
+  test("finalize refuses a file a Recovery draft doesn't hold, and writes no Recovery", async () => {
+    const { dir, project } = await withFirstMigration();
+    await recovery(project, { migration: 1 });
+    await dir.write("data-model/draft/notes.md", "why the backfill\n");
+
+    await expect(finalize(project)).rejects.toMatchObject({
+      constructor: UnknownDraftFileError,
+      file: "data-model/draft/notes.md",
+    });
+    expect(
+      dir.exists("data-model/migrations/00001-add-customers/recoveries"),
+    ).toBe(false);
+  });
+
+  test("a draft holding only a draft's files warns about none, and finalizes", async () => {
     const { dir, project } = await withFirstMigration();
     await dir.write(
       "data-model/desired-schema/customers.sql",
@@ -808,9 +831,9 @@ alter table customers alter column phone set not null;
 
     await draft(project, reported.option("draft"));
     await rehearse(project, reported.option("rehearse"));
-    await finalize(project, reported.option("finalize"));
+    await finalize(project);
 
-    expect(reported.by).toEqual({ draft: [], rehearse: [], finalize: [] });
+    expect(reported.by).toEqual({ draft: [], rehearse: [] });
   });
 
   test("draft refuses DDL in a post-migration script before running anything", async () => {

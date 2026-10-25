@@ -561,7 +561,6 @@ const finalizeCommand: CommandDefinition = {
       finalize(project, {
         acknowledgeDestructive: values["acknowledge-destructive"] === true,
         ...(confirm === undefined ? {} : { confirm }),
-        ...warnUnknownFiles(context),
       }),
     );
     if (result === undefined) {

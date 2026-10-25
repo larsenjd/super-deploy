@@ -16,12 +16,16 @@
 // unchanged, and the migration's own hashed file is never touched.
 //
 // A draft holds only draftFileNames. Anything else in its folder (a misnamed
-// script such as `post-migrate.sql`, or notes) never runs, yet finalize
-// copies it into the migration, so `draft`, `rehearse`, `finalize` and
-// `validate` warn about each one (unknownDraftFiles) and carry on: the
-// maintainer chose a warning over a refusal (QA 44). The commands that
-// rehearse report them through `onUnknownFile` before any check, rehearsal or
-// question: a misnamed backfill is often why the rehearsal then fails.
+// script such as `post-migrate.sql`, or notes) never runs. `draft`,
+// `rehearse` and `validate` warn about each one (unknownDraftFiles) and carry
+// on: the maintainer chose a warning over a refusal while the draft is being
+// written (QA 44). `draft` and `rehearse` report them through
+// `onUnknownFile` before any check or rehearsal: a misnamed backfill is often
+// why the rehearsal then fails. `finalize` refuses the first one
+// (UnknownDraftFileError, refuseUnknownDraftFiles) before anything else,
+// since a finalized migration or Recovery can't hold it (store/integrity.ts).
+// A Recovery draft holds the same names; finalize copies only its scripts and
+// seed data.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -151,6 +155,17 @@ export async function unknownDraftFiles(
     });
 }
 
+/** UnknownDraftFileError for the first of unknownDraftFiles, if any. */
+export async function refuseUnknownDraftFiles(
+  root: string,
+  paths: ProjectPaths,
+): Promise<void> {
+  const [unknown] = await unknownDraftFiles(root, paths);
+  if (unknown !== undefined) {
+    throw new UnknownDraftFileError(unknown);
+  }
+}
+
 export interface DraftMetadata {
   readonly name: string;
   /** store/hashing.ts desiredSchemaHash() of the desired schema `draft` last generated from. */
@@ -259,5 +274,19 @@ export class InvalidDraftError extends SuperDeployError {
   constructor(file: string, problem: string, options?: ErrorOptions) {
     super(`${file} ${problem}`, options);
     this.file = file;
+  }
+}
+
+/** finalize found a file in the draft folder that a draft doesn't hold. */
+export class UnknownDraftFileError extends SuperDeployError {
+  readonly code = "unknown-draft-file";
+  /** Project-relative path with forward slashes. */
+  readonly file: string;
+
+  constructor(unknown: UnknownDraftFile) {
+    super(
+      `${unknown.message}: a finalized migration can't hold it, so rename it to one of those or move it out of the draft folder, then finalize again`,
+    );
+    this.file = unknown.file;
   }
 }

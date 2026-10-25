@@ -162,7 +162,7 @@ describe("validate", () => {
     });
   });
 
-  test("a misnamed script in the draft: draft, rehearse and finalize warn on stderr and exit 0; validate --strict --allow-draft exits 1", async () => {
+  test("a misnamed script in the draft: draft and rehearse warn on stderr and exit 0; validate --strict --allow-draft and finalize exit 1", async () => {
     const dir = await draftedProject();
     await dir.write("data-model/draft/post-migrate.sql", "select 1/0;\n");
     const warning =
@@ -176,15 +176,21 @@ describe("validate", () => {
 
     expect(validated.exitCode).toBe(1);
     expect(validated.stderr).toMatch(warning);
-    for (const result of [drafted, rehearsed, finalized]) {
+    for (const result of [drafted, rehearsed]) {
       expect(result.exitCode).toBe(0);
       expect(result.stderr.trimEnd().split("\n")).toEqual([
         expect.stringMatching(warning),
       ]);
     }
+    expect(finalized.exitCode).toBe(1);
+    expect(finalized.stderr.trimEnd().split("\n")).toEqual([
+      expect.stringMatching(
+        /^Error: data-model\/draft\/post-migrate\.sql is not one of a draft's files/,
+      ),
+    ]);
   });
 
-  test("a misnamed script in a draft that then fails: draft, rehearse and finalize warn about it first", async () => {
+  test("a misnamed script in a draft that then fails: draft and rehearse warn about it first", async () => {
     const dir = await draftedProject();
     await dir.write("data-model/draft/post-migrate.sql", "select 1;\n");
     // Runs before the schema change that creates customers.
@@ -196,7 +202,7 @@ describe("validate", () => {
       /^warning: data-model\/draft\/post-migrate\.sql is not one of a draft's files, so it will not run \(/;
     const run = (...args: string[]) => runCli(args, { cwd: dir.root });
 
-    for (const command of ["draft", "rehearse", "finalize"]) {
+    for (const command of ["draft", "rehearse"]) {
       const result = await run(command);
 
       expect(result.exitCode).toBe(1);
@@ -206,7 +212,7 @@ describe("validate", () => {
     }
   });
 
-  test("a misnamed script in a destructive draft: finalize warns about it before asking for the acknowledgement", async () => {
+  test("a misnamed script in a destructive draft: finalize refuses it before asking for the acknowledgement", async () => {
     const dir = await draftedProject();
     expect((await runCli(["finalize"], { cwd: dir.root })).exitCode).toBe(0);
     await dir.write("data-model/desired-schema/customers.sql", "");
@@ -219,9 +225,10 @@ describe("validate", () => {
     const result = await runCli(["finalize"], { cwd: dir.root });
 
     expect(result.exitCode).toBe(1);
-    const lines = result.stderr.trimEnd().split("\n");
-    expect(lines[0]).toMatch(/^warning: data-model\/draft\/post-migrate\.sql /);
-    expect(lines.at(-1)).toContain("--acknowledge-destructive");
+    expect(result.stderr).toMatch(
+      /^Error: data-model\/draft\/post-migrate\.sql is not one of a draft's files/,
+    );
+    expect(result.stderr).not.toContain("--acknowledge-destructive");
   });
 
   test("--help lists --allow-draft", async () => {

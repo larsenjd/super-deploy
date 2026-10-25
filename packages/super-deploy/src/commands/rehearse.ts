@@ -127,7 +127,7 @@ export interface RehearseDraftHooks extends UnknownDraftFileOptions {
 
 /**
  * Shared by `rehearse` and `finalize`. Unknown draft files are reported
- * first, then the rules run, then `beforeRehearsal`, then the rehearsal. A
+ * first (finalize has already refused them), then the rules run, then `beforeRehearsal`, then the rehearsal. A
  * Recovery draft is rehearsed against its migration's original instead of
  * the desired schema.
  */

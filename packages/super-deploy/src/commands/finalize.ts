@@ -7,6 +7,11 @@
 // rehearsed. A Recovery draft becomes its migration's next Recovery
 // (store/migrations.ts) instead, with no snapshot.
 //
+// A file in the draft folder that a draft doesn't hold is refused first
+// (UnknownDraftFileError, store/draft.ts), before the rules or the
+// rehearsal: copied into the migration, it would fail every later integrity
+// check.
+//
 // Nothing locks the project's files between commands, so another command
 // (discard-draft, draft, a second finalize) can change the draft while the
 // rehearsal runs. finalize reads the draft once, before the rehearsal, and
@@ -33,7 +38,7 @@ import type {
 import {
   draftMetadataFileName,
   generatedSchemaChangeFileName,
-  type UnknownDraftFileOptions,
+  refuseUnknownDraftFiles,
 } from "../store/draft.ts";
 import { handEditReport, handEditReportFileName } from "../store/hand-edit.ts";
 import {
@@ -95,11 +100,7 @@ export interface DestructiveAcknowledgement {
   readonly statements: readonly DestructiveStatement[];
 }
 
-/**
- * `onUnknownFile` reports the draft folder's unknown files before the rules,
- * the acknowledgement question and the rehearsal; finalize still copies them.
- */
-export type FinalizeOptions = DestructiveOptions & UnknownDraftFileOptions;
+export type FinalizeOptions = DestructiveOptions;
 
 export interface FinalizeResult {
   /** The migration's number (for a Recovery, the number of the migration it recovers). */
@@ -143,9 +144,9 @@ export async function finalize(
   options: FinalizeOptions = {},
 ): Promise<FinalizeResult> {
   const { root, paths } = project;
+  await refuseUnknownDraftFiles(root, paths);
   const draftFiles = await readHashedFiles(root, paths.draft);
   const rehearsed = await rehearseCurrentDraft(project, "finalize", {
-    onUnknownFile: options.onUnknownFile,
     async beforeRehearsal(draft, analysis) {
       const count = analysis.destructive.length;
       await acknowledgeDestructive(options, {

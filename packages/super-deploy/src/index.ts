@@ -254,6 +254,7 @@ export {
   InvalidDraftError,
   NoDraftError,
   type UnknownDraftFile,
+  UnknownDraftFileError,
   type UnknownDraftFileOptions,
 } from "./store/draft.ts";
 export {

@@ -755,9 +755,12 @@ asking for YES. `finalize` records the edit in the migration's
 `metadata.json` and writes `HAND-EDITED.md` into the migration, with the diff
 from the generated schema change to yours, so reviewers see it; `validate`
 lists such migrations as a notice, which `--strict` doesn't fail on.
-`draft`, `rehearse`, `finalize` and `validate` warn about any other file in
-the draft folder, such as a misnamed `post-migrate.sql`, naming it and the
-files a draft holds; `finalize` still copies it into the migration.
+`draft`, `rehearse` and `validate` warn about any other file in the draft
+folder, such as a misnamed `post-migrate.sql`, naming it and the files a
+draft holds. `finalize` refuses it as `unknown-draft-file`
+(`UnknownDraftFileError`) before it rehearses or writes anything, since a
+finalized migration can't hold it: rename it or move it out of the draft
+folder, then finalize again.
 
 `finalize` also writes `desired-schema.diff` into the migration: its
 snapshot of the desired schema, stored as the change from the previous
@@ -1146,8 +1149,8 @@ If a finalized migration (or Recovery) was edited, or had its
 as `changed after it was finalized`. Restore its folder from Git
 (`git checkout HEAD -- data-model/migrations/00002-add-orders`), then run
 `pnpm exec super-deploy validate`, which makes it read-only again. To change
-what the migration does, finalize a new
-migration, or a Recovery for the targets where it failed.
+what the migration does, finalize a new migration, or a Recovery for the
+targets where it failed.
 
 Before comparing any hash, every command that checks the finalized
 migrations refuses a file in a migration or Recovery folder that it can't
