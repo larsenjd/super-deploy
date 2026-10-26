@@ -29,9 +29,7 @@
 // target recorded for the migration. A Recovery never has a schema change:
 // it always runs its migration's.
 //
-// finalize writes every file LF (store/hashing.ts normalisation), except
-// desired-schema.diff, which it writes byte for byte: a line of it can end
-// in a carriage return of the desired schema's own.
+// Every file but desired-schema.diff is written LF (commands/finalize.ts).
 
 import { constants, type Dirent } from "node:fs";
 import {

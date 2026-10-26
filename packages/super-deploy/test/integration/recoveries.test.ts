@@ -32,6 +32,10 @@ import {
   finalizeMigration,
   targetDatabaseName,
 } from "../support/deploy.ts";
+import {
+  finalizedWithEachLineEnding,
+  withoutCrlf,
+} from "../support/line-endings.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
 let server: TestServer;
@@ -206,42 +210,20 @@ describe("finalizing a Recovery", () => {
   });
 
   test("saved with Windows line endings, freezes LF files, byte for byte the Recovery the same draft saved with LF freezes", async () => {
-    const { dir, project } = await failedMigration();
+    const { project } = await failedMigration();
     await recovery(project, { migration: 2 });
     const scripts = {
       "pre-migration.sql": backfill,
+      "post-migration.sql":
+        "update customers set email = lower(email) where email <> lower(email);\n",
       // A carriage return inside a line is content, not a line ending.
       "seed-data.sql": "insert into customers (id, email) values (7, '\r');\n",
     };
-    for (const [file, text] of Object.entries(scripts)) {
-      await dir.write(
-        `data-model/draft/${file}`,
-        text.replaceAll("\n", "\r\n"),
-      );
-    }
-    const readRecovery = async () => {
-      const files: Record<string, string> = {};
-      for (const file of await listFiles(dir.path(recovery1))) {
-        files[file] = await dir.read(`${recovery1}/${file}`);
-      }
-      return files;
-    };
 
-    await finalize(project);
+    const { crlf, lf } = await finalizedWithEachLineEnding(project, scripts);
 
-    const finalized = await readRecovery();
-    expect(finalized).toEqual({
-      "metadata.json": expect.not.stringContaining("\r"),
-      ...scripts,
-    });
-    const index = await dir.read("data-model/migrations/index.json");
-    await unfinalize(project);
-    for (const [file, text] of Object.entries(scripts)) {
-      await dir.write(`data-model/draft/${file}`, text);
-    }
-    await finalize(project);
-    expect(await readRecovery()).toEqual(finalized);
-    expect(await dir.read("data-model/migrations/index.json")).toBe(index);
+    expect(crlf.files).toEqual({ ...scripts, "metadata.json": withoutCrlf });
+    expect(lf).toEqual(crlf);
   });
 
   test("rehearses with the Recovery's seed data, so its scripts must handle it", async () => {

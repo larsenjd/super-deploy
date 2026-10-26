@@ -12,7 +12,6 @@ import {
   rehearse,
   SuperDeployError,
   toolVersion,
-  unfinalize,
   validate,
 } from "superdeploy";
 import {
@@ -24,6 +23,10 @@ import {
   test,
 } from "vitest";
 import { deployProject } from "../support/deploy.ts";
+import {
+  finalizedWithEachLineEnding,
+  withoutCrlf,
+} from "../support/line-endings.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import {
   createTestProject,
@@ -294,7 +297,7 @@ describe("a schema change edited by hand", () => {
 });
 
 describe("a draft saved with Windows line endings", () => {
-  const index = "create index customers_name_idx on customers (name);\n";
+  const nameIndex = "create index customers_name_idx on customers (name);\n";
   const scripts = {
     "pre-migration.sql": "update customers set name = trim(name);\n",
     "post-migration.sql":
@@ -303,55 +306,31 @@ describe("a draft saved with Windows line endings", () => {
     "seed-data.sql":
       "insert into customers (id, name) values (1, ' Ada\rLovelace ');\n",
   };
-  const migration = "data-model/migrations/00002-add-index";
-  const crlf = (text: string) => text.replaceAll("\n", "\r\n");
-
-  /** Every file of `folder` with its text, read byte for byte. */
-  async function filesOf(dir: TestProject, folder: string) {
-    const files: Record<string, string> = {};
-    for (const file of await filesUnder(dir.path(folder))) {
-      files[file] = await dir.read(`${folder}/${file}`);
-    }
-    return files;
-  }
 
   test("finalizes to LF files, byte for byte the migration the same draft saved with LF finalizes to", async () => {
     const { dir, project } = await draftedProject();
     await finalize(project);
     await dir.write(
       "data-model/desired-schema/customers.sql",
-      `${customers}${index}`,
+      `${customers}${nameIndex}`,
     );
     await draft(project, { name: "Add index" });
     const schemaChange = `${await dir.read("data-model/draft/schema-change.sql")}-- reviewed by hand\n`;
     const draftFiles = { ...scripts, "schema-change.sql": schemaChange };
-    for (const [file, text] of Object.entries(draftFiles)) {
-      await dir.write(`data-model/draft/${file}`, crlf(text));
-    }
 
-    expect((await finalize(project)).handEdited).toBe(
-      "data-model/draft/schema-change.sql",
+    const { result, crlf, lf } = await finalizedWithEachLineEnding(
+      project,
+      draftFiles,
     );
 
-    const finalized = await filesOf(dir, migration);
-    expect(finalized).toMatchObject(draftFiles);
-    expect(Object.keys(finalized)).toContain("HAND-EDITED.md");
-    for (const [file, text] of Object.entries(finalized)) {
-      expect({ file, crlf: text.includes("\r\n") }).toEqual({
-        file,
-        crlf: false,
-      });
-    }
-    const indexJson = await dir.read("data-model/migrations/index.json");
-
-    await unfinalize(project);
-    for (const [file, text] of Object.entries(draftFiles)) {
-      await dir.write(`data-model/draft/${file}`, text);
-    }
-    await finalize(project);
-
-    expect(await filesOf(dir, migration)).toEqual(finalized);
-    expect(await dir.read("data-model/migrations/index.json")).toBe(indexJson);
+    expect(result.handEdited).toBe("data-model/draft/schema-change.sql");
+    expect(crlf.files).toEqual({
+      ...draftFiles,
+      "HAND-EDITED.md": withoutCrlf,
+      "desired-schema.diff": withoutCrlf,
+      "metadata.json": withoutCrlf,
+    });
+    expect(lf).toEqual(crlf);
   });
 });
 

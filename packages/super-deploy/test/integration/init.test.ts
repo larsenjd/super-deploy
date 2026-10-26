@@ -330,7 +330,7 @@ create function customer_count() returns bigint
   );
 
   test.skipIf(!gitInstalled)(
-    "git checks out the LF files finalize writes as LF, even with core.autocrlf",
+    "git keeps a migration's SQL, JSON and Markdown files LF, even with core.autocrlf",
     async () => {
       const root = await emptyDirectory();
       await init({ directory: root });
