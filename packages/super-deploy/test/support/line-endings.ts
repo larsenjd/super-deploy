@@ -10,7 +10,7 @@ import {
   unfinalize,
 } from "superdeploy";
 import { expect } from "vitest";
-import { type Files, readFiles, writeFiles } from "./git-apply.ts";
+import { type Files, readFiles, writeFiles } from "./files.ts";
 
 /** `text` with each LF line ending saved as CRLF, as a Windows editor saves it. */
 export function withCrlf(text: string): string {

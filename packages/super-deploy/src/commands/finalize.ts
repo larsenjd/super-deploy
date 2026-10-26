@@ -76,7 +76,11 @@ import {
   snapshotDiffFileName,
   writeIndex,
 } from "../store/migrations.ts";
-import { readSnapshot, snapshotDiff } from "../store/snapshots.ts";
+import {
+  isSnapshotPath,
+  readSnapshot,
+  snapshotDiff,
+} from "../store/snapshots.ts";
 import { parserName, parserVersion, toolVersion } from "../version.ts";
 import { type RehearsedDraft, rehearseCurrentDraft } from "./rehearse.ts";
 
@@ -294,9 +298,7 @@ async function writeFinalizedFolder(
       await mkdir(dirname(written), { recursive: true });
       await writeFile(
         written,
-        file.path === snapshotDiffFileName
-          ? file.text
-          : normaliseLineEndings(file.text),
+        isSnapshotPath(file.path) ? file.text : normaliseLineEndings(file.text),
       );
     }
     await makeReadOnly(staging);

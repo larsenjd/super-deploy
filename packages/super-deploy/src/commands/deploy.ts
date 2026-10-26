@@ -7,7 +7,9 @@
 // drift check run even when nothing is pending. A file failing on the target
 // is reported as a rollback (SqlFileFailedError.rolledBack): the migration
 // the target is still at, and a Recovery for a data error. The newest
-// snapshot comes from the snapshot reader (store/snapshots.ts).
+// snapshot comes from the snapshot reader (store/snapshots.ts), rebuilt
+// before the attempt opens, so a diff that doesn't apply leaves the target
+// untouched.
 
 import { applyMigrations, withLockedTarget } from "../deploy/engine.ts";
 import { readRecordedMigrations } from "../deploy/history.ts";
@@ -84,6 +86,9 @@ export async function deploy(
   const { root, paths, config } = project;
   const migrations = await verifiedMigrations(root, paths);
   const deployable = await readMigrationsWithUnits(root, migrations);
+  // Rebuilt before anything touches the target, so a snapshot diff that
+  // doesn't apply is refused first.
+  const snapshot = await readSnapshot(root, migrations);
 
   return withLockedTarget(
     project,
@@ -127,10 +132,9 @@ export async function deploy(
         pending: pending.map((migration) => migration.unit),
         snapshot: async () => {
           const newest = deployable.at(-1) as MigrationWithUnit;
-          const { sqlFiles } = await readSnapshot(root, migrations);
           return {
             folder: newest.folder,
-            statements: await analyseDesiredSchema(sqlFiles, {
+            statements: await analyseDesiredSchema(snapshot.sqlFiles, {
               managedSchema: config.managedSchema,
               externalSchemas: config.externalSchemas,
             }),

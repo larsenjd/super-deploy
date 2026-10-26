@@ -78,7 +78,7 @@ export async function readSnapshots(
   let before = emptySnapshot;
   for (const migration of migrations) {
     const diffPath = join(migration.path, snapshotDiffFileName);
-    const named = projectRelative(root, diffPath);
+    const diffName = projectRelative(root, diffPath);
     let files: HashedFile[];
     try {
       files = applyFilesDiff(await readFile(diffPath, "utf8"), before.files);
@@ -88,14 +88,14 @@ export async function readSnapshots(
       }
       throw new SnapshotDiffDoesNotApplyError(
         projectRelative(root, migration.path),
-        error.file === undefined ? named : `${named}/${error.file}`,
+        error.file === undefined ? diffName : `${diffName}/${error.file}`,
         { cause: error },
       );
     }
     const after = {
       files,
       sqlFiles: files.map((file) => ({
-        path: `${named}/${file.path}`,
+        path: `${diffName}/${file.path}`,
         text: file.text,
       })),
     };
@@ -103,6 +103,18 @@ export async function readSnapshots(
     before = after;
   }
   return steps;
+}
+
+/**
+ * Migration `number` with the snapshots on either side of it, from `steps`
+ * (readSnapshots of a history up to it at least); undefined when `steps`
+ * doesn't hold it.
+ */
+export function snapshotsAround(
+  steps: readonly MigrationSnapshots[],
+  number: number,
+): MigrationSnapshots | undefined {
+  return steps.find((step) => step.migration.number === number);
 }
 
 /** True for a path (relative to a migration folder) that stores the migration's snapshot. */

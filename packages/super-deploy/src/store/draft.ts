@@ -30,7 +30,7 @@
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { SuperDeployError } from "../errors.ts";
+import { joined, SuperDeployError } from "../errors.ts";
 import { isSqlFile } from "./desired-schema.ts";
 import { normaliseDraftName } from "./draft-name.ts";
 import { normaliseLineEndings } from "./hashing.ts";
@@ -171,7 +171,7 @@ export async function unknownDraftFiles(
     finalizedAs(draft) === "Recovery"
       ? [recoveryDraftFileNames, "a Recovery draft"]
       : [draftFileNames, "a draft"];
-  const holds = `${kind} holds ${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  const holds = `${kind} holds ${joined(names)}`;
   return (await listFiles(paths.draft))
     .filter((path) => !names.includes(path))
     .map((path) => {

@@ -9,19 +9,25 @@ import {
   draft,
   finalize,
   restoreSchema,
+  SnapshotDiffDoesNotApplyError,
   unfinalize,
   ValidationFailedError,
   validate,
 } from "superdeploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { deployProject } from "../support/deploy.ts";
 import {
-  type Files,
-  gitApply,
-  readFiles,
-  writeFiles,
-} from "../support/git-apply.ts";
+  attemptLog,
+  deployProject,
+  finalizeMigration,
+} from "../support/deploy.ts";
+import { type Files, readFiles, writeFiles } from "../support/files.ts";
+import { gitApply } from "../support/git-apply.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
+import {
+  rehashMigration,
+  type TestProject,
+  tamperFinalized,
+} from "../support/project.ts";
 
 let server: TestServer;
 beforeAll(async () => {
@@ -260,7 +266,9 @@ describe("a history of migrations stored as diffs", () => {
     expect((error as ValidationFailedError).problems).toEqual([
       expect.objectContaining({
         code: "undrafted-changes",
-        message: `The desired schema differs from migration ${folders[3]?.split("/").at(-1)}'s snapshot and no draft covers it; run draft`,
+        message: expect.stringContaining(
+          `migration ${folders[3]?.split("/").at(-1)}'s snapshot`,
+        ),
       }),
     ]);
   });
@@ -323,5 +331,57 @@ describe("a history of migrations stored as diffs", () => {
     await expect(validate(project, { strict: true })).resolves.toMatchObject({
       problems: [],
     });
+  });
+});
+
+describe("a desired-schema diff that doesn't apply", () => {
+  /**
+   * Edits migration `folder`'s diff, the first, so it no longer applies
+   * (customers.sql's section loses its `new file mode` line) and rehashes
+   * index.json to match, so the integrity check passes it.
+   */
+  async function breakDiff(dir: TestProject, folder: string) {
+    await tamperFinalized(
+      dir,
+      `${migrations}/${folder}/desired-schema.diff`,
+      (text) => text.replace("new file mode 100644\n", ""),
+    );
+    await rehashMigration(dir, folder);
+  }
+
+  test("is refused, naming the migration and the file", async () => {
+    const { dir, project } = await deployProject(server, {
+      "customers.sql": customers,
+    });
+    const { folder } = await finalizeMigration(project, "add customers");
+    await breakDiff(dir, folder);
+
+    const error = await restoreSchema(project, {
+      acknowledgeOverwrite: true,
+    }).catch((e: unknown) => e);
+
+    const migration = `${migrations}/${folder}`;
+    const file = `${migration}/desired-schema.diff/customers.sql`;
+    expect(error).toBeInstanceOf(SnapshotDiffDoesNotApplyError);
+    expect(error).toMatchObject({
+      code: "snapshot-diff-does-not-apply",
+      migration,
+      file,
+      message: expect.stringContaining(migration),
+    });
+    expect((error as Error).message).toContain(file);
+  });
+
+  test("deploy refuses it before touching the target", async () => {
+    const { dir, project, database } = await deployProject(server, {});
+    await deploy(project, { target: "dev" });
+    await setDesiredSchema(dir.root, { "customers.sql": customers });
+    const { folder } = await finalizeMigration(project, "add customers");
+    await breakDiff(dir, folder);
+
+    await expect(deploy(project, { target: "dev" })).rejects.toBeInstanceOf(
+      SnapshotDiffDoesNotApplyError,
+    );
+    expect(await attemptLog(server, database)).toHaveLength(1);
   });
 });

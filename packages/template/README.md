@@ -1125,12 +1125,13 @@ Three commands throw unfinished work away:
   and deletes any draft. Your files come back with their names, folders,
   comments and formatting; the ones it rewrites get LF line endings.
 - `unfinalize` moves the newest migration back into the draft, writable
-  again (all but its `metadata.json` and `desired-schema.diff`), and resets
-  the desired schema to the migration's snapshot, so finalizing again
-  reproduces the migration, `desired-schema.diff` included. When the newest
-  migration has Recoveries, it moves the newest Recovery back into a
-  Recovery draft instead, leaving the desired schema alone. `--recovery-of
-  N` does that for migration N's newest Recovery.
+  again (all but its `metadata.json`, `desired-schema.diff` and
+  `HAND-EDITED.md`), and resets the desired schema to the migration's
+  snapshot, so finalizing again reproduces the migration,
+  `desired-schema.diff` included. When the newest migration has
+  Recoveries, it moves the newest Recovery back into a Recovery draft
+  instead, leaving the desired schema alone. `--recovery-of N` does that for
+  migration N's newest Recovery.
 
 Each asks first in a terminal when it would delete or overwrite something:
 a draft, or desired-schema files that differ from the snapshot being

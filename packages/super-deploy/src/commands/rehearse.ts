@@ -48,9 +48,9 @@ import {
   UnknownMigrationError,
 } from "../store/migrations.ts";
 import {
-  type MigrationSnapshots,
   readSnapshot,
   readSnapshots,
+  snapshotsAround,
 } from "../store/snapshots.ts";
 import { refuseRuleViolations } from "./check-rules.ts";
 import { RecoverySchemaChangeEditedError } from "./recovery.ts";
@@ -291,19 +291,20 @@ export async function checkRecoveryDraft(
 ): Promise<CheckedRecoveryDraft> {
   const { root, paths, config } = project;
   const number = draft.recoveryOf as number;
-  const migration = migrations[number - 1];
-  if (migration === undefined) {
+  const recovered = snapshotsAround(
+    await readSnapshots(root, migrations.slice(0, number)),
+    number,
+  );
+  if (recovered === undefined) {
     throw new UnknownMigrationError(number, migrations.at(-1)?.number);
   }
+  const { migration, before, after } = recovered;
   await requireOriginalSchemaChange(project, migration);
   const seeded = await readSeededUnit(
     root,
     paths.draft,
     `Recovery draft of ${migration.folder}`,
   );
-  const { before, after } = (
-    await readSnapshots(root, migrations.slice(0, number))
-  ).at(-1) as MigrationSnapshots;
   const analysis = await refuseRuleViolations(seededFiles(seeded), {
     managedSchema: config.managedSchema,
     externalSchemas: config.externalSchemas,

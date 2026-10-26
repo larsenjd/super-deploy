@@ -68,7 +68,11 @@ import {
   schemaChangeFileName,
   writableFiles,
 } from "../store/migrations.ts";
-import { type MigrationSnapshots, readSnapshots } from "../store/snapshots.ts";
+import {
+  type MigrationSnapshots,
+  readSnapshots,
+  snapshotsAround,
+} from "../store/snapshots.ts";
 import { analyseReplayUnit } from "./check-rules.ts";
 import { RecoverySchemaChangeEditedError } from "./recovery.ts";
 import { requireOriginalSchemaChange } from "./rehearse.ts";
@@ -365,7 +369,7 @@ async function ruleProblems(
     const recovered =
       draft?.recoveryOf === undefined
         ? undefined
-        : snapshots[draft.recoveryOf - 1];
+        : snapshotsAround(snapshots, draft.recoveryOf);
     const draftSides: readonly (readonly SqlFile[])[] | undefined =
       draft?.recoveryOf === undefined
         ? [snapshots.at(-1)?.after.sqlFiles ?? [], desired]

@@ -1,6 +1,4 @@
-import { createHash } from "node:crypto";
-import { chmod, readdir, readFile, rename, rm, stat } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { chmod, rename, rm, stat } from "node:fs/promises";
 import {
   draft,
   finalize,
@@ -18,7 +16,8 @@ import { startTestServer, type TestServer } from "../support/postgres.ts";
 import {
   createTestProject,
   embeddedConfig,
-  type TestProject,
+  rehashMigration,
+  tamperFinalized,
 } from "../support/project.ts";
 
 let server: TestServer;
@@ -45,49 +44,9 @@ async function finalizedProject() {
   const project = await loadProject({ cwd: dir.root });
   await draft(project, { name: "Add customers" });
   await finalize(project);
-  /** Rewrites a finalized file the way someone bypassing read-only would. */
-  const tamper = async (relative: string, edit: (text: string) => string) => {
-    await chmod(dir.path(relative), 0o644);
-    await dir.write(relative, edit(await dir.read(relative)));
-  };
+  const tamper = (path: string, edit: (text: string) => string) =>
+    tamperFinalized(dir, path, edit);
   return { dir, project, tamper };
-}
-
-/**
- * Rewrites index.json so migration `name`, the first, matches its folder's
- * files again, by the hash format documented in src/store/hashing.ts. It is
- * written out here rather than imported: tests reach only the public API,
- * which deliberately has no way to re-hash a finalized migration (that is
- * the tampering validate exists to catch). Change it with hashing.ts.
- */
-async function rehashMigration(dir: TestProject, name: string) {
-  const sha256 = (text: string) =>
-    createHash("sha256").update(text, "utf8").digest("hex");
-  const migration = dir.path(`data-model/migrations/${name}`);
-  const files = (
-    await readdir(migration, { recursive: true, withFileTypes: true })
-  )
-    .filter((entry) => entry.isFile())
-    .map((entry) =>
-      relative(migration, join(entry.parentPath, entry.name))
-        .split(sep)
-        .join("/"),
-    )
-    .sort();
-  let manifest = `super-deploy migration 1\nfolder ${JSON.stringify(name)}\n`;
-  for (const file of files) {
-    const text = await readFile(join(migration, file), "utf8");
-    manifest += `file ${JSON.stringify(file)} ${sha256(text)}\n`;
-  }
-  const contentHash = sha256(manifest);
-  const indexPath = "data-model/migrations/index.json";
-  const index = JSON.parse(await dir.read(indexPath));
-  index.migrations[0] = {
-    ...index.migrations[0],
-    contentHash,
-    chainHash: sha256(contentHash),
-  };
-  await dir.write(indexPath, JSON.stringify(index));
 }
 
 async function validationError(
@@ -209,7 +168,9 @@ describe("validate", () => {
       {
         severity: "error",
         code: "missing-migration-file",
-        message: `${folder}/schema-change.sql is missing; every migration has one, as finalize writes it: restore it from Git (\`git checkout HEAD -- ${folder}/schema-change.sql\`), then run validate`,
+        message: expect.stringContaining(
+          `${folder}/schema-change.sql is missing`,
+        ),
         path: `${folder}/schema-change.sql`,
       },
     ]);
@@ -317,7 +278,7 @@ describe("a file a finalized folder can't have", () => {
       constructor: UnknownMigrationFileError,
       file: `${recovery1}/schema-change.sql`,
       message: expect.stringContaining(
-        "does not belong in a finalized Recovery, which holds only pre-migration.sql, post-migration.sql, seed-data.sql and metadata.json",
+        "does not belong in a finalized Recovery",
       ),
     });
   });

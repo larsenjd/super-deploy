@@ -4,17 +4,20 @@
 // project's super-deploy.config.ts can `import "superdeploy"` exactly like a
 // real project: natively (CLI seam, resolving to dist/) or through Vitest's
 // alias (API seam, resolving to src/). The project itself is <tmp>/project.
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
+  chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { onTestFinished } from "vitest";
 import type { TestServer } from "./postgres.ts";
 
@@ -171,4 +174,54 @@ export default defineConfig({
   ${settings}
 });
 `;
+}
+
+/** Rewrites a finalized file the way someone bypassing read-only would. */
+export async function tamperFinalized(
+  dir: TestProject,
+  path: string,
+  edit: (text: string) => string,
+): Promise<void> {
+  await chmod(dir.path(path), 0o644);
+  await dir.write(path, edit(await dir.read(path)));
+}
+
+/**
+ * Rewrites index.json so migration `name`, the first, matches its folder's
+ * files again, by the hash format documented in src/store/hashing.ts. It is
+ * written out here rather than imported: tests reach only the public API,
+ * which deliberately has no way to re-hash a finalized migration (that is
+ * the tampering validate exists to catch). Change it with hashing.ts.
+ */
+export async function rehashMigration(
+  dir: TestProject,
+  name: string,
+): Promise<void> {
+  const sha256 = (text: string) =>
+    createHash("sha256").update(text, "utf8").digest("hex");
+  const migration = dir.path(`data-model/migrations/${name}`);
+  const files = (
+    await readdir(migration, { recursive: true, withFileTypes: true })
+  )
+    .filter((entry) => entry.isFile())
+    .map((entry) =>
+      relative(migration, join(entry.parentPath, entry.name))
+        .split(sep)
+        .join("/"),
+    )
+    .sort();
+  let manifest = `super-deploy migration 1\nfolder ${JSON.stringify(name)}\n`;
+  for (const file of files) {
+    const text = await readFile(join(migration, file), "utf8");
+    manifest += `file ${JSON.stringify(file)} ${sha256(text)}\n`;
+  }
+  const contentHash = sha256(manifest);
+  const indexPath = "data-model/migrations/index.json";
+  const index = JSON.parse(await dir.read(indexPath));
+  index.migrations[0] = {
+    ...index.migrations[0],
+    contentHash,
+    chainHash: sha256(contentHash),
+  };
+  await dir.write(indexPath, JSON.stringify(index));
 }

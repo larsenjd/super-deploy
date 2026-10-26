@@ -71,7 +71,8 @@ export async function checkMigrations(
   const findings: Findings = {
     indexPath,
     problem,
-    holdsItsFiles(errors) {
+    async checkFolderFiles(folder, files) {
+      const errors = await folderFileErrors(root, folder, files);
       for (const error of errors) {
         fileErrors.push(error);
         problem(error.code, error.message, error.file);
@@ -168,9 +169,7 @@ export async function checkMigrations(
       );
       continue;
     }
-    if (
-      findings.holdsItsFiles(await folderFileErrors(root, path, migrationFiles))
-    ) {
+    if (await findings.checkFolderFiles(path, migrationFiles)) {
       await checkContentHash(
         display(path),
         findings,
@@ -202,8 +201,14 @@ interface Findings {
   /** The index, project-relative, as messages name it. */
   readonly indexPath: string;
   readonly problem: Problem;
-  /** Reports each of a folder's file errors; true if it has none. */
-  readonly holdsItsFiles: (errors: readonly MigrationFileError[]) => boolean;
+  /**
+   * Checks a finalized folder's files (folderFileErrors), reporting each
+   * error as a problem and in the report's `fileErrors`; true if it has none.
+   */
+  readonly checkFolderFiles: (
+    folder: string,
+    files: FolderFiles,
+  ) => Promise<boolean>;
 }
 
 /** The files a finalized folder of one kind holds: every file it can have, and those it must. */
@@ -375,9 +380,7 @@ async function checkRecoveries(
       );
       continue;
     }
-    if (
-      findings.holdsItsFiles(await folderFileErrors(root, path, recoveryFiles))
-    ) {
+    if (await findings.checkFolderFiles(path, recoveryFiles)) {
       await checkContentHash(
         display(path),
         findings,

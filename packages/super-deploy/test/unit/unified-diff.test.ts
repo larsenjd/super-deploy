@@ -8,7 +8,8 @@ import {
   FilesDiffDoesNotApplyError,
   filesDiff,
 } from "../../src/store/unified-diff.ts";
-import { type Files, gitApply, gitInstalled } from "../support/git-apply.ts";
+import type { Files } from "../support/files.ts";
+import { gitApply, gitInstalled } from "../support/git-apply.ts";
 
 function asFiles(files: Files) {
   return Object.entries(files).map(([path, text]) => ({ path, text }));
