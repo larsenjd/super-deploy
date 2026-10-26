@@ -290,7 +290,9 @@ create function customer_count() returns bigint
     expect(settings).toContain('"data-model/draft/schema-change.sql": true');
 
     const readme = await readFile(join(root, "README.md"), "utf8");
-    expect(readme).toMatch(/seed data must be synthetic or anonymised/i);
+    expect(readme).toMatch(
+      /seed data is committed forever\. Make it synthetic/i,
+    );
 
     const ignored = await readFile(join(root, ".gitignore"), "utf8");
     expect(ignored).toMatch(/^\.super-deploy\/$/m);
