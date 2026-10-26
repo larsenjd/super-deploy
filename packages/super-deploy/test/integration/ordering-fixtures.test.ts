@@ -9,7 +9,7 @@ import {
   draft,
   loadProject,
   SqlRuleViolationError,
-} from "superdeploy";
+} from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { orderingFixtures } from "../fixtures/ordering.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";

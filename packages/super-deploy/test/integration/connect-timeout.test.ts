@@ -6,7 +6,7 @@ import {
   InterruptedError,
   loadProject,
   status,
-} from "superdeploy";
+} from "super-deploy";
 import { expect, test, vi } from "vitest";
 import { createTestProject, downTargetConfig } from "../support/project.ts";
 import { silentHost } from "../support/silent-host.ts";

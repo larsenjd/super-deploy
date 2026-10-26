@@ -69,7 +69,7 @@ Migration folders also become strict about their contents. A file a migration ca
 ## Testing Decisions
 
 - A good test drives the feature the way a developer does and checks what they would see: files on disk, command results and typed errors. It never checks how the snapshot is rebuilt.
-- **API seam (main seam).** Integration tests import `superdeploy`, build a temp project and run commands, as the existing finalize and housekeeping tests do. They cover:
+- **API seam (main seam).** Integration tests import `super-deploy`, build a temp project and run commands, as the existing finalize and housekeeping tests do. They cover:
   - finalize writes `desired-schema.diff` and no snapshot folder, the diff is empty for a script-only migration, and `git apply` of the diff onto the previous snapshot's files gives the current desired schema;
   - after several finalizes that add, edit, split and delete files in nested folders, with comments, override markers and a file without a trailing newline, `unfinalize` and `restore-schema` give back those files exactly, and finalizing again after `unfinalize` recreates the identical migration;
   - `rehearse` of an older migration, `validate` and `deploy` behave as now across a history of several migrations;

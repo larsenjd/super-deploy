@@ -9,11 +9,11 @@ import { defineConfig } from "vitest/config";
 // build is needed. The CLI seam spawns the built binary instead (dist/).
 const alias = [
   {
-    find: /^superdeploy$/,
+    find: /^super-deploy$/,
     replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)),
   },
   {
-    find: /^superdeploy\/embedded-postgres$/,
+    find: /^super-deploy\/embedded-postgres$/,
     replacement: fileURLToPath(
       new URL("./src/adapters/embedded-postgres.ts", import.meta.url),
     ),

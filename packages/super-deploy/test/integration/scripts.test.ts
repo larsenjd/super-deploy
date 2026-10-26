@@ -12,7 +12,7 @@ import {
   type UnknownDraftFile,
   UnknownDraftFileError,
   validate,
-} from "superdeploy";
+} from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { deployProject } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";

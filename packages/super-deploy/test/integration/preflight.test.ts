@@ -13,7 +13,7 @@ import {
   PreflightFailedError,
   status,
   unfinalize,
-} from "superdeploy";
+} from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   asDeployerPreamble,
@@ -63,7 +63,7 @@ describe("roles in rehearsals", () => {
       server,
       { "customers.sql": customers, "orders.sql": orders },
       {
-        preamble: `import { postgresRehearsal } from "superdeploy";
+        preamble: `import { postgresRehearsal } from "super-deploy";
 const rehearsalUrl = new URL(await postgres.connectionString("postgres"));
 rehearsalUrl.username = ${JSON.stringify(rehearser)};
 rehearsalUrl.password = "rehearser";

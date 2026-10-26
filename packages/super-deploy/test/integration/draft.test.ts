@@ -6,7 +6,7 @@ import {
   loadProject,
   SqlRuleViolationError,
   UnsupportedServerError,
-} from "superdeploy";
+} from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { finalizeMigration } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
@@ -268,8 +268,8 @@ create table orders (
 
   test("refuses a rehearsal server that isn't PostgreSQL 18, and still drops the database", async () => {
     const dir = await createTestProject({
-      config: `import { defineConfig } from "superdeploy";
-import { embeddedPostgres } from "superdeploy/embedded-postgres";
+      config: `import { defineConfig } from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
 
 const postgres = embeddedPostgres({ dataDir: ${JSON.stringify(server.dataDir)} });
 
@@ -309,7 +309,7 @@ export default defineConfig({
     const dir = await createTestProject({
       config: embeddedConfig(
         server,
-        `...{ targets: { prod: { adapter: (await import("superdeploy")).postgresTarget({ env: "SUPER_DEPLOY_TEST_UNSET_URL" }) } } },`,
+        `...{ targets: { prod: { adapter: (await import("super-deploy")).postgresTarget({ env: "SUPER_DEPLOY_TEST_UNSET_URL" }) } } },`,
       ),
       files: { "data-model/desired-schema/customers.sql": customers },
     });

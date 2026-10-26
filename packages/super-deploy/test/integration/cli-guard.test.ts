@@ -2,8 +2,8 @@
 // terminal on stdin and stdout, and in a real terminal they show what they
 // are about to do and go ahead only when YES is typed.
 import { userInfo } from "node:os";
-import { deploy, draft, finalize, loadProject } from "superdeploy";
-import { embeddedPostgres } from "superdeploy/embedded-postgres";
+import { deploy, draft, finalize, loadProject } from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import {
@@ -124,7 +124,7 @@ async function localhostUrl(database: string): Promise<string> {
 describe.skipIf(process.platform === "win32")("at a terminal", () => {
   test("the Host line shows a postgresTarget's host as configured, then the server's address", async () => {
     const { dir, database } = await deployedProject({
-      preamble: 'import { postgresTarget } from "superdeploy";',
+      preamble: 'import { postgresTarget } from "super-deploy";',
       otherTargets:
         'qa: { adapter: postgresTarget({ env: "SUPER_DEPLOY_TEST_QA_URL" }) },',
     });

@@ -15,8 +15,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import pg from "pg";
-import { AdapterError } from "superdeploy";
-import { embeddedPostgres } from "superdeploy/embedded-postgres";
+import { AdapterError } from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
 import {
   afterAll,
   beforeAll,

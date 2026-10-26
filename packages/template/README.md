@@ -252,7 +252,7 @@ If a deployment waits on another session's lock, `status` shows `waiting for a l
 ### Adding a real target
 
 ```ts
-import { defineConfig, postgresTarget } from "superdeploy";
+import { defineConfig, postgresTarget } from "super-deploy";
 
 export default defineConfig({
   // ...

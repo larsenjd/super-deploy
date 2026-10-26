@@ -4,7 +4,7 @@
 //
 // Installing: tests run offline, so instead of `pnpm install` the project's
 // node_modules links each devDependency to the copy the workspace's template
-// package already has installed (superdeploy itself to this package, whose
+// package already has installed (super-deploy itself to this package, whose
 // dist/ the integration globalSetup builds). The test checks that every
 // linked copy has exactly the version the project's package.json pins, so
 // this matches a real install.
@@ -41,7 +41,7 @@ async function linkDependencies(root: string): Promise<void> {
   );
   for (const [name, spec] of Object.entries<string>(manifest.devDependencies)) {
     const installed =
-      name === "superdeploy"
+      name === "super-deploy"
         ? packageDir
         : realpathSync(join(templateDir, "node_modules", ...name.split("/")));
     const { version } = JSON.parse(

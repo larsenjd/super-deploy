@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { toolVersion } from "superdeploy";
+import { toolVersion } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
@@ -295,8 +295,8 @@ describe("config runtime errors", () => {
 });
 
 describe("embedded-postgres adapter", () => {
-  const ownServerConfig = `import { defineConfig } from "superdeploy";
-import { embeddedPostgres } from "superdeploy/embedded-postgres";
+  const ownServerConfig = `import { defineConfig } from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
 
 const postgres = embeddedPostgres({ dataDir: new URL(".super-deploy/postgres/", import.meta.url) });
 

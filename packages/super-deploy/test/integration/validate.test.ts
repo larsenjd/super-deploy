@@ -10,7 +10,7 @@ import {
   unfinalize,
   ValidationFailedError,
   validate,
-} from "superdeploy";
+} from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import {
@@ -568,7 +568,7 @@ language sql stable as $$ select count(*) from orders where customer_id = cid $$
 
   test("never touches a database", async () => {
     const dir = await createTestProject({
-      config: `import { defineConfig } from "superdeploy";
+      config: `import { defineConfig } from "super-deploy";
 export default defineConfig({
   postgresVersion: 18,
   rehearsal: { createDatabase() { throw new Error("validate must not create databases"); } },

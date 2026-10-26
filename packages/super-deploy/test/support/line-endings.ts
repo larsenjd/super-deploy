@@ -8,7 +8,7 @@ import {
   finalize,
   type Project,
   unfinalize,
-} from "superdeploy";
+} from "super-deploy";
 import { expect } from "vitest";
 import { type Files, readFiles, writeFiles } from "./files.ts";
 

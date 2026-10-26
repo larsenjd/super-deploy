@@ -22,8 +22,8 @@
     "skipLibCheck": true,
     "noEmit": true,
     "paths": {
-      "superdeploy": ["./src/index.ts"],
-      "superdeploy/embedded-postgres": ["./src/adapters/embedded-postgres.ts"]
+      "super-deploy": ["./src/index.ts"],
+      "super-deploy/embedded-postgres": ["./src/adapters/embedded-postgres.ts"]
     }
   },
   "include": ["src", "test", "scripts", "vitest.config.ts"]

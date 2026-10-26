@@ -20,7 +20,7 @@
     "@types/node": "24.19.2",
     "embedded-postgres": "18.4.0-beta.17",
     "husky": "9.1.7",
-    "superdeploy": "workspace:*",
+    "super-deploy": "workspace:*",
     "typescript": "7.0.2"
   }
 }

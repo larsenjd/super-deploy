@@ -5,8 +5,8 @@
 import { chmod, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AdapterError, postgresRehearsal, postgresTarget } from "superdeploy";
-import { embeddedPostgres } from "superdeploy/embedded-postgres";
+import { AdapterError, postgresRehearsal, postgresTarget } from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 

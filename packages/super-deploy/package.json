@@ -1,5 +1,5 @@
 {
-  "name": "superdeploy",
+  "name": "super-deploy",
   "version": "0.3.0",
   "description": "Immutable, all-or-nothing PostgreSQL 18 migrations generated from a desired schema.",
   "keywords": [

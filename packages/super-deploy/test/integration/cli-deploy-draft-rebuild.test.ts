@@ -11,7 +11,7 @@ import {
   loadProject,
   recovery,
   unfinalize,
-} from "superdeploy";
+} from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import {

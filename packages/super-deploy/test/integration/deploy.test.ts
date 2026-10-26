@@ -15,7 +15,7 @@ import {
   toolVersion,
   UnknownTargetError,
   UnsupportedServerError,
-} from "superdeploy";
+} from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   columnPending,
@@ -917,7 +917,7 @@ describe("deploy configuration", () => {
       server,
       { "customers.sql": customers },
       {
-        preamble: 'import { postgresTarget } from "superdeploy";',
+        preamble: 'import { postgresTarget } from "super-deploy";',
         otherTargets:
           'prod: { adapter: postgresTarget({ env: "SUPER_DEPLOY_TEST_UNSET_URL" }) },',
       },
@@ -940,7 +940,7 @@ describe("deploy configuration", () => {
       server,
       { "customers.sql": customers },
       {
-        preamble: 'import { postgresTarget } from "superdeploy";',
+        preamble: 'import { postgresTarget } from "super-deploy";',
         otherTargets: `down: { adapter: postgresTarget({ connectionString: "postgres://u:p@localhost:${port}/x" }) },`,
       },
     );
@@ -962,7 +962,7 @@ describe("deploy configuration", () => {
       server,
       { "customers.sql": customers },
       {
-        preamble: 'import { postgresTarget } from "superdeploy";',
+        preamble: 'import { postgresTarget } from "super-deploy";',
         otherTargets: `missing: { adapter: { async connect() {
   return postgresTarget({ connectionString: await postgres.connectionString("no_such_database") }).connect();
 } } },`,

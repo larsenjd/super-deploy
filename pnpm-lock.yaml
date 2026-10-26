@@ -184,7 +184,7 @@ importers:
       embedded-postgres:
         specifier: 18.4.0-beta.17
         version: 18.4.0-beta.17
-      superdeploy:
+      super-deploy:
         specifier: workspace:*
         version: link:../../packages/super-deploy
       typescript:
@@ -260,7 +260,7 @@ importers:
       husky:
         specifier: 9.1.7
         version: 9.1.7
-      superdeploy:
+      super-deploy:
         specifier: workspace:*
         version: link:../super-deploy
       typescript:

@@ -1,7 +1,7 @@
 // Temporary super-deploy projects for the API and CLI seams.
 //
-// Layout: <tmp>/node_modules/superdeploy is a junction to this package, so a
-// project's super-deploy.config.ts can `import "superdeploy"` exactly like a
+// Layout: <tmp>/node_modules/super-deploy is a junction to this package, so a
+// project's super-deploy.config.ts can `import "super-deploy"` exactly like a
 // real project: natively (CLI seam, resolving to dist/) or through Vitest's
 // alias (API seam, resolving to src/). The project itself is <tmp>/project.
 import { createHash } from "node:crypto";
@@ -49,7 +49,7 @@ export async function createTestProject(
   await mkdir(join(base, "node_modules"));
   await symlink(
     packageDir,
-    join(base, "node_modules", "superdeploy"),
+    join(base, "node_modules", "super-deploy"),
     "junction",
   );
   const root = join(base, "project");
@@ -89,8 +89,8 @@ export async function createTestProject(
  */
 export function stallingConfig(dataDir: string): string {
   return `import { writeFileSync } from "node:fs";
-import { defineConfig } from "superdeploy";
-import { embeddedPostgres } from "superdeploy/embedded-postgres";
+import { defineConfig } from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
 
 const postgres = embeddedPostgres({ dataDir: ${dataDir} });
 const stall = process.env.TEST_STALL;
@@ -141,8 +141,8 @@ export function downTargetConfig(
   variable: string,
   targetSettings: string,
 ): string {
-  return `import { defineConfig, postgresTarget } from "superdeploy";
-import { embeddedPostgres } from "superdeploy/embedded-postgres";
+  return `import { defineConfig, postgresTarget } from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
 
 const postgres = embeddedPostgres({ dataDir: "/nonexistent/super-deploy-down-target" });
 
@@ -162,8 +162,8 @@ export function embeddedConfig(
   server: Pick<TestServer, "dataDir">,
   settings = "",
 ): string {
-  return `import { defineConfig } from "superdeploy";
-import { embeddedPostgres } from "superdeploy/embedded-postgres";
+  return `import { defineConfig } from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
 
 const postgres = embeddedPostgres({ dataDir: ${JSON.stringify(server.dataDir)} });
 

@@ -1,4 +1,4 @@
-# superdeploy
+# super-deploy
 
 Immutable, all-or-nothing **PostgreSQL 18** migrations, generated from the schema you declare.
 
@@ -20,7 +20,7 @@ Requires Node 24 and pnpm. No database is needed, because projects run private e
 
 ```sh
 mkdir my-schema && cd my-schema
-pnpm dlx superdeploy init
+pnpm dlx super-deploy init
 git init && pnpm install
 ```
 

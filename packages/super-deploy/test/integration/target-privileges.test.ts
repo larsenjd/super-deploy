@@ -13,8 +13,8 @@ import {
   SqlFileFailedError,
   SqlRuleViolationError,
   status,
-} from "superdeploy";
-import { embeddedPostgres } from "superdeploy/embedded-postgres";
+} from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   asDeployRole,

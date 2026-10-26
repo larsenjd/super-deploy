@@ -13,7 +13,7 @@ import {
   SuperDeployError,
   toolVersion,
   validate,
-} from "superdeploy";
+} from "super-deploy";
 import {
   afterAll,
   beforeAll,

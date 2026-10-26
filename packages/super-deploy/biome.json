@@ -52,10 +52,10 @@
                     "group": [
                       "**/src/**",
                       "**/dist/**",
-                      "superdeploy/**",
-                      "!superdeploy/embedded-postgres"
+                      "super-deploy/**",
+                      "!super-deploy/embedded-postgres"
                     ],
-                    "message": "Integration tests import the library only by its package name (superdeploy, superdeploy/embedded-postgres), so they test the public API."
+                    "message": "Integration tests import the library only by its package name (super-deploy, super-deploy/embedded-postgres), so they test the public API."
                   }
                 ]
               }
@@ -79,9 +79,9 @@
                       "!**/src/sql-analysis/index.ts",
                       "!**/src/store/unified-diff.ts",
                       "**/dist/**",
-                      "superdeploy/**"
+                      "super-deploy/**"
                     ],
-                    "message": "Unit tests reach src/ only through src/sql-analysis/index.ts and src/store/unified-diff.ts (or the package name superdeploy)."
+                    "message": "Unit tests reach src/ only through src/sql-analysis/index.ts and src/store/unified-diff.ts (or the package name super-deploy)."
                   }
                 ]
               }

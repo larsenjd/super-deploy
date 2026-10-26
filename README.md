@@ -12,7 +12,7 @@ flowchart LR
 ```
 
 ```sh
-pnpm dlx superdeploy init
+pnpm dlx super-deploy init
 ```
 
 | | |

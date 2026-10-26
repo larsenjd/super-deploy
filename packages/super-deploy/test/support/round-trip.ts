@@ -10,7 +10,7 @@
 //
 // Not test.concurrent: createTestProject's cleanup uses the global
 // onTestFinished, which can't tell concurrent tests apart.
-import { deploy, draft, finalize, loadProject, status } from "superdeploy";
+import { deploy, draft, finalize, loadProject, status } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import type { RoundTrip } from "../fixtures/round-trips.ts";
 import { deployConfig, targetDatabaseName } from "./deploy.ts";

@@ -16,7 +16,7 @@ import {
   restoreSchema,
   unfinalize,
   validate,
-} from "superdeploy";
+} from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject, embeddedConfig } from "../support/project.ts";

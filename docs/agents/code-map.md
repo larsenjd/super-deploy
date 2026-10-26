@@ -6,16 +6,16 @@ Where things live and where a change goes. Every source file opens with a header
 
 | Package | Path | What it is |
 |---|---|---|
-| `superdeploy` | `packages/super-deploy` | The library and its `super-deploy` CLI, published to npm as `superdeploy`. `pnpm build` (`scripts/build.ts`) compiles `src/` to `dist/` with plain `tsc`, then copies `packages/template` into `dist/template`. |
-| `super-deploy-template` | `packages/template` | The project `init` copies (`src/store/template.ts`: `dist/template`, or this folder when running from source). `init` renames `project.gitignore` and `project.pnpm-workspace.yaml` to `.gitignore` and `pnpm-workspace.yaml` (`renamedOnInit`) and rewrites `superdeploy: workspace:*` to the library's exact version (`src/commands/init.ts`). Its README is the user documentation. |
+| `super-deploy` | `packages/super-deploy` | The library and its `super-deploy` CLI, published to npm as `super-deploy`. `pnpm build` (`scripts/build.ts`) compiles `src/` to `dist/` with plain `tsc`, then copies `packages/template` into `dist/template`. |
+| `super-deploy-template` | `packages/template` | The project `init` copies (`src/store/template.ts`: `dist/template`, or this folder when running from source). `init` renames `project.gitignore` and `project.pnpm-workspace.yaml` to `.gitignore` and `pnpm-workspace.yaml` (`renamedOnInit`) and rewrites `super-deploy: workspace:*` to the library's exact version (`src/commands/init.ts`). Its README is the user documentation. |
 | `super-deploy-example-shop` | `examples/shop` | A realistic history of five migrations and a Recovery, made with the real CLI; its README walks through it. Its `precommit` also runs `scripts/rehearse-history.ts`, which deploys the whole history to a throwaway database through the public API. |
 
-The template and example devDepend on `superdeploy: workspace:*`; their `tsc` and `super-deploy` binary use the library's `dist/`. Finalized migrations are hashed and read-only, so the example's history changes through the CLI (`unfinalize`, `draft`, `finalize`), as a user's would.
+The template and example devDepend on `super-deploy: workspace:*`; their `tsc` and `super-deploy` binary use the library's `dist/`. Finalized migrations are hashed and read-only, so the example's history changes through the CLI (`unfinalize`, `draft`, `finalize`), as a user's would.
 
 ## Entry points (`packages/super-deploy/src`)
 
-- `index.ts`: the public API, package export `superdeploy`. Each command is an exported function `(project, options)`: flags as options, questions as callbacks, typed errors. Export every new command, its option and result types, and every new error from here.
-- `adapters/embedded-postgres.ts`: the second package export, `superdeploy/embedded-postgres`.
+- `index.ts`: the public API, package export `super-deploy`. Each command is an exported function `(project, options)`: flags as options, questions as callbacks, typed errors. Export every new command, its option and result types, and every new error from here.
+- `adapters/embedded-postgres.ts`: the second package export, `super-deploy/embedded-postgres`.
 - `cli.ts`: the `super-deploy` bin (`dist/cli.js`); the CLI itself is `cli/`.
 
 ## Directories

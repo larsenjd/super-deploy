@@ -1,7 +1,7 @@
 // API seam for postgresTarget's and postgresRehearsal's connection strings:
 // each problem is refused before any connection, with a message naming the
 // target and never the password.
-import { AdapterError, deploy, draft, status } from "superdeploy";
+import { AdapterError, deploy, draft, status } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import {
   deployProject,
@@ -28,7 +28,7 @@ function qaProject(source: string) {
     server,
     { "customers.sql": customers },
     {
-      preamble: 'import { postgresTarget } from "superdeploy";',
+      preamble: 'import { postgresTarget } from "super-deploy";',
       otherTargets: `qa: { adapter: postgresTarget(${source}) },`,
     },
   );
@@ -113,7 +113,7 @@ describe("a qa target's connection string", () => {
       { "customers.sql": customers },
       {
         database,
-        preamble: `import { postgresTarget } from "superdeploy";
+        preamble: `import { postgresTarget } from "super-deploy";
 const viaUrl = (scheme) => ({
   async connect() {
     await (await real.connect()).close();
@@ -143,7 +143,7 @@ test("the rehearsal adapter's unset variable is refused before connecting", asyn
     server,
     { "customers.sql": customers },
     {
-      preamble: 'import { postgresRehearsal } from "superdeploy";',
+      preamble: 'import { postgresRehearsal } from "super-deploy";',
       rehearsal: `postgresRehearsal({ env: "${unset}" })`,
     },
   );

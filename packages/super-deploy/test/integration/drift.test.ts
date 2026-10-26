@@ -7,7 +7,7 @@ import {
   RehearsalMismatchError,
   status,
   unfinalize,
-} from "superdeploy";
+} from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   asDeployRole,

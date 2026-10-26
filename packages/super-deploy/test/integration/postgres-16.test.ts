@@ -7,7 +7,7 @@ import {
   loadProject,
   status,
   UnsupportedServerError,
-} from "superdeploy";
+} from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { targetDatabaseName } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
@@ -31,8 +31,8 @@ afterAll(async () => {
 
 /** A config for `postgresVersion`, rehearsing on the test server, with `targets` spliced in. */
 function config(postgresVersion: number, targets: string): string {
-  return `import { defineConfig, postgresTarget } from "superdeploy";
-import { embeddedPostgres } from "superdeploy/embedded-postgres";
+  return `import { defineConfig, postgresTarget } from "super-deploy";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
 
 const postgres = embeddedPostgres({ dataDir: ${JSON.stringify(server.dataDir)} });
 

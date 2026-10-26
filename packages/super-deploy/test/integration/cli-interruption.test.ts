@@ -6,7 +6,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { embeddedPostgres } from "superdeploy/embedded-postgres";
+import { embeddedPostgres } from "super-deploy/embedded-postgres";
 import {
   afterAll,
   beforeAll,

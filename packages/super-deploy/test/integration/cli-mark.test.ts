@@ -3,7 +3,7 @@
 // target was fixed by hand, it records the next pending migration as marked,
 // but only if the target matches a replica of its migrations up to it.
 import { userInfo } from "node:os";
-import { deploy, draft, finalize, loadProject } from "superdeploy";
+import { deploy, draft, finalize, loadProject } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runCli } from "../support/cli.ts";
 import {

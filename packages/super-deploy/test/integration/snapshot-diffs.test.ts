@@ -13,7 +13,7 @@ import {
   unfinalize,
   ValidationFailedError,
   validate,
-} from "superdeploy";
+} from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   attemptLog,

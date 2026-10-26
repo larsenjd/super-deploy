@@ -26,7 +26,7 @@ import {
   rehearse,
   status,
   toolVersion,
-} from "superdeploy";
+} from "super-deploy";
 import { describe, expect, onTestFinished, test, vi } from "vitest";
 import { gitInstalled } from "../support/git-apply.ts";
 import { holdPort } from "../support/postgres.ts";
@@ -245,7 +245,7 @@ create function customer_count() returns bigint
     expect(manifest.name).toBe("my-shop");
     expect(manifest.private).toBe(true);
     expect(manifest.description).toBeUndefined();
-    expect(manifest.devDependencies.superdeploy).toBe(toolVersion);
+    expect(manifest.devDependencies["super-deploy"]).toBe(toolVersion);
     expect(manifest.scripts.precommit).toBe(
       "biome check && tsc --noEmit && super-deploy validate --strict --allow-draft",
     );
@@ -361,9 +361,9 @@ create function customer_count() returns bigint
     await init({ directory: root });
     const configPath = join(root, "super-deploy.config.ts");
     const scaffolded = await readFile(configPath, "utf8");
-    const importLine = /^import \{ defineConfig \} from "superdeploy";$/m;
+    const importLine = /^import \{ defineConfig \} from "super-deploy";$/m;
     const exampleImport =
-      /^\/\/ +(import \{ defineConfig, postgresTarget \} from "superdeploy";)$/m;
+      /^\/\/ +(import \{ defineConfig, postgresTarget \} from "super-deploy";)$/m;
     const exampleTarget =
       /^( +)\/\/ (qa: \{ adapter: postgresTarget\(\{ env: "QA_DATABASE_URL" \}\) \},)$/m;
     expect(scaffolded).toMatch(importLine);
