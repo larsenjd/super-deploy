@@ -12,6 +12,7 @@ import {
   rehearse,
   SuperDeployError,
   toolVersion,
+  unfinalize,
   validate,
 } from "superdeploy";
 import {
@@ -289,6 +290,68 @@ describe("a schema change edited by hand", () => {
         "data-model/migrations/00001-add-customers/schema-change.sql",
       ),
     ).toContain("CREATE INDEX customers_name_idx");
+  });
+});
+
+describe("a draft saved with Windows line endings", () => {
+  const index = "create index customers_name_idx on customers (name);\n";
+  const scripts = {
+    "pre-migration.sql": "update customers set name = trim(name);\n",
+    "post-migration.sql":
+      "update customers set name = 'Unknown' where name = '';\n",
+    // A carriage return inside a line is content, not a line ending.
+    "seed-data.sql":
+      "insert into customers (id, name) values (1, ' Ada\rLovelace ');\n",
+  };
+  const migration = "data-model/migrations/00002-add-index";
+  const crlf = (text: string) => text.replaceAll("\n", "\r\n");
+
+  /** Every file of `folder` with its text, read byte for byte. */
+  async function filesOf(dir: TestProject, folder: string) {
+    const files: Record<string, string> = {};
+    for (const file of await filesUnder(dir.path(folder))) {
+      files[file] = await dir.read(`${folder}/${file}`);
+    }
+    return files;
+  }
+
+  test("finalizes to LF files, byte for byte the migration the same draft saved with LF finalizes to", async () => {
+    const { dir, project } = await draftedProject();
+    await finalize(project);
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      `${customers}${index}`,
+    );
+    await draft(project, { name: "Add index" });
+    const schemaChange = `${await dir.read("data-model/draft/schema-change.sql")}-- reviewed by hand\n`;
+    const draftFiles = { ...scripts, "schema-change.sql": schemaChange };
+    for (const [file, text] of Object.entries(draftFiles)) {
+      await dir.write(`data-model/draft/${file}`, crlf(text));
+    }
+
+    expect((await finalize(project)).handEdited).toBe(
+      "data-model/draft/schema-change.sql",
+    );
+
+    const finalized = await filesOf(dir, migration);
+    expect(finalized).toMatchObject(draftFiles);
+    expect(Object.keys(finalized)).toContain("HAND-EDITED.md");
+    for (const [file, text] of Object.entries(finalized)) {
+      expect({ file, crlf: text.includes("\r\n") }).toEqual({
+        file,
+        crlf: false,
+      });
+    }
+    const indexJson = await dir.read("data-model/migrations/index.json");
+
+    await unfinalize(project);
+    for (const [file, text] of Object.entries(draftFiles)) {
+      await dir.write(`data-model/draft/${file}`, text);
+    }
+    await finalize(project);
+
+    expect(await filesOf(dir, migration)).toEqual(finalized);
+    expect(await dir.read("data-model/migrations/index.json")).toBe(indexJson);
   });
 });
 

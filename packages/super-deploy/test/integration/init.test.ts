@@ -64,6 +64,19 @@ async function emptyDirectory(name = "my-shop"): Promise<string> {
   return directory;
 }
 
+/** Runs git in `root` as a Windows checkout would, converting line endings; fails the test on an error. */
+function autocrlfGit(root: string) {
+  return (...args: string[]): string => {
+    const run = spawnSync(
+      "git",
+      ["-c", "core.autocrlf=true", "-c", "core.safecrlf=false", ...args],
+      { cwd: root, encoding: "utf8" },
+    );
+    expect(run.status, run.stderr).toBe(0);
+    return run.stdout;
+  };
+}
+
 describe("init", () => {
   test("a freshly initialised project drafts, finalizes and deploys to dev with no other setup, and no warnings", async () => {
     const root = await emptyDirectory();
@@ -305,15 +318,7 @@ create function customer_count() returns bigint
       ].join("\n");
       await mkdir(join(root, dirname(diffPath)), { recursive: true });
       await writeFile(join(root, diffPath), diff);
-      const git = (...args: string[]) => {
-        const run = spawnSync(
-          "git",
-          ["-c", "core.autocrlf=true", "-c", "core.safecrlf=false", ...args],
-          { cwd: root, encoding: "utf8" },
-        );
-        expect(run.status, run.stderr).toBe(0);
-        return run.stdout;
-      };
+      const git = autocrlfGit(root);
 
       git("init", "--quiet");
       git("add", "--all");
@@ -321,6 +326,33 @@ create function customer_count() returns bigint
       await rm(join(root, diffPath));
       git("checkout", "--", diffPath);
       expect(await readFile(join(root, diffPath), "utf8")).toBe(diff);
+    },
+  );
+
+  test.skipIf(!gitInstalled)(
+    "git checks out the LF files finalize writes as LF, even with core.autocrlf",
+    async () => {
+      const root = await emptyDirectory();
+      await init({ directory: root });
+      const migration = "data-model/migrations/00001-add-customers";
+      const files = ["schema-change.sql", "metadata.json", "HAND-EDITED.md"];
+      const text = "one\ntwo\n";
+      await mkdir(join(root, migration), { recursive: true });
+      for (const file of files) {
+        await writeFile(join(root, migration, file), text);
+      }
+      const git = autocrlfGit(root);
+
+      git("init", "--quiet");
+      git("add", "--all");
+      await rm(join(root, migration), { recursive: true });
+      git("checkout", "--", migration);
+      for (const file of files) {
+        expect({
+          file,
+          text: await readFile(join(root, migration, file), "utf8"),
+        }).toEqual({ file, text });
+      }
     },
   );
 

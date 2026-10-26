@@ -1,7 +1,9 @@
-# Migration hashes normalise line endings, but keep SQL and JSON as LF in
-# every checkout so files never show up as changed on Windows.
+# Migration hashes normalise line endings, but finalize writes a migration's
+# files LF: keep SQL, JSON and Markdown (HAND-EDITED.md) LF in every checkout
+# so files never show up as changed on Windows.
 *.sql text eol=lf
 *.json text eol=lf
+*.md text eol=lf
 # A snapshot's diff is stored byte for byte: a line in it can end in a
 # carriage return of the desired schema's own, which converting line endings
 # would lose without changing the migration's hash.

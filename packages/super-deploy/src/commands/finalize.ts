@@ -7,6 +7,15 @@
 // rehearsed. A Recovery draft becomes its migration's next Recovery
 // (store/migrations.ts) instead, with no snapshot.
 //
+// Every file is written with its line endings normalised to LF
+// (normaliseLineEndings, store/hashing.ts), so a finalized file's bytes
+// never depend on the editor or OS the draft came from; hashes ignore line
+// endings, so a draft saved with CRLF finalizes to exactly the migration it
+// does saved with LF. Not desired-schema.diff: it is written from
+// normalised text already, and a line in it can end in a carriage return
+// the desired schema holds (a file ending in one), so it is written byte
+// for byte.
+//
 // A file in the draft folder that a draft doesn't hold is refused first
 // (UnknownDraftFileError, store/draft.ts), before the rules or the
 // rehearsal: copied into the migration, it would fail every later integrity
@@ -46,6 +55,7 @@ import {
   chainHash,
   type HashedFile,
   migrationContentHash,
+  normaliseLineEndings,
   recoveryContentHash,
 } from "../store/hashing.ts";
 import { projectRelative } from "../store/layout.ts";
@@ -258,7 +268,8 @@ function sameFiles(
 }
 
 /**
- * Writes `files` as the read-only folder `path`: under a temporary name,
+ * Writes `files` as the read-only folder `path`, LF but for
+ * desired-schema.diff (see the header): under a temporary name,
  * created exclusively, then renamed, so a half-written folder never looks
  * like a migration or Recovery (validate reports a leftover one). On
  * failure the temporary folder is removed (unless another finalize owns
@@ -281,7 +292,12 @@ async function writeFinalizedFolder(
     for (const file of files) {
       const written = join(staging, file.path);
       await mkdir(dirname(written), { recursive: true });
-      await writeFile(written, file.text);
+      await writeFile(
+        written,
+        file.path === snapshotDiffFileName
+          ? file.text
+          : normaliseLineEndings(file.text),
+      );
     }
     await makeReadOnly(staging);
     await rename(staging, path);

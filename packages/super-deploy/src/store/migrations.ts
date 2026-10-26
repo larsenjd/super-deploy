@@ -28,6 +28,10 @@
 // migration's chain hash, so adding a Recovery never changes the hashes a
 // target recorded for the migration. A Recovery never has a schema change:
 // it always runs its migration's.
+//
+// finalize writes every file LF (store/hashing.ts normalisation), except
+// desired-schema.diff, which it writes byte for byte: a line of it can end
+// in a carriage return of the desired schema's own.
 
 import { constants, type Dirent } from "node:fs";
 import {

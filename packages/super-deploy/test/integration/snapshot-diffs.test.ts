@@ -293,6 +293,22 @@ describe("a history of migrations stored as diffs", () => {
     ).toEqual({ "customers.sql": customers });
   });
 
+  test("a file ending in a carriage return keeps it in desired-schema.diff, byte for byte, though finalize writes its other files LF", async () => {
+    const { dir, project } = await deployProject(server, {});
+    const endingInCarriageReturn = `${customers.trimEnd()}\r`;
+    await setDesiredSchema(dir.root, {
+      "customers.sql": endingInCarriageReturn,
+    });
+    await draft(project, { name: "add customers" });
+    const { folder } = await finalize(project);
+    const diff = await dir.read(`${migrations}/${folder}/desired-schema.diff`);
+
+    expect(diff).toContain("+);\r\n\\ No newline at end of file\n");
+    expect(await gitApply({}, diff)).toEqual({
+      "customers.sql": endingInCarriageReturn,
+    });
+  });
+
   test("deploy rehearses the history against the newest snapshot and deploys it", async () => {
     const { project } = await history();
 

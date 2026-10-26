@@ -771,6 +771,15 @@ pull request shows what it changed in the desired schema as one diff, which
 GitHub and editors highlight. super-deploy rebuilds a migration's snapshot
 by applying the diffs in order, from migration 1's.
 
+`finalize` writes every file of a migration (or Recovery) with LF line
+endings, whatever the draft's were, so a finalized file's bytes never depend
+on the editor or OS it came from; the project's `.gitattributes` keeps them
+LF in every checkout. `desired-schema.diff` is the exception: it is written
+and checked out byte for byte, since a line in it can end in a carriage
+return the desired schema holds. Hashes ignore line endings either way, so
+finalizing a draft saved with Windows line endings gives exactly the
+migration it gives saved with LF.
+
 Finalized migrations are read-only and hashed: never edit them.
 `super-deploy validate` checks their hashes, and `pnpm precommit` runs
 Biome, the type checker and `super-deploy validate --strict --allow-draft`
