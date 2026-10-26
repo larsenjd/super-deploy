@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Line endings are normalised once, the same way on both sides: what the writer diffs is exactly what the applier rebuilds, so applying a written diff to its "before" files always gives its "after" files, whatever carriage returns the files hold.
 - [ ] Unit tests at the diff module's seam: a round trip with `\r\r\n`, a lone `\r` inside a line and at the end of a file, and a mix of LF and CRLF lines, each also accepted by `git apply`.

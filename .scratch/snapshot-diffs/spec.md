@@ -1,6 +1,6 @@
 # Snapshots stored as diffs
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 Decision and rejected alternatives: ADR-0008. Term: **Snapshot** in `GLOSSARY.md`.
 
