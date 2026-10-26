@@ -1,24 +1,30 @@
 # superdeploy
 
-Immutable, all-or-nothing PostgreSQL 18 migrations generated from a desired
-schema. You describe the schema you want as `CREATE` statements; super-deploy
-generates each migration from it, rehearses it on a throwaway database, and
-deploys every pending migration to a target in one transaction.
+Immutable, all-or-nothing **PostgreSQL 18** migrations, generated from the schema you declare.
 
-The package is `superdeploy`; its command is `super-deploy`. Requires Node 24
-and pnpm. Projects start with private embedded PostgreSQL 18 servers, so no
-database is needed to try it.
+```mermaid
+flowchart LR
+  DS["You edit<br>CREATE statements"] -->|draft| D["Generated<br>schema change"]
+  D -->|finalize| M["Frozen, hashed<br>migration"]
+  M -->|deploy| T[("Every pending migration,<br>one transaction")]
+```
 
-## Creating a project
+- **Declarative:** describe the end state, and super-deploy writes the migration.
+- **Rehearsed:** every migration is replayed on a throwaway database before it is frozen and before it is deployed.
+- **All-or-nothing:** a failed deployment rolls back completely.
+- **Immutable:** finalized migrations are hash-chained, and Git hooks and CI catch edits.
+
+## Quick start
+
+Requires Node 24 and pnpm. No database is needed, because projects run private embedded PostgreSQL servers.
 
 ```sh
 mkdir my-schema && cd my-schema
 pnpm dlx superdeploy init
-git init
-pnpm install
+git init && pnpm install
 ```
 
-Then write `CREATE` statements under `data-model/desired-schema/` and run:
+Write `CREATE` statements in `data-model/desired-schema/`, then run:
 
 ```sh
 pnpm exec super-deploy draft --name "add customers"
@@ -26,14 +32,12 @@ pnpm exec super-deploy finalize
 pnpm exec super-deploy deploy --target dev
 ```
 
-`pnpm exec super-deploy` with no arguments opens an interactive menu.
+Run `pnpm exec super-deploy` with no arguments for an interactive menu.
 
 ## Documentation
 
-Each project's `README.md` is the full guide: what the desired schema
-supports, configuration, real targets, adopting an existing database,
-permissions, drift and recovery. The same guide is
-[in the repository](https://github.com/larsenjd/super-deploy/blob/main/packages/template/README.md).
+- **[The guide](https://github.com/larsenjd/super-deploy/blob/main/packages/template/README.md)**: every project gets a copy as its `README.md`.
+- **[Example project](https://github.com/larsenjd/super-deploy/tree/main/examples/shop)**: a real migration history, including a failed deployment and its fix.
 
 ## Licence
 
