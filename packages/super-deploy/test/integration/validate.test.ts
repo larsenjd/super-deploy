@@ -16,7 +16,7 @@ import { startTestServer, type TestServer } from "../support/postgres.ts";
 import {
   createTestProject,
   embeddedConfig,
-  rehashMigration,
+  rehashFirstMigration,
   tamperFinalized,
 } from "../support/project.ts";
 
@@ -160,7 +160,7 @@ describe("validate", () => {
   test("fails when a migration has no schema-change.sql, even with its index entry rehashed to match", async () => {
     const { dir, project } = await finalizedProject();
     await rm(dir.path(`${folder}/schema-change.sql`));
-    await rehashMigration(dir, "00001-add-customers");
+    await rehashFirstMigration(dir, "00001-add-customers");
 
     const error = await validationError(project);
 

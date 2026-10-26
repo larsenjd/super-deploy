@@ -24,7 +24,7 @@ import { type Files, readFiles, writeFiles } from "../support/files.ts";
 import { gitApply } from "../support/git-apply.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import {
-  rehashMigration,
+  rehashFirstMigration,
   type TestProject,
   tamperFinalized,
 } from "../support/project.ts";
@@ -346,7 +346,7 @@ describe("a desired-schema diff that doesn't apply", () => {
       `${migrations}/${folder}/desired-schema.diff`,
       (text) => text.replace("new file mode 100644\n", ""),
     );
-    await rehashMigration(dir, folder);
+    await rehashFirstMigration(dir, folder);
   }
 
   test("is refused, naming the migration and the file", async () => {
@@ -367,9 +367,11 @@ describe("a desired-schema diff that doesn't apply", () => {
       code: "snapshot-diff-does-not-apply",
       migration,
       file,
-      message: expect.stringContaining(migration),
     });
-    expect((error as Error).message).toContain(file);
+    // The file's path holds the migration's, so the migration must be named apart from it.
+    const { message } = error as Error;
+    expect(message).toContain(file);
+    expect(message.replace(file, "")).toContain(migration);
   });
 
   test("deploy refuses it before touching the target", async () => {
