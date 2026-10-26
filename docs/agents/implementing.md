@@ -29,7 +29,7 @@ The Bash tool runs zsh, which expands unquoted globs and words starting with `=`
 
 ## Before reporting
 
-1. Commit everything.
+1. Commit everything. Every commit, merge commits included, goes through the pre-commit hook.
 2. `git merge <integration>` into your branch, so merging back is a fast-forward; resolve any conflicts.
-3. Run the full suite once, `pnpm test` at the root, then `pnpm precommit`.
+3. Run the full suite once, `pnpm test` at the root, then `pnpm precommit`, each in the foreground to completion. Report only once both have finished.
 4. Report: branch, final commit, what was built, the test commands and their results, and anything deferred.

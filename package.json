@@ -16,7 +16,7 @@
     "test": "pnpm -r test",
     "test:unit": "pnpm -r test:unit",
     "test:integration": "pnpm -r test:integration",
-    "precommit": "biome check && pnpm -r precommit"
+    "precommit": "biome check && pnpm build && pnpm -r precommit"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
