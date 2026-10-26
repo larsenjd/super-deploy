@@ -2,7 +2,7 @@
 // database under management in an initialised project with no migrations:
 // its managed schema becomes the desired schema and migration 00001-adopt,
 // recorded on the target as marked after mark's replica check.
-import { readdir, rm } from "node:fs/promises";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import {
   AdoptCancelledError,
   AdoptConflictError,
@@ -29,6 +29,7 @@ import {
   testSession,
   whileLocked,
 } from "../support/deploy.ts";
+import { withCrlf, withoutCrlf } from "../support/line-endings.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
 let server: TestServer;
@@ -1841,6 +1842,156 @@ const changing = {
       expect(report.attempts).toMatchObject([
         { command: "init --adopt", outcome: "failed" },
       ]);
+    } finally {
+      await project.close();
+    }
+  });
+});
+
+/**
+ * Routines as a Windows client (pgAdmin, DBeaver, psql reading a CRLF file)
+ * sends them: PostgreSQL stores a body byte for byte, so each line of it
+ * keeps its carriage return in pg_proc.prosrc.
+ */
+const windowsRoutines = `
+create table orders (id bigint primary key, placed_on date not null, amount numeric(10, 2) not null);
+create table orders_archive (id bigint primary key, placed_on date not null, amount numeric(10, 2) not null);
+
+CREATE OR REPLACE PROCEDURE archive_orders(before_date date)
+LANGUAGE plpgsql
+AS $procedure$
+DECLARE
+  moved bigint;
+BEGIN
+  INSERT INTO orders_archive SELECT * FROM orders WHERE placed_on < before_date;
+  GET DIAGNOSTICS moved = ROW_COUNT;
+  DELETE FROM orders WHERE placed_on < before_date;
+  RAISE NOTICE 'archived % orders', moved;
+END
+$procedure$;
+
+CREATE OR REPLACE FUNCTION order_total(o bigint)
+RETURNS numeric
+LANGUAGE plpgsql
+STABLE
+AS $function$
+DECLARE
+  total numeric;
+BEGIN
+  SELECT sum(amount) INTO total FROM orders WHERE id = o;
+  RETURN coalesce(total, 0);
+END
+$function$;
+
+CREATE OR REPLACE FUNCTION orders_on(d date)
+RETURNS bigint
+LANGUAGE sql
+STABLE
+AS $function$
+  SELECT count(*)
+  FROM orders
+  WHERE placed_on = d
+$function$;
+`;
+
+/** Each routine's body as the target stores it. */
+async function storedBodies(prod: string): Promise<string[]> {
+  const rows = await server.query(
+    "select prosrc from pg_proc where pronamespace = 'public'::regnamespace order by proname",
+    [],
+    prod,
+  );
+  return rows.map((row) => (row as { prosrc: string }).prosrc);
+}
+
+describe("adopt: routine bodies saved with different line endings", () => {
+  const variants: [string, (sql: string) => string][] = [
+    ["LF", (sql) => sql],
+    ["CRLF", withCrlf],
+    [
+      "LF, with trailing spaces and tabs",
+      (sql) => sql.replaceAll(";\n", "; \t\n").replaceAll("  ", "\t"),
+    ],
+    [
+      "CRLF and LF mixed",
+      (sql) =>
+        sql
+          .split("\n")
+          .map((line, i) => (i % 2 === 0 ? `${line}\r` : line))
+          .join("\n"),
+    ],
+    ["lone CR (classic Mac)", (sql) => sql.replaceAll("\n", "\r")],
+  ];
+
+  test.each(variants)(
+    "adopts procedures and functions whose bodies were saved with %s, with no drift on the target or a fresh one",
+    async (_name, saved) => {
+      const sent = saved(windowsRoutines);
+      const { dir, project, prod } = await adoptableProject(sent);
+      try {
+        // The fixture is real: the target keeps the bodies as they were sent.
+        const bodies = await storedBodies(prod);
+        expect(bodies).toHaveLength(3);
+        expect(bodies.every((body) => body.includes("\r"))).toBe(
+          sent.includes("\r"),
+        );
+
+        // On failure, shows which objects didn't match and why.
+        const outcome = await adopt(project, { target: "prod" }).then(
+          async (result) => {
+            for (const file of result.files) {
+              expect(await readFile(dir.path(file), "utf8")).toEqual(
+                withoutCrlf,
+              );
+            }
+            return "adopted";
+          },
+          (e: unknown) =>
+            e instanceof AdoptUnsupportedError || e instanceof MarkMismatchError
+              ? e.objects
+              : e,
+        );
+        expect(outcome).toBe("adopted");
+
+        await expectReproducedOnDev(project);
+        // The desired schema it wrote is the one migration 1 makes.
+        expect(
+          (await draft(project, { name: "no change" })).statements,
+        ).toEqual([]);
+      } finally {
+        await project.close();
+      }
+    },
+  );
+
+  test("adopts comments and column defaults whose text holds a CRLF", async () => {
+    const { project } = await adoptableProject(
+      "create table notes (body text default 'first\r\nsecond');\n" +
+        "comment on table notes is 'Saved\r\nfrom Windows';",
+    );
+    try {
+      await adopt(project, { target: "prod" });
+
+      await expectReproducedOnDev(project);
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("reports no change for adopted routines once the desired schema is checked out with CRLF", async () => {
+    const { dir, project } = await adoptableProject(windowsRoutines);
+    try {
+      const result = await adopt(project, { target: "prod" });
+      // As git with core.autocrlf=true checks the files out on Windows.
+      for (const file of result.files) {
+        const path = dir.path(file);
+        await writeFile(path, withCrlf(await readFile(path, "utf8")));
+      }
+
+      expect((await status(project, { target: "prod" })).drift).toEqual([]);
+      const drafted = await draft(project, { name: "no change" });
+      expect(drafted.statements).toEqual([]);
+      expect(drafted.shortfalls).toEqual([]);
     } finally {
       await project.close();
     }

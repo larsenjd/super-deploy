@@ -25,6 +25,12 @@
 // `-1` before 17 (NULL since), and before 18 a NOT NULL column has no
 // `<table>_<column>_not_null` constraint, so one is read for each.
 //
+// A line's line endings are normalised (normaliseLineEndings) as it is read:
+// a string the catalogs store byte for byte (a routine body, a comment, a
+// default's literal) keeps the CRLF a Windows client sent, which a migration
+// can't carry, since finalize normalises its files and git may convert them.
+// So a CR before LF is never a difference, as it is never one in a file's hash.
+//
 // Binding facts (opt-in) record what each object is bound to: pg_depend
 // edges (the overload a view or default calls, the table a function body
 // reads) and the index each foreign key uses. The order-independence check
@@ -34,6 +40,7 @@ import type { Session } from "../adapters/types.ts";
 import { pinnedSettings } from "../rehearsal/throwaway.ts";
 import { generatedName } from "../sql-analysis/generated-names.ts";
 import type { CatalogReference } from "../sql-analysis/index.ts";
+import { normaliseLineEndings } from "../store/hashing.ts";
 
 const describe = (classTable: string, oid: string, sub = "0") =>
   `pg_describe_object('${classTable}'::regclass, ${oid}, ${sub})`;
@@ -258,7 +265,11 @@ export async function catalogFacts(
           [schema],
         );
         for (const row of result.rows) {
-          read.push({ kind, key: addressKey(row), line: row.line });
+          read.push({
+            kind,
+            key: addressKey(row),
+            line: normaliseLineEndings(row.line),
+          });
         }
       }
       const version = await session.query<{ version: number }>(

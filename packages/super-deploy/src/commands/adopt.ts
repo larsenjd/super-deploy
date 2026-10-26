@@ -172,6 +172,7 @@ import {
 } from "../sql-analysis/index.ts";
 import type { Override } from "../sql-analysis/overrides.ts";
 import { isSqlFile } from "../store/desired-schema.ts";
+import { normaliseLineEndings } from "../store/hashing.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
   exists,
@@ -1226,7 +1227,11 @@ async function projectBefore(project: Project): Promise<ProjectBefore> {
   };
 }
 
-/** Writes the files (absolute paths returned); never overwrites one. */
+/**
+ * Writes the files (absolute paths returned), line endings normalised: a
+ * string the target kept with a Windows client's CRLF is written LF, as
+ * finalize writes migration 1. Never overwrites one.
+ */
 async function writeAdoptedFiles(
   project: Project,
   files: readonly AdoptedFile[],
@@ -1237,7 +1242,7 @@ async function writeAdoptedFiles(
   try {
     for (const file of files) {
       const path = join(project.paths.desiredSchema, file.path);
-      await writeFile(path, file.text, { flag: "wx" });
+      await writeFile(path, normaliseLineEndings(file.text), { flag: "wx" });
       written.push(path);
     }
   } catch (error) {

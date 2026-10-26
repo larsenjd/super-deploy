@@ -1,6 +1,10 @@
 // The desired schema on disk: every *.sql file under the desired-schema
 // folder (or a migration's snapshot of it), any names and folders. Files must
 // be UTF-8 without a BOM, because finalize hashes them into the snapshot.
+// Their text is read with line endings normalised, as migration files are
+// written: loaded on a throwaway database, a CRLF inside a string (a routine
+// body checked out by git on Windows, or adopted from a target that kept a
+// Windows client's) would otherwise differ from what the migrations make.
 import { readFile, rm, rmdir } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import type { SqlFile } from "../sql-analysis/index.ts";
@@ -12,12 +16,15 @@ export function isSqlFile(path: string): boolean {
   return path.toLowerCase().endsWith(".sql");
 }
 
-/** Every *.sql file under `folder`, with paths relative to it, sorted. */
-export function readDesiredSchemaFiles(
+/** Every *.sql file under `folder`, with paths relative to it, sorted; line endings normalised. */
+export async function readDesiredSchemaFiles(
   root: string,
   folder: string,
 ): Promise<HashedFile[]> {
-  return readHashedFiles(root, folder, isSqlFile);
+  return (await readHashedFiles(root, folder, isSqlFile)).map((file) => ({
+    ...file,
+    text: normaliseLineEndings(file.text),
+  }));
 }
 
 /** The same files as SQL analysis input, with project-relative paths. */
