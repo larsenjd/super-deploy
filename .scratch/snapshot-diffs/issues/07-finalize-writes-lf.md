@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Every file `finalize` writes into a migration or Recovery folder (schema change, pre- and post-migration scripts, seed data, `metadata.json`, `HAND-EDITED.md`) has its line endings normalised to LF with the store's existing normalisation (a run of `\r` before `\n` becomes `\n`). Any other carriage return is content and stays.
 - [ ] `desired-schema.diff` is not normalised: it is already written from normalised text, and a `\r` at the end of one of its lines can be content of the desired schema (ticket 06). It stays byte for byte.
