@@ -7,3 +7,4 @@ Each migration stores its snapshot as `desired-schema.diff`, a git-compatible di
 - Reading any snapshot reads every migration before it; commands that need several build them in one forward pass.
 - The diff is always written, empty when the desired schema didn't change, and finalize checks that applying it gives back exactly the current desired schema before the migration becomes read-only.
 - Migrations with a `desired-schema/` folder, from 0.3.0 and earlier, are not read. No project used the library yet.
+- A carriage return that isn't part of a line ending is content of the desired schema, so a diff line can end in one. The diff is therefore stored byte for byte: finalize writes every other file LF, and projects mark `desired-schema.diff` as `-text` in `.gitattributes`, because git converting it would change the snapshot without changing the migration's hash.

@@ -13,3 +13,7 @@
 - [ ] Unit tests, importing the module directly as the SQL-analysis tests import theirs, cover: no trailing newline on either side, CRLF input, empty files, a file deleted and another added at the same path, many hunks in one file, adding to and deleting from nested folders, round trips of each, and the error on mismatched text.
 - [ ] A unit test checks that `git apply` accepts a written diff and produces the same files (skipped only if `git` isn't installed).
 - [ ] The existing hand-edit report and its reversal behave as before.
+
+## Comments
+
+- After the first code review, `SnapshotDiffDoesNotApplyError` moved to the snapshot reader (`store/snapshots.ts`): the diff module now throws a generic `FilesDiffDoesNotApplyError` naming the file, and the reader turns it into the public error naming the migration. The criterion above describes the state when this ticket was resolved.
