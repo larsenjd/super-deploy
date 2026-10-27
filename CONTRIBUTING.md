@@ -36,4 +36,6 @@ flowchart LR
 
 - `init` pins new projects to this version, and `finalize` records it in each migration's metadata.
 - `test/integration/package.test.ts` checks that the tarball keeps every template file. `prepack` rebuilds `dist/`.
-- After publishing, any change to the history schema's columns must raise `historyLayoutVersion` (`deploy/history.ts`) and ship an upgrade step.
+
+> [!CAUTION]
+> You can unpublish a version only within 72 hours, and its number can never be reused. After publishing, any change to the history schema's columns must raise `historyLayoutVersion` (`deploy/history.ts`) and ship an upgrade step.
