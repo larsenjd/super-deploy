@@ -18,14 +18,13 @@
 // embedded-postgres.ts's superuser, `serverRunning` judges a pid as
 // server-lease.ts's isAlive does, and `freePort` picks a port as ports.ts's
 // does. Change them together.
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import pg from "pg";
 import { embeddedPostgres } from "super-deploy/embedded-postgres";
 import { onTestFinished, vi } from "vitest";
@@ -240,7 +239,11 @@ export async function holdPort(port = 0): Promise<number> {
   return address.port;
 }
 
-/** Runs embedded-postgres's `pg_ctl`, rejecting on a non-zero exit. */
+/**
+ * Runs embedded-postgres's `pg_ctl`, rejecting on a non-zero exit. Its output
+ * is ignored: on Windows a server it starts would hold output pipes open (see
+ * embedded-server.ts's header).
+ */
 async function pgCtl(args: readonly string[]): Promise<void> {
   const platform = process.platform === "win32" ? "windows" : process.platform;
   const library = createRequire(import.meta.url).resolve("embedded-postgres");
@@ -250,5 +253,12 @@ async function pgCtl(args: readonly string[]): Promise<void> {
   const { pg_ctl } = (await import(pathToFileURL(entry).href)) as {
     pg_ctl: string;
   };
-  await promisify(execFile)(pg_ctl, args, { windowsHide: true });
+  const code = await new Promise<number | null>((resolve, reject) => {
+    const child = spawn(pg_ctl, args, { stdio: "ignore", windowsHide: true });
+    child.once("error", reject);
+    child.once("exit", resolve);
+  });
+  if (code !== 0) {
+    throw new Error(`pg_ctl ${args.join(" ")} exited with code ${code}`);
+  }
 }

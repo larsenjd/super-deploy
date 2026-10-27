@@ -9,7 +9,16 @@
 // process that started it, which its exit hooks stop when that process ends
 // and which Ctrl+C reaches with the rest of the process group, so it could not
 // outlive its starter for other commands. `pg_ctl` starts the server in a
-// session of its own instead (a detached child), which works on Windows too.
+// session of its own instead (a detached child).
+//
+// On Windows `pg_ctl start` is not detached: a detached process has no
+// console, so each console program it starts (cmd.exe running `postgres -V`,
+// then cmd.exe running the server) opened a console window of its own. With
+// `windowsHide` and no inherited stdio, Node gives it a hidden console of its
+// own instead, which Ctrl+C in the user's terminal doesn't reach, and the
+// server, started through cmd.exe, outlives the CLI. That cmd.exe also
+// inherits `pg_ctl`'s output pipes and holds them while the server runs, so
+// running a binary ends when it exits, not when its output closes.
 //
 // Stopping spawns no child on POSIX: it sends the server SIGINT (a fast
 // shutdown, as `pg_ctl stop -m fast` does) and waits for it to go. A child
@@ -62,6 +71,9 @@ const logFileName = "super-deploy-server.log";
 const startingUpWaitMs = 30_000;
 // How long a stop waits for the server to shut down, as `pg_ctl stop -t 60`.
 const stopWaitMs = 60_000;
+// How long a binary's output may keep arriving after it exits, while a
+// process it started holds the output open.
+const outputDrainMs = 250;
 
 interface Binaries {
   readonly initdb: string;
@@ -176,7 +188,7 @@ export async function startServer(
       "-o",
       `-p ${port} -c listen_addresses=${localHost} -c unix_socket_directories=`,
     ],
-    { detached: true },
+    { detached: process.platform !== "win32" },
   );
   if (result.code !== 0) {
     const serverLog = await readFile(log, "utf8").catch(() => "");
@@ -323,7 +335,11 @@ function lastLines(text: string): string {
     .join(" | ");
 }
 
-/** Runs a binary to completion, collecting its output. */
+/**
+ * Runs a binary to completion, collecting its output. Ends when its output
+ * closes, or shortly after it exits if a process it started holds the output
+ * open (the server, on Windows).
+ */
 function run(
   command: string,
   args: readonly string[],
@@ -342,6 +358,18 @@ function run(
     child.stdout.on("data", collect);
     child.stderr.on("data", collect);
     child.once("error", reject);
-    child.once("close", (code) => resolveRun({ code, output }));
+    let drain: NodeJS.Timeout | undefined;
+    child.once("close", (code) => {
+      clearTimeout(drain);
+      resolveRun({ code, output });
+    });
+    child.once("exit", (code) => {
+      // Output it wrote before exiting may still be arriving.
+      drain = setTimeout(() => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        resolveRun({ code, output });
+      }, outputDrainMs);
+    });
   });
 }
