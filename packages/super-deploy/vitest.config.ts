@@ -29,6 +29,14 @@ const alias = [
 // the CPUs with a second run.
 const integrationWorkers = Math.max(3, Math.floor(availableParallelism() / 2));
 
+// Measured on 16 CPUs: the slowest test takes ~7 s alone and ~14 s with a
+// second worktree's run alongside at full width; each file's PostgreSQL starts
+// in under 1 s. 30 s fails a hung test (e.g. one that deliberately breaks
+// code) quickly while leaving room for load. On Windows (8 CPUs) PostgreSQL
+// takes ~2.5 s to start and ~0.2 s to create a database, which every
+// rehearsal does several times, and the slowest test ~33 s alone: 90 s there.
+const integrationTimeout = process.platform === "win32" ? 90_000 : 30_000;
+
 // Two projects so the pre-commit hook can run only database-free tests:
 // - unit: pure functions such as SQL analysis; never starts PostgreSQL.
 // - integration: the programmatic API and CLI seams against real PostgreSQL 18.
@@ -49,13 +57,8 @@ export default defineConfig({
           include: ["test/integration/**/*.test.ts"],
           // Builds dist/ once per run for the CLI seam.
           globalSetup: ["test/support/build-once.ts"],
-          // Measured on 16 CPUs: the slowest test takes ~7 s alone and ~14 s
-          // with a second worktree's run alongside at full width; each
-          // file's PostgreSQL starts in under 1 s. 30 s fails a hung test
-          // (e.g. one that deliberately breaks code) quickly while leaving
-          // room for load; the round trips, the slowest, get 60 s each.
-          testTimeout: 30_000,
-          hookTimeout: 30_000,
+          testTimeout: integrationTimeout,
+          hookTimeout: integrationTimeout,
           maxWorkers: integrationWorkers,
           // Projects with different maxWorkers run as separate groups:
           // the (sub-second) unit tests first.
