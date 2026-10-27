@@ -169,10 +169,16 @@ export async function stopServerOn(dataDir: string): Promise<void> {
 
 /**
  * Promotes the standby running on `dataDir` and waits until it has, as
- * `pg_ctl promote` does on every platform (Windows has no SIGUSR1).
+ * `pg_ctl promote` does on every platform (Windows has no SIGUSR1). pg_ctl
+ * refuses, changing nothing, until the server has entered standby mode, which
+ * a loaded machine can take seconds to do after its postmaster starts: it is
+ * tried again until then, for up to 20 s.
  */
 export async function promoteStandby(dataDir: string): Promise<void> {
-  await pgCtl(["promote", "-D", dataDir, "-w"]);
+  await vi.waitFor(() => pgCtl(["promote", "-D", dataDir, "-w"]), {
+    timeout: 20_000,
+    interval: 100,
+  });
 }
 
 /**
