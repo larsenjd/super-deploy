@@ -11,7 +11,6 @@ import {
   mkdir,
   mkdtemp,
   readFile,
-  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -19,7 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { onTestFinished } from "vitest";
 import { readFiles } from "./files.ts";
-import type { TestServer } from "./postgres.ts";
+import { removeServerFolder, type TestServer } from "./postgres.ts";
 
 export interface TestProject {
   /** Absolute path of the project root (the folder holding the config). */
@@ -45,7 +44,8 @@ export async function createTestProject(
   options: TestProjectOptions = {},
 ): Promise<TestProject> {
   const base = await mkdtemp(join(tmpdir(), "super-deploy-test-project-"));
-  onTestFinished(() => rm(base, { recursive: true, force: true }));
+  // A project may run its own embedded server in .super-deploy/postgres.
+  onTestFinished(() => removeServerFolder(base));
   await mkdir(join(base, "node_modules"));
   await symlink(
     packageDir,

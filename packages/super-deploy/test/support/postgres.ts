@@ -132,9 +132,19 @@ export async function startTestServer(): Promise<TestServer> {
     async stop() {
       await server.stop();
       await stopServerOn(dataDir);
-      await rm(root, { recursive: true, force: true });
+      await removeServerFolder(root);
     },
   };
+}
+
+/**
+ * Deletes a temp folder that holds a server's data directory. On Windows the
+ * server's processes, whose working directory it is, can still hold it for a
+ * moment after `pg_ctl stop -w` returns, so EBUSY is tried again for a few
+ * seconds.
+ */
+export function removeServerFolder(path: string): Promise<void> {
+  return rm(path, { recursive: true, force: true, maxRetries: 10 });
 }
 
 /**

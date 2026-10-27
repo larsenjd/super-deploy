@@ -8,7 +8,6 @@ import {
   mkdtemp,
   readdir,
   readFile,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -30,6 +29,7 @@ import {
   freePort,
   holdPort,
   promoteStandby,
+  removeServerFolder,
   serverRunning,
   startTestServer,
   type TestServer,
@@ -38,7 +38,7 @@ import {
 /** A new temp folder for a data directory, deleted when the test finishes. */
 async function tempDataDir(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "super-deploy-test-embedded-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  onTestFinished(() => removeServerFolder(root));
   return join(root, "data");
 }
 

@@ -3,12 +3,12 @@
 // Started straight from the `embedded-postgres-16` dev dependency (an alias of
 // embedded-postgres 16), on a free port and a unique temp data directory, as
 // the superuser `postgres`. Projects reach it through `postgresTarget`.
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import EmbeddedPostgres from "embedded-postgres-16";
 import pg from "pg";
-import { freePort } from "./postgres.ts";
+import { freePort, removeServerFolder } from "./postgres.ts";
 
 export interface Postgres16Server {
   /** A superuser connection string to `database`. */
@@ -63,7 +63,7 @@ export async function startPostgres16(): Promise<Postgres16Server> {
     },
     async stop() {
       await server.stop();
-      await rm(root, { recursive: true, force: true });
+      await removeServerFolder(root);
     },
   };
 }
