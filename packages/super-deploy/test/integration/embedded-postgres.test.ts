@@ -29,6 +29,7 @@ import { embeddedDeployRole } from "../support/deploy.ts";
 import {
   freePort,
   holdPort,
+  promoteStandby,
   serverRunning,
   startTestServer,
   type TestServer,
@@ -128,11 +129,10 @@ describe("embeddedPostgres shared by several clients of one data directory", () 
     const started = client.start().finally(() => {
       settled = true;
     });
-    const pid = await postmasterPid(dataDir);
+    await postmasterPid(dataDir);
     await delay(1_000);
     expect(settled).toBe(false);
-    await writeFile(join(dataDir, "promote"), "");
-    process.kill(pid, "SIGUSR1");
+    await promoteStandby(dataDir);
 
     await started;
     expect(await accepts(await client.connectionString())).toBe(true);

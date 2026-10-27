@@ -8,7 +8,8 @@
 // registered as clients.
 //
 // Also helpers for a project's own server (`serverRunning`, `stopServerOn`,
-// `onStoppedServer`), which run `pg_ctl` outside the adapter's lease, and for
+// `promoteStandby`, `onStoppedServer`), which run `pg_ctl` outside the
+// adapter's lease, and for
 // ports (`freePort`, `holdPort`).
 //
 // Test support may not import src/ (biome's noRestrictedImports), so what
@@ -164,6 +165,14 @@ export async function stopServerOn(dataDir: string): Promise<void> {
   if (await serverRunning(dataDir)) {
     await pgCtl(["stop", "-D", dataDir, "-m", "fast", "-w"]);
   }
+}
+
+/**
+ * Promotes the standby running on `dataDir` and waits until it has, as
+ * `pg_ctl promote` does on every platform (Windows has no SIGUSR1).
+ */
+export async function promoteStandby(dataDir: string): Promise<void> {
+  await pgCtl(["promote", "-D", dataDir, "-w"]);
 }
 
 /**
