@@ -22,9 +22,19 @@ export async function gitApply(files: Files, diff: string): Promise<Files> {
   onTestFinished(() => rm(dir, { recursive: true, force: true }));
   await writeFiles(dir, files);
   // Outside a repository, git apply patches the files in its working directory.
+  // It still converts line endings as `core.autocrlf` says (true in Git for
+  // Windows' system config), so that is turned off: the files are compared
+  // byte for byte.
   const applied = spawnSync(
     "git",
-    ["apply", "--allow-empty", "--whitespace=nowarn", "-"],
+    [
+      "-c",
+      "core.autocrlf=false",
+      "apply",
+      "--allow-empty",
+      "--whitespace=nowarn",
+      "-",
+    ],
     { cwd: dir, input: diff, encoding: "utf8" },
   );
   if (applied.status !== 0 || applied.stderr !== "") {
