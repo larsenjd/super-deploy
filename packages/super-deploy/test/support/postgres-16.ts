@@ -30,6 +30,10 @@ export async function startPostgres16(): Promise<Postgres16Server> {
     user: "postgres",
     password,
     authMethod: "scram-sha-256",
+    // As embedded-server.ts's initdb does. initdb would otherwise take the
+    // system locale's encoding, WIN1252 on Windows, which can't hold the
+    // non-ASCII text in pg-delta's catalog queries.
+    initdbFlags: ["--encoding=UTF8", "--locale=C"],
     persistent: false,
     onLog: () => {},
   });
