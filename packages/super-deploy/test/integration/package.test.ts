@@ -12,11 +12,13 @@ import { expect, test } from "vitest";
 const packageDir = join(import.meta.dirname, "..", "..");
 
 function packedFiles(): string[] {
-  const pack = spawnSync(
-    "pnpm",
-    ["pack", "--dry-run", "--json", "--ignore-scripts"],
-    { cwd: packageDir, encoding: "utf8" },
-  );
+  // Through a shell: on Windows `pnpm` is a .cmd script, which only a shell
+  // runs.
+  const pack = spawnSync("pnpm pack --dry-run --json --ignore-scripts", {
+    cwd: packageDir,
+    encoding: "utf8",
+    shell: true,
+  });
   expect(pack.status, pack.stderr).toBe(0);
   const { files } = JSON.parse(pack.stdout) as {
     files: { path: string }[];
