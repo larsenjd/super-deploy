@@ -24,9 +24,13 @@ export interface RunningCli {
   readonly child: ChildProcess;
   /** Resolves when the process has exited and its output is closed. */
   readonly result: Promise<CliResult>;
-  /** Sends a signal to the CLI process only. */
+  /**
+   * Sends a signal to the CLI process only. On Windows every signal ends the
+   * process outright, unhandled, so tests of what the CLI does on a signal
+   * skip there.
+   */
   signal(signal: NodeJS.Signals): void;
-  /** Sends a signal to the CLI's whole process group (needs `detached`). */
+  /** Sends a signal to the CLI's whole process group (needs `detached`; not on Windows, which has no process groups). */
   signalGroup(signal: NodeJS.Signals): void;
 }
 

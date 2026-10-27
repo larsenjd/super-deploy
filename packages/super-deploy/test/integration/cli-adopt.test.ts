@@ -268,41 +268,50 @@ describe("init --adopt", () => {
     expect((await adopt()).exitCode).toBe(0);
   });
 
-  test("SIGINT while its read of the target waits for a lock ends the read at once and exits 130, writing nothing", async () => {
-    const prod = await server.createDatabase();
-    await asDeployRole(server, prod, "create table t (id bigint primary key)");
-    const dir = await createTestProject({
-      config: deployConfig(server, {
-        otherTargets: `prod: { adapter: postgres.target(${JSON.stringify(prod)}), lockTimeout: "30s" },`,
-      }).config,
-    });
-    const holder = await testSession(server, prod);
-    try {
-      await holder.execute("BEGIN; LOCK TABLE t IN ACCESS EXCLUSIVE MODE");
-      const cli = spawnCli(["init", "--adopt", "prod"], { cwd: dir.root });
-      await server.untilLockWaiter(prod);
-      const interrupted = Date.now();
+  // Not on Windows, where the signal would end the CLI unhandled (see
+  // `RunningCli.signal`).
+  test.skipIf(process.platform === "win32")(
+    "SIGINT while its read of the target waits for a lock ends the read at once and exits 130, writing nothing",
+    async () => {
+      const prod = await server.createDatabase();
+      await asDeployRole(
+        server,
+        prod,
+        "create table t (id bigint primary key)",
+      );
+      const dir = await createTestProject({
+        config: deployConfig(server, {
+          otherTargets: `prod: { adapter: postgres.target(${JSON.stringify(prod)}), lockTimeout: "30s" },`,
+        }).config,
+      });
+      const holder = await testSession(server, prod);
+      try {
+        await holder.execute("BEGIN; LOCK TABLE t IN ACCESS EXCLUSIVE MODE");
+        const cli = spawnCli(["init", "--adopt", "prod"], { cwd: dir.root });
+        await server.untilLockWaiter(prod);
+        const interrupted = Date.now();
 
-      cli.signal("SIGINT");
-      const result = await cli.result;
+        cli.signal("SIGINT");
+        const result = await cli.result;
 
-      // Well under the 30 s lockTimeout: it didn't wait for the lock.
-      expect(Date.now() - interrupted).toBeLessThan(15_000);
-      expect(result.exitCode).toBe(130);
-      expect(await server.lockWaiters(prod)).toEqual([]);
-      expect(dir.exists("data-model/desired-schema")).toBe(false);
-      expect(dir.exists("data-model/migrations")).toBe(false);
-      expect(
-        await server.query(
-          "select 1 from pg_namespace where nspname = 'deployment_history'",
-          [],
-          prod,
-        ),
-      ).toEqual([]);
-    } finally {
-      await holder.close();
-    }
-  });
+        // Well under the 30 s lockTimeout: it didn't wait for the lock.
+        expect(Date.now() - interrupted).toBeLessThan(15_000);
+        expect(result.exitCode).toBe(130);
+        expect(await server.lockWaiters(prod)).toEqual([]);
+        expect(dir.exists("data-model/desired-schema")).toBe(false);
+        expect(dir.exists("data-model/migrations")).toBe(false);
+        expect(
+          await server.query(
+            "select 1 from pg_namespace where nspname = 'deployment_history'",
+            [],
+            prod,
+          ),
+        ).toEqual([]);
+      } finally {
+        await holder.close();
+      }
+    },
+  );
 
   test("an unknown target is a usage error (exit 2)", async () => {
     const dir = await projectAdopting("");

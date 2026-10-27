@@ -57,7 +57,7 @@ test("draft writes the schema change", async () => {
 
 Only what exists at the process boundary: flags and usage errors, exit codes, stdout versus stderr, signals and closed output, guarded commands refusing. Everything else belongs to the API seam.
 
-- `cli.ts`: `runCli(args, { cwd, env? })` returns `{ exitCode, stdout, stderr }`; it spawns `node dist/cli.js` with `CI=1` and no terminal. For signals, `spawnCli(args, { cwd, env, detached })`: `signal(sig)` reaches the CLI only, `signalGroup(sig)` its whole process group like Ctrl+C in a terminal (needs `detached`). `waitForFile(path)` waits for a marker file.
+- `cli.ts`: `runCli(args, { cwd, env? })` returns `{ exitCode, stdout, stderr }`; it spawns `node dist/cli.js` with `CI=1` and no terminal. For signals, `spawnCli(args, { cwd, env, detached })`: `signal(sig)` reaches the CLI only, `signalGroup(sig)` its whole process group like Ctrl+C in a terminal (needs `detached`). Windows can't deliver a signal the CLI handles (every signal ends the process outright, and there are no process groups), so wrap these tests in `test.skipIf(process.platform === "win32")`. `waitForFile(path)` waits for a marker file.
 - A temp project's `node_modules/super-deploy` is a junction to the package, so its config's imports resolve to `dist/` under Node's own type stripping.
 - `project.ts`: `stallingConfig(dataDirExpression)` is a rehearsal adapter that stalls on demand (`TEST_STALL=query` or `drop`, after writing the file named by `TEST_MARKER`), for signalling a command mid-flight; `TEST_STALL_SECONDS` makes the stall end, for commands that overlap (`cli-shared-server.test.ts`).
 

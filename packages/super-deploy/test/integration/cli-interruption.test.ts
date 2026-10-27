@@ -3,6 +3,8 @@
 // notice; closed output prints none. The same signal twice within a second
 // is one interruption; a later second one exits at once. The repeats of a
 // signal to the process group also reach whatever child cleanup starts.
+// On Windows another process can't deliver a signal the CLI handles (see
+// `RunningCli.signal`), so the tests that signal it skip there.
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -58,7 +60,7 @@ async function stallingProject() {
   return { dir, marker, env: { TEST_STALL: "query", TEST_MARKER: marker } };
 }
 
-describe.each([
+describe.skipIf(process.platform === "win32").each([
   ["SIGINT", 130],
   ["SIGTERM", 143],
 ] as const)("%s during a command", (signal, exitCode) => {
@@ -87,54 +89,60 @@ describe.each([
   });
 });
 
-test("SIGTERM while connecting to a target that doesn't answer exits 143 at once", async () => {
-  const host = await silentHost();
-  const variable = "SUPER_DEPLOY_TEST_DOWN_URL";
-  const dir = await createTestProject({
-    config: downTargetConfig(variable, 'connectTimeout: "1min"'),
-  });
-  const cli = spawnCli(["status", "--target", "down"], {
-    cwd: dir.root,
-    env: { [variable]: host.url },
-  });
-  await host.connected;
+test.skipIf(process.platform === "win32")(
+  "SIGTERM while connecting to a target that doesn't answer exits 143 at once",
+  async () => {
+    const host = await silentHost();
+    const variable = "SUPER_DEPLOY_TEST_DOWN_URL";
+    const dir = await createTestProject({
+      config: downTargetConfig(variable, 'connectTimeout: "1min"'),
+    });
+    const cli = spawnCli(["status", "--target", "down"], {
+      cwd: dir.root,
+      env: { [variable]: host.url },
+    });
+    await host.connected;
 
-  const signalled = Date.now();
-  cli.signal("SIGTERM");
-  const result = await cli.result;
+    const signalled = Date.now();
+    cli.signal("SIGTERM");
+    const result = await cli.result;
 
-  expect(result.exitCode).toBe(143);
-  expect(result.stderr.trim().split("\n")).toEqual([
-    expect.stringContaining("Interrupted by SIGTERM"),
-  ]);
-  // Well before the 1 min connectTimeout; a second leaves room for a loaded machine.
-  expect(Date.now() - signalled).toBeLessThan(2000);
-});
+    expect(result.exitCode).toBe(143);
+    expect(result.stderr.trim().split("\n")).toEqual([
+      expect.stringContaining("Interrupted by SIGTERM"),
+    ]);
+    // Well before the 1 min connectTimeout; a second leaves room for a loaded machine.
+    expect(Date.now() - signalled).toBeLessThan(2000);
+  },
+);
 
-test("a second interrupt a second or more after the first exits at once, even while cleanup is still running", async () => {
-  const { dir, marker } = await stallingProject();
-  const cli = spawnCli(["draft", "--name", "add customers"], {
-    cwd: dir.root,
-    env: { TEST_STALL: "drop", TEST_MARKER: marker },
-  });
-  await waitForFile(marker);
+test.skipIf(process.platform === "win32")(
+  "a second interrupt a second or more after the first exits at once, even while cleanup is still running",
+  async () => {
+    const { dir, marker } = await stallingProject();
+    const cli = spawnCli(["draft", "--name", "add customers"], {
+      cwd: dir.root,
+      env: { TEST_STALL: "drop", TEST_MARKER: marker },
+    });
+    await waitForFile(marker);
 
-  cli.signal("SIGINT");
-  // Wait for the notice, so the first interrupt has surely been handled.
-  await new Promise<void>((resolve) => {
-    cli.child.stderr?.on("data", () => resolve());
-  });
-  // Sooner, a repeat of the same signal counts as the same interruption.
-  await delay(1100);
-  cli.signal("SIGINT");
-  const result = await cli.result;
+    cli.signal("SIGINT");
+    // Wait for the notice, so the first interrupt has surely been handled.
+    await new Promise<void>((resolve) => {
+      cli.child.stderr?.on("data", () => resolve());
+    });
+    // Sooner, a repeat of the same signal counts as the same interruption.
+    await delay(1100);
+    cli.signal("SIGINT");
+    const result = await cli.result;
 
-  expect(result.exitCode).toBe(130);
-  expect(result.stderr.trim().split("\n")).toHaveLength(1);
-  for (const name of await rehearsalDatabases()) {
-    await server.query(`drop database "${name}" with (force)`);
-  }
-});
+    expect(result.exitCode).toBe(130);
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    for (const name of await rehearsalDatabases()) {
+      await server.query(`drop database "${name}" with (force)`);
+    }
+  },
+);
 
 test("closed output (e.g. `| head`) stops the command and exits 141 without a notice", async () => {
   const dir = await createTestProject();
@@ -193,50 +201,56 @@ async function ownServerDatabases(dataDir: string): Promise<string[]> {
   return rows.map((row) => row.datname);
 }
 
-test("SIGTERM while the command runs its own embedded server drops throwaway databases before stopping it", async () => {
-  const { dir, marker, env } = await ownServerProject();
-  const cli = spawnCli(["draft", "--name", "add customers"], {
-    cwd: dir.root,
-    env,
-  });
-  await waitForFile(marker);
+test.skipIf(process.platform === "win32")(
+  "SIGTERM while the command runs its own embedded server drops throwaway databases before stopping it",
+  async () => {
+    const { dir, marker, env } = await ownServerProject();
+    const cli = spawnCli(["draft", "--name", "add customers"], {
+      cwd: dir.root,
+      env,
+    });
+    await waitForFile(marker);
 
-  cli.signal("SIGTERM");
-  const result = await cli.result;
+    cli.signal("SIGTERM");
+    const result = await cli.result;
 
-  expect(result.exitCode).toBe(143);
-  expect(result.stderr.trim().split("\n")).toEqual([
-    expect.stringContaining("Interrupted by SIGTERM"),
-  ]);
-  expect(dir.exists(".super-deploy/postgres/postmaster.pid")).toBe(false);
-  expect(await ownServerDatabases(dir.path(".super-deploy/postgres"))).toEqual(
-    [],
-  );
-});
+    expect(result.exitCode).toBe(143);
+    expect(result.stderr.trim().split("\n")).toEqual([
+      expect.stringContaining("Interrupted by SIGTERM"),
+    ]);
+    expect(dir.exists(".super-deploy/postgres/postmaster.pid")).toBe(false);
+    expect(
+      await ownServerDatabases(dir.path(".super-deploy/postgres")),
+    ).toEqual([]);
+  },
+);
 
-test("Ctrl+C to the process group of a command that started its embedded server exits 130 and stops the server", async () => {
-  const { dir, marker, env } = await ownServerProject();
-  const cli = spawnCli(["draft", "--name", "add customers"], {
-    cwd: dir.root,
-    env,
-    detached: true,
-  });
-  await waitForFile(marker);
+test.skipIf(process.platform === "win32")(
+  "Ctrl+C to the process group of a command that started its embedded server exits 130 and stops the server",
+  async () => {
+    const { dir, marker, env } = await ownServerProject();
+    const cli = spawnCli(["draft", "--name", "add customers"], {
+      cwd: dir.root,
+      env,
+      detached: true,
+    });
+    await waitForFile(marker);
 
-  cli.signalGroup("SIGINT");
-  const result = await cli.result;
+    cli.signalGroup("SIGINT");
+    const result = await cli.result;
 
-  expect(result.exitCode).toBe(130);
-  expect(result.stderr.trim().split("\n")).toEqual([
-    expect.stringContaining("Interrupted by SIGINT"),
-  ]);
-  expect(dir.exists(".super-deploy/postgres/postmaster.pid")).toBe(false);
-});
+    expect(result.exitCode).toBe(130);
+    expect(result.stderr.trim().split("\n")).toEqual([
+      expect.stringContaining("Interrupted by SIGINT"),
+    ]);
+    expect(dir.exists(".super-deploy/postgres/postmaster.pid")).toBe(false);
+  },
+);
 
 // In a terminal, a wrapper such as `pnpm exec` forwards SIGTERM and SIGHUP
 // to the CLI that the kernel has already signalled as part of the foreground
 // group: one interruption, delivered twice within milliseconds.
-describe.each([
+describe.skipIf(process.platform === "win32").each([
   ["SIGTERM", 143],
   ["SIGHUP", 129],
 ] as const)("%s delivered twice within 100 ms", (signal, exitCode) => {
@@ -268,27 +282,30 @@ describe.each([
 // A repeat that lands while cleanup starts a child process reaches the child
 // too, until it is in a session of its own: it killed `pg_ctl stop` and left
 // the server running. Signalling every millisecond makes that window certain.
-test("SIGHUP repeated to the group throughout cleanup still stops the embedded server and exits 129", async () => {
-  const { dir, marker, env } = await ownServerProject();
-  const dataDir = dir.path(".super-deploy/postgres");
-  onTestFinished(() => stopServerOn(dataDir));
-  const cli = spawnCli(["draft", "--name", "add customers"], {
-    cwd: dir.root,
-    env,
-    detached: true,
-  });
-  await waitForFile(marker);
+test.skipIf(process.platform === "win32")(
+  "SIGHUP repeated to the group throughout cleanup still stops the embedded server and exits 129",
+  async () => {
+    const { dir, marker, env } = await ownServerProject();
+    const dataDir = dir.path(".super-deploy/postgres");
+    onTestFinished(() => stopServerOn(dataDir));
+    const cli = spawnCli(["draft", "--name", "add customers"], {
+      cwd: dir.root,
+      env,
+      detached: true,
+    });
+    await waitForFile(marker);
 
-  const repeating = setInterval(() => {
-    if (cli.child.exitCode === null && cli.child.signalCode === null) {
-      cli.signalGroup("SIGHUP");
-    }
-  }, 1);
-  const result = await cli.result.finally(() => clearInterval(repeating));
+    const repeating = setInterval(() => {
+      if (cli.child.exitCode === null && cli.child.signalCode === null) {
+        cli.signalGroup("SIGHUP");
+      }
+    }, 1);
+    const result = await cli.result.finally(() => clearInterval(repeating));
 
-  expect(result.exitCode).toBe(129);
-  expect(await serverRunning(dataDir)).toBe(false);
-});
+    expect(result.exitCode).toBe(129);
+    expect(await serverRunning(dataDir)).toBe(false);
+  },
+);
 
 // 162: at a guarded command's YES prompt, closing the terminal under
 // `pnpm exec` delivers SIGHUP twice (or SIGTERM, signalled to the group).

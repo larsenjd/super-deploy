@@ -6,6 +6,8 @@
 // server process ends within seconds (the client connection check). A
 // `status` while a deployment holds the target names the holder, what its
 // server process runs and how to end it, and leaves drift unchecked.
+// On Windows another process can't deliver a signal the CLI handles (see
+// `RunningCli.signal`), so the tests that signal it skip there.
 import { userInfo } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -144,7 +146,7 @@ async function advisoryLocks(database: string): Promise<number> {
   return row?.count ?? -1;
 }
 
-describe.each([
+describe.skipIf(process.platform === "win32").each([
   ["SIGINT", 130, "rehearsal"],
   ["SIGTERM", 143, "transaction"],
 ] as const)("%s during a deployment's %s", (signal, exitCode, stage) => {
@@ -216,7 +218,7 @@ async function secondMigrationPending() {
 
 // 110: once cleanup has finished, a command that changes a target says what
 // happened to it.
-describe.each([
+describe.skipIf(process.platform === "win32").each([
   ["SIGINT", 130],
   ["SIGTERM", 143],
   ["SIGHUP", 129],
@@ -241,35 +243,38 @@ describe.each([
   });
 });
 
-test("SIGINT after the deploy transaction committed exits 130, saying the deployment had already finished", async () => {
-  const { dir, marker } = await finalizedProject();
-  const cli = spawnCli(["deploy", "--target", "dev"], {
-    cwd: dir.root,
-    env: { TEST_STALL: "committed", TEST_MARKER: marker },
-  });
-  await waitForFile(marker);
+test.skipIf(process.platform === "win32")(
+  "SIGINT after the deploy transaction committed exits 130, saying the deployment had already finished",
+  async () => {
+    const { dir, marker } = await finalizedProject();
+    const cli = spawnCli(["deploy", "--target", "dev"], {
+      cwd: dir.root,
+      env: { TEST_STALL: "committed", TEST_MARKER: marker },
+    });
+    await waitForFile(marker);
 
-  cli.signal("SIGINT");
-  const result = await cli.result;
+    cli.signal("SIGINT");
+    const result = await cli.result;
 
-  expect(result.exitCode).toBe(130);
-  expect(result.stdout).toBe(
-    "Deployed 1 migration to dev: 00001-add-customers\n",
-  );
-  expect(result.stderr.trim().split("\n")).toEqual([
-    expect.stringContaining("Interrupted by SIGINT"),
-    "The deployment had already finished: the interruption came too late to stop it on target dev.",
-  ]);
-  const status = await runCli(["status", "--target", "dev"], {
-    cwd: dir.root,
-  });
-  expect(status.stdout).toContain("#1 deploy succeeded migration 1 by ");
-});
+    expect(result.exitCode).toBe(130);
+    expect(result.stdout).toBe(
+      "Deployed 1 migration to dev: 00001-add-customers\n",
+    );
+    expect(result.stderr.trim().split("\n")).toEqual([
+      expect.stringContaining("Interrupted by SIGINT"),
+      "The deployment had already finished: the interruption came too late to stop it on target dev.",
+    ]);
+    const status = await runCli(["status", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(status.stdout).toContain("#1 deploy succeeded migration 1 by ");
+  },
+);
 
 // Ctrl+C in a terminal reaches the whole process group. The project's own
 // embedded server runs in a session of its own, so the CLI cleans up on it
 // and then stops it as its last client.
-describe.each([
+describe.skipIf(process.platform === "win32").each([
   ["SIGINT", 130, "rehearsal"],
   ["SIGTERM", 143, "transaction"],
 ] as const)(
@@ -308,53 +313,56 @@ describe.each([
 
 // 144: once the command has finished, an interruption while the CLI closes
 // the project (stopping embedded servers) doesn't change its exit code.
-describe("SIGINT after the command has finished, while the project closes", () => {
-  test("exits 0 after a deploy that succeeded, which stays succeeded", async () => {
-    const { dir, marker } = await finalizedProject();
-    const cli = spawnCli(["deploy", "--target", "dev"], {
-      cwd: dir.root,
-      env: { TEST_STALL: "close", TEST_MARKER: marker },
-      detached: true,
+describe.skipIf(process.platform === "win32")(
+  "SIGINT after the command has finished, while the project closes",
+  () => {
+    test("exits 0 after a deploy that succeeded, which stays succeeded", async () => {
+      const { dir, marker } = await finalizedProject();
+      const cli = spawnCli(["deploy", "--target", "dev"], {
+        cwd: dir.root,
+        env: { TEST_STALL: "close", TEST_MARKER: marker },
+        detached: true,
+      });
+      await waitForFile(marker);
+
+      cli.signalGroup("SIGINT");
+      const result = await cli.result;
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe(
+        "Deployed 1 migration to dev: 00001-add-customers\n",
+      );
+      expect(result.stderr).toContain(
+        "Interrupted by SIGINT after deploy finished",
+      );
+      const status = await runCli(["status", "--target", "dev"], {
+        cwd: dir.root,
+      });
+      expect(status.stdout).toContain("#1 deploy succeeded migration 1 by ");
     });
-    await waitForFile(marker);
 
-    cli.signalGroup("SIGINT");
-    const result = await cli.result;
+    test("exits 1 after a deploy that failed", async () => {
+      const { dir, database, marker } = await finalizedProject();
+      await asDeployRole(
+        server,
+        database,
+        "create table customers (id bigint primary key)",
+      );
+      const cli = spawnCli(["deploy", "--target", "dev"], {
+        cwd: dir.root,
+        env: { TEST_STALL: "close", TEST_MARKER: marker },
+        detached: true,
+      });
+      await waitForFile(marker);
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe(
-      "Deployed 1 migration to dev: 00001-add-customers\n",
-    );
-    expect(result.stderr).toContain(
-      "Interrupted by SIGINT after deploy finished",
-    );
-    const status = await runCli(["status", "--target", "dev"], {
-      cwd: dir.root,
+      cli.signalGroup("SIGINT");
+      const result = await cli.result;
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toMatch(/^Error: /m);
     });
-    expect(status.stdout).toContain("#1 deploy succeeded migration 1 by ");
-  });
-
-  test("exits 1 after a deploy that failed", async () => {
-    const { dir, database, marker } = await finalizedProject();
-    await asDeployRole(
-      server,
-      database,
-      "create table customers (id bigint primary key)",
-    );
-    const cli = spawnCli(["deploy", "--target", "dev"], {
-      cwd: dir.root,
-      env: { TEST_STALL: "close", TEST_MARKER: marker },
-      detached: true,
-    });
-    await waitForFile(marker);
-
-    cli.signalGroup("SIGINT");
-    const result = await cli.result;
-
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toMatch(/^Error: /m);
-  });
-});
+  },
+);
 
 test("status during a deployment names the holder, leaves drift unchecked and exits 1", async () => {
   const { dir, marker } = await finalizedProject();
@@ -430,29 +438,37 @@ test("a deployment killed outright leaves its attempt running, and the next stat
   }
 });
 
-test("a deployment killed outright mid-statement has its server process end within seconds, not when the statement finishes", async () => {
-  const { dir, database, marker } = await finalizedProject();
-  const cli = spawnCli(["deploy", "--target", "dev"], {
-    cwd: dir.root,
-    env: { TEST_STALL: "transaction", TEST_MARKER: marker },
-  });
-  await waitForFile(marker);
+// Not on Windows, whose servers can't poll the socket and refuse
+// client_connection_check_interval (see src/deploy/target.ts).
+test.skipIf(process.platform === "win32")(
+  "a deployment killed outright mid-statement has its server process end within seconds, not when the statement finishes",
+  async () => {
+    const { dir, database, marker } = await finalizedProject();
+    const cli = spawnCli(["deploy", "--target", "dev"], {
+      cwd: dir.root,
+      env: { TEST_STALL: "transaction", TEST_MARKER: marker },
+    });
+    await waitForFile(marker);
 
-  cli.signal("SIGKILL");
-  await cli.result;
-  const killed = Date.now();
-  // The orphaned `pg_sleep(60)` holds the target lock until its server
-  // process notices the client is gone: the 5 s client connection check plus
-  // a margin, well before the 60 s.
-  while ((await advisoryLocks(database)) > 0 && Date.now() - killed < 15_000) {
-    await delay(100);
-  }
+    cli.signal("SIGKILL");
+    await cli.result;
+    const killed = Date.now();
+    // The orphaned `pg_sleep(60)` holds the target lock until its server
+    // process notices the client is gone: the 5 s client connection check plus
+    // a margin, well before the 60 s.
+    while (
+      (await advisoryLocks(database)) > 0 &&
+      Date.now() - killed < 15_000
+    ) {
+      await delay(100);
+    }
 
-  expect(await advisoryLocks(database)).toBe(0);
-  const result = await runCli(["deploy", "--target", "dev"], {
-    cwd: dir.root,
-  });
-  expect(result.stdout).toBe(
-    "Deployed 1 migration to dev: 00001-add-customers\n",
-  );
-});
+    expect(await advisoryLocks(database)).toBe(0);
+    const result = await runCli(["deploy", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(result.stdout).toBe(
+      "Deployed 1 migration to dev: 00001-add-customers\n",
+    );
+  },
+);
