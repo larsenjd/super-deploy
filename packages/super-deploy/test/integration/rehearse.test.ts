@@ -13,6 +13,7 @@ import {
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { finalizeMigration } from "../support/deploy.ts";
+import { withCrlf } from "../support/line-endings.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import { createTestProject, embeddedConfig } from "../support/project.ts";
 
@@ -99,6 +100,25 @@ describe("rehearse", () => {
       ),
     );
     expect(await server.databases()).toEqual(before);
+  });
+
+  test("a pre-migration script still holding only its header, saved with CRLF, isn't blamed for a mismatch", async () => {
+    const { dir, project } = await draftedProject();
+    const script = "data-model/draft/pre-migration.sql";
+    await dir.write(script, withCrlf(await dir.read(script)));
+    await dir.write(
+      "data-model/desired-schema/customers.sql",
+      customers.replace(
+        "name text not null",
+        "name text not null,\n  email text",
+      ),
+    );
+
+    const error = await rehearse(project).catch((e: unknown) => e);
+
+    expect((error as RehearsalMismatchError).subject).toBe(
+      "The rehearsal does not match the desired schema; run draft again",
+    );
   });
 
   test("a mismatch re-drafting can't fix says the pre-migration script causes it, not run draft again", async () => {
@@ -340,7 +360,7 @@ comment on column t.b is 'bee';
     const error = await rehearse(project).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(SqlFileFailedError);
-    expect(error).toMatchObject({ file, line: 7 });
+    expect(error).toMatchObject({ file, line: 11 });
     expect((error as SqlFileFailedError).postgresMessage).toContain(
       'column "nmae" does not exist',
     );

@@ -4,10 +4,11 @@
 // rehearse, finalize) and, later, by `deploy-draft --with-seed`. Never loaded
 // when finalized migrations are replayed or deployed, nor in deployment
 // rehearsals: readReplayUnit does not read it. Finalize freezes it with the
-// migration as an audit record. An empty seed-data.sql, as `draft` creates
-// it, is no seed data (isEmptyFile).
+// migration as an audit record. A seed-data.sql not filled in, as `draft`
+// creates it, is no seed data (isUnfilledDraftScript).
 import { readFile } from "node:fs/promises";
 import { join, posix } from "node:path";
+import { isUnfilledDraftScript } from "../store/draft.ts";
 import { decodeHashedText } from "../store/hashing.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
@@ -15,14 +16,14 @@ import {
   preMigrationFileName,
   seedDataFileName,
 } from "../store/migrations.ts";
-import { isEmptyFile, type ReplayUnit, readReplayUnit } from "./replay.ts";
+import { type ReplayUnit, readReplayUnit } from "./replay.ts";
 
 /** A draft (or Recovery) folder's deploy-time files with the seed data that goes before them. */
 export interface SeededUnit {
   /**
    * The folder's seed data as a unit of its own, so it ends at a boundary
    * like data already committed on a target; undefined when there is none
-   * or seed-data.sql is empty.
+   * or seed-data.sql isn't filled in.
    */
   readonly seedData: ReplayUnit | undefined;
   /** The folder's deploy-time files, in the order they run. */
@@ -45,7 +46,7 @@ export async function readSeededUnit(
   if (await exists(absolute)) {
     const file = projectRelative(root, absolute);
     const sql = decodeHashedText(await readFile(absolute), file);
-    if (!isEmptyFile(sql)) {
+    if (!isUnfilledDraftScript(seedDataFileName, sql)) {
       seedData = { label: `${label} seed data`, files: [{ file, sql }] };
     }
   }

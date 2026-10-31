@@ -2,11 +2,14 @@
   // Formatting runs through this package's own `format:file` script (Biome),
   // never through the editor's formatter. SQL is never formatted automatically.
   "editor.formatOnSave": false,
-  // Finalized migrations never change, and the draft's schema change is
-  // generated: both are read-only in the editor.
+  // Finalized migrations never change, and schema-change.generated.sql is the
+  // schema change as `draft` generated it: both are read-only in the editor.
+  // The draft's other files, schema-change.sql among them, stay editable: a
+  // hand edit of it is warned about and recorded. This binds the editor only,
+  // so super-deploy still writes them.
   "files.readonlyInclude": {
     "data-model/migrations/**": true,
-    "data-model/draft/schema-change.sql": true
+    "data-model/draft/schema-change.generated.sql": true
   },
   "emeraldwalk.runonsave": {
     "commands": [

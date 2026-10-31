@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(/data-model/migrations/**)",
+      "Edit(/data-model/draft/schema-change.generated.sql)"
+    ]
+  }
+}

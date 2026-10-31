@@ -4,16 +4,16 @@
 // regenerated; only its header comment says so, store/draft.ts) and starts
 // from the scripts and seed data of N's newest variant (its newest Recovery,
 // else the original), for the developer to change; any of them the variant
-// lacks is created empty (store/draft.ts). `finalize` freezes it as N's next
-// Recovery once its rehearsal proves it ends in the same structure as the
-// original.
+// lacks is created holding only a header (store/draft.ts). `finalize` freezes
+// it as N's next Recovery once its rehearsal proves it ends in the same
+// structure as the original.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import {
-  createEmptyDraftFiles,
+  createDraftScripts,
   writeDraftMetadata,
   writeRecoverySchemaChange,
 } from "../store/draft.ts";
@@ -82,7 +82,7 @@ export async function recovery(
       await copy(join(source, name), name);
     }
   }
-  for (const path of await createEmptyDraftFiles(paths)) {
+  for (const path of await createDraftScripts(paths)) {
     files.push(projectRelative(root, path));
   }
   await writeDraftMetadata(paths, {

@@ -17,6 +17,7 @@ import {
 } from "../deploy/target.ts";
 import { errorReason, SuperDeployError, sessionEnding } from "../errors.ts";
 import { parseSqlFile } from "../sql-analysis/parse.ts";
+import { isUnfilledDraftScript } from "../store/draft.ts";
 import { decodeHashedText } from "../store/hashing.ts";
 import { projectRelative } from "../store/layout.ts";
 import {
@@ -48,20 +49,11 @@ export interface ReplayUnit {
 }
 
 /**
- * True for a script or seed data file holding nothing but whitespace, which
- * is read as missing: `draft` and `recovery` create them empty (store/draft.ts),
- * and an empty one must not count as a script that runs or seed data that
- * loads. The schema change is always read, empty or not.
- */
-export function isEmptyFile(sql: string): boolean {
-  return sql.trim() === "";
-}
-
-/**
  * The deploy-time SQL files a migration or draft folder holds, in the order
- * they run; an empty script is left out (isEmptyFile). For a Recovery
- * folder, `schemaChangeFolder` is its migration's folder: a Recovery runs its
- * own scripts around its migration's schema change.
+ * they run; a script not filled in is left out (isUnfilledDraftScript), and the
+ * schema change is always read. For a Recovery folder, `schemaChangeFolder` is
+ * its migration's folder: a Recovery runs its own scripts around its
+ * migration's schema change.
  */
 export async function readReplayUnit(
   root: string,
@@ -78,7 +70,7 @@ export async function readReplayUnit(
     if (await exists(absolute)) {
       const file = projectRelative(root, absolute);
       const sql = decodeHashedText(await readFile(absolute), file);
-      if (name === schemaChangeFileName || !isEmptyFile(sql)) {
+      if (name === schemaChangeFileName || !isUnfilledDraftScript(name, sql)) {
         files.push({ file, sql });
       }
     }

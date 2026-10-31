@@ -265,6 +265,7 @@ create function customer_count() returns bigint
       expect.arrayContaining([
         ".gitattributes",
         ".gitignore",
+        ".claude/settings.json",
         ".vscode/extensions.json",
         ".vscode/settings.json",
         "README.md",
@@ -287,7 +288,18 @@ create function customer_count() returns bigint
       "utf8",
     );
     expect(settings).toContain('"data-model/migrations/**": true');
-    expect(settings).toContain('"data-model/draft/schema-change.sql": true');
+    expect(settings).toContain(
+      '"data-model/draft/schema-change.generated.sql": true',
+    );
+    expect(settings).not.toContain('"data-model/draft/schema-change.sql"');
+
+    const agentSettings = JSON.parse(
+      await readFile(join(root, ".claude", "settings.json"), "utf8"),
+    );
+    expect(agentSettings.permissions.deny).toEqual([
+      "Edit(/data-model/migrations/**)",
+      "Edit(/data-model/draft/schema-change.generated.sql)",
+    ]);
 
     const readme = await readFile(join(root, "README.md"), "utf8");
     expect(readme).toMatch(

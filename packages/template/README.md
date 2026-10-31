@@ -186,7 +186,7 @@ A deployment runs these files in one transaction, in this order:
 
 ```mermaid
 flowchart LR
-  P["pre-migration.sql<br><i>optional, hand-written</i><br>data and structure"] --> S["schema-change.sql<br><i>generated, never edit</i>"] --> Q["post-migration.sql<br><i>optional, hand-written</i><br>data only"]
+  P["pre-migration.sql<br><i>optional, hand-written</i><br>data and structure"] --> S["schema-change.sql<br><i>generated, edit only if necessary</i>"] --> Q["post-migration.sql<br><i>optional, hand-written</i><br>data only"]
 ```
 
 | File | Purpose |
@@ -198,12 +198,17 @@ flowchart LR
 | `desired-schema.diff` | This migration's change to the desired schema, in `git diff` format, so pull requests show it. Finalized migrations only. |
 | `recoveries/recovery-K/` | [Recoveries](#when-a-deploy-fails) of this migration. |
 
-`draft` creates `seed-data.sql`, `pre-migration.sql` and `post-migration.sql` empty when it creates the draft, ready to fill in. `recovery` copies them from the migration and creates any it lacks. An empty one runs and loads nothing, as if it weren't there: leave it or delete it, and a later `draft` doesn't create it again.
+`draft` creates `seed-data.sql`, `pre-migration.sql` and `post-migration.sql` when it creates the draft, each holding only a header comment, ready to fill in. `recovery` copies them from the migration and creates any it lacks. One still holding only its header, or nothing, runs and loads nothing, as if it weren't there: leave it or delete it, and a later `draft` doesn't create it again.
+
+> [!WARNING]
+> **Running `draft` overwrites `schema-change.sql` and `schema-change.generated.sql`, and nothing else.** Any hand edit of `schema-change.sql` is lost, while `seed-data.sql`, `pre-migration.sql` and `post-migration.sql` are never overwritten. Edit `schema-change.sql` only if necessary, when the generated statements have a problem that changing the desired schema or the pre-migration script and running `draft` again can't fix, and make that edit your last step before `finalize`.
 
 `finalize` refuses any other file in the draft folder (`unknown-draft-file`). Finalized files are written with LF line endings, and hashes ignore line endings.
 
 > [!WARNING]
 > **Finalized migrations are read-only and hashed.** Never edit them. `validate` catches edits, and the pre-commit hook runs `validate --strict --allow-draft`.
+>
+> `.vscode/settings.json` makes `migrations/` and the draft's `schema-change.generated.sql` read-only in the editor, and `.claude/settings.json` stops Claude Code editing them. Both assume the default `directory`, and neither limits super-deploy, which writes these files itself. The draft's `schema-change.sql` stays editable. Claude Code's sandbox, if you turn it on, may apply those rules to commands it runs, including super-deploy.
 >
 > In CI, run `validate --strict` without `--allow-draft`, so an unfinalized draft can't be merged.
 

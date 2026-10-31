@@ -78,7 +78,7 @@ describe("draft", () => {
     expect((await draft(project)).name).toBe("create-customer-table");
   });
 
-  test("a new draft starts with empty seed data and scripts, which a later run leaves as they are", async () => {
+  test("a new draft starts with seed data and scripts holding only a header, which a later run leaves as they are", async () => {
     const dir = await customersProject();
     const project = await loadProject({ cwd: dir.root });
 
@@ -89,8 +89,15 @@ describe("draft", () => {
       "pre-migration.sql",
       "post-migration.sql",
     ]) {
-      expect(await dir.read(`data-model/draft/${file}`)).toBe("");
+      const text = await dir.read(`data-model/draft/${file}`);
+      expect(text).toContain("Running draft never overwrites this file");
+      expect(
+        text
+          .split("\n")
+          .filter((line) => line !== "" && !line.startsWith("--")),
+      ).toEqual([]);
     }
+    const header = await dir.read("data-model/draft/pre-migration.sql");
     const backfill = "update customers set name = name;\n";
     await dir.write("data-model/draft/post-migration.sql", backfill);
     await rm(dir.path("data-model/draft/seed-data.sql"));
@@ -100,8 +107,27 @@ describe("draft", () => {
     expect(await dir.read("data-model/draft/post-migration.sql")).toBe(
       backfill,
     );
-    expect(await dir.read("data-model/draft/pre-migration.sql")).toBe("");
+    expect(await dir.read("data-model/draft/pre-migration.sql")).toBe(header);
     expect(dir.exists("data-model/draft/seed-data.sql")).toBe(false);
+  });
+
+  test("running draft overwrites the schema change and its generated copy, as their header warns", async () => {
+    const dir = await customersProject();
+    const project = await loadProject({ cwd: dir.root });
+    await draft(project, { name: "Add customers" });
+    const generated = await dir.read("data-model/draft/schema-change.sql");
+    expect(generated).toContain(
+      "WARNING: running draft overwrites this file and schema-change.generated.sql",
+    );
+    for (const file of ["schema-change.sql", "schema-change.generated.sql"]) {
+      await dir.write(`data-model/draft/${file}`, `${generated}-- edited\n`);
+    }
+
+    await draft(project);
+
+    for (const file of ["schema-change.sql", "schema-change.generated.sql"]) {
+      expect(await dir.read(`data-model/draft/${file}`)).toBe(generated);
+    }
   });
 
   test("a new draft needs a name", async () => {

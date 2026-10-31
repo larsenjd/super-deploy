@@ -9,8 +9,9 @@
 // shortfall, and the draft is written all the same. The draft's scripts are
 // checked against the rules between the newest migration's snapshot, from
 // the snapshot reader (store/snapshots.ts), and the desired schema. A new
-// draft also gets its seed data and scripts, empty, to fill in
-// (store/draft.ts).
+// draft also gets its seed data and scripts, holding only a header, to fill in
+// (store/draft.ts); a later run overwrites only the schema change and its
+// generated copy.
 
 import { posix } from "node:path";
 import { differ, type PlannedStatement } from "../differ/index.ts";
@@ -50,7 +51,7 @@ import {
 } from "../sql-analysis/index.ts";
 import { asSqlFiles, readDesiredSchemaFiles } from "../store/desired-schema.ts";
 import {
-  createEmptyDraftFiles,
+  createDraftScripts,
   readDraft,
   reportUnknownDraftFiles,
   schemaChangeHeader,
@@ -233,7 +234,7 @@ export async function draft(
     schemaChange,
   );
   if (existing === undefined) {
-    await createEmptyDraftFiles(paths);
+    await createDraftScripts(paths);
   }
   // Generated SQL obeys the same rules as hand-written SQL, so a differ bug
   // cannot bypass them. The schema change stays on disk for review.
