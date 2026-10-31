@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises";
 import {
   DesiredSchemaLoadError,
   DraftNameRequiredError,
@@ -75,6 +76,32 @@ describe("draft", () => {
       renamedFrom: "add-customers",
     });
     expect((await draft(project)).name).toBe("create-customer-table");
+  });
+
+  test("a new draft starts with empty seed data and scripts, which a later run leaves as they are", async () => {
+    const dir = await customersProject();
+    const project = await loadProject({ cwd: dir.root });
+
+    await draft(project, { name: "Add customers" });
+
+    for (const file of [
+      "seed-data.sql",
+      "pre-migration.sql",
+      "post-migration.sql",
+    ]) {
+      expect(await dir.read(`data-model/draft/${file}`)).toBe("");
+    }
+    const backfill = "update customers set name = name;\n";
+    await dir.write("data-model/draft/post-migration.sql", backfill);
+    await rm(dir.path("data-model/draft/seed-data.sql"));
+
+    await draft(project);
+
+    expect(await dir.read("data-model/draft/post-migration.sql")).toBe(
+      backfill,
+    );
+    expect(await dir.read("data-model/draft/pre-migration.sql")).toBe("");
+    expect(dir.exists("data-model/draft/seed-data.sql")).toBe(false);
   });
 
   test("a new draft needs a name", async () => {

@@ -48,10 +48,20 @@ export interface ReplayUnit {
 }
 
 /**
+ * True for a script or seed data file holding nothing but whitespace, which
+ * is read as missing: `draft` and `recovery` create them empty (store/draft.ts),
+ * and an empty one must not count as a script that runs or seed data that
+ * loads. The schema change is always read, empty or not.
+ */
+export function isEmptyFile(sql: string): boolean {
+  return sql.trim() === "";
+}
+
+/**
  * The deploy-time SQL files a migration or draft folder holds, in the order
- * they run. For a Recovery folder, `schemaChangeFolder` is its migration's
- * folder: a Recovery runs its own scripts around its migration's schema
- * change.
+ * they run; an empty script is left out (isEmptyFile). For a Recovery
+ * folder, `schemaChangeFolder` is its migration's folder: a Recovery runs its
+ * own scripts around its migration's schema change.
  */
 export async function readReplayUnit(
   root: string,
@@ -67,10 +77,10 @@ export async function readReplayUnit(
     );
     if (await exists(absolute)) {
       const file = projectRelative(root, absolute);
-      files.push({
-        file,
-        sql: decodeHashedText(await readFile(absolute), file),
-      });
+      const sql = decodeHashedText(await readFile(absolute), file);
+      if (name === schemaChangeFileName || !isEmptyFile(sql)) {
+        files.push({ file, sql });
+      }
     }
   }
   return { label, files };

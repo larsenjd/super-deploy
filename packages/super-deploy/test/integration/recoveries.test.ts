@@ -133,6 +133,31 @@ describe("recovery", () => {
     });
   });
 
+  test("a Recovery draft gets an empty file for each script and seed data its migration lacks", async () => {
+    const { dir, project } = await deployProject(server, {
+      "customers.sql": customers,
+    });
+    await draft(project, { name: "add customers" });
+    const note = "-- Nothing to prepare.\n";
+    await dir.write("data-model/draft/pre-migration.sql", note);
+    await rm(dir.path("data-model/draft/post-migration.sql"));
+    await rm(dir.path("data-model/draft/seed-data.sql"));
+    await finalize(project);
+
+    const result = await recovery(project, { migration: 1 });
+
+    expect(await dir.read("data-model/draft/pre-migration.sql")).toBe(note);
+    expect(await dir.read("data-model/draft/post-migration.sql")).toBe("");
+    expect(await dir.read("data-model/draft/seed-data.sql")).toBe("");
+    expect(result.files).toEqual([
+      "data-model/draft/draft.json",
+      "data-model/draft/post-migration.sql",
+      "data-model/draft/pre-migration.sql",
+      "data-model/draft/schema-change.sql",
+      "data-model/draft/seed-data.sql",
+    ]);
+  });
+
   test("is refused while another draft exists, and for a migration that doesn't exist", async () => {
     const { dir, project } = await failedMigration();
     await recovery(project, { migration: 2 });
@@ -179,6 +204,7 @@ describe("finalizing a Recovery", () => {
     });
     expect(await listFiles(dir.path(recovery1))).toEqual([
       "metadata.json",
+      "post-migration.sql",
       "pre-migration.sql",
       "seed-data.sql",
     ]);
@@ -439,6 +465,7 @@ describe("unfinalize with Recoveries", () => {
     expect(dir.exists(`${migration2}/schema-change.sql`)).toBe(true);
     expect(await listFiles(dir.path("data-model/draft"))).toEqual([
       "draft.json",
+      "post-migration.sql",
       "pre-migration.sql",
       "schema-change.sql",
       "seed-data.sql",

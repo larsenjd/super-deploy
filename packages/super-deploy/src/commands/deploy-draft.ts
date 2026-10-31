@@ -273,7 +273,7 @@ function seedDataLine(withSeed: boolean, seeded: SeededUnit): string {
     return "Seed data: not loaded";
   }
   return seeded.seedData === undefined
-    ? "Seed data: none (the draft has no seed-data.sql)"
+    ? "Seed data: none (the draft's seed-data.sql is missing or empty)"
     : "Seed data: loaded first";
 }
 

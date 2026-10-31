@@ -15,6 +15,14 @@
 // generated one's "run draft again"; its statements are migration N's,
 // unchanged, and the migration's own hashed file is never touched.
 //
+// A new draft starts with its hand-written files (recoveryFileNames) created
+// empty, so the scripts and seed data are there to fill in: `draft` creates
+// them with the draft (never on a later run, so one deleted on purpose stays
+// deleted) and `recovery` creates those its source lacks. `unfinalize` doesn't,
+// so finalizing again still reproduces the migration. An empty one runs and
+// loads nothing, and is read as missing (rehearsal/replay.ts isEmptyFile);
+// finalize freezes it like any other.
+//
 // A draft holds only draftFileNames, and a Recovery draft only
 // recoveryDraftFileNames: its metadata, its copy of the schema change and the
 // files a Recovery replaces. Anything else in its folder (a misnamed script
@@ -124,6 +132,29 @@ const recoveryDraftFileNames: readonly string[] = draftFileNames.filter(
 /** What `draft` finalizes as: a migration, or for a Recovery draft a Recovery. */
 function finalizedAs(draft: DraftMetadata | undefined): FinalizedFolderKind {
   return draft?.recoveryOf === undefined ? "migration" : "Recovery";
+}
+
+/**
+ * Creates each of the hand-written files (recoveryFileNames) the draft folder
+ * lacks, empty; a file already there is left as it is. Returns the absolute
+ * paths created.
+ */
+export async function createEmptyDraftFiles(
+  paths: ProjectPaths,
+): Promise<string[]> {
+  const created: string[] = [];
+  for (const name of recoveryFileNames) {
+    const path = join(paths.draft, name);
+    try {
+      await writeFile(path, "", { flag: "wx" });
+      created.push(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+    }
+  }
+  return created;
 }
 
 /** A file in the draft folder that the draft doesn't hold (draftFileNames, or recoveryDraftFileNames). */

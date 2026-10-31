@@ -1,16 +1,19 @@
 // `recovery --migration N`: start a Recovery of migration N, for targets that
 // haven't run it yet (typically because it failed on their data). The
 // Recovery draft carries N's schema change unchanged (it is never
-// regenerated; only its header comment says so, store/draft.ts) and starts from the scripts and seed data of N's newest
-// variant (its newest Recovery, else the original), for the developer to
-// change. `finalize` freezes it as N's next Recovery once its rehearsal
-// proves it ends in the same structure as the original.
+// regenerated; only its header comment says so, store/draft.ts) and starts
+// from the scripts and seed data of N's newest variant (its newest Recovery,
+// else the original), for the developer to change; any of them the variant
+// lacks is created empty (store/draft.ts). `finalize` freezes it as N's next
+// Recovery once its rehearsal proves it ends in the same structure as the
+// original.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SuperDeployError } from "../errors.ts";
 import type { Project } from "../project.ts";
 import {
+  createEmptyDraftFiles,
   writeDraftMetadata,
   writeRecoverySchemaChange,
 } from "../store/draft.ts";
@@ -78,6 +81,9 @@ export async function recovery(
     if (await exists(join(source, name))) {
       await copy(join(source, name), name);
     }
+  }
+  for (const path of await createEmptyDraftFiles(paths)) {
+    files.push(projectRelative(root, path));
   }
   await writeDraftMetadata(paths, {
     name: migration.name,

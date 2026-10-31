@@ -88,7 +88,10 @@ describe("finalize", () => {
     expect(await filesUnder(dir.path(folder))).toEqual([
       "desired-schema.diff",
       "metadata.json",
+      "post-migration.sql",
+      "pre-migration.sql",
       "schema-change.sql",
+      "seed-data.sql",
     ]);
     expect(await dir.read(`${folder}/schema-change.sql`)).toBe(schemaChange);
     expect(await dir.read(`${folder}/desired-schema.diff`)).toBe(
@@ -271,7 +274,10 @@ describe("a schema change edited by hand", () => {
       "HAND-EDITED.md",
       "desired-schema.diff",
       "metadata.json",
+      "post-migration.sql",
+      "pre-migration.sql",
       "schema-change.sql",
+      "seed-data.sql",
     ]);
   });
 
@@ -286,7 +292,10 @@ describe("a schema change edited by hand", () => {
     expect(await filesUnder(result.path)).toEqual([
       "desired-schema.diff",
       "metadata.json",
+      "post-migration.sql",
+      "pre-migration.sql",
       "schema-change.sql",
+      "seed-data.sql",
     ]);
     expect(
       await dir.read(

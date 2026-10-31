@@ -8,7 +8,9 @@
 // can't generate, or generates but PostgreSQL refuses, is reported as a
 // shortfall, and the draft is written all the same. The draft's scripts are
 // checked against the rules between the newest migration's snapshot, from
-// the snapshot reader (store/snapshots.ts), and the desired schema.
+// the snapshot reader (store/snapshots.ts), and the desired schema. A new
+// draft also gets its seed data and scripts, empty, to fill in
+// (store/draft.ts).
 
 import { posix } from "node:path";
 import { differ, type PlannedStatement } from "../differ/index.ts";
@@ -48,6 +50,7 @@ import {
 } from "../sql-analysis/index.ts";
 import { asSqlFiles, readDesiredSchemaFiles } from "../store/desired-schema.ts";
 import {
+  createEmptyDraftFiles,
   readDraft,
   reportUnknownDraftFiles,
   schemaChangeHeader,
@@ -229,6 +232,9 @@ export async function draft(
     { name, desiredSchemaHash: desiredSchemaHash(files) },
     schemaChange,
   );
+  if (existing === undefined) {
+    await createEmptyDraftFiles(paths);
+  }
   // Generated SQL obeys the same rules as hand-written SQL, so a differ bug
   // cannot bypass them. The schema change stays on disk for review.
   await refuseRuleViolations(

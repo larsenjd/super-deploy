@@ -198,6 +198,8 @@ flowchart LR
 | `desired-schema.diff` | This migration's change to the desired schema, in `git diff` format, so pull requests show it. Finalized migrations only. |
 | `recoveries/recovery-K/` | [Recoveries](#when-a-deploy-fails) of this migration. |
 
+`draft` creates `seed-data.sql`, `pre-migration.sql` and `post-migration.sql` empty when it creates the draft, ready to fill in. `recovery` copies them from the migration and creates any it lacks. An empty one runs and loads nothing, as if it weren't there: leave it or delete it, and a later `draft` doesn't create it again.
+
 `finalize` refuses any other file in the draft folder (`unknown-draft-file`). Finalized files are written with LF line endings, and hashes ignore line endings.
 
 > [!WARNING]
