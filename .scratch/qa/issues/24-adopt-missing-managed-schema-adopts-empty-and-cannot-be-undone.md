@@ -22,7 +22,7 @@ export default defineConfig({
 
 ```sh
 export EXT2_DATABASE_URL=postgres://adopt_deployer:deploy@localhost:54818/qa_adopt_ext2
-pnpm exec super-deploy init --adopt ext2
+pnpm exec super-deploy adopt --target ext2
 ```
 
 Then I fixed the typo, deleted the empty `data-model/migrations/`, and adopted again.
@@ -62,7 +62,7 @@ The README says nothing about undoing an adoption. I only got out by guessing: `
 ## Agent Brief
 
 **Category:** bug
-**Summary:** `init --adopt` refuses a target whose managed schema doesn't exist, instead of recording an empty adoption.
+**Summary:** `adopt` refuses a target whose managed schema doesn't exist, instead of recording an empty adoption.
 
 **Current behavior:**
 If the configured managed schema doesn't exist on the target (typically a typo in `managedSchema`), adoption succeeds. It writes an empty desired schema and migration `00001-adopt`, and records that migration on the target in a newly created history schema. A second adoption, once the typo is fixed, then refuses because the target already records a migration.
@@ -74,7 +74,7 @@ If the configured managed schema doesn't exist on the target (typically a typo i
 - A managed schema that exists but is empty can still be adopted, as today.
 
 **Key interfaces:**
-- The adoption command (`adopt`, CLI `init --adopt <target>`) and its target-reading step.
+- The adoption command (`adopt`, CLI `adopt --target <target>`) and its target-reading step.
 - `AdoptConflictError` (or whichever existing adoption error carries target-state reasons): a new reason for a missing managed schema.
 
 **Acceptance criteria:**

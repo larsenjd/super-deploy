@@ -1,6 +1,6 @@
 # 26: Override reasons during adoption
 
-**What to build:** `init --adopt` can adopt a database whose functions need an override marker (dynamic SQL, denylisted calls). It asks for a reason per function and writes the marker, instead of refusing until those functions are removed from the target.
+**What to build:** `adopt` can adopt a database whose functions need an override marker (dynamic SQL, denylisted calls). It asks for a reason per function and writes the marker, instead of refusing until those functions are removed from the target.
 
 **Blocked by:** 24
 

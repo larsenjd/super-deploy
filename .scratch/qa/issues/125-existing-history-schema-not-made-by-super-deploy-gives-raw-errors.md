@@ -14,7 +14,7 @@ Case A, a DBA pre-creates the history schema (an obvious way to avoid granting `
 create schema deployment_history authorization qa2_adopt_deployer;
 ```
 ```sh
-pnpm exec super-deploy init --adopt qa       # managedSchema: "inv"
+pnpm exec super-deploy adopt --target qa       # managedSchema: "inv"
 pnpm exec super-deploy status --target qa
 ```
 
@@ -27,7 +27,7 @@ create schema audit; create table audit.migrations (x int); create table audit.l
 managedSchema: "app", historySchema: "audit",
 ```
 ```sh
-pnpm exec super-deploy init --adopt qa
+pnpm exec super-deploy adopt --target qa
 pnpm exec super-deploy status --target qa
 ```
 
@@ -60,7 +60,7 @@ The README says `historySchema` is "the schema super-deploy creates on each targ
 ### Triage, 2026-10-21
 
 **Verification:** CONFIRMED, and wider than adoption.
-- Case A (`qa2t_adopt_nocreate`): an empty `deployment_history` owned by the deploy role. `init --adopt qa` gave `Error: relation "deployment_history.migrations" does not exist`, and `status` gave `relation "deployment_history.attempts" does not exist`.
+- Case A (`qa2t_adopt_nocreate`): an empty `deployment_history` owned by the deploy role. `adopt --target qa` gave `Error: relation "deployment_history.migrations" does not exist`, and `status` gave `relation "deployment_history.attempts" does not exist`.
 - Case B (`qa2t_adopt_audit`): `historySchema: "audit"`, a schema holding unrelated `migrations` and `log` tables. Adoption gave `Error: column "number" does not exist`. `status` and `deploy` gave `relation "audit.attempts" does not exist`.
 - The same schema owned by `postgres` (deploy role without USAGE) gave `permission denied for schema audit` from every command.
 - Nothing was written in any case.
@@ -73,7 +73,7 @@ The README says `historySchema` is "the schema super-deploy creates on each targ
 **Summary:** Every command should recognise a history schema that super-deploy didn't make and say what to do, instead of failing with a raw PostgreSQL error.
 
 **Current behavior:**
-An existing schema with the history schema's name is taken to be super-deploy's. If it is empty, holds other tables, or the deploy role can't use it, `init --adopt`, `status`, `deploy` (and every other command reading history) fail with raw `relation ... does not exist`, `column ... does not exist` or `permission denied` errors.
+An existing schema with the history schema's name is taken to be super-deploy's. If it is empty, holds other tables, or the deploy role can't use it, `adopt`, `status`, `deploy` (and every other command reading history) fail with raw `relation ... does not exist`, `column ... does not exist` or `permission denied` errors.
 
 **Desired behavior (once decided):**
 - Commands tell three states apart: no history schema, super-deploy's history schema, and some other schema with that name.
@@ -86,7 +86,7 @@ An existing schema with the history schema's name is taken to be super-deploy's.
 - The README's `historySchema` setting and its Permissions note on CREATE.
 
 **Acceptance criteria (once decided):**
-- [ ] Case A and case B from the report give a refusal naming the schema and the fix, from both `init --adopt` and `status`/`deploy`, with nothing written. API seam.
+- [ ] Case A and case B from the report give a refusal naming the schema and the fix, from both `adopt` and `status`/`deploy`, with nothing written. API seam.
 - [ ] A history schema owned by another role, without USAGE for the deploy role, gives the same kind of refusal, not `permission denied`.
 - [ ] Targets with a real history schema, or with none, behave as today.
 - [ ] Per the decision: an empty, deploy-role-owned schema is either filled and used, or refused.

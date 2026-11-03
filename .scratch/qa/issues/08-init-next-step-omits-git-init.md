@@ -48,7 +48,7 @@ After `init`, the CLI prints "Initialised a super-deploy project in ." and "Next
 - When the directory isn't inside a git work tree, the next steps start with `git init`, then `pnpm install`, then the rest.
 - When it is already inside a git work tree, `git init` is left out.
 - The first line names the project directory by its absolute path (or its basename), never ".".
-- `init --adopt` output is unchanged unless it prints the same lines.
+- `adopt` output is unchanged unless it prints the same lines.
 
 **Key interfaces:**
 - The `init` command's `CommandDefinition` (its result rendering) and the result type `init` returns. The API may need to report whether the project is inside a git work tree, or the CLI can check.

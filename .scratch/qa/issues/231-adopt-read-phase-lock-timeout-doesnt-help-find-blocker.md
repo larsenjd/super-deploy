@@ -12,7 +12,7 @@ Target `qa3_adopt_race` (managed schema `r`), not yet adopted. Config `lockTimeo
 ```sh
 # another session, as superuser, holds for 30 s:
 #   begin; lock table r.t in access exclusive mode;
-pnpm exec super-deploy init --adopt qa </dev/null &   # waits
+pnpm exec super-deploy adopt --target qa </dev/null &   # waits
 pnpm exec super-deploy status --target qa              # 4 s later, to find out why
 ```
 
@@ -35,7 +35,7 @@ something else holds a lock.
 The adoption, once its 20 s run out:
 
 ```
-Error: Target qa's lockTimeout (20s) ran out waiting for a lock while init --adopt read the target's managed schema (canceling statement due to lock timeout). Nothing was written, to the project or to target qa. Next: retry once whatever held the lock has finished, or raise lockTimeout for target qa in super-deploy.config.ts.
+Error: Target qa's lockTimeout (20s) ran out waiting for a lock while adopt read the target's managed schema (canceling statement due to lock timeout). Nothing was written, to the project or to target qa. Next: retry once whatever held the lock has finished, or raise lockTimeout for target qa in super-deploy.config.ts.
 ```
 
 It gives no hint about how to find "whatever held the lock". When the

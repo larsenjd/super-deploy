@@ -22,7 +22,7 @@ alter table x.t set (autovacuum_enabled = false);
 ```
 
 ```sh
-pnpm exec super-deploy init --adopt qa </dev/null
+pnpm exec super-deploy adopt --target qa </dev/null
 ```
 
 ## Expected

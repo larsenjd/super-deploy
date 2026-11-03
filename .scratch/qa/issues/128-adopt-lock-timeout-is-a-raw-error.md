@@ -14,11 +14,11 @@ Another session holds a lock on a table in the managed schema (a long migration 
 await c.query("begin"); await c.query("lock table app.t in access exclusive mode"); // held 12 s
 ```
 ```sh
-pnpm exec super-deploy init --adopt qa
+pnpm exec super-deploy adopt --target qa
 ```
 
 ## Expected
-Like `deploy` and `status` when the target is locked: say what was waited for (which table, which session/pid), that nothing was written, and what to do (wait, or raise `lockTimeout` for the target, which the README says applies to `init --adopt`).
+Like `deploy` and `status` when the target is locked: say what was waited for (which table, which session/pid), that nothing was written, and what to do (wait, or raise `lockTimeout` for the target, which the README says applies to `adopt`).
 
 ## Actual
 After 5.7 s, on two runs:
@@ -54,7 +54,7 @@ Deployments already add a next step for 55P03 and 57014 (`SqlFileFailedError`, `
 **Summary:** When adoption's read of the target runs out of lockTimeout or statementTimeout, it refuses with a message saying what happened, that nothing was written, and what to do.
 
 **Current behavior:**
-A lock held on a managed-schema table makes `init --adopt` fail with a raw `canceling statement due to lock timeout`, sometimes prefixed with `pg-delta could not diff the schemas:`. A user has never heard of pg-delta, and the message doesn't say that nothing was written.
+A lock held on a managed-schema table makes `adopt` fail with a raw `canceling statement due to lock timeout`, sometimes prefixed with `pg-delta could not diff the schemas:`. A user has never heard of pg-delta, and the message doesn't say that nothing was written.
 
 **Desired behavior:**
 - A lock timeout (SQLSTATE 55P03) or statement timeout (57014) anywhere in adoption's read of the target gives a typed adoption refusal, e.g. `Cannot adopt target qa: reading its managed schema waited longer than its lockTimeout (5s) for a lock another session holds. Nothing was written; retry once that session has finished, or raise lockTimeout for target qa in super-deploy.config.ts`.

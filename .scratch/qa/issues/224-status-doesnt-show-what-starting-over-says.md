@@ -15,7 +15,7 @@ which says:
 > `00001-adopt`, marked.
 
 ```sh
-pnpm exec super-deploy init --adopt qa
+pnpm exec super-deploy adopt --target qa
 pnpm exec super-deploy status --target qa
 ```
 
@@ -28,11 +28,11 @@ marked, so I can check all three before dropping the history schema.
 Target qa: 1 migration recorded, 0 pending
 Drift: none
 Recent attempts:
-  #1 init --adopt succeeded migration 1 by jonathanl at 2026-10-21T22:46:43.421Z
+  #1 adopt succeeded migration 1 by jonathanl at 2026-10-21T22:46:43.421Z
 ```
 
 Neither `00001-adopt` nor "marked" appears. Nothing in the output names the
-recorded migration, or says it was marked rather than run. "#1 init --adopt
+recorded migration, or says it was marked rather than run. "#1 adopt
 succeeded migration 1" is the closest.
 
 ## Notes
@@ -40,4 +40,4 @@ This check guards a destructive step (`drop schema deployment_history cascade`),
 so it matters that the user can actually make it. Either `status` should name
 the recorded migrations (or at least the newest, and how it was recorded),
 or the README should describe what `status` really prints: "1 migration
-recorded, 0 pending", and an attempt `init --adopt succeeded migration 1`.
+recorded, 0 pending", and an attempt `adopt succeeded migration 1`.

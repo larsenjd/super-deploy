@@ -21,7 +21,7 @@ select attname, attgenerated from pg_attribute where attrelid = 'people'::regcla
 Project with target `gen` (`postgresTarget({ connectionString: process.env.GEN_DATABASE_URL ?? "" })`), then:
 
 ```sh
-pnpm exec super-deploy init --adopt gen
+pnpm exec super-deploy adopt --target gen
 ```
 
 ## Expected

@@ -12,13 +12,13 @@ table each), an empty schema `empty1`, and a table in `public`. I set
 `managedSchema: "empty1"` by mistake:
 
 ```sh
-pnpm exec super-deploy init --adopt qa </dev/null
+pnpm exec super-deploy adopt --target qa </dev/null
 ```
 
 And in a brand-new project with no changes to the config:
 
 ```sh
-pnpm exec super-deploy init --adopt dev </dev/null
+pnpm exec super-deploy adopt --target dev </dev/null
 ```
 
 ## Expected
@@ -38,14 +38,14 @@ warning: Adopted 0 objects from schema public
 ```
 
 It asks whether `managedSchema` is right, but not what to do if it isn't. A
-user who just changes `managedSchema` and runs `init --adopt` again is
+user who just changes `managedSchema` and runs `adopt` again is
 refused twice (project already has migrations, target already records one)
 before reaching the README section.
 
 ## Notes
 - Suggestion: end the warning with `to start over, see "Starting an adoption
   over" in README.md`, as the refusals do.
-- `init --adopt dev` on a new project (picked in the menu, where `dev` is
+- `adopt --target dev` on a new project (picked in the menu, where `dev` is
   preselected under `init`) quietly makes an empty `00001-adopt`. Undoing that
   on `dev` means connecting as `deployer` with the README's keep-running
   snippet, or deleting `.super-deploy`. The README doesn't spell out either

@@ -1,4 +1,4 @@
-// Override markers for adoption (`init --adopt`): which generated
+// Override markers for adoption (`adopt`): which generated
 // desired-schema statements only an override marker stands between and
 // adoption, and writing the markers into the generated files once a person
 // has given a reason for each.
@@ -7,7 +7,7 @@ import { parseSqlFile, type SqlFile } from "./parse.ts";
 import type { RuleContext } from "./rule-types.ts";
 import { analyseFile } from "./rules.ts";
 
-/** Something `init --adopt` can only write with an override marker. */
+/** Something `adopt` can only write with an override marker. */
 export interface OverrideNeeded {
   /** What it is, e.g. `function load_staging(text)`. */
   readonly object: string;

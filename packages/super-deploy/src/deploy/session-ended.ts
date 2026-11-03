@@ -169,7 +169,7 @@ export class TargetSessionEndedError extends SuperDeployError {
 /**
  * Outside a deploy-time file, a statement on the target ran into its lock or
  * statement timeout: under the target lock (the drift check, the
- * pre-flight), or in a read before it (`outsideLock`, init --adopt's read of
+ * pre-flight), or in a read before it (`outsideLock`, adopt's read of
  * the managed schema). Nothing changed on the target. The message words the
  * timeout as every timeout message does (deploy/target.ts, `timeoutRanOut`).
  */
@@ -185,7 +185,7 @@ export class TargetTimeoutError extends SuperDeployError {
     options: ErrorOptions & {
       /**
        * What the statement was part of when it ran outside the target lock,
-       * e.g. `init --adopt read the target's managed schema`: the message
+       * e.g. `adopt read the target's managed schema`: the message
        * names it and says nothing was written, without pointing to
        * `status`, which shows only the target lock's holder.
        */

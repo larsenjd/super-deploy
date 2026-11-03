@@ -47,4 +47,4 @@ the current owner.
 
 ### Triage, 2026-10-21
 
-Closed as a duplicate of 126: same message, same README sentence (`packages/template/README.md:416`), reached through `status` here and `init --adopt` there; 126's owner covers both, since both use the same ownership pre-flight. One point to carry over: the suggested fix doesn't say it must be run by a superuser or the object's current owner.
+Closed as a duplicate of 126: same message, same README sentence (`packages/template/README.md:416`), reached through `status` here and `adopt` there; 126's owner covers both, since both use the same ownership pre-flight. One point to carry over: the suggested fix doesn't say it must be run by a superuser or the object's current owner.

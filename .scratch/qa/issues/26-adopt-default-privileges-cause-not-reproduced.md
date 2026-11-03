@@ -25,7 +25,7 @@ create function app.note_count() returns bigint language sql stable as $$ select
 Config: `managedSchema: "app"`, target `defpriv` from `DEFPRIV_DATABASE_URL=postgres://adopt_deployer:deploy@localhost:54818/qa_adopt_defpriv`.
 
 ```sh
-pnpm exec super-deploy init --adopt defpriv </dev/null
+pnpm exec super-deploy adopt defpriv </dev/null
 ```
 
 ## Expected
@@ -54,7 +54,7 @@ Each default privilege on its own triggers the refusal (I removed them one at a 
 
 ## Notes
 - Guess: when `pg_default_acl` has an entry for the owner, the owner's privileges stop looking like the default `acldefault()` and get emitted as an explicit grant to the deploy role, which then differs in the rehearsal.
-- README, "Permissions": the warning about `ALTER DEFAULT PRIVILEGES` covers deploys after adoption. It could add "remove any default privileges before `init --adopt`".
+- README, "Permissions": the warning about `ALTER DEFAULT PRIVILEGES` covers deploys after adoption. It could add "remove any default privileges before `adopt`".
 
 ## Comments
 

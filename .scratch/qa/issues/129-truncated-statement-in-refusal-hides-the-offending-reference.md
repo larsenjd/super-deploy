@@ -17,7 +17,7 @@ create schema app authorization qa2_adopt_deployer;
 create table app.users (id int primary key, email public.citext not null, token bytea not null default public.gen_random_bytes(16));
 ```
 ```sh
-pnpm exec super-deploy init --adopt qa      # managedSchema: "app"
+pnpm exec super-deploy adopt --target qa      # managedSchema: "app"
 ```
 
 ## Expected

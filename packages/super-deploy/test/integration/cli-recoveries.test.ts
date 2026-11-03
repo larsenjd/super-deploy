@@ -162,9 +162,8 @@ describe.skipIf(process.platform === "win32")("menu", () => {
     const dir = await twoMigrations();
     const terminal = spawnTerminal([], { cwd: dir.root });
 
-    const menu = await terminal.waitFor("quit");
-    expect(menu).toMatch(/Recover\s*\n.*recovery/);
-    await terminal.chooseMenuItem("recovery");
+    await terminal.waitForMenu();
+    await terminal.chooseMenuItem("Recover", "recovery");
     const question = await terminal.waitFor("00001-add-customers");
     // Shown before 00001-add-customers, the first one offered.
     expect(question).toContain("00002-require-email");
@@ -173,8 +172,8 @@ describe.skipIf(process.platform === "win32")("menu", () => {
     await terminal.waitFor(
       "Created a Recovery draft of migration 00002-require-email",
     );
-    await terminal.waitFor("quit");
-    terminal.type(keys.escape);
+    await terminal.waitForMenu();
+    await terminal.chooseMenuItem("quit");
     expect(await terminal.exited).toBe(0);
     expect(JSON.parse(await dir.read("data-model/draft/draft.json"))).toEqual({
       name: "require-email",

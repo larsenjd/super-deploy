@@ -17,7 +17,7 @@ grant usage on schema core to qa2_adopt_app_reader;
 grant select (id, qty) on core.items to qa2_adopt_app_reader;
 ```
 ```sh
-pnpm exec super-deploy init --adopt qa     # in a terminal (one override reason asked)
+pnpm exec super-deploy adopt --target qa     # in a terminal (one override reason asked)
 ```
 Also on `qa2_adopt_shop`: 7 grants, 1 policy, RLS enabled on `orders`.
 

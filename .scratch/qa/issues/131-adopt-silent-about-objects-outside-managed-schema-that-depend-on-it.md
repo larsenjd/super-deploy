@@ -17,7 +17,7 @@ create table core.items (id int primary key, qty core.small_pos, price numeric);
 create view reporting.item_view as select id, qty from core.items;
 ```
 ```sh
-pnpm exec super-deploy init --adopt qa       # managedSchema "core", externalSchemas ["reporting"]
+pnpm exec super-deploy adopt --target qa       # managedSchema "core", externalSchemas ["reporting"]
 # change items.qty to bigint in data-model/desired-schema/tables.sql
 pnpm exec super-deploy draft --name "widen qty"
 pnpm exec super-deploy finalize --acknowledge-destructive

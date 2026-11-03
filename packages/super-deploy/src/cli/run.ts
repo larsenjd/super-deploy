@@ -95,10 +95,7 @@ export async function runCommand(
         }
         await command.run(io.cwd, prepared.values, context);
       } else if (command.needsProject === false) {
-        if (command.projectMode === undefined) {
-          throw new Error(`${command.name} runs without a project`);
-        }
-        await command.projectMode.run(project, prepared.values, context);
+        throw new Error(`${command.name} runs without a project`);
       } else {
         await command.run(project, prepared.values, context);
       }

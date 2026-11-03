@@ -12,7 +12,7 @@ schema. Config `lockTimeout: "60s"`.
 
 1. In another session, as a superuser, I held a lock:
    `begin; lock table r.t in access exclusive mode;` (and kept it open for 30 s).
-2. In a terminal I ran `pnpm exec super-deploy init --adopt qa` and answered the override reason.
+2. In a terminal I ran `pnpm exec super-deploy adopt --target qa` and answered the override reason.
    Adoption then waits for the lock. By now it has already written
    `data-model/migrations/00001-adopt/` and the desired schema
    (`find data-model -type f` lists 8 files).
@@ -21,7 +21,7 @@ schema. Config `lockTimeout: "60s"`.
 
 ```sh
 pnpm exec super-deploy status --target qa
-pnpm exec super-deploy init --adopt qa </dev/null
+pnpm exec super-deploy adopt --target qa </dev/null
 ```
 
 ## Expected
@@ -39,7 +39,7 @@ Drift (the target differs from its recorded migrations):
 Pending:
   00001-adopt
 Recent attempts:
-  #3 init --adopt abandoned migration 1 by jonathanl at ...: The command ended without recording an outcome; settled as abandoned: none of its migrations are recorded
+  #3 adopt abandoned migration 1 by jonathanl at ...: The command ended without recording an outcome; settled as abandoned: none of its migrations are recorded
 Error: Target qa has drifted from its recorded migrations: ... If its changes are those of the next pending migration applied by hand, mark --target qa records that migration as deployed (see the README, "Drift")
 ```
 

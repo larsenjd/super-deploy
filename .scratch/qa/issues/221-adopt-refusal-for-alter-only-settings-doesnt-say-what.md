@@ -30,7 +30,7 @@ alter domain e.d3 add constraint d3_pos check (value > 0) not valid;
 ```
 
 ```sh
-pnpm exec super-deploy init --adopt qa </dev/null
+pnpm exec super-deploy adopt --target qa </dev/null
 ```
 
 ## Expected

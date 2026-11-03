@@ -9,8 +9,8 @@
 // rather than deployed, and is the only thing written: one `migrations` row
 // in the target's history schema, inside its own transaction.
 //
-// The guarded `mark` command (commands/mark.ts) and `init --adopt` (ticket
-// 22, which records migration 1 this way from `init`, without the guard) both
+// The guarded `mark` command (commands/mark.ts) and `adopt` (ticket
+// 22, which records migration 1 this way, without the guard) both
 // use `markNextPending` under `withLockedTarget`.
 //
 // SQL `recordMarked` sends on the command session (fault-injection wrappers
@@ -157,7 +157,7 @@ export async function recordMarked(
  * (`requireReplicaMatch`) and records it as marked (`recordMarked`). Returns the migration marked.
  *
  * No guard: the caller decides who may do this. `mark` asks for YES first;
- * `init --adopt` (ticket 22) calls it directly from `init`.
+ * `adopt` (ticket 22) calls it directly.
  */
 export async function markNextPending(
   project: Project,

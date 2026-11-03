@@ -1,4 +1,4 @@
-// CLI seam for `init --adopt <target>`: it runs in the project found from the
+// CLI seam for `adopt --target <target>`: it runs in the project found from the
 // working directory, prints what it wrote, and lists what V1 doesn't support
 // on stderr when it refuses. In a terminal it asks for override reasons.
 import { rm } from "node:fs/promises";
@@ -34,14 +34,14 @@ async function projectAdopting(sql: string, settings = "") {
   });
 }
 
-describe("init --adopt", () => {
+describe("adopt", () => {
   test("adopts the target from a subdirectory of the project", async () => {
     const dir = await projectAdopting(
       "create table customers (id bigint primary key, name text not null);",
     );
     await dir.write("data-model/desired-schema/.gitkeep", "");
 
-    const result = await runCli(["init", "--adopt", "prod"], {
+    const result = await runCli(["adopt", "--target", "prod"], {
       cwd: dir.path("data-model"),
     });
 
@@ -64,7 +64,7 @@ describe("init --adopt", () => {
       "create schema shop; create table shop.t (id bigint primary key);",
     );
 
-    const result = await runCli(["init", "--adopt", "prod"], {
+    const result = await runCli(["adopt", "--target", "prod"], {
       cwd: dir.root,
     });
 
@@ -86,7 +86,7 @@ describe("init --adopt", () => {
       create policy customers_read on customers for select to ${reader} using (true);
     `);
 
-    const result = await runCli(["init", "--adopt", "prod"], {
+    const result = await runCli(["adopt", "--target", "prod"], {
       cwd: dir.root,
     });
 
@@ -108,7 +108,7 @@ describe("init --adopt", () => {
       alter default privileges in schema public grant select on tables to ${reader};
     `);
 
-    const result = await runCli(["init", "--adopt", "prod"], {
+    const result = await runCli(["adopt", "--target", "prod"], {
       cwd: dir.root,
     });
 
@@ -129,7 +129,7 @@ describe("init --adopt", () => {
       'managedSchema: "core",',
     );
 
-    const result = await runCli(["init", "--adopt", "prod"], {
+    const result = await runCli(["adopt", "--target", "prod"], {
       cwd: dir.root,
     });
 
@@ -144,7 +144,7 @@ describe("init --adopt", () => {
       "create type mood as enum ('sad'); create sequence counter;",
     );
 
-    const result = await runCli(["init", "--adopt", "prod"], {
+    const result = await runCli(["adopt", "--target", "prod"], {
       cwd: dir.root,
     });
 
@@ -170,7 +170,7 @@ describe("init --adopt", () => {
       'managedSchema: "ap",',
     );
 
-    const result = await runCli(["init", "--adopt", "prod"], {
+    const result = await runCli(["adopt", "--target", "prod"], {
       cwd: dir.root,
     });
 
@@ -205,7 +205,7 @@ describe("init --adopt", () => {
       }).config,
     });
 
-    const result = await runCli(["init", "--adopt", "prod"], {
+    const result = await runCli(["adopt", "--target", "prod"], {
       cwd: dir.root,
     });
 
@@ -231,7 +231,7 @@ describe("init --adopt", () => {
       .join("\n");
     await server.query(script, [], prod);
     expect(
-      await runCli(["init", "--adopt", "prod"], { cwd: dir.root }),
+      await runCli(["adopt", "--target", "prod"], { cwd: dir.root }),
     ).toMatchObject({ exitCode: 0 });
   });
 
@@ -244,7 +244,8 @@ describe("init --adopt", () => {
         otherTargets: `prod: { adapter: ${asSuperuser(prod)} },`,
       }).config,
     });
-    const adopt = () => runCli(["init", "--adopt", "prod"], { cwd: dir.root });
+    const adopt = () =>
+      runCli(["adopt", "--target", "prod"], { cwd: dir.root });
     expect((await adopt()).exitCode).toBe(0);
     const startOver =
       'to start the adoption over, see "Starting an adoption over" in README.md';
@@ -287,7 +288,7 @@ describe("init --adopt", () => {
       const holder = await testSession(server, prod);
       try {
         await holder.execute("BEGIN; LOCK TABLE t IN ACCESS EXCLUSIVE MODE");
-        const cli = spawnCli(["init", "--adopt", "prod"], { cwd: dir.root });
+        const cli = spawnCli(["adopt", "--target", "prod"], { cwd: dir.root });
         await server.untilLockWaiter(prod);
         const interrupted = Date.now();
 
@@ -316,7 +317,7 @@ describe("init --adopt", () => {
   test("an unknown target is a usage error (exit 2)", async () => {
     const dir = await projectAdopting("");
 
-    const result = await runCli(["init", "--adopt", "nope"], {
+    const result = await runCli(["adopt", "--target", "nope"], {
       cwd: dir.root,
     });
 
@@ -324,7 +325,7 @@ describe("init --adopt", () => {
       exitCode: 2,
       stdout: "",
       stderr:
-        'Error: Unknown target "nope" for --adopt; super-deploy.config.ts has dev, prod\n',
+        'Error: Unknown target "nope" for --target; super-deploy.config.ts has dev, prod\n',
     });
   });
 
@@ -336,7 +337,7 @@ create function purge_kind(k text) returns void language plpgsql
   as $$ begin execute format('delete from %I', k); perform pg_notify('purged', k); end $$;
 `);
 
-    const result = await runCli(["init", "--adopt", "prod"], {
+    const result = await runCli(["adopt", "--target", "prod"], {
       cwd: dir.root,
     });
 
@@ -365,79 +366,76 @@ create function load_staging(source text) returns void language plpgsql
   as $$ begin execute format('insert into staging select * from %I', source); end $$;
 `;
 
-describe.skipIf(process.platform === "win32")(
-  "init --adopt at a terminal",
-  () => {
-    test("lists the functions that need an override marker, asks a reason for each and writes the markers", async () => {
-      const dir = await projectAdopting(loader);
-      const terminal = spawnTerminal(["init", "--adopt", "prod"], {
-        cwd: dir.root,
-      });
-
-      const listed = await terminal.waitFor(
-        "Reason to override plpgsql-dynamic-sql for function load_staging(text)?",
-      );
-      expect(listed).toContain(
-        "Target prod has 1 object that needs an override marker:",
-      );
-      expect(listed).toMatch(
-        /function load_staging\(text\)\s+plpgsql-dynamic-sql: EXECUTE \(dynamic SQL\)/,
-      );
-      terminal.type("loads tables named by the caller");
-      terminal.type(keys.enter);
-
-      await terminal.waitFor(
-        "override: data-model/migrations/00001-adopt/schema-change.sql:",
-      );
-      await terminal.waitFor(
-        "function load_staging(text) [plpgsql-dynamic-sql]: loads tables named by the caller",
-      );
-      expect(await terminal.exited).toBe(0);
-      expect(await dir.read("data-model/desired-schema/routines.sql")).toMatch(
-        /\n-- OVERRIDE SUPER-DEPLOY REFUSAL: loads tables named by the caller\nCREATE FUNCTION public\.load_staging/,
-      );
-      const validated = await runCli(["validate"], { cwd: dir.root });
-      expect(validated.stdout).toContain(
-        "override: data-model/desired-schema/routines.sql:",
-      );
+describe.skipIf(process.platform === "win32")("adopt at a terminal", () => {
+  test("lists the functions that need an override marker, asks a reason for each and writes the markers", async () => {
+    const dir = await projectAdopting(loader);
+    const terminal = spawnTerminal(["adopt", "--target", "prod"], {
+      cwd: dir.root,
     });
 
-    test("while anything else is refused, says which functions it will ask a reason for once that is fixed", async () => {
-      const dir = await projectAdopting(
-        `${loader} create type mood as enum ('sad');`,
-      );
-      const terminal = spawnTerminal(["init", "--adopt", "prod"], {
-        cwd: dir.root,
-      });
+    const listed = await terminal.waitFor(
+      "Reason to override plpgsql-dynamic-sql for function load_staging(text)?",
+    );
+    expect(listed).toContain(
+      "Target prod has 1 object that needs an override marker:",
+    );
+    expect(listed).toMatch(
+      /function load_staging\(text\)\s+plpgsql-dynamic-sql: EXECUTE \(dynamic SQL\)/,
+    );
+    terminal.type("loads tables named by the caller");
+    terminal.type(keys.enter);
 
-      await terminal.waitFor("Nothing was written");
-      expect(await terminal.exited).toBe(1);
-      const screen = terminal.screen.replace(/\s+/g, " ");
-      expect(screen).toContain(
-        "Target prod has 1 thing V1 doesn't support: type public.mood",
-      );
-      expect(screen).toContain(
-        "Once nothing else is refused, adoption will ask an override reason for 1 object that breaks only risk rules: function load_staging(text)",
-      );
-      expect(screen).not.toContain("Reason to override");
-      expect(dir.exists("data-model/desired-schema")).toBe(false);
+    await terminal.waitFor(
+      "override: data-model/migrations/00001-adopt/schema-change.sql:",
+    );
+    await terminal.waitFor(
+      "function load_staging(text) [plpgsql-dynamic-sql]: loads tables named by the caller",
+    );
+    expect(await terminal.exited).toBe(0);
+    expect(await dir.read("data-model/desired-schema/routines.sql")).toMatch(
+      /\n-- OVERRIDE SUPER-DEPLOY REFUSAL: loads tables named by the caller\nCREATE FUNCTION public\.load_staging/,
+    );
+    const validated = await runCli(["validate"], { cwd: dir.root });
+    expect(validated.stdout).toContain(
+      "override: data-model/desired-schema/routines.sql:",
+    );
+  });
+
+  test("while anything else is refused, says which functions it will ask a reason for once that is fixed", async () => {
+    const dir = await projectAdopting(
+      `${loader} create type mood as enum ('sad');`,
+    );
+    const terminal = spawnTerminal(["adopt", "--target", "prod"], {
+      cwd: dir.root,
     });
 
-    test("an empty reason cancels the adoption, writing nothing", async () => {
-      const dir = await projectAdopting(loader);
-      const terminal = spawnTerminal(["init", "--adopt", "prod"], {
-        cwd: dir.root,
-      });
+    await terminal.waitFor("Nothing was written");
+    expect(await terminal.exited).toBe(1);
+    const screen = terminal.screen.replace(/\s+/g, " ");
+    expect(screen).toContain(
+      "Target prod has 1 thing V1 doesn't support: type public.mood",
+    );
+    expect(screen).toContain(
+      "Once nothing else is refused, adoption will ask an override reason for 1 object that breaks only risk rules: function load_staging(text)",
+    );
+    expect(screen).not.toContain("Reason to override");
+    expect(dir.exists("data-model/desired-schema")).toBe(false);
+  });
 
-      await terminal.waitFor("for function load_staging(text)?");
-      terminal.type(keys.enter);
-
-      await terminal.waitFor(
-        "Error: Adoption of target prod cancelled: no override reason given for function load_staging(text). Nothing was written",
-      );
-      expect(await terminal.exited).toBe(1);
-      expect(dir.exists("data-model/desired-schema")).toBe(false);
-      expect(dir.exists("data-model/migrations")).toBe(false);
+  test("an empty reason cancels the adoption, writing nothing", async () => {
+    const dir = await projectAdopting(loader);
+    const terminal = spawnTerminal(["adopt", "--target", "prod"], {
+      cwd: dir.root,
     });
-  },
-);
+
+    await terminal.waitFor("for function load_staging(text)?");
+    terminal.type(keys.enter);
+
+    await terminal.waitFor(
+      "Error: Adoption of target prod cancelled: no override reason given for function load_staging(text). Nothing was written",
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(dir.exists("data-model/desired-schema")).toBe(false);
+    expect(dir.exists("data-model/migrations")).toBe(false);
+  });
+});

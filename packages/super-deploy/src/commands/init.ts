@@ -4,9 +4,9 @@
 // for rehearsals. `dev`'s listens on a fixed port, so it is always at the same
 // URL: init writes one that is free when it runs in place of the template's.
 //
-// `init --adopt <target>` doesn't scaffold: it needs the target's connection
-// from config, so it runs in a project initialised (and configured) already,
-// and is the `adopt` API function (commands/adopt.ts).
+// Adopting an existing database is a command of its own, `adopt`
+// (commands/adopt.ts): it needs the target's connection from config, so it
+// runs in a project initialised (and configured) already.
 
 import { constants, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";

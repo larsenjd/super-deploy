@@ -5,6 +5,8 @@
 **Severity:** low
 **Area:** adopt
 
+> Since this was resolved, `init --adopt <target>` became its own command, `adopt --target <target>`, in the menu's Project section. Its menu question is still the one this issue introduced.
+
 ## What I did
 In an initialised project with no migrations and two targets (`dev`, `gen`), I ran the menu in a terminal (120x40 pseudo-terminal) and chose `init`:
 
@@ -43,7 +45,7 @@ The prompt is the `--adopt` option's description from `init --help`, starting wi
 ## Agent Brief
 
 **Category:** enhancement
-**Summary:** The menu asks options with a question written for the menu, not the flag's help text, starting with `init --adopt`.
+**Summary:** The menu asks options with a question written for the menu, not the flag's help text, starting with `adopt`.
 
 **Current behavior:**
 When a menu command needs an option, the menu uses the option's `--help` description as the question. For `init` in a project with no migrations, the question reads "Instead, in an initialised project with no migrations yet: turn this target's managed schema into the desired schema and migration 1, recorded on it as marked". The menu's summary of `init` says "in an empty project", meaning an initialised project with no migrations.

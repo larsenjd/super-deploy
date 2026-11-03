@@ -12,7 +12,7 @@ Target `qa` with `lockTimeout: "30s"` (managedSchema `app`, one table `app.t`). 
 ```sh
 node scripts/hold_lock.mjs qa2_adopt_sig "lock table app.t in access exclusive mode" 15 &
 sleep 1.5
-node node_modules/super-deploy/dist/cli.js init --adopt qa </dev/null &   # pid $CPID
+node node_modules/super-deploy/dist/cli.js adopt --target qa </dev/null &   # pid $CPID
 sleep 3; kill -INT $CPID; wait $CPID
 ```
 
@@ -43,7 +43,7 @@ Guess: the cleanup waits for the in-flight query; `pg_cancel_backend` on its own
 ## Agent Brief
 
 **Category:** bug
-**Summary:** Interrupting `init --adopt` while it reads the target ends the read at once.
+**Summary:** Interrupting `adopt` while it reads the target ends the read at once.
 
 **Current behavior:**
 Ctrl+C during adoption's read of the target waits for the blocked statement to finish (until the lock clears or `lockTimeout` passes) before exiting 130. Nothing says what it's waiting for.
@@ -58,7 +58,7 @@ Ctrl+C during adoption's read of the target waits for the blocked statement to f
 - `cleanupOnAbort` (`interruption.ts`), and `interruptibleSession` or a lighter equivalent for a read-only session.
 
 **Acceptance criteria:**
-- [ ] CLI seam: a test session holds `ACCESS EXCLUSIVE` on a managed table and the target's `lockTimeout` is `30s`. `init --adopt` gets SIGINT once it is waiting, and exits 130 within a couple of seconds.
+- [ ] CLI seam: a test session holds `ACCESS EXCLUSIVE` on a managed table and the target's `lockTimeout` is `30s`. `adopt` gets SIGINT once it is waiting, and exits 130 within a couple of seconds.
 - [ ] Afterwards, `pg_stat_activity` shows no session of the deploy role still waiting, and the project and target are unchanged.
 - [ ] Uninterrupted adoption is unaffected.
 

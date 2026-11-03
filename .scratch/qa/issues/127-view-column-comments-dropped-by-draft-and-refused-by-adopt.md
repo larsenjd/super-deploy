@@ -18,7 +18,7 @@ comment on column app.mv.id is 'mv col';
 comment on view app.v is 'a view';
 ```
 ```sh
-pnpm exec super-deploy init --adopt qa      # managedSchema: "app"
+pnpm exec super-deploy adopt --target qa      # managedSchema: "app"
 ```
 
 Then, in a project with no migrations, the same thing written as a desired schema:

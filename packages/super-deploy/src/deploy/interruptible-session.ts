@@ -10,7 +10,7 @@
 // attempt succeeds) or it didn't.
 //
 // A command that only reads a target, with no attempt-log session
-// (`init --adopt`'s read), uses `terminatedOnAbort`: on abort it connects
+// (`adopt`'s read), uses `terminatedOnAbort`: on abort it connects
 // once more just to terminate the reading session's server process, so a
 // statement waiting for a lock doesn't keep the command waiting until the
 // lock clears or lockTimeout passes.

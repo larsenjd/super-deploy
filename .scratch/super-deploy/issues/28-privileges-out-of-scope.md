@@ -30,7 +30,7 @@
 ## Commands
 
 - [ ] `rebuild` drops the managed schema's objects and leaves the schema's grants and default privileges untouched. Its revoke step, the unrevoked-grant check and `WipeFailedError`'s grant reasons go. Fix the comment at `commands/rebuild.ts:5-8`.
-- [ ] `init --adopt` leaves grants, policies and RLS flags out of the desired schema and prints one line saying how many were left as they are on the target. It refuses a target with a `SECURITY DEFINER` routine in the managed schema, and a target that fails the ownership check, naming the objects.
+- [ ] `adopt` leaves grants, policies and RLS flags out of the desired schema and prints one line saying how many were left as they are on the target. It refuses a target with a `SECURITY DEFINER` routine in the managed schema, and a target that fails the ownership check, naming the objects.
 
 ## Docs
 

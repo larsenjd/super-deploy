@@ -33,7 +33,7 @@ gen: { adapter: postgresTarget({ connectionString: process.env.GEN_DATABASE_URL 
 
 ```sh
 export GEN_DATABASE_URL=postgres://adopt_pubowner:pubowner@localhost:54818/qa_adopt_gen
-pnpm exec super-deploy init --adopt gen
+pnpm exec super-deploy adopt --target gen
 ```
 
 ## Expected
@@ -113,7 +113,7 @@ The same mechanism adds misleading entries to refusals:
 - When adoption does refuse (enums, inheritance, storage parameters), each object appears once, with its real reason, and no `desired-schema-statement` entries for statements adoption itself produced.
 
 **Key interfaces:**
-- `adopt` / `init --adopt`.
+- `adopt` (CLI and API).
 - The function that turns the differ's statements into the adopted desired-schema files (`adoptedDesiredSchema`).
 - `AdoptUnsupportedError`'s list of entries.
 

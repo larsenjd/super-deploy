@@ -1,13 +1,19 @@
 // The interactive menu: `super-deploy` with no arguments at a terminal.
-// Pick a command, answer its options, see it run, and land back on the same
-// command. Failures print and return to the menu; cancelling a question runs
-// nothing; quit, Escape, Ctrl+C or Ctrl+D at the menu leaves (exit 0). An
-// interruption while a command runs cleans up and exits like any other.
+// Pick a section, then a command in it, answer its options, see it run, and
+// land back on the same command inside its section. Failures print and return
+// to the menu; cancelling a question runs nothing; quit, Escape,
+// Ctrl+C or Ctrl+D at the menu leaves (exit 0). An interruption while a
+// command runs cleans up and exits like any other.
 import { cancel, intro, outro } from "@clack/prompts";
 import { findConfig, loadProject } from "../project.ts";
 import { toolVersion } from "../version.ts";
 import { type CommandDefinition, commands } from "./definitions.ts";
-import { askOptions, type PromptIo, pickCommand } from "./prompts.ts";
+import {
+  askOptions,
+  type MenuStart,
+  type PromptIo,
+  pickCommand,
+} from "./prompts.ts";
 import { type CliIo, exitCodes, runCommand } from "./run.ts";
 
 export async function runMenu(io: CliIo, debug: boolean): Promise<number> {
@@ -23,7 +29,7 @@ export async function runMenu(io: CliIo, debug: boolean): Promise<number> {
     const command = await pickCommand(
       prompts,
       commands,
-      current ?? startingCommand(io.cwd),
+      current === undefined ? startingSection(io.cwd) : { command: current },
     );
     if (io.signal.aborted) {
       return exitCodes.failure;
@@ -34,21 +40,8 @@ export async function runMenu(io: CliIo, debug: boolean): Promise<number> {
     }
     current = command;
     await runCommand(io, command, debug, async () => {
-      const projectMode =
-        command.needsProject === false ? command.projectMode : undefined;
-      const inProject = findConfig(io.cwd) !== undefined;
-      if (command.needsProject === false && !(projectMode && inProject)) {
-        // Outside a project, the option that needs one isn't asked.
-        const values = await askOptions(
-          prompts,
-          {
-            ...command,
-            options: command.options.filter(
-              (option) => option.name !== projectMode?.option,
-            ),
-          },
-          undefined,
-        );
+      if (command.needsProject === false) {
+        const values = await askOptions(prompts, command, undefined);
         if (values === undefined && !io.signal.aborted) {
           cancel("Cancelled: nothing ran", output);
         }
@@ -60,20 +53,7 @@ export async function runMenu(io: CliIo, debug: boolean): Promise<number> {
         reload: true,
       });
       try {
-        // Inside a project, a directory command runs in its project mode,
-        // so that mode's option is required.
-        const values = await askOptions(
-          prompts,
-          {
-            ...command,
-            options: command.options.map((option) =>
-              option.name === projectMode?.option
-                ? { ...option, required: true }
-                : option,
-            ),
-          },
-          project,
-        );
+        const values = await askOptions(prompts, command, project);
         if (values === undefined && !io.signal.aborted) {
           cancel("Cancelled: nothing ran", output);
         }
@@ -90,12 +70,15 @@ export async function runMenu(io: CliIo, debug: boolean): Promise<number> {
 }
 
 /**
- * Where the cursor starts: on the first command that needs no project
- * (init) when there is none, otherwise on the first one that does (draft).
+ * Where the menu opens: at the top, on the section of the first command that
+ * needs no project (Project, for init) when there is none, otherwise on the
+ * section of the first one that does (Author, for draft).
  */
-function startingCommand(cwd: string): CommandDefinition | undefined {
+function startingSection(cwd: string): MenuStart {
   const inProject = findConfig(cwd) !== undefined;
-  return commands.find(
-    (command) => (command.needsProject !== false) === inProject,
-  );
+  return {
+    section: commands.find(
+      (command) => (command.needsProject !== false) === inProject,
+    )?.section,
+  };
 }

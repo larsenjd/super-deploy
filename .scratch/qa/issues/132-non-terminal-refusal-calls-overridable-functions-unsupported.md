@@ -10,7 +10,7 @@
 `public`-schema database `qa2_adopt_pub` with three PL/pgSQL functions: `count_rows` (uses `EXECUTE`), `notify_event` (calls `pg_notify`), `purge_kind` (both).
 
 ```sh
-pnpm exec super-deploy init --adopt qa </dev/null
+pnpm exec super-deploy adopt --target qa </dev/null
 ```
 
 ## Expected
@@ -42,7 +42,7 @@ When the list mixes both kinds (e.g. a `SECURITY DEFINER` function plus a `pg_no
 ### Triage, 2026-10-21
 
 **Verification:** CONFIRMED on `qa2t_adopt_pub` (the reporter's three functions).
-- `init --adopt qa </dev/null` printed `Target qa has 4 things V1 doesn't support`, with `purge_kind` listed twice (once per rule). The advice was correct: run adoption in a terminal.
+- `adopt --target qa </dev/null` printed `Target qa has 4 things V1 doesn't support`, with `purge_kind` listed twice (once per rule). The advice was correct: run adoption in a terminal.
 - In a pseudo-terminal, the same adoption printed `Target qa has 3 objects that need an override marker:`, with `purge_kind` once under both rules, then asked a reason per object.
 
 **Cause:** without the `overrideReason` callback, adoption's `readTarget` (`commands/adopt.ts`) doesn't compute `overrideCandidates`. The risk-rule violations go into `objects` one per violation, under the "things V1 doesn't support" heading of `AdoptUnsupportedError`. The spec (Q51) says that "without a terminal it refuses them, listing them". The refusal is intended; the framing and count are wrong.

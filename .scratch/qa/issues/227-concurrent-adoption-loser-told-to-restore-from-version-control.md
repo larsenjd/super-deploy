@@ -17,9 +17,9 @@ create table r.t (id int primary key);
 create function r.f() returns void language plpgsql as $$ begin perform pg_notify('a','b'); end $$;
 ```
 
-1. In `p12a`, in a terminal: `pnpm exec super-deploy init --adopt qa`. It
+1. In `p12a`, in a terminal: `pnpm exec super-deploy adopt --target qa`. It
    stops at `Reason to override denylisted-call for function f()?`.
-2. Meanwhile, in `p12b`, in a terminal: `pnpm exec super-deploy init --adopt qa`.
+2. Meanwhile, in `p12b`, in a terminal: `pnpm exec super-deploy adopt --target qa`.
    I answered `from B`, and it adopted the target.
 3. Back in `p12a`, I answered `from A`.
 

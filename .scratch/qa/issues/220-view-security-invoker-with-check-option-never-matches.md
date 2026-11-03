@@ -23,7 +23,7 @@ create view core.open_projects with (security_invoker = true) as
 ```
 
 ```sh
-pnpm exec super-deploy init --adopt qa
+pnpm exec super-deploy adopt --target qa
 ```
 
 **Normal draft.** In an already-adopted project, I added this to `data-model/desired-schema/views.sql`:

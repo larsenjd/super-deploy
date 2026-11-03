@@ -12,9 +12,9 @@ deleted `data-model/migrations/` but not yet the desired-schema files, then
 adopted again:
 
 ```sh
-pnpm exec super-deploy init --adopt qa          # succeeds
+pnpm exec super-deploy adopt --target qa          # succeeds
 rm -rf data-model/migrations
-pnpm exec super-deploy init --adopt qa </dev/null
+pnpm exec super-deploy adopt --target qa </dev/null
 ```
 
 ## Expected

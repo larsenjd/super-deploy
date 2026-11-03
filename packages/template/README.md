@@ -89,6 +89,8 @@ Husky installs the hook only when the project folder is the repository root. For
 | Recover | `recovery --migration <n>` | Starts a [Recovery](#when-a-deploy-fails) draft. |
 | | `mark --target <t>` | Records the next migration as deployed without running it. |
 | Disposable | `disposable` · `deploy-draft` · `rebuild` | See [Disposable targets](#disposable-targets-and-the-guarded-commands). |
+| Project | `init` | Creates a project: see [Getting started](#getting-started). |
+| | `adopt --target <t>` | Turns an existing database into migration 1: see [Adopting an existing database](#adopting-an-existing-database). |
 
 ## Connecting to dev
 
@@ -290,7 +292,7 @@ For a managed database with a private CA, use `?sslmode=verify-full&sslrootcert=
 
 ```mermaid
 flowchart TD
-  A["Add the database as a target<br>and set managedSchema"] --> B["init --adopt target"]
+  A["Add the database as a target<br>and set managedSchema"] --> B["adopt --target target"]
   B --> C{"anything<br>refused?"}
   C -->|yes| D["Fix it on the target,<br>for example by running the printed<br>OWNER TO / GRANT script"] --> B
   C -->|EXECUTE / pg_notify| E["Run in a terminal and<br>give a reason for each override"] --> B
@@ -305,7 +307,7 @@ flowchart TD
 
 ### Adopting from an older PostgreSQL
 
-1. Set `postgresVersion` to the old version, such as `16`, and run `init --adopt <target>`.
+1. Set `postgresVersion` to the old version, such as `16`, and run `adopt --target <target>`.
 2. Set `postgresVersion` back to `18`, and deploy to PostgreSQL 18 targets.
 
 Rehearsals always run on 18. Deploying to the old server isn't supported.
@@ -316,7 +318,7 @@ This works only while `status --target <t>` shows a single recorded migration, `
 
 1. On the target, as the deploy role, run `drop schema deployment_history cascade`. This also deletes the attempt log and the disposable flag.
 2. Delete `data-model/migrations/` and the files that adoption wrote in `desired-schema/`.
-3. Fix what went wrong, then run `init --adopt <target>` again.
+3. Fix what went wrong, then run `adopt --target <target>` again.
 
 > [!CAUTION]
 > Never do this on a target that has deployed migrations since adoption.

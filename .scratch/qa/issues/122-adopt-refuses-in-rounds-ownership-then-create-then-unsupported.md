@@ -16,7 +16,7 @@ create statistics app.people_stats on id, name from app.people;   -- as postgres
 ```
 
 ```sh
-pnpm exec super-deploy init --adopt qa
+pnpm exec super-deploy adopt --target qa
 ```
 
 Similarly, on `qa2_adopt_shop` (everything owned by `postgres`, and the deploy role without `CREATE` on the database).

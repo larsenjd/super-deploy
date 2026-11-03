@@ -38,7 +38,7 @@ create table orders (
 Project: `init`, `managedSchema: "shop"`, target `qa: { adapter: postgresTarget({ env: "QA_DATABASE_URL" }) }`.
 
 ```sh
-pnpm exec super-deploy init --adopt qa
+pnpm exec super-deploy adopt --target qa
 pnpm exec super-deploy deploy --target dev
 ```
 

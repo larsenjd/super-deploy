@@ -11,14 +11,14 @@
 The managed schema is `public` and the deploy role is `qa3_adopt_pubdeploy`:
 
 ```sh
-pnpm exec super-deploy init --adopt qa </dev/null
+pnpm exec super-deploy adopt --target qa </dev/null
 ```
 
 **Named schema.** On `qa3_adopt_hist`, the deploy role owns `app2`, but has no
 CREATE on the database and no history schema. I set `historySchema: "dh2"`:
 
 ```sh
-pnpm exec super-deploy init --adopt qa </dev/null
+pnpm exec super-deploy adopt --target qa </dev/null
 ```
 
 ## Expected

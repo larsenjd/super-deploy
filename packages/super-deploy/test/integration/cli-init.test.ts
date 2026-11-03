@@ -347,17 +347,18 @@ describe("init", () => {
     );
   });
 
-  test("is listed under Start", async () => {
+  test("is listed with adopt under Project, the last section", async () => {
     const help = await runCli(["--help"], { cwd: await emptyDirectory() });
-    expect(help.stdout).toMatch(/\nStart:\n {2}init {2,}\S/);
+    expect(help.stdout).toMatch(
+      /\nDisposable:\n(?: {2}\S.*\n)+\nProject:\n {2}init {2,}\S.*\n {2}adopt {2,}\S.*\n\n/,
+    );
   });
 
-  test("--help describes --adopt for the command line", async () => {
-    const help = await runCli(["init", "--help"], {
+  test("has no --adopt: adopting is a command of its own (exit 2)", async () => {
+    const result = await runCli(["init", "--adopt", "prod"], {
       cwd: await emptyDirectory(),
     });
-    expect(help.stdout).toContain(
-      "Instead, in an initialised project with no migrations yet: turn this target's managed schema into the desired schema and migration 1, recorded on it as marked",
-    );
+    expect(result).toMatchObject({ exitCode: 2, stdout: "" });
+    expect(result.stderr).toContain("--adopt");
   });
 });

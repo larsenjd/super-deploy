@@ -1750,8 +1750,8 @@ unix("from the menu", () => {
     await requireCityDraft(dir);
     const terminal = spawnTerminal([], { cwd: dir.root });
 
-    await terminal.waitFor("quit");
-    await terminal.chooseMenuItem("deploy-draft");
+    await terminal.waitForMenu();
+    await terminal.chooseMenuItem("Disposable", "deploy-draft");
     await terminal.waitFor("The target to use");
     terminal.type(keys.enter);
     await terminal.waitFor("Load the draft's seed data first");
@@ -1763,8 +1763,8 @@ unix("from the menu", () => {
     terminal.type(`YES${keys.enter}`);
     await terminal.waitFor("without seed data");
 
-    await terminal.waitFor("quit");
-    terminal.type(keys.escape);
+    await terminal.waitForMenu();
+    await terminal.chooseMenuItem("quit");
     expect(await terminal.exited).toBe(0);
     expect(
       await server.query(
@@ -1779,8 +1779,8 @@ unix("from the menu", () => {
     const { dir, database } = await deployedProject();
     const terminal = spawnTerminal([], { cwd: dir.root });
 
-    await terminal.waitFor("quit");
-    await terminal.chooseMenuItem("rebuild");
+    await terminal.waitForMenu();
+    await terminal.chooseMenuItem("Disposable", "rebuild");
     await terminal.waitFor("The target to use");
     terminal.type(keys.enter);
     const offered = await terminal.waitFor("(none: no migrations)");
@@ -1794,8 +1794,8 @@ unix("from the menu", () => {
     );
     terminal.type(`YES${keys.enter}`);
     await terminal.waitFor("Rebuilt dev with no migrations");
-    await terminal.waitFor("quit");
-    terminal.type(keys.escape);
+    await terminal.waitForMenu();
+    await terminal.chooseMenuItem("quit");
     expect(await terminal.exited).toBe(0);
     expect(await server.query(recordedState, [], database)).toEqual([
       { migrations: 0, drafts: 0, relations: 0 },
@@ -1806,8 +1806,8 @@ unix("from the menu", () => {
     const { dir } = await twoMigrations();
     const terminal = spawnTerminal([], { cwd: dir.root });
 
-    await terminal.waitFor("quit");
-    await terminal.chooseMenuItem("rebuild");
+    await terminal.waitForMenu();
+    await terminal.chooseMenuItem("Disposable", "rebuild");
     await terminal.waitFor("The target to use");
     terminal.type(keys.enter);
     await terminal.waitFor("The last migration to replay");
@@ -1819,8 +1819,8 @@ unix("from the menu", () => {
     await terminal.waitFor(
       "Rebuilt dev with 2 migrations: 00001-add-customers, 00002-add-orders",
     );
-    await terminal.waitFor("quit");
-    terminal.type(keys.escape);
+    await terminal.waitForMenu();
+    await terminal.chooseMenuItem("quit");
     expect(await terminal.exited).toBe(0);
   });
 });

@@ -1,5 +1,5 @@
 // The deployment engine, shared by every command that changes a target
-// (deploy, disposable, deploy-draft, rebuild, mark, init --adopt).
+// (deploy, disposable, deploy-draft, rebuild, mark, adopt).
 //
 // `withLockedTarget` runs a command body against a target:
 //   1. connect the command session (adapter.connect() call #1): it takes the

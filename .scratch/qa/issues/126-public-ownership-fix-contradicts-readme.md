@@ -11,7 +11,7 @@
 Database `qa2_adopt_typo` created by `postgres` (so owned by `postgres`); deploy role `qa2_adopt_deployer`, with `CREATE` on the database; `managedSchema` left at its default, `public`.
 
 ```sh
-pnpm exec super-deploy init --adopt qa
+pnpm exec super-deploy adopt --target qa
 ```
 
 ## Expected
@@ -32,7 +32,7 @@ Both fixes work, but they differ: re-owning `public` breaks the PostgreSQL 15+ c
 ### Triage, 2026-10-21
 
 **Verification:** CONFIRMED, along with 188. `qa2t_adopt_typo` was owned by `postgres`, with `managedSchema` left at `public`.
-- `init --adopt qa` and `status --target qa` both offered `fix: ALTER SCHEMA public OWNER TO qa2t_adopt_dep`.
+- `adopt --target qa` and `status --target qa` both offered `fix: ALTER SCHEMA public OWNER TO qa2t_adopt_dep`.
 - The README says: "For `public`, which `pg_database_owner` owns, deploy as the database's owner".
 - After `ALTER DATABASE qa2t_adopt_typo OWNER TO qa2t_adopt_dep`, the ownership check passed and adoption succeeded.
 
@@ -49,7 +49,7 @@ For a managed schema owned by `pg_database_owner` (`public` on PostgreSQL 15+), 
 **Desired behavior:**
 - A managed schema owned by `pg_database_owner` is reported as owned by the database's owner, naming that owner, e.g. `schema public is owned by pg_database_owner (the owner of database shopdb, postgres)`.
 - Its fix is `ALTER DATABASE <database> OWNER TO <deploy role>`, with identifiers quoted as the other fixes quote theirs.
-- `init --adopt`, `mark`, `deploy`, `deploy-draft` and `status` all show this, since they share the check.
+- `adopt`, `mark`, `deploy`, `deploy-draft` and `status` all show this, since they share the check.
 - Objects inside such a schema that another role owns keep their own `ALTER ... OWNER TO` fix.
 
 **Key interfaces:**

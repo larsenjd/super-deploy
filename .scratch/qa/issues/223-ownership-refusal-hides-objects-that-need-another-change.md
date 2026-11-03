@@ -19,7 +19,7 @@ create view public.active as select a.id from public.accounts a;
 ```
 
 ```sh
-pnpm exec super-deploy init --adopt qa </dev/null
+pnpm exec super-deploy adopt --target qa </dev/null
 ```
 
 Then I fixed what it listed: I dropped the `pw` default and the extension, and

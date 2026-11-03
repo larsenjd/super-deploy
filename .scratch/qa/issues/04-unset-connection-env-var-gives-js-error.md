@@ -86,7 +86,7 @@ When a command first uses a target, its connection string is checked before any 
 - `env` variable set but empty: "... is empty".
 - A string that isn't a `postgres://` or `postgresql://` URL, or that fails to parse: "Target qa's connection string is not a PostgreSQL URL (postgres://user:password@host:port/database)". Never echo the password.
 
-These errors surface the same way from `status`, `deploy`, `init --adopt` and the guarded commands.
+These errors surface the same way from `status`, `deploy`, `adopt` and the guarded commands.
 
 **Key interfaces:**
 - `postgresTarget(source: ConnectionSource)` and the function that turns a `ConnectionSource` into a connection string.

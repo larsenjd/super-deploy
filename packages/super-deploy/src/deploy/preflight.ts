@@ -5,12 +5,12 @@
 //     or empty and the deploy role's (deploy/history.ts creates the tables
 //     in it); any other is refused by name, with what it holds or who owns
 //     it. Like the next check, `withLockedTarget` refuses it up front
-//     (ForeignHistorySchemaError), and `init --adopt` in its one refusal
+//     (ForeignHistorySchemaError), and `adopt` in its one refusal
 //   - the deploy role can create the history schema, if the target has none
 //     yet: it needs CREATE on the database. `withLockedTarget` refuses up
 //     front with HistorySchemaNotCreatableError (there is nowhere to log an
 //     attempt yet), so deploy never gets this far without it; `status`
-//     lists it with the others, and `init --adopt` in its one refusal
+//     lists it with the others, and `adopt` in its one refusal
 //   - the deploy role owns the managed schema and everything in it, or is a
 //     member of their owner (deploy/ownership.ts)
 //   - the deploy role is not superuser and holds none of the predefined roles
@@ -650,7 +650,7 @@ export class ForeignHistorySchemaError extends SuperDeployError {
 }
 
 /**
- * A command that records on the target (deploy, mark, init --adopt, ...)
+ * A command that records on the target (deploy, mark, adopt, ...)
  * refused before doing anything: the target has no history schema yet and
  * the deploy role lacks CREATE on the database to create it. Nothing was
  * written, and no attempt was logged (there is nowhere to log it yet).

@@ -26,7 +26,7 @@ grant usage, create on schema app to adopt_deployer with grant option;
 Project with `managedSchema: "app"`, target `owned` connecting as `adopt_deployer`:
 
 ```sh
-pnpm exec super-deploy init --adopt owned      # succeeds, no warning
+pnpm exec super-deploy adopt --target owned      # succeeds, no warning
 # add a column "color" text to app.widgets in desired-schema/tables.sql
 pnpm exec super-deploy draft --name color
 pnpm exec super-deploy finalize
@@ -35,7 +35,7 @@ pnpm exec super-deploy deploy --target owned
 ```
 
 ## Expected
-`init --adopt` (or at least `status`/the deploy pre-flight checks) says that `app.widgets`, `app.widget_names` and `app.widget_count()` are owned by `adopt_admin`, not the deploy role. It tells the user to run `ALTER ... OWNER TO adopt_deployer` (or `REASSIGN OWNED`) first, and that ownership decides who a `SECURITY DEFINER` function runs as.
+`adopt` (or at least `status`/the deploy pre-flight checks) says that `app.widgets`, `app.widget_names` and `app.widget_count()` are owned by `adopt_admin`, not the deploy role. It tells the user to run `ALTER ... OWNER TO adopt_deployer` (or `REASSIGN OWNED`) first, and that ownership decides who a `SECURITY DEFINER` function runs as.
 
 ## Actual
 ```
@@ -55,7 +55,7 @@ After `alter table app.widgets owner to adopt_deployer` (and the same for the vi
 ### Triage, 2026-10-20
 
 **Verification:** CONFIRMED; partly by design.
-- *Adoption (28):* a schema, table and SECURITY DEFINER function owned by an admin. `init --adopt` succeeded with no warning; `status` showed no drift and 1 pending; `deploy` failed with `must be owner of table widgets`. Adoption has no ownership check, and the adoption analysis drops `ALTER ... OWNER TO` (`src/sql-analysis/adoption.ts:12`).
+- *Adoption (28):* a schema, table and SECURITY DEFINER function owned by an admin. `adopt` succeeded with no warning; `status` showed no drift and 1 pending; `deploy` failed with `must be owner of table widgets`. Adoption has no ownership check, and the adoption analysis drops `ALTER ... OWNER TO` (`src/sql-analysis/adoption.ts:12`).
 - *Mark (65):* migration 2 applied by hand as the superuser, then `mark` printed "(column order and ownership aside)" and `Marked`. `status` showed no drift; the next `deploy` failed with `must be owner of table tags`. `cli-mark.test.ts` already asserts that mark accepts a table owned by another role. An `alter table ... owner to <superuser>` on a deployed table isn't reported by `status` either.
 - *By design:* drift and `mark` don't compare owners (REFINEMENTS "Roles, grants and ownership": "ownership is not diffed").
 - *Not by design:* the same REFINEMENTS entry and the README promise that objects belong to the deploy role and that "a SECURITY DEFINER function always runs as the deploy role". Adoption and `mark` break that silently. A hand-applied, marked or adopted SECURITY DEFINER function runs as its real owner, possibly a superuser. That's worse than the failing deploy.
@@ -66,7 +66,7 @@ After `alter table app.widgets owner to adopt_deployer` (and the same for the vi
 **Summary:** Adoption and `mark` should flag managed-schema objects the deploy role doesn't own, before they're recorded.
 
 **Current behavior:**
-`init --adopt` and `mark` record targets whose objects are owned by another role. Nothing says so, and `status` and the pre-flight checks don't either. The next migration that alters such an object fails with "must be owner". A SECURITY DEFINER function among them runs as its real owner, contrary to the README.
+`adopt` and `mark` record targets whose objects are owned by another role. Nothing says so, and `status` and the pre-flight checks don't either. The next migration that alters such an object fails with "must be owner". A SECURITY DEFINER function among them runs as its real owner, contrary to the README.
 
 **Desired behavior (once decided):**
 Before recording, adoption and `mark` list each managed-schema object whose owner isn't the deploy role (or a role it belongs to), with the `ALTER ... OWNER TO` that fixes it. SECURITY DEFINER functions are called out. Depending on the decision, `status` and the deploy pre-flight checks report the same.
@@ -100,4 +100,4 @@ ADR-0006 puts privileges, ownership and row-level security outside the system in
 
 ### Resolved, 2026-10-20
 
-Implemented by `.scratch/privileges-out-of-scope/issues/03-preflight-refuses-objects-the-deploy-role-does-not-own.md` (commits 4477991, 91768cb): the ownership pre-flight in `deploy/ownership.ts`, used by `deploy`, `deploy-draft`, `status`, `mark` and `init --adopt`.
+Implemented by `.scratch/privileges-out-of-scope/issues/03-preflight-refuses-objects-the-deploy-role-does-not-own.md` (commits 4477991, 91768cb): the ownership pre-flight in `deploy/ownership.ts`, used by `deploy`, `deploy-draft`, `status`, `mark` and `adopt`.

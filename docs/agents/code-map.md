@@ -23,7 +23,7 @@ The template and example devDepend on `super-deploy: workspace:*`; their `tsc` a
 | Path | Job and key exports |
 |---|---|
 | `commands/` | One file per command: the API function behind it. `check-rules.ts` gathers a migration's or draft's files from disk for the deploy-time rules (`analyseReplayUnit`, `refuseRuleViolations`). `rehearse.ts` also holds `rehearseCurrentDraft`, the front half shared with `finalize`. |
-| `cli/` | `definitions.ts`: the `commands` list that drives direct mode, help and the menu (`CommandDefinition`, option kinds, `acknowledge`, `needsProject`). `parse.ts` argv, `main.ts` the shell, `menu.ts`, `prompts.ts` (clack), `run.ts` (one command, exit codes 0/1/2), `process.ts` (signals, exit codes 129–149). |
+| `cli/` | `definitions.ts`: the `commands` list that drives direct mode, help and the menu (`CommandDefinition`, option kinds, `acknowledge`; `needsProject: false` for a command without a project). `parse.ts` argv, `main.ts` the shell, `menu.ts`, `prompts.ts` (clack), `run.ts` (one command, exit codes 0/1/2), `process.ts` (signals, exit codes 129–149). |
 | `errors.ts` | The base `SuperDeployError`, `ErrorCode` (the union of stable codes, computed from the error classes `index.ts` exports) and `listed`. Each error class lives in the module that throws it, next to its payload types; errors several modules throw live with their concept (`NoDraftError` in `store/draft.ts`, the Recovery errors in `commands/recovery.ts`). |
 | `config/config.ts` | `defineConfig`, the config types, `resolveConfig` (defaults applied, unknown keys refused). |
 | `project.ts` | `loadProject` → `Project` (root, config, paths, signal, `close()`); `findConfig`. |

@@ -11,7 +11,7 @@ A legacy database whose `shop` schema and its 13 objects were created by the sup
 
 ```sh
 export QA_DATABASE_URL=postgres://qa2_adopt_deployer:dep@localhost:54818/qa2_adopt_shop
-pnpm exec super-deploy init --adopt qa
+pnpm exec super-deploy adopt --target qa
 ```
 
 ## Expected
@@ -35,7 +35,7 @@ A list like the unsupported-object one (object on one line, fix indented under i
 
 ### Triage, 2026-10-21
 
-**Verification:** CONFIRMED. `qa2t_adopt_shop`, with all 14 objects owned by `postgres`: `init --adopt qa` printed one `Error:` line of about 2,700 characters. `status --target qa` already prints the same findings one per line under "Deploy would refuse". `NotOwnedError` (`deploy/ownership.ts`) joins `notOwnedMessage` for every object with `; ` into its message. The CLI's `describeError` (`cli/run.ts`, `listedDetails`) only lists the items of `AdoptUnsupportedError`, `SqlRuleViolationError` and `RehearsalMismatchError`, so this refusal stays on one line. Deploy's `PreflightFailedError` joins its findings the same way.
+**Verification:** CONFIRMED. `qa2t_adopt_shop`, with all 14 objects owned by `postgres`: `adopt --target qa` printed one `Error:` line of about 2,700 characters. `status --target qa` already prints the same findings one per line under "Deploy would refuse". `NotOwnedError` (`deploy/ownership.ts`) joins `notOwnedMessage` for every object with `; ` into its message. The CLI's `describeError` (`cli/run.ts`, `listedDetails`) only lists the items of `AdoptUnsupportedError`, `SqlRuleViolationError` and `RehearsalMismatchError`, so this refusal stays on one line. Deploy's `PreflightFailedError` joins its findings the same way.
 
 ## Agent Brief
 
@@ -43,7 +43,7 @@ A list like the unsupported-object one (object on one line, fix indented under i
 **Summary:** The ownership refusal lists one object per line, followed by its fixes as a script a DBA can copy and run.
 
 **Current behavior:**
-`init --adopt` and `mark` refuse with `NotOwnedError`, and `deploy` and `deploy-draft` with `PreflightFailedError`. Each prints every object, its owner and its fix on a single `Error:` line, separated by `; `, and repeats "whose privileges the deploy role doesn't have" for every object. Function signatures contain `)`, so even extracting the fixes with a regex is error-prone.
+`adopt` and `mark` refuse with `NotOwnedError`, and `deploy` and `deploy-draft` with `PreflightFailedError`. Each prints every object, its owner and its fix on a single `Error:` line, separated by `; `, and repeats "whose privileges the deploy role doesn't have" for every object. Function signatures contain `)`, so even extracting the fixes with a regex is error-prone.
 
 **Desired behavior:**
 - In the CLI, before the `Error:` line, the refusal lists each object on its own line with its owner, e.g. `  table shop.customers (owned by postgres)`.

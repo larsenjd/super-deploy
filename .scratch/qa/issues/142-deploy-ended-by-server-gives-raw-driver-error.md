@@ -82,7 +82,7 @@ The target was in fact unchanged each time (`status` shows the migration still p
 - A lock or statement timeout in the drift check or pre-flight names the target and the setting, as a deploy-time timeout does (see 145 for the value it quotes), and says nothing was changed.
 - Errors from a lost COMMIT keep `CommitOutcomeUnknownError`.
 - The attempt log records the same message.
-- The same applies to the other commands that run under the target lock (`mark`, `rebuild`, `deploy-draft`, `disposable`, `init --adopt`).
+- The same applies to the other commands that run under the target lock (`mark`, `rebuild`, `deploy-draft`, `disposable`, `adopt`).
 
 **Key interfaces:**
 - The per-statement runner shared by rehearsals and deployments, and `SqlFileFailedError`: a lost session is not a refusal of the file.

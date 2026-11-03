@@ -7,7 +7,7 @@
 **Area:** adopt
 
 ## What I did
-Adopted targets holding objects that V1 doesn't support (non-terminal, `pnpm exec super-deploy init --adopt <target> </dev/null`):
+Adopted targets holding objects that V1 doesn't support (non-terminal, `pnpm exec super-deploy adopt --target <target> </dev/null`):
 
 ```sql
 -- qa_adopt_shop, schema app

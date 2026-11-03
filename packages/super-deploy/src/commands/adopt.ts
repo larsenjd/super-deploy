@@ -1,4 +1,4 @@
-// `init --adopt <target>`: bring an existing database under management. Its
+// `adopt --target <target>`: bring an existing database under management. Its
 // managed schema becomes the project's desired schema and migration
 // 00001-adopt, which is recorded on the target as marked (its scripts never
 // run there) after `mark`'s replica check.
@@ -321,7 +321,7 @@ export async function adopt(
     const attemptId = await withLockedTarget(
       project,
       target.name,
-      { command: "init --adopt" },
+      { command: "adopt" },
       async (locked) => {
         await markNextPending(project, locked, migrations);
         return locked.attempt.id;
@@ -425,7 +425,7 @@ async function readTarget(
       ? error
       : new TargetTimeoutError(target, timeout.sqlState, {
           cause: timeout.error,
-          outsideLock: "init --adopt read the target's managed schema",
+          outsideLock: "adopt read the target's managed schema",
         });
   } finally {
     await close();
@@ -511,7 +511,7 @@ async function readTargetOn(
       managedSchema: config.managedSchema,
       columnOrder: await columnOrder(session, config.managedSchema),
       header: [
-        `Adopted from target ${target.name} by super-deploy init --adopt.`,
+        `Adopted from target ${target.name} by super-deploy adopt.`,
         "This is the desired schema now: change it, then run draft.",
       ],
     },
@@ -1288,7 +1288,7 @@ async function undoAdoption(
 }
 
 /**
- * `init --adopt` needs a project with no migrations, draft or desired
+ * `adopt` needs a project with no migrations, draft or desired
  * schema yet, and a target that records no migrations and has the managed
  * schema; nothing was written.
  */
@@ -1307,7 +1307,7 @@ export class AdoptConflictError extends SuperDeployError {
   }
 }
 
-/** Something V1 doesn't support, found by `init --adopt`. */
+/** Something V1 doesn't support, found by `adopt`. */
 export interface UnsupportedObject {
   /**
    * The object as PostgreSQL describes it, qualified (`table app.users`,
@@ -1327,7 +1327,7 @@ export interface UnsupportedObject {
   readonly schemaToDeclare?: string;
 }
 
-/** Everything `init --adopt` refuses a target for, found without writing. */
+/** Everything `adopt` refuses a target for, found without writing. */
 export interface AdoptRefusal {
   /** What V1 doesn't support (or can't reproduce). */
   readonly objects: readonly UnsupportedObject[];
@@ -1351,7 +1351,7 @@ export interface OverridesToAsk {
 }
 
 /**
- * `init --adopt` refused the target, listing everything it found at once:
+ * `adopt` refused the target, listing everything it found at once:
  * objects in its managed schema that V1 doesn't support (or can't
  * reproduce), objects the deploy role doesn't own, the deploy role lacking
  * CREATE on the database for the history schema, and the objects that need
@@ -1582,7 +1582,7 @@ function adoptionAdvice(
 }
 
 /**
- * `init --adopt` asked for an override reason and got none (an empty
+ * `adopt` asked for an override reason and got none (an empty
  * answer); nothing was written anywhere.
  */
 export class AdoptCancelledError extends SuperDeployError {

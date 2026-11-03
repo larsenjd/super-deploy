@@ -1,4 +1,5 @@
-// Terminal questions with @clack/prompts: the menu's command list, one
+// Terminal questions with @clack/prompts: the menu (sections, then a
+// section's commands, in one prompt that redraws in place), one
 // question per option kind (worded by the option's `question`, else its
 // `--help` description; a choice may work out its question and preselection
 // from the answers so far), and yes/no confirmations (default no). Every
@@ -7,7 +8,7 @@
 // signal.
 import type { Readable, Writable } from "node:stream";
 import { styleText } from "node:util";
-import { SelectPrompt, TextPrompt } from "@clack/core";
+import { Prompt, TextPrompt } from "@clack/core";
 import {
   autocomplete,
   confirm as clackConfirm,
@@ -30,7 +31,8 @@ import {
 import { migrationFolderName } from "../store/migrations.ts";
 import {
   type CommandDefinition,
-  commandGroups,
+  type CommandSection,
+  commandSections,
   type NameOption,
   type OptionDefinition,
   type OptionValues,
@@ -63,72 +65,186 @@ export const quit = "quit";
 
 const arrow = unicodeOr("\u2192", "->");
 
+/** A menu section: its commands, in the order `commands` lists them. */
+interface MenuSection {
+  readonly name: CommandSection;
+  readonly commands: readonly CommandDefinition[];
+}
+
+/** Where the menu opens: at the top on a section, or inside one on a command. */
+export type MenuStart =
+  | { readonly section: CommandSection | undefined }
+  | { readonly command: CommandDefinition };
+
 interface MenuEntry {
-  value: string;
-  label: string;
-  hint?: string;
-  disabled?: boolean;
+  readonly label: string;
+  readonly hint: string;
+}
+
+/** What one of the menu's levels shows, and where its cursor is. */
+interface MenuLevel {
+  /** Shown above the entries: the open section's name. */
+  readonly heading: string | undefined;
+  readonly entries: readonly MenuEntry[];
+  readonly cursor: number;
+  readonly footer: string;
+}
+
+const menuMessage = "What do you want to do?";
+
+/**
+ * The menu's two levels. At the top: the sections, then `quit`; Enter or
+ * Right opens the section under the cursor. Inside a section: its commands;
+ * Enter runs one, Backspace or Left go back to the top. Escape leaves from
+ * either.
+ * Each level keeps its cursor, so a section reopens where it was left. Its
+ * value is the chosen command's name, or `quit`.
+ */
+class MenuPrompt extends Prompt<string> {
+  readonly sections: readonly MenuSection[];
+  /** The section whose commands are showing; undefined at the top. */
+  openSection: MenuSection | undefined;
+  /** Each level's cursor, by the open section's name (undefined: the top). */
+  private readonly cursors = new Map<CommandSection | undefined, number>();
+
+  constructor(
+    streams: PromptStreams,
+    sections: readonly MenuSection[],
+    start: MenuStart,
+  ) {
+    super({ ...streams, render: renderMenu }, false);
+    this.sections = sections;
+    const name = "command" in start ? start.command.section : start.section;
+    const index = sections.findIndex((section) => section.name === name);
+    this.cursors.set(undefined, Math.max(index, 0));
+    if ("command" in start && index >= 0) {
+      this.openSection = sections[index];
+      this.cursors.set(
+        name,
+        Math.max(this.openSection?.commands.indexOf(start.command) ?? 0, 0),
+      );
+    }
+    this.on("cursor", (action) => {
+      switch (action) {
+        case "up":
+        case "down":
+          this.move(action === "up" ? -1 : 1);
+          break;
+        case "right":
+          this.openSectionAtCursor();
+          break;
+        case "left":
+          this.closeSection();
+          break;
+      }
+    });
+    this.on("key", (_char, key) => {
+      if (key.name === "backspace") {
+        this.closeSection();
+      }
+    });
+  }
+
+  /** The level showing now. */
+  get level(): MenuLevel {
+    const open = this.openSection;
+    const cursor = this.cursors.get(open?.name) ?? 0;
+    if (open === undefined) {
+      return {
+        heading: undefined,
+        entries: [
+          ...this.sections.map((section) => ({
+            label: section.name,
+            hint: section.commands.map((command) => command.name).join(", "),
+          })),
+          { label: quit, hint: "Leave the menu" },
+        ],
+        cursor,
+        footer: "Up/Down to move, Enter or Right to open, Escape to leave",
+      };
+    }
+    return {
+      heading: open.name,
+      entries: open.commands.map((command) => ({
+        label: command.name,
+        hint: command.summary,
+      })),
+      cursor,
+      footer: "Up/Down to move, Enter to run, Left to go back, Escape to leave",
+    };
+  }
+
+  private move(by: number): void {
+    const { entries, cursor } = this.level;
+    const count = entries.length;
+    this.cursors.set(this.openSection?.name, (cursor + by + count) % count);
+  }
+
+  /** Opens the section under the top's cursor (not quit). */
+  private openSectionAtCursor(): boolean {
+    const section = this.sections[this.cursors.get(undefined) ?? 0];
+    if (this.openSection !== undefined || section === undefined) {
+      return false;
+    }
+    this.openSection = section;
+    return true;
+  }
+
+  private closeSection(): void {
+    this.openSection = undefined;
+  }
+
+  /** Enter opens a section at the top; it submits a command or quit. */
+  protected override _shouldSubmit(): boolean {
+    if (this.openSectionAtCursor()) {
+      return false;
+    }
+    const { entries, cursor } = this.level;
+    this.value = entries[cursor]?.label ?? quit;
+    return true;
+  }
+}
+
+function renderMenu(this: MenuPrompt): string {
+  const title = `${styleText("gray", S_BAR)}\n${symbol(this.state)}  ${menuMessage}\n`;
+  const { heading, entries, cursor, footer } = this.level;
+  if (this.state === "submit" || this.state === "cancel") {
+    const label = entries[cursor]?.label ?? "";
+    return `${title}${styleText("gray", S_BAR)}  ${styleText(this.state === "cancel" ? ["strikethrough", "dim"] : "dim", label)}`;
+  }
+  const bar = styleText("cyan", S_BAR);
+  const width = Math.max(...entries.map((entry) => entry.label.length)) + 2;
+  const lines = entries.map((entry, index) => {
+    const active = index === cursor;
+    const radio = active
+      ? styleText("green", S_RADIO_ACTIVE)
+      : styleText("dim", S_RADIO_INACTIVE);
+    const label = entry.label.padEnd(width);
+    return `${bar}    ${radio} ${active ? label : styleText("dim", label)}${styleText("dim", entry.hint)}`;
+  });
+  const headingLine =
+    heading === undefined ? "" : `${bar}  ${styleText("bold", heading)}\n`;
+  return `${title}${headingLine}${lines.join("\n")}\n${bar}\n${styleText("cyan", S_BAR_END)}  ${styleText("dim", footer)}\n`;
 }
 
 /**
- * The menu: commands grouped by section, then `quit`. Resolves to the chosen
- * command, or `undefined` for quit, Escape, Ctrl+C or an interruption.
+ * The menu: sections of commands, then `quit`. Resolves to the chosen
+ * command, or `undefined` for quit, Escape, Ctrl+C or an
+ * interruption.
  */
 export async function pickCommand(
   io: PromptIo,
   commands: readonly CommandDefinition[],
-  current: CommandDefinition | undefined,
+  start: MenuStart,
 ): Promise<CommandDefinition | undefined> {
-  const entries: MenuEntry[] = [];
-  for (const group of commandGroups) {
-    const inGroup = commands.filter((command) => command.group === group);
-    if (inGroup.length > 0) {
-      entries.push({ value: `#${group}`, label: group, disabled: true });
-      for (const command of inGroup) {
-        entries.push({
-          value: command.name,
-          label: command.name,
-          hint: command.summary,
-        });
-      }
-    }
-  }
-  entries.push({ value: quit, label: quit, hint: "Leave the menu" });
-  const width = Math.max(...entries.map((entry) => entry.label.length)) + 2;
-  const message = "What do you want to do?";
-
+  const sections = commandSections
+    .map((name) => ({
+      name,
+      commands: commands.filter((command) => command.section === name),
+    }))
+    .filter((section) => section.commands.length > 0);
   const answer = await ask(io, (streams) =>
-    new SelectPrompt<MenuEntry>({
-      ...streams,
-      options: entries,
-      initialValue: current?.name ?? commands[0]?.name ?? quit,
-      render() {
-        const title = `${styleText("gray", S_BAR)}\n${symbol(this.state)}  ${message}\n`;
-        const chosen = this.options[this.cursor];
-        if (this.state === "submit" || this.state === "cancel") {
-          const label = chosen?.label ?? "";
-          return `${title}${styleText("gray", S_BAR)}  ${styleText(this.state === "cancel" ? ["strikethrough", "dim"] : "dim", label)}`;
-        }
-        const bar = styleText("cyan", S_BAR);
-        const lines = this.options.map((entry, index) => {
-          if (entry.disabled) {
-            return `${bar}  ${styleText("bold", entry.label)}`;
-          }
-          const active = index === this.cursor;
-          const radio = active
-            ? styleText("green", S_RADIO_ACTIVE)
-            : styleText("dim", S_RADIO_INACTIVE);
-          const label = entry.label.padEnd(width);
-          const hint = styleText("dim", entry.hint ?? "");
-          return `${bar}    ${radio} ${active ? label : styleText("dim", label)}${hint}`;
-        });
-        const footer = styleText(
-          "dim",
-          "Up/Down to move, Enter to run, Escape to leave",
-        );
-        return `${title}${lines.join("\n")}\n${bar}\n${styleText("cyan", S_BAR_END)}  ${footer}\n`;
-      },
-    }).prompt(),
+    new MenuPrompt(streams, sections, start).prompt(),
   );
   if (isCancel(answer) || answer === undefined || answer === quit) {
     return undefined;

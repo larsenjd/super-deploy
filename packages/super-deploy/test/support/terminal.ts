@@ -11,6 +11,9 @@ export const keys = {
   escape: "\x1b",
   down: "\x1b[B",
   up: "\x1b[A",
+  right: "\x1b[C",
+  left: "\x1b[D",
+  backspace: "\x7f",
   ctrlC: "\x03",
   ctrlD: "\x04",
 } as const;
@@ -19,7 +22,12 @@ export const keys = {
 export const showCursor = "\x1b[?25h";
 
 const menuTitle = "What do you want to do?";
-const menuFooter = "Up/Down to move, Enter to run, Escape to leave";
+/** The footers of the menu's top (the sections) and of an open section. */
+export const menuFooters = {
+  top: "Up/Down to move, Enter or Right to open, Escape to leave",
+  section: "Up/Down to move, Enter to run, Left to go back, Escape to leave",
+} as const;
+const menuFooter = new RegExp(`${menuFooters.top}|${menuFooters.section}`);
 /** More moves than the menu has items: the cursor has been everywhere. */
 const maxMenuMoves = 50;
 
@@ -37,12 +45,18 @@ export interface Terminal {
    */
   waitFor(text: string | RegExp, timeoutMs?: number): Promise<string>;
   /**
-   * Runs the menu item labelled `label` (e.g. `deploy-draft`, `quit`): moves
-   * the menu's cursor down, wrapping round, until the screen shows that item
-   * selected, then presses Enter. Call it once the menu is showing (e.g. after
-   * `waitFor("quit")`); later waits start after the menu.
+   * Waits for the menu, at its top or inside a section, like `waitFor`.
    */
-  chooseMenuItem(label: string): Promise<void>;
+  waitForMenu(): Promise<string>;
+  /**
+   * Chooses `item` at the menu's top (a section, or `quit`), then `command`
+   * inside that section if given, e.g. `("Disposable", "deploy-draft")` or
+   * `("quit")`. Goes back to the top if a section is open; for each, moves
+   * the cursor down, wrapping round, until the screen shows it selected, and
+   * presses Enter. Call it once the menu is showing (after `waitForMenu()`);
+   * later waits start after the menu.
+   */
+  chooseMenuItem(item: string, command?: string): Promise<void>;
   /**
    * Sends a signal to the terminal's foreground process group, as closing
    * the terminal (SIGHUP) or `kill -TERM -<pgid>` does.
@@ -151,28 +165,57 @@ export function spawnTerminal(
       consumed += match;
       return upTo;
     },
-    async chooseMenuItem(label) {
-      // Every menu redraw ends with the footer, and the selected item is the
+    waitForMenu() {
+      return this.waitFor(menuFooter);
+    },
+    async chooseMenuItem(item, command) {
+      // Every menu redraw ends with a footer, and the selected item is the
       // one with the filled radio.
-      const drawnAfter = (from: number) =>
+      const drawnAfter = (from: number, footers: readonly string[]) =>
         until("the menu", (current) =>
-          current.indexOf(menuFooter, from) >= 0 ? true : undefined,
+          footers.some((footer) => current.indexOf(footer, from) >= 0)
+            ? true
+            : undefined,
         );
-      await drawnAfter(Math.max(0, screen().lastIndexOf(menuTitle)));
-      for (let moves = 0; moves <= maxMenuMoves; moves++) {
-        const selected = [...screen().matchAll(/●\s+(\S+)/g)].at(-1)?.[1];
-        if (selected === label) {
-          pty.write(keys.enter);
-          consumed = screen().length;
-          return;
-        }
+      await drawnAfter(Math.max(0, screen().lastIndexOf(menuTitle)), [
+        menuFooters.top,
+        menuFooters.section,
+      ]);
+      if (
+        screen().lastIndexOf(menuFooters.section) >
+        screen().lastIndexOf(menuFooters.top)
+      ) {
         const from = screen().length;
-        pty.write(keys.down);
-        await drawnAfter(from);
+        pty.write(keys.left);
+        await drawnAfter(from, [menuFooters.top]);
       }
-      throw new Error(
-        `The menu has no item ${label}; screen:\n${screen().slice(consumed)}`,
-      );
+      // Moves the cursor onto `label`, redrawing with `footer`, then presses
+      // Enter; resolves to the screen's length at that moment.
+      const choose = async (label: string, footer: string) => {
+        for (let moves = 0; ; moves++) {
+          const selected = [...screen().matchAll(/●\s+(\S+)/g)].at(-1)?.[1];
+          if (selected === label) {
+            break;
+          }
+          if (moves === maxMenuMoves) {
+            throw new Error(
+              `The menu has no item ${label}; screen:\n${screen().slice(consumed)}`,
+            );
+          }
+          const from = screen().length;
+          pty.write(keys.down);
+          await drawnAfter(from, [footer]);
+        }
+        const entered = screen().length;
+        pty.write(keys.enter);
+        return entered;
+      };
+      const entered = await choose(item, menuFooters.top);
+      if (command !== undefined) {
+        await drawnAfter(entered, [menuFooters.section]);
+        await choose(command, menuFooters.section);
+      }
+      consumed = screen().length;
     },
     exited,
   };

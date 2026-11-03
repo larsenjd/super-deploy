@@ -78,7 +78,7 @@ Merged here: 120 (adoption: `00001-adopt` builds every other target with the ado
 **Summary:** A table created by a migration gets its columns in the order the desired schema declares them, even when a column's type or default is created in the same migration.
 
 **Current behavior:**
-A column typed with a domain or composite type, or defaulting to a managed-schema function, created in the same migration is added after the `CREATE TABLE` with `ALTER TABLE … ADD COLUMN`, so it ends up last. This holds for `draft` and for `init --adopt`'s `00001-adopt`. The adopted target keeps its original order, so it differs from `dev`, rehearsal databases and every other target. Nothing warns.
+A column typed with a domain or composite type, or defaulting to a managed-schema function, created in the same migration is added after the `CREATE TABLE` with `ALTER TABLE … ADD COLUMN`, so it ends up last. This holds for `draft` and for `adopt`'s `00001-adopt`. The adopted target keeps its original order, so it differs from `dev`, rehearsal databases and every other target. Nothing warns.
 
 **Desired behavior (once decided):**
 - `CREATE TABLE` in a generated schema change lists the columns in declared order. For adoption, that is the target's order. This holds when a column's type (domain, composite) or its default's function is created in the same migration. The type or function is created before the table.
@@ -89,7 +89,7 @@ A column typed with a domain or composite type, or defaulting to a managed-schem
 **Key interfaces:**
 - The `Differ` seam and its pg-delta implementation: the order of create actions for tables versus the types and routines their columns use.
 - The pg-delta research §8 "Known behaviours", which gains a row for this.
-- `init --adopt`: its generated `00001-adopt` and desired schema.
+- `adopt`: its generated `00001-adopt` and desired schema.
 
 **Acceptance criteria (once decided):**
 - [ ] API seam: the report's `people` schema (domain, composite and function-default columns, all new) drafts one `CREATE TABLE` with `id, email, price, ref, name` in that order. After deploy, `pg_attribute` order on `dev` matches.

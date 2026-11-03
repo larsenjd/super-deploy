@@ -16,7 +16,7 @@ create table app.t (id bigint generated always as identity primary key);
 ```
 Project with `managedSchema: "app"`, target `nc`:
 ```sh
-NC_DATABASE_URL=postgres://adopt_deployer:deploy@localhost:54818/qa_adopt_nocreate pnpm exec super-deploy init --adopt nc
+NC_DATABASE_URL=postgres://adopt_deployer:deploy@localhost:54818/qa_adopt_nocreate pnpm exec super-deploy adopt --target nc
 ```
 
 ## Expected
@@ -46,7 +46,7 @@ The deploy pre-flight checks (which say things like `role "x" does not exist (th
 **Summary:** Adoption and the first deploy refuse up front, naming the missing grant, when the deploy role can't create the history schema.
 
 **Current behavior:**
-When the history schema doesn't exist yet and the deploy role lacks `CREATE` on the database, `init --adopt` rehearses, writes the migration, then fails with a bare `permission denied for database <name>`. It leaves an empty `data-model/migrations/` behind, despite "Nothing is written". A first plain `deploy` to such a target takes the same path to the history schema and very likely fails the same way.
+When the history schema doesn't exist yet and the deploy role lacks `CREATE` on the database, `adopt` rehearses, writes the migration, then fails with a bare `permission denied for database <name>`. It leaves an empty `data-model/migrations/` behind, despite "Nothing is written". A first plain `deploy` to such a target takes the same path to the history schema and very likely fails the same way.
 
 **Desired behavior:**
 - When the history schema is missing and `has_database_privilege(current_user, current_database(), 'CREATE')` is false, adoption refuses before any rehearsal or writing. It names the deploy role, the database, the history schema and the fix, e.g. `The deploy role adopt_deployer needs CREATE on database qa_adopt_nocreate to create the history schema "deployment_history": grant create on database qa_adopt_nocreate to adopt_deployer`.

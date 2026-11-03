@@ -49,20 +49,20 @@ Run without the race, mark does refuse before asking ("The deploy role on target
 - I created `app.notes` by hand as the deploy role and ran `mark --target qa`. While it waited for YES, I ran `alter table app.notes owner to postgres` as the superuser, then typed YES.
 - The output was `Marked migration 00003-add-notes as deployed on target qa (attempt #4)`, and the next `status` listed `table app.notes is owned by postgres ...` under "Deploy would refuse".
 - Root cause: `mark`'s `check()` runs the ownership check and the replica check before asking (`commands/mark.ts:70-79`). Under the lock, `markNextPending` repeats only the replica check (`deploy/mark.ts:258-281`). The catalog comparison ignores ownership by design, so a change of owner during the prompt is never seen. The guard's fingerprint (recorded migrations, draft, flag) doesn't cover it either.
-- `init --adopt` has the same gap: it checks ownership before taking the lock (`commands/adopt.ts:314`), then records through the same `markNextPending`.
+- `adopt` has the same gap: it checks ownership before taking the lock (`commands/adopt.ts:314`), then records through the same `markNextPending`.
 - The behaviour isn't intended. ADR-0006 and the README say `mark` refuses such a target, and `commands/mark.ts`'s header says the replica check runs again under the lock "because the target's structure ... may have changed while the person read the screen". Ownership needs the same treatment.
 
 ## Agent Brief
 
 **Category:** bug
-**Summary:** `mark` (and `init --adopt`) check ownership again under the target lock, right before recording, as they already do for the replica match.
+**Summary:** `mark` (and `adopt`) check ownership again under the target lock, right before recording, as they already do for the replica match.
 
 **Current behavior:**
 The ownership check runs only before the YES question. An object in the managed schema that changes owner while the prompt waits is recorded as marked, and the next `deploy` refuses the target. Without the race, `mark` refuses as documented.
 
 **Desired behavior:**
 - Under the lock, before the migration is recorded, the ownership check runs again. If it fails, `mark` refuses with the same `NotOwnedError` it gives before asking. Nothing is recorded and the attempt ends failed, as a replica mismatch found under the lock does.
-- `init --adopt` gets the same check under the lock, since it records through the same path.
+- `adopt` gets the same check under the lock, since it records through the same path.
 
 **Key interfaces:**
 - `markNextPending` (shared by `mark` and adoption): add the ownership check (`requireOwnership`) next to its replica check.

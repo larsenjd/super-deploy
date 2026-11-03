@@ -23,7 +23,7 @@ create function app.user_name(uid bigint) returns text language sql stable as $$
 Config: `managedSchema: "app"`, `externalSchemas: ["auth"]`, target `ext` from `EXT_DATABASE_URL`.
 
 ```sh
-pnpm exec super-deploy init --adopt ext </dev/null
+pnpm exec super-deploy adopt --target ext </dev/null
 ```
 
 ## Expected

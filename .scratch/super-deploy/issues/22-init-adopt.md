@@ -1,6 +1,6 @@
-# 22: Init --adopt
+# 22: Adopt (was `init --adopt`)
 
-**What to build:** A team brings an existing database under management: `init --adopt <target>` turns its managed schema into migration 1 and records it as already deployed there.
+**What to build:** A team brings an existing database under management: `adopt --target <target>` turns its managed schema into migration 1 and records it as already deployed there.
 
 **Blocked by:** 20, 21
 

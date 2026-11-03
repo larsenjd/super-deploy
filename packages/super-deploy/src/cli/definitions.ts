@@ -63,20 +63,23 @@ import {
 } from "../verification/drift.ts";
 import { alreadyListed, indentContinuation } from "./run.ts";
 
-export type CommandGroup =
-  | "Start"
+export type CommandSection =
   | "Author"
   | "Deploy"
   | "Recover"
-  | "Disposable";
+  | "Disposable"
+  | "Project";
 
-/** Menu and help sections, in order. */
-export const commandGroups: readonly CommandGroup[] = [
-  "Start",
+/**
+ * Menu and help sections, in order. Project (init, adopt) comes last: each
+ * is run once, at the start of a project's life.
+ */
+export const commandSections: readonly CommandSection[] = [
   "Author",
   "Deploy",
   "Recover",
   "Disposable",
+  "Project",
 ];
 
 interface OptionBase {
@@ -185,7 +188,7 @@ export interface CommandContext {
 
 interface CommandBase {
   readonly name: string;
-  readonly group: CommandGroup;
+  readonly section: CommandSection;
   readonly summary: string;
   readonly options: readonly OptionDefinition[];
   /**
@@ -212,7 +215,7 @@ export interface ProjectCommandDefinition extends CommandBase {
 /**
  * A command that runs in the working directory without loading a project
  * (`init`). Its options must not need one: no `target` or `migration` kinds,
- * and no `initial` on `name` options; except `projectMode`'s option.
+ * and no `initial` on `name` options.
  */
 export interface DirectoryCommandDefinition extends CommandBase {
   readonly needsProject: false;
@@ -221,37 +224,11 @@ export interface DirectoryCommandDefinition extends CommandBase {
     values: OptionValues,
     context: CommandContext,
   ): Promise<void>;
-  /**
-   * An option (e.g. `init --adopt <target>`) that turns the command into a
-   * project command: when it is given, the project is loaded and `run`
-   * runs instead. The menu asks it (as required) only inside a project,
-   * and runs the command without it outside one.
-   */
-  readonly projectMode?: {
-    readonly option: string;
-    run(
-      project: Project,
-      values: OptionValues,
-      context: CommandContext,
-    ): Promise<void>;
-  };
 }
 
 export type CommandDefinition =
   | ProjectCommandDefinition
   | DirectoryCommandDefinition;
-
-/** True when the command runs on a project with these option values. */
-export function needsProject(
-  command: CommandDefinition,
-  values: OptionValues,
-): boolean {
-  return (
-    command.needsProject !== false ||
-    (command.projectMode !== undefined &&
-      values[command.projectMode.option] !== undefined)
-  );
-}
 
 /**
  * The root of the Git work tree holding `directory`: the nearest folder,
@@ -292,21 +269,11 @@ export async function acknowledge(
 
 const initCommand: DirectoryCommandDefinition = {
   name: "init",
-  group: "Start",
+  section: "Project",
   summary:
-    "Create a project here, or adopt a database into an initialised project with no migrations yet",
+    "Create a project here, with a dev target and rehearsals on embedded PostgreSQL",
   needsProject: false,
-  changesTarget: { option: "adopt", command: "init --adopt" },
-  options: [
-    {
-      name: "adopt",
-      kind: "target",
-      description:
-        "Instead, in an initialised project with no migrations yet: turn this target's managed schema into the desired schema and migration 1, recorded on it as marked",
-      question:
-        "Adopt which target's existing database as migration 1? Its managed schema becomes the desired schema",
-    },
-  ],
+  options: [],
   async run(directory, _values, context) {
     const result = await init({ directory });
     // The absolute path: init runs in the working directory, which
@@ -327,62 +294,6 @@ const initCommand: DirectoryCommandDefinition = {
         `The project is inside the Git repository at ${repository}, so pnpm install won't install the pre-commit hook: see "A project inside another Git repository" in README.md`,
       );
     }
-  },
-  projectMode: {
-    option: "adopt",
-    async run(project, values, context) {
-      try {
-        const result = await adopt(project, {
-          target: String(values.adopt),
-          overrideReason: overrideReasonCallback(context),
-        });
-        for (const file of result.files) {
-          context.result(
-            `Wrote ${context.displayPath(join(project.root, file))}`,
-          );
-        }
-        // An empty schema's warning gives the count itself: said once.
-        const adopted =
-          result.warning === undefined
-            ? `: ${plural(result.objects, "object")} from schema ${project.config.managedSchema},`
-            : "";
-        context.result(
-          `Adopted target ${result.target}${adopted} as migration ${result.migration.folder} in ${context.displayPath(result.migration.path)}, recorded on it as marked (attempt #${result.attemptId})`,
-        );
-        if (result.warning !== undefined) {
-          context.warn(`warning: ${result.warning}`);
-        }
-        const left = leftOnTarget(result.leftOnTarget);
-        if (left !== undefined) {
-          context.result(
-            `Left ${left} on target ${result.target} as they are: privileges and row-level security are set up outside super-deploy`,
-          );
-        }
-        const dependents = result.dependentsOutside;
-        if (dependents.length > 0) {
-          const one = dependents.length === 1;
-          const [them, they, uses] = one
-            ? ["it", "it", "uses"]
-            : ["them", "they", "use"];
-          context.result(
-            `Target ${result.target} has ${plural(dependents.length, "object")} in other schemas that ${one ? "depends" : "depend"} on schema ${project.config.managedSchema}. Rehearsals don't have ${them}, so a migration that changes or drops what ${they} ${uses} will fail on target ${result.target} (drop ${them}, deploy, then create ${them} again):`,
-          );
-          for (const dependent of dependents) {
-            context.result(`  ${dependent}`);
-          }
-        }
-        for (const override of result.overrides) {
-          context.result(
-            describeOverride(override, result.migration.path, context),
-          );
-        }
-      } catch (error) {
-        if (error instanceof MarkMismatchError) {
-          reportMarkMismatch(error, context);
-        }
-        throw error;
-      }
-    },
   },
 };
 
@@ -416,7 +327,7 @@ function leftOnTarget(left: LeftOnTarget): string | undefined {
 }
 
 /**
- * `init --adopt`'s override reasons, asked at the terminal after listing
+ * `adopt`'s override reasons, asked at the terminal after listing
  * every object that needs one. Undefined without a terminal: adoption then
  * refuses them, listed apart from anything unsupported.
  */
@@ -442,7 +353,7 @@ function overrideReasonCallback(
 
 const draftCommand: CommandDefinition = {
   name: "draft",
-  group: "Author",
+  section: "Author",
   summary:
     "Generate the draft's schema change from the newest migration to the desired schema",
   options: [
@@ -487,7 +398,7 @@ const draftCommand: CommandDefinition = {
 
 const rehearseCommand: CommandDefinition = {
   name: "rehearse",
-  group: "Author",
+  section: "Author",
   summary:
     "Replay every migration plus the draft on a throwaway database and prove it matches the desired schema",
   options: [],
@@ -543,7 +454,7 @@ function warnUnknownFiles(context: CommandContext): UnknownDraftFileOptions {
 
 const finalizeCommand: CommandDefinition = {
   name: "finalize",
-  group: "Author",
+  section: "Author",
   summary:
     "Rehearse the draft, then freeze it as the next numbered, read-only, hash-chained migration",
   options: [
@@ -594,7 +505,7 @@ const finalizeCommand: CommandDefinition = {
 
 const validateCommand: CommandDefinition = {
   name: "validate",
-  group: "Author",
+  section: "Author",
   summary:
     "Check the finalized migrations' hashes, chain and read-only state, and warn about unfinished work",
   options: [
@@ -727,7 +638,7 @@ function reportRestore(
 
 const unfinalizeCommand: CommandDefinition = {
   name: "unfinalize",
-  group: "Author",
+  section: "Author",
   summary:
     "Move the newest migration (or its newest Recovery) back into the draft and restore its desired-schema snapshot",
   options: [
@@ -765,7 +676,7 @@ const unfinalizeCommand: CommandDefinition = {
 
 const restoreSchemaCommand: CommandDefinition = {
   name: "restore-schema",
-  group: "Author",
+  section: "Author",
   summary:
     "Reset the desired schema to the newest migration's snapshot and delete any draft",
   options: [acknowledgeOverwriteOption],
@@ -794,7 +705,7 @@ const restoreSchemaCommand: CommandDefinition = {
 
 const discardDraftCommand: CommandDefinition = {
   name: "discard-draft",
-  group: "Author",
+  section: "Author",
   summary: "Delete the draft, leaving the desired schema alone",
   options: [acknowledgeOverwriteOption],
   async run(project, values, context) {
@@ -817,9 +728,75 @@ const targetOption: TargetOption = {
   required: true,
 };
 
+const adoptCommand: CommandDefinition = {
+  name: "adopt",
+  section: "Project",
+  summary:
+    "Bring a target's existing database under management as migration 1, in a project with no migrations yet",
+  options: [
+    {
+      ...targetOption,
+      question:
+        "Adopt which target's existing database as migration 1? Its managed schema becomes the desired schema",
+    },
+  ],
+  changesTarget: { option: "target", command: "adopt" },
+  async run(project, values, context) {
+    try {
+      const result = await adopt(project, {
+        target: String(values.target),
+        overrideReason: overrideReasonCallback(context),
+      });
+      for (const file of result.files) {
+        context.result(
+          `Wrote ${context.displayPath(join(project.root, file))}`,
+        );
+      }
+      // An empty schema's warning gives the count itself: said once.
+      const adopted =
+        result.warning === undefined
+          ? `: ${plural(result.objects, "object")} from schema ${project.config.managedSchema},`
+          : "";
+      context.result(
+        `Adopted target ${result.target}${adopted} as migration ${result.migration.folder} in ${context.displayPath(result.migration.path)}, recorded on it as marked (attempt #${result.attemptId})`,
+      );
+      if (result.warning !== undefined) {
+        context.warn(`warning: ${result.warning}`);
+      }
+      const left = leftOnTarget(result.leftOnTarget);
+      if (left !== undefined) {
+        context.result(
+          `Left ${left} on target ${result.target} as they are: privileges and row-level security are set up outside super-deploy`,
+        );
+      }
+      const dependents = result.dependentsOutside;
+      if (dependents.length > 0) {
+        const one = dependents.length === 1;
+        const [them, they, uses] = one
+          ? ["it", "it", "uses"]
+          : ["them", "they", "use"];
+        context.result(
+          `Target ${result.target} has ${plural(dependents.length, "object")} in other schemas that ${one ? "depends" : "depend"} on schema ${project.config.managedSchema}. Rehearsals don't have ${them}, so a migration that changes or drops what ${they} ${uses} will fail on target ${result.target} (drop ${them}, deploy, then create ${them} again):`,
+        );
+        for (const dependent of dependents) {
+          context.result(`  ${dependent}`);
+        }
+      }
+      for (const override of result.overrides) {
+        context.result(
+          describeOverride(override, result.migration.path, context),
+        );
+      }
+    } catch (error) {
+      reportMarkMismatch(error, context);
+      throw error;
+    }
+  },
+};
+
 const deployCommand: CommandDefinition = {
   name: "deploy",
-  group: "Deploy",
+  section: "Deploy",
   summary:
     "Rehearse every pending migration, then apply them all to the target in one transaction",
   options: [targetOption],
@@ -839,7 +816,7 @@ const deployCommand: CommandDefinition = {
 
 const statusCommand: CommandDefinition = {
   name: "status",
-  group: "Deploy",
+  section: "Deploy",
   summary:
     "Show the target's pending migrations, recent attempts and drift (exit 1 on drift, on drift not checked or when deploy would refuse)",
   options: [targetOption],
@@ -924,7 +901,7 @@ const statusCommand: CommandDefinition = {
 
 const recoveryCommand: CommandDefinition = {
   name: "recovery",
-  group: "Recover",
+  section: "Recover",
   summary:
     "Start a Recovery of a migration: replacement scripts and seed data for targets that haven't run it",
   options: [
@@ -951,7 +928,7 @@ const recoveryCommand: CommandDefinition = {
 
 const markCommand: CommandDefinition = {
   name: "mark",
-  group: "Recover",
+  section: "Recover",
   summary:
     "Record the target's next pending migration as deployed after fixing the target by hand, if it matches a replica exactly; asks you to type YES",
   options: [targetOption],
@@ -963,9 +940,7 @@ const markCommand: CommandDefinition = {
         `Marked migration ${result.marked.folder} as deployed on target ${result.target} (attempt #${result.attemptId})`,
       );
     } catch (error) {
-      if (error instanceof MarkMismatchError) {
-        reportMarkMismatch(error, context);
-      }
+      reportMarkMismatch(error, context);
       throw error;
     }
   },
@@ -973,7 +948,7 @@ const markCommand: CommandDefinition = {
 
 const disposableCommand: CommandDefinition = {
   name: "disposable",
-  group: "Disposable",
+  section: "Disposable",
   summary:
     "Flag the target as disposable (or not) in its own history schema; asks you to type YES",
   changesTarget: { option: "target", command: "disposable" },
@@ -1015,11 +990,11 @@ const disposableCommand: CommandDefinition = {
   },
 };
 
-/** The objects a MarkMismatchError lists, on stderr. */
-function reportMarkMismatch(
-  error: MarkMismatchError,
-  context: CommandContext,
-): void {
+/** The objects a MarkMismatchError lists, on stderr; other errors print nothing. */
+function reportMarkMismatch(error: unknown, context: CommandContext): void {
+  if (!(error instanceof MarkMismatchError)) {
+    return;
+  }
   context.warn(
     `The target differs from a replica of its migrations up to ${error.migration}:`,
   );
@@ -1045,7 +1020,7 @@ function driftListing(objects: readonly DriftedObject[]): string[] {
 
 const deployDraftCommand: CommandDefinition = {
   name: "deploy-draft",
-  group: "Disposable",
+  section: "Disposable",
   summary:
     "Try the unfinalized draft on a disposable target, in one transaction; asks you to type YES",
   changesTarget: { option: "target", command: "deploy-draft" },
@@ -1093,7 +1068,7 @@ async function indexedMigrations(
 
 const rebuildCommand: CommandDefinition = {
   name: "rebuild",
-  group: "Disposable",
+  section: "Disposable",
   summary:
     "Wipe a disposable target and replay migrations 1 to N, without seed data; asks you to type YES",
   changesTarget: { option: "target", command: "rebuild" },
@@ -1171,7 +1146,6 @@ function describeOverride(
 }
 
 export const commands: readonly CommandDefinition[] = [
-  initCommand,
   draftCommand,
   rehearseCommand,
   finalizeCommand,
@@ -1186,4 +1160,6 @@ export const commands: readonly CommandDefinition[] = [
   disposableCommand,
   deployDraftCommand,
   rebuildCommand,
+  initCommand,
+  adoptCommand,
 ];

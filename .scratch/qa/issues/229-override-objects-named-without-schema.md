@@ -15,7 +15,7 @@ create function app.notify_order() returns trigger language plpgsql as $$ begin 
 ```
 
 ```sh
-pnpm exec super-deploy init --adopt qa </dev/null
+pnpm exec super-deploy adopt --target qa </dev/null
 ```
 
 ## Expected

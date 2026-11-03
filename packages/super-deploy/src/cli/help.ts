@@ -1,7 +1,7 @@
 import { toolVersion } from "../version.ts";
 import {
   type CommandDefinition,
-  commandGroups,
+  commandSections,
   type OptionDefinition,
 } from "./definitions.ts";
 import { optionsOf } from "./parse.ts";
@@ -14,11 +14,11 @@ export function usage(commands: readonly CommandDefinition[]): string {
     "Usage: super-deploy <command> [options]",
     "",
   ];
-  for (const group of commandGroups) {
-    const inGroup = commands.filter((command) => command.group === group);
-    if (inGroup.length > 0) {
-      lines.push(`${group}:`);
-      for (const command of inGroup) {
+  for (const section of commandSections) {
+    const inSection = commands.filter((command) => command.section === section);
+    if (inSection.length > 0) {
+      lines.push(`${section}:`);
+      for (const command of inSection) {
         lines.push(`  ${command.name.padEnd(width)}${command.summary}`);
       }
       lines.push("");

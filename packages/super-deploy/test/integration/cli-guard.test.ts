@@ -575,8 +575,8 @@ describe.skipIf(process.platform === "win32")("from the menu", () => {
     const { dir, database } = await guardedProject();
     const terminal = spawnTerminal([], { cwd: dir.root });
 
-    await terminal.waitFor("quit");
-    await terminal.chooseMenuItem("disposable");
+    await terminal.waitForMenu();
+    await terminal.chooseMenuItem("Disposable", "disposable");
     await terminal.waitFor("The target to use");
     terminal.type(keys.enter);
     await terminal.waitFor(
@@ -590,8 +590,8 @@ describe.skipIf(process.platform === "win32")("from the menu", () => {
     terminal.type(`YES${keys.enter}`);
     await terminal.waitFor("Target dev is now disposable");
 
-    await terminal.waitFor("quit");
-    await terminal.chooseMenuItem("disposable");
+    await terminal.waitForMenu();
+    await terminal.chooseMenuItem("Disposable", "disposable");
     await terminal.waitFor("The target to use");
     terminal.type(keys.enter);
     await terminal.waitFor("Target dev is disposable now. Keep it disposable?");
@@ -602,8 +602,8 @@ describe.skipIf(process.platform === "win32")("from the menu", () => {
     terminal.type(`no${keys.enter}`);
     await terminal.waitFor("was not confirmed");
 
-    await terminal.waitFor("quit");
-    terminal.type(keys.escape);
+    await terminal.waitForMenu();
+    await terminal.chooseMenuItem("quit");
     expect(await terminal.exited).toBe(0);
     expect(
       await server.query(
@@ -621,8 +621,8 @@ describe.skipIf(process.platform === "win32")("from the menu", () => {
     });
     const terminal = spawnTerminal([], { cwd: dir.root });
 
-    await terminal.waitFor("quit");
-    await terminal.chooseMenuItem("disposable");
+    await terminal.waitForMenu();
+    await terminal.chooseMenuItem("Disposable", "disposable");
     await terminal.waitFor("The target to use");
     terminal.type(keys.down);
     terminal.type(keys.enter);
@@ -634,8 +634,8 @@ describe.skipIf(process.platform === "win32")("from the menu", () => {
     await terminal.waitFor(noSelected);
     terminal.type(keys.escape);
     await terminal.waitFor("Cancelled: nothing ran");
-    await terminal.waitFor("quit");
-    terminal.type(keys.escape);
+    await terminal.waitForMenu();
+    await terminal.chooseMenuItem("quit");
     expect(await terminal.exited).toBe(0);
   });
 });

@@ -31,7 +31,7 @@ grant select on app.t to adopt_app_reader;
 Project with `managedSchema: "app"`, target `revoke` from `REVOKE_DATABASE_URL=postgres://adopt_deployer:deploy@localhost:54818/qa_adopt_revoke`:
 
 ```sh
-pnpm exec super-deploy init --adopt revoke
+pnpm exec super-deploy adopt --target revoke
 # desired-schema/grants.sql now has: GRANT USAGE ON SCHEMA "app" TO "adopt_app_reader";
 git add -A && git commit -m adopt
 # take the reader's access away, as the README says ("to take a grant away, remove the GRANT"):

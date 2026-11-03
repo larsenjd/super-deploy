@@ -1,4 +1,4 @@
-// Adoption (`init --adopt`): the statements the differ generates to build an
+// Adoption (`adopt`): the statements the differ generates to build an
 // existing database from nothing, turned into desired-schema files. The
 // differ reads the whole database, so this keeps only statements about
 // objects in the managed schema, and sorts them into one file per kind of

@@ -10,9 +10,9 @@
 Continuing from issue 123: target `qa` adopted with the wrong `managedSchema` (an empty `public`). I corrected `managedSchema` to `shop` and tried to adopt again.
 
 ```sh
-pnpm exec super-deploy init --adopt qa
+pnpm exec super-deploy adopt --target qa
 rm -rf data-model/migrations
-pnpm exec super-deploy init --adopt qa
+pnpm exec super-deploy adopt --target qa
 ```
 
 ## Expected
@@ -40,7 +40,7 @@ Neither says what to do. Meanwhile `status --target qa` shows every object in `s
 ### Triage, 2026-10-21
 
 **Verification:** CONFIRMED. After the empty adoption in 123, with `managedSchema` corrected:
-- `init --adopt qa` refused: `the project already has migrations in data-model/migrations`.
+- `adopt --target qa` refused: `the project already has migrations in data-model/migrations`.
 - With `data-model/migrations` moved away, it refused again: `it already records 1 migration in its history schema "deployment_history"`.
 
 Neither refusal says what to do. Round-1 issue 24 left exactly this open ("how a user starts over after a wrong adoption ... needs a maintainer and should become its own ticket").
@@ -61,16 +61,16 @@ The adoption then succeeded.
 After a wrong adoption (wrong schema, wrong target, adopted before cleaning up the target), adopting again is refused on the project side and then on the target side. Nothing explains how to undo it, and `status` and `deploy` refuse the target meanwhile.
 
 **Desired behavior (once decided):**
-- There is a documented, safe way to undo an adoption. It applies only while the target records nothing but `00001-adopt`, marked by `init --adopt`. It warns that undoing deletes the target's attempt log and disposable flag.
+- There is a documented, safe way to undo an adoption. It applies only while the target records nothing but `00001-adopt`, marked by `adopt`. It warns that undoing deletes the target's attempt log and disposable flag.
 - The refusal `it already records N migrations` points to that way when the only recorded migration is the adoption.
 - `the project already has migrations` points to it too.
 
 **Key interfaces:**
 - The README's "Adopting an existing database".
-- `AdoptConflictError`'s reasons (the adoption command's project and target checks). The target check can tell an adoption apart by its record's `recorded_how = 'marked'` and its attempt's command `init --adopt`.
+- `AdoptConflictError`'s reasons (the adoption command's project and target checks). The target check can tell an adoption apart by its record's `recorded_how = 'marked'` and its attempt's command `adopt`.
 
 **Acceptance criteria (once decided):**
-- [ ] Following the README procedure (or the command) after an adoption with the wrong `managedSchema` lets the next `init --adopt` succeed. API seam for a command; a docs check for the procedure.
+- [ ] Following the README procedure (or the command) after an adoption with the wrong `managedSchema` lets the next `adopt` succeed. API seam for a command; a docs check for the procedure.
 - [ ] When the target's only recorded migration came from adoption, the refusal names the way to undo it.
 - [ ] A target that has deployed migrations since adoption is never offered the undo.
 
@@ -86,7 +86,7 @@ After a wrong adoption (wrong schema, wrong target, adopted before cleaning up t
   3. Adopt again.
 
   It is valid only while the target records just the adoption. Both refusals point to it (recommended).
-- Add a guarded command or flag (e.g. `init --adopt <target> --again`) that does both sides after YES, refusing unless the target records only its adoption.
+- Add a guarded command or flag (e.g. `adopt --target <target> --again`) that does both sides after YES, refusing unless the target records only its adoption.
 - Document it without changing the refusals.
 
 ### Decided, 2026-10-21

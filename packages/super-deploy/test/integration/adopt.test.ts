@@ -1,4 +1,4 @@
-// API seam: `init --adopt <target>` (the `adopt` function) brings an existing
+// API seam: `adopt --target <target>` (the `adopt` function) brings an existing
 // database under management in an initialised project with no migrations:
 // its managed schema becomes the desired schema and migration 00001-adopt,
 // recorded on the target as marked after mark's replica check.
@@ -1732,7 +1732,7 @@ describe("adopt", () => {
       expect(error).toBeInstanceOf(TargetTimeoutError);
       const { message } = error as TargetTimeoutError;
       expect(message).toContain(
-        "Target prod's lockTimeout (200ms) ran out waiting for a lock while init --adopt read the target's managed schema",
+        "Target prod's lockTimeout (200ms) ran out waiting for a lock while adopt read the target's managed schema",
       );
       expect(message).toContain("Nothing was written");
       expect(dir.exists("data-model/desired-schema")).toBe(false);
@@ -1840,7 +1840,7 @@ const changing = {
       const report = await status(project, { target: "prod" });
       expect(report.recorded).toEqual([]);
       expect(report.attempts).toMatchObject([
-        { command: "init --adopt", outcome: "failed" },
+        { command: "adopt", outcome: "failed" },
       ]);
     } finally {
       await project.close();

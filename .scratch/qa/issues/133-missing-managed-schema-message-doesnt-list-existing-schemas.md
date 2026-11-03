@@ -11,7 +11,7 @@
 2. Target `qa2_adopt_mixed` has schema `"MyApp"` (common in databases made by ORMs/GUIs).
 
 ```sh
-pnpm exec super-deploy init --adopt qa
+pnpm exec super-deploy adopt --target qa
 ```
 
 ## Expected

@@ -1,6 +1,6 @@
 # 05: Interactive menu and CLI behaviour
 
-**What to build:** Running `super-deploy` with no arguments in a terminal opens a menu grouped into Start, Author, Deploy, Recover and Disposable, which asks for each option and returns to the command just run. Every command also behaves predictably under Ctrl+C, SIGTERM and closed pipes.
+**What to build:** Running `super-deploy` with no arguments in a terminal opens a two-level menu (sections Author, Deploy, Recover, Disposable and Project, then a section's commands), which asks for each option and returns to the command just run. Every command also behaves predictably under Ctrl+C, SIGTERM and closed pipes.
 
 **Blocked by:** 02
 

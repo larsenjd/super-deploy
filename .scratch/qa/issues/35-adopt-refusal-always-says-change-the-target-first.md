@@ -8,11 +8,11 @@
 ## What I did
 1. A target whose only problems are a function using `EXECUTE` and one calling `pg_notify` (`qa_adopt_shop`), adopted without a terminal:
    ```sh
-   pnpm exec super-deploy init --adopt shop </dev/null
+   pnpm exec super-deploy adopt --target shop </dev/null
    ```
 2. A target whose PL/pgSQL trigger function reads `auth.users`, with `externalSchemas` not set in the config (`qa_adopt_ext2`):
    ```sh
-   pnpm exec super-deploy init --adopt ext2 </dev/null
+   pnpm exec super-deploy adopt --target ext2 </dev/null
    ```
 3. Every refusal also prints the full list twice: once as the list, and again inside the final `Error:` line.
 
@@ -66,7 +66,7 @@ The CLI prints the list of objects, then the error message lists the first five 
 
 **Key interfaces:**
 - `AdoptUnsupportedError`: its message, or a structured field the CLI uses, carries the advice. The rule id and category of each entry (risk or not) come from the rule catalogue.
-- The CLI's rendering of `AdoptUnsupportedError` in the `init --adopt` command definition.
+- The CLI's rendering of `AdoptUnsupportedError` in the `adopt` command definition.
 
 **Acceptance criteria:**
 - [ ] Adopting without a terminal a target whose only problems are risk-rule functions ends with advice to run in a terminal, not to change the target (API seam on the error message, or CLI seam).

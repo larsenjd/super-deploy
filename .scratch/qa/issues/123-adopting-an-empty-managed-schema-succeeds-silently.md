@@ -18,7 +18,7 @@ Fresh project (`init`, `git init`, `pnpm install`), `qa` target added as the REA
 
 ```sh
 export QA_DATABASE_URL=postgres://qa2_adopt_deployer:dep@localhost:54818/qa2_adopt_typo
-pnpm exec super-deploy init --adopt qa
+pnpm exec super-deploy adopt --target qa
 ```
 
 ## Expected
@@ -40,7 +40,7 @@ Guess: refuse (or ask in a terminal) when the managed schema has no objects, or 
 
 ### Triage, 2026-10-21
 
-**Verification:** CONFIRMED. `qa2t_adopt_typo` was owned by the deploy role, with an empty `public` and `shop.t`; `managedSchema` was left at `public`. `init --adopt qa` exited 0:
+**Verification:** CONFIRMED. `qa2t_adopt_typo` was owned by the deploy role, with an empty `public` and `shop.t`; `managedSchema` was left at `public`. `adopt --target qa` exited 0:
 - `Adopted target qa: migration 00001-adopt ...`;
 - a header-only `schema-change.sql`;
 - no desired-schema files;

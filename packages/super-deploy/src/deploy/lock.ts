@@ -3,7 +3,7 @@
 // from the history schema name. Session-level, so it outlives the deploy
 // transaction's ROLLBACK and is released explicitly (or when the session
 // closes). Every command that changes a target takes it: deploy, mark,
-// rebuild, deploy-draft, disposable and init --adopt. Contention fails at
+// rebuild, deploy-draft, disposable and adopt. Contention fails at
 // once, naming the holder's running attempt and what its server process is
 // doing (pg_stat_activity), so a user can tell a live command from a dead
 // CLI's statement still running, and how to end that. Guarded commands also

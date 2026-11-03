@@ -129,7 +129,7 @@ Changed since round 2:
 
 ### adopt: adopting an existing database
 
-Build realistic existing databases by hand with SQL, then bring them under management with `init --adopt`:
+Build realistic existing databases by hand with SQL, then bring them under management with `adopt`:
 - a named managed schema, and one using `public`;
 - foreign keys, indexes, views, functions and triggers;
 - domain-typed columns, function defaults and generated columns;

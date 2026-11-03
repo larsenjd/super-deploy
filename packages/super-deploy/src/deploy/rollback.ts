@@ -13,7 +13,7 @@ import type { RecordedMigration } from "./history.ts";
 export type TargetCommand =
   | "deploy"
   | "deploy-draft"
-  | "init --adopt"
+  | "adopt"
   | "mark"
   | "disposable"
   | "rebuild";
@@ -25,7 +25,7 @@ export function commandNoun(command: TargetCommand): string {
       return "deployment";
     case "deploy-draft":
       return "draft's deployment";
-    case "init --adopt":
+    case "adopt":
       return "adoption";
     case "mark":
       return "mark";

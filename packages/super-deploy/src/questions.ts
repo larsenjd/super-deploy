@@ -37,7 +37,7 @@ export interface DestructiveQuestion {
 export type Question = OverwriteQuestion | DestructiveQuestion;
 
 /**
- * Asked by `init --adopt` once nothing else is refused, for each object in
+ * Asked by `adopt` once nothing else is refused, for each object in
  * `needed` in turn (this one is `needed[index]`): the reason written into
  * its override marker (`-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>`). Not a
  * yes/no Question: it is answered with text.
