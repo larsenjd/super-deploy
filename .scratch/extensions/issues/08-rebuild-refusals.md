@@ -8,9 +8,13 @@ Either way the target is unchanged and no rebuild attempt is recorded. (Spec: "R
 
 **Blocked by:** 02, 05
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Pseudo-terminal test: on a disposable target with `pg_stat_statements` in `public`, `rebuild` refuses before asking YES, naming the extension and its schema. The target is unchanged and no attempt is recorded.
-- [ ] A disposable target whose deploy role lacks `CREATE` on the database, with a migration history that creates an extension, makes `rebuild` refuse before YES.
-- [ ] A disposable target with only managed extensions in the managed schema rebuilds as before. The wipe drops them, and the replay creates them again at their pinned versions.
-- [ ] The template README's description of `rebuild` mentions both refusals.
+- [x] Pseudo-terminal test: on a disposable target with `pg_stat_statements` in `public`, `rebuild` refuses before asking YES, naming the extension and its schema. The target is unchanged and no attempt is recorded.
+- [x] A disposable target whose deploy role lacks `CREATE` on the database, with a migration history that creates an extension, makes `rebuild` refuse before YES.
+- [x] A disposable target with only managed extensions in the managed schema rebuilds as before. The wipe drops them, and the replay creates them again at their pinned versions.
+- [x] The template README's description of `rebuild` mentions both refusals.
+
+## Comments
+
+The missing-CREATE refusal reuses ticket 05's `ExtensionCreateNotPermittedError`; an extension surviving the wipe throws `ExtensionSurvivesWipeError`.
