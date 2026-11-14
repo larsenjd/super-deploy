@@ -262,6 +262,7 @@ export type {
   LockWarningKind,
 } from "./sql-analysis/destructive.ts";
 export {
+  type ListedExtensions,
   type RuleViolation,
   SqlRuleViolationError,
 } from "./sql-analysis/index.ts";

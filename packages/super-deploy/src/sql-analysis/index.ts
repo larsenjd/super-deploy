@@ -100,6 +100,7 @@ export {
   checkRules,
   type FileAnalysis,
   type FileKind,
+  type ListedExtensions,
   type RuleContext,
 } from "./rules.ts";
 

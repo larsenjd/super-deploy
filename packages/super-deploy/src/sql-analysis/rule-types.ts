@@ -1,5 +1,15 @@
 // Types shared by every rule set (desired schema, deploy-time).
 
+import type { SupportedExtension } from "./supported-extensions.ts";
+
+/**
+ * Supported extensions, each with the versions allowed of it: the config's
+ * `extensions` as resolved, or every version the tool knows.
+ */
+export type ListedExtensions = Readonly<
+  Partial<Record<SupportedExtension, readonly string[]>>
+>;
+
 /** What the rules need from the project's configuration. */
 export interface RuleContext {
   /** Default `public`. */
@@ -13,7 +23,7 @@ export interface RuleContext {
    * (`supportedExtensionVersions`), since it replays whatever the config
    * lists now (ADR-0009).
    */
-  readonly extensions: Readonly<Record<string, readonly string[]>>;
+  readonly extensions: ListedExtensions;
 }
 
 export interface RuleFinding {

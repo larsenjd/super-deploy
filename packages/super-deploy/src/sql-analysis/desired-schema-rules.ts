@@ -624,7 +624,9 @@ function supportedExtensionFindings(
 ): RuleFinding[] {
   const statement = createExtension(node);
   const { name, version } = statement;
-  const listed = context.extensions[name];
+  const listed = isSupportedExtension(name)
+    ? context.extensions[name]
+    : undefined;
   const pinned = (versions: readonly string[]) => versions.join(", ");
   let refusal: RuleFinding | undefined;
   if (!isSupportedExtension(name)) {

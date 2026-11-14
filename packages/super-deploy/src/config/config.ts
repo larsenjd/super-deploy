@@ -4,6 +4,8 @@
 import { isAbsolute, normalize } from "node:path";
 import type { DeploymentAdapter, RehearsalAdapter } from "../adapters/types.ts";
 import { SuperDeployError } from "../errors.ts";
+import { isSupportedExtension } from "../sql-analysis/extensions.ts";
+import type { ListedExtensions } from "../sql-analysis/rule-types.ts";
 import {
   type SupportedExtension,
   supportedExtensionVersions,
@@ -93,7 +95,7 @@ export interface ResolvedConfig {
   readonly externalSchemas: readonly string[];
   readonly directory: string;
   /** Each supported extension the project may use, with its versions; empty by default. */
-  readonly extensions: Readonly<Record<string, readonly string[]>>;
+  readonly extensions: ListedExtensions;
 }
 
 const settings = new Set([
@@ -243,9 +245,7 @@ export function resolveConfig(raw: unknown): ResolvedConfig {
   };
 }
 
-function extensionsSetting(
-  value: unknown,
-): Readonly<Record<string, readonly string[]>> {
+function extensionsSetting(value: unknown): ListedExtensions {
   if (value === undefined) {
     return {};
   }
@@ -255,15 +255,13 @@ function extensionsSetting(
       `must be an object from supported extension names to lists of versions, got ${describe(value)}`,
     );
   }
-  const known: Readonly<Record<string, readonly string[]>> =
-    supportedExtensionVersions;
-  const extensions: Record<string, readonly string[]> = {};
+  const extensions: Partial<Record<SupportedExtension, readonly string[]>> = {};
   for (const [name, versions] of Object.entries(value)) {
     const setting = `extensions.${name}`;
-    const supported = Object.hasOwn(known, name) ? known[name] : undefined;
-    if (supported === undefined) {
+    if (!isSupportedExtension(name)) {
       throw new ExtensionNotSupportedError(name, setting);
     }
+    const supported: readonly string[] = supportedExtensionVersions[name];
     if (
       !Array.isArray(versions) ||
       !versions.every((version) => typeof version === "string")

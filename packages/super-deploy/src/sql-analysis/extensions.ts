@@ -8,6 +8,7 @@
 
 import type { ParsedStatement } from "./parse.ts";
 import type { RuleId } from "./rule-catalogue.ts";
+import type { ListedExtensions } from "./rule-types.ts";
 import { quoteIdentifier } from "./statement-names.ts";
 import {
   type ExtensionObjects,
@@ -159,7 +160,7 @@ export function extensionObjects(
  * listed for them: what deploy-time SQL may call besides pg_catalog's.
  */
 export function listedExtensionFunctions(
-  extensions: Readonly<Record<string, readonly string[]>>,
+  extensions: ListedExtensions,
 ): Set<string> {
   const names = new Set<string>();
   for (const [name, versions] of Object.entries(extensions)) {

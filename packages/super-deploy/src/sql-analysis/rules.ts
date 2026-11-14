@@ -22,6 +22,7 @@ import { parseSqlFile, type SqlFile } from "./parse.ts";
 import type { RuleContext, SchemaReference } from "./rule-types.ts";
 
 export type {
+  ListedExtensions,
   RuleContext,
   RuleFinding,
   SchemaReference,
