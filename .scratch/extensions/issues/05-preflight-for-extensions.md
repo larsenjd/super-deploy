@@ -21,3 +21,5 @@
 ## Comments
 
 Pre-flight lives in deploy/extension-preflight.ts; `missingCreateExtensions` and `createExtensionMessage` are for ticket 08's rebuild refusal. Open question: check (c)'s advice to move the extension with ALTER EXTENSION ... SET SCHEMA doesn't let the pending CREATE EXTENSION succeed (extension names are database-unique), so only dropping it clears the way.
+
+Code-review fix: check (c) became `ExtensionAlreadyInstalledError` (code `extension-already-installed`). It refuses an extension that already exists in any schema, unless a pending statement drops it first, and it advises dropping it.

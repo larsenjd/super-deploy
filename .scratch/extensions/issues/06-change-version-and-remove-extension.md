@@ -31,3 +31,5 @@ The deploy-time rules accept `ALTER EXTENSION ... UPDATE TO` and `DROP EXTENSION
 ## Comments
 
 Gap found: the spec says an extension in the managed schema not owned by the deploy role is refused by the existing ownership pre-flight, but the ownership query doesn't cover extensions. The ownership header now describes the actual behaviour; no check was added.
+
+Code-review fix: the ownership pre-flight, `mark` and `adopt` now refuse an extension in the managed schema that the deploy role doesn't own. The fix it prints drops the extension and creates it again as the deploy role.
