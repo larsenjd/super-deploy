@@ -24,18 +24,21 @@ import {
   unwrap,
 } from "./syntax-tree.ts";
 
-/** What a `CREATE EXTENSION` statement says, from its syntax tree. */
-export interface CreateExtension {
+/**
+ * What a `CREATE EXTENSION` or `ALTER EXTENSION ... UPDATE` statement says,
+ * from its syntax tree.
+ */
+export interface ExtensionClauses {
   readonly name: string;
-  /** The `VERSION`, if given. */
+  /** The `VERSION` (`UPDATE TO` for ALTER EXTENSION), if given. */
   readonly version: string | undefined;
   /** The `SCHEMA`, if given. */
   readonly schema: string | undefined;
   readonly cascade: boolean;
 }
 
-/** The clauses of a `CreateExtensionStmt` body. */
-export function createExtension(node: Json): CreateExtension {
+/** The clauses of a `CreateExtensionStmt` or `AlterExtensionStmt` body. */
+export function extensionClauses(node: Json): ExtensionClauses {
   const options = defElems(node.options);
   const option = (name: string) =>
     options.find((element) => element.name === name);
@@ -59,7 +62,7 @@ export function pinnedExtensions(
     if (body === undefined) {
       return [];
     }
-    const { name, version } = createExtension(body);
+    const { name, version } = extensionClauses(body);
     return name === "plpgsql" || version === undefined
       ? []
       : [{ name, version }];
@@ -113,7 +116,7 @@ function versionOf(node: Json): {
   name: string;
   version: string | undefined;
 } {
-  const { name, version } = createExtension(node);
+  const { name, version } = extensionClauses(node);
   return { name, version };
 }
 
@@ -204,7 +207,7 @@ export function extensionElsewhereFinding(
 
 /** The refusals of a supported extension's `SCHEMA` and `CASCADE` clauses. */
 export function extensionClauseFindings(
-  statement: CreateExtension,
+  statement: ExtensionClauses,
   managedSchema: string,
 ): ExtensionFinding[] {
   const findings: ExtensionFinding[] = [];

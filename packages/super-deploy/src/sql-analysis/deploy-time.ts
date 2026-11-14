@@ -51,8 +51,8 @@ import {
   type LockWarning,
 } from "./destructive.ts";
 import {
-  createExtension,
   extensionClauseFindings,
+  extensionClauses,
   extensionCommentFinding,
   isSupportedExtension,
   listedExtensionFunctions,
@@ -548,7 +548,7 @@ function classify(statement: ParsedStatement): Classification {
     );
   }
   if (type === "CreateExtensionStmt") {
-    const { name, version } = createExtension(body);
+    const { name, version } = extensionClauses(body);
     if (name === "plpgsql") {
       return { class: "ddl" };
     }
@@ -659,7 +659,7 @@ function extensionChangeClassification(
   body: Json,
 ): Classification | undefined {
   if (type === "AlterExtensionStmt") {
-    const { name, version } = createExtension(body);
+    const { name, version } = extensionClauses(body);
     if (!isSupportedExtension(name)) {
       return { refused: unsupportedExtensionFinding(name) };
     }
@@ -896,7 +896,7 @@ function detailFindings(
   }
   if (type === "CreateExtensionStmt" && body.extname !== "plpgsql") {
     findings.push(
-      ...extensionClauseFindings(createExtension(body), state.managedSchema),
+      ...extensionClauseFindings(extensionClauses(body), state.managedSchema),
     );
   }
   if (type === "CommentStmt" && body.objtype === "OBJECT_EXTENSION") {

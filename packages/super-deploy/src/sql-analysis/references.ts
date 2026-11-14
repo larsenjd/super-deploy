@@ -33,7 +33,7 @@
 // nothing, can't make a cycle.
 import type { Node } from "@pgsql/types";
 import { parseSync } from "libpg-query";
-import { createExtension, extensionObjects } from "./extensions.ts";
+import { extensionClauses, extensionObjects } from "./extensions.ts";
 import { generatedName } from "./generated-names.ts";
 import { isObject, type Json } from "./syntax-tree.ts";
 
@@ -755,7 +755,7 @@ const extractors: Record<string, Extractor> = {
     facts.kind = "extension";
     facts.identity = `extension ${str(body.extname) ?? "?"}`;
     facts.provides.push(`ext:${str(body.extname) ?? "?"}`);
-    const { name, version } = createExtension(body);
+    const { name, version } = extensionClauses(body);
     const objects = extensionObjects(name, version);
     for (const type of objects?.types ?? []) {
       facts.provides.push(`type:${type}`);

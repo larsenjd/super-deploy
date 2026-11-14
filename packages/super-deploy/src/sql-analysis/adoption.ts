@@ -43,7 +43,7 @@
 // by object (`adoptedObject`), rather than at the first statement the
 // throwaway database refuses.
 import { foldTableAlters, type KeptStatement } from "./adoption-folding.ts";
-import { createExtension, extensionSqlName } from "./extensions.ts";
+import { extensionClauses, extensionSqlName } from "./extensions.ts";
 import { overrideObject } from "./overrides.ts";
 import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 import { statementFacts } from "./references.ts";
@@ -424,7 +424,7 @@ function desiredText(sql: string): string {
 
 /** `CREATE EXTENSION <name> VERSION '<v>';`, its SCHEMA left out. */
 function extensionText(node: Json): string {
-  const { name, version } = createExtension(node);
+  const { name, version } = extensionClauses(node);
   const pinned =
     version === undefined ? "" : ` VERSION ${quoteLiteral(version)}`;
   return `CREATE EXTENSION ${extensionSqlName(name)}${pinned};`;
@@ -488,7 +488,7 @@ function ownSchema(type: string, node: Json): string | null | undefined {
     case "CreateRangeStmt":
       return schemaQualifier(stringList(node.typeName), 2);
     case "CreateExtensionStmt":
-      return createExtension(node).schema;
+      return extensionClauses(node).schema;
     case "CommentStmt":
       return objectSchema(
         node.object,

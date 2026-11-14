@@ -31,8 +31,8 @@
 
 import { denylistFindings } from "./denylist.ts";
 import {
-  createExtension,
   extensionClauseFindings,
+  extensionClauses,
   extensionCommentFinding,
   isSupportedExtension,
   unsupportedExtensionFinding,
@@ -622,7 +622,7 @@ function supportedExtensionFindings(
   node: Json,
   context: RuleContext,
 ): RuleFinding[] {
-  const statement = createExtension(node);
+  const statement = extensionClauses(node);
   const { name, version } = statement;
   const listed = isSupportedExtension(name)
     ? context.extensions[name]
