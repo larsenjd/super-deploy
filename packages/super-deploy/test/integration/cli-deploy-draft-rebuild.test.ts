@@ -1282,6 +1282,8 @@ unix("rebuild", () => {
 
   test("lists a table of any kind in another schema inheriting from a managed table, or typed with a managed composite type, as dropped with its data", async () => {
     const { dir, database } = await deployedProject();
+    // A wrapper without an extension: an extension outside public would
+    // refuse the rebuild, since the wipe leaves it.
     await server.query(
       `create type public.pair as (a int, b int);
        create schema reporting;
@@ -1289,8 +1291,8 @@ unix("rebuild", () => {
        insert into reporting.child (id, name, extra) values (999, 'child row', 1);
        create table reporting.typed of public.pair;
        insert into reporting.typed values (1, 2);
-       create extension postgres_fdw schema reporting;
-       create server reporting_loopback foreign data wrapper postgres_fdw;
+       create foreign data wrapper reporting_wrapper;
+       create server reporting_loopback foreign data wrapper reporting_wrapper;
        create foreign table reporting.remote () inherits (public.customers) server reporting_loopback;`,
       [],
       database,
@@ -1384,6 +1386,150 @@ unix("rebuild", () => {
         database,
       ),
     ).toEqual([{ command: "deploy" }]);
+  });
+
+  test("refuses, without asking or recording an attempt, an extension outside the managed schema, which would survive the wipe as drift, naming it and its schema", async () => {
+    const { config, database } = deployConfig(server, {
+      settings: 'managedSchema: "app",',
+    });
+    const dir = await customersDeployed(config);
+    // A DBA's monitoring extension in public, outside managed schema app.
+    await server.query(
+      `update deployment_history.settings set disposable = true;
+       insert into app.customers (id, name) values (1, 'Ada');
+       create extension pg_stat_statements schema public;`,
+      [],
+      database,
+    );
+    const attempts = await attemptLog(server, database);
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor(
+      "Error: rebuild refuses target dev: extension pg_stat_statements in schema public (owned by super_deploy) would survive the wipe of schema app, as drift that blocks every deployment. Have its owner or a superuser run DROP EXTENSION pg_stat_statements, then run rebuild again (nothing changed)",
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    expect(await attemptLog(server, database)).toEqual(attempts);
+    expect(
+      await server.query(
+        "select (select count(*)::int from pg_extension where extname = 'pg_stat_statements') as extensions, (select count(*)::int from app.customers) as customers",
+        [],
+        database,
+      ),
+    ).toEqual([{ extensions: 1, customers: 1 }]);
+  });
+
+  test("drops the managed schema's extensions with the wipe, and the replay creates each again at the version its migrations pin", async () => {
+    const { config, database } = deployConfig(server, {
+      settings: `extensions: { citext: ["1.6", "1.8"] },`,
+    });
+    const users = (
+      version: string,
+    ) => `create extension citext version '${version}';
+create table users (id bigint constraint users_pkey primary key, email citext not null);
+`;
+    const dir = await createTestProject({
+      config,
+      files: { "data-model/desired-schema/users.sql": users("1.6") },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await draft(project, { name: "add users" });
+      await finalize(project);
+      await dir.write("data-model/desired-schema/users.sql", users("1.8"));
+      await draft(project, { name: "update citext" });
+      await finalize(project);
+      await deploy(project, { target: "dev" });
+    } finally {
+      await project.close();
+    }
+    await server.query(
+      `update deployment_history.settings set disposable = true;
+       insert into users (id, email) values (1, 'Ada@example.com');`,
+      [],
+      database,
+    );
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor(
+      "Type YES to wipe target dev and replay migration 1",
+    );
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor("Rebuilt dev with 1 migration: 00001-add-users");
+    expect(await terminal.exited).toBe(0);
+    expect(
+      await server.query(
+        "select e.extname, e.extnamespace::regnamespace::text as schema, e.extversion, e.extowner::regrole::text as owner, (select count(*)::int from users) as users from pg_extension e where e.extname <> 'plpgsql'",
+        [],
+        database,
+      ),
+    ).toEqual([
+      {
+        extname: "citext",
+        schema: "public",
+        extversion: "1.6",
+        owner: embeddedDeployRole,
+        users: 0,
+      },
+    ]);
+
+    // The rebuilt target deploys again: no extension is drift.
+    const deployed = await runCli(["deploy", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    expect(deployed.stdout).toBe(
+      "Deployed 1 migration to dev: 00002-update-citext\n",
+    );
+  });
+
+  test("refuses, without asking or recording an attempt, a replay creating an extension while the deploy role lacks CREATE on the database, naming the GRANT", async () => {
+    const { config, database } = deployConfig(server, {
+      settings: `extensions: { citext: ["1.8"] },`,
+    });
+    const dir = await createTestProject({
+      config,
+      files: {
+        "data-model/desired-schema/users.sql": `create extension citext version '1.8';
+create table users (id bigint constraint users_pkey primary key, email citext not null);
+`,
+      },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await draft(project, { name: "add users" });
+      await finalize(project);
+      await deploy(project, { target: "dev" });
+    } finally {
+      await project.close();
+    }
+    await server.query(
+      `update deployment_history.settings set disposable = true;
+       insert into users (id, email) values (1, 'Ada@example.com');
+       revoke create on database ${database} from ${embeddedDeployRole};`,
+      [],
+      database,
+    );
+    const attempts = await attemptLog(server, database);
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor(
+      `Error: Target dev failed the extension pre-flight: the deploy role ${embeddedDeployRole} needs CREATE on database ${database} to create extension citext (a DBA runs: GRANT CREATE ON DATABASE ${database} TO ${embeddedDeployRole})`,
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    expect(await attemptLog(server, database)).toEqual(attempts);
+    expect(await server.query("select email from users", [], database)).toEqual(
+      [{ email: "Ada@example.com" }],
+    );
   });
 
   test("says it rolled back when a migration's file fails during the replay, without suggesting a Recovery", async () => {

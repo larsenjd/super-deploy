@@ -26,6 +26,12 @@
 // 172), then one holding something the deploy role can't drop
 // (CannotWipeError), so that never surfaces after YES. With the schema's
 // owner's privileges, only extensions and their members can block the wipe.
+// It also refuses before asking an extension outside the managed schema,
+// which would survive the wipe as drift (ExtensionSurvivesWipeError), and a
+// replay that creates an extension while the deploy role lacks CREATE on the
+// database (ExtensionCreateNotPermittedError, the extension pre-flight's
+// check (b) and wording): the wipe drops the managed schema's extensions, so
+// the replay creates each again at its pinned version (ADR-0009).
 //
 // The confirmation also lists what in the managed schema no recorded
 // migration created (QA 68): drift's objects "only on the target", from a
@@ -45,6 +51,10 @@ import {
   type MigrationToApply,
   runMigrations,
 } from "../deploy/engine.ts";
+import {
+  ExtensionCreateNotPermittedError,
+  missingCreateExtensions,
+} from "../deploy/extension-preflight.ts";
 import { historyTable } from "../deploy/history.ts";
 import { requireDisposable } from "../deploy/target.ts";
 import {
@@ -111,7 +121,10 @@ interface RebuildPlan {
  * `to` isn't 0 and the repo has no finalized migration `to`; NotOwnedError
  * when the deploy role doesn't own the managed schema (deploy would refuse
  * the result); CannotWipeError when the managed schema holds something the
- * deploy role can't drop. After YES, rolled back:
+ * deploy role can't drop; ExtensionSurvivesWipeError when an extension
+ * lives outside the managed schema; ExtensionCreateNotPermittedError when
+ * the replay creates an extension and the deploy role lacks CREATE on the
+ * database. After YES, rolled back:
  * TargetChangedError when what it drops outside the managed schema changed
  * meanwhile; WipeDropFailedError when PostgreSQL refuses a drop all the same;
  * WipeFailedError when the managed schema still holds something after the
@@ -160,6 +173,13 @@ export async function rebuild(
           : [`deployed draft ${view.draft.name}`]),
       ];
       await requireWipeable(session, target, config.managedSchema);
+      const missingCreate = await missingCreateExtensions(
+        session,
+        replayed.map(({ unit }) => unit),
+      );
+      if (missingCreate !== undefined) {
+        throw new ExtensionCreateNotPermittedError(target, missingCreate);
+      }
       const dependents = await dependentsOutside(
         session,
         config.managedSchema,

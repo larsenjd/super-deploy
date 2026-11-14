@@ -17,7 +17,11 @@
 // deploy role doesn't own (QA 172: deploy would refuse the rebuilt target;
 // NotOwnedError) or one holding something it couldn't drop even then
 // (CannotWipeError, e.g. an extension a superuser installed), both in one
-// refusal when both hold. A drop PostgreSQL refuses all the same
+// refusal when both hold. It then refuses any extension outside the managed
+// schema (ExtensionSurvivesWipeError, but plpgsql in pg_catalog, as drift
+// reads them, ADR-0009): the wipe drops only the managed schema's
+// extensions, so it would still be there afterwards, as drift no recorded
+// migration created, refusing every deployment. A drop PostgreSQL refuses all the same
 // (something appeared meanwhile) becomes WipeDropFailedError, which says the
 // rebuild rolled back. The drops cover every kind of object a schema can
 // hold. Afterwards the schema's dependents in pg_depend (what DROP SCHEMA
@@ -40,8 +44,9 @@ import {
 /**
  * Throws CannotWipeError when the managed schema holds something the deploy
  * role can't drop (naming the schema's owner too, if the deploy role doesn't
- * own it), NotOwnedError when the schema's owner is all that is wrong.
- * Read-only, for `rebuild` before it asks.
+ * own it), NotOwnedError when the schema's owner is all that is wrong, and
+ * ExtensionSurvivesWipeError when an extension lives outside it. Read-only,
+ * for `rebuild` before it asks.
  */
 export async function requireWipeable(
   session: Session,
@@ -55,6 +60,17 @@ export async function requireWipeable(
   }
   if (notOwned !== undefined) {
     throw new NotOwnedError(target, [notOwned], "rebuild");
+  }
+  const { rows: surviving } = await session.query<SurvivingExtension>(
+    `SELECT e.extname AS name, n.nspname AS schema, pg_catalog.pg_get_userbyid(e.extowner) AS owner
+       FROM pg_catalog.pg_extension e
+       JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
+      WHERE n.nspname <> $1 AND NOT (e.extname = 'plpgsql' AND n.nspname = 'pg_catalog')
+      ORDER BY e.extname COLLATE "C"`,
+    [schema],
+  );
+  if (surviving.length > 0) {
+    throw new ExtensionSurvivesWipeError(target, schema, surviving);
   }
 }
 
@@ -401,5 +417,45 @@ export class CannotWipeError extends SuperDeployError {
     this.schema = schema;
     this.objects = objects;
     this.schemaNotOwned = schemaNotOwned;
+  }
+}
+
+/** An extension outside the managed schema, which the wipe leaves. */
+export interface SurvivingExtension {
+  readonly name: string;
+  /** The schema it lives in. */
+  readonly schema: string;
+  readonly owner: string;
+}
+
+/**
+ * rebuild refused before asking: an extension lives outside the managed
+ * schema, so it would survive the wipe as drift no recorded migration
+ * created, and every deployment to the rebuilt target would refuse. Nothing
+ * changed and no attempt was recorded.
+ */
+export class ExtensionSurvivesWipeError extends SuperDeployError {
+  readonly code = "extension-survives-wipe";
+  readonly target: string;
+  /** The managed schema the wipe empties. */
+  readonly schema: string;
+  /** Each extension outside it, by name; never empty. */
+  readonly extensions: readonly SurvivingExtension[];
+
+  constructor(
+    target: string,
+    schema: string,
+    extensions: readonly SurvivingExtension[],
+  ) {
+    const one = extensions.length === 1;
+    const listed = extensions
+      .map((e) => `${e.name} in schema ${e.schema} (owned by ${e.owner})`)
+      .join(", ");
+    super(
+      `rebuild refuses target ${target}: ${one ? "extension" : "extensions"} ${listed} would survive the wipe of schema ${schema}, as drift that blocks every deployment. Have ${one ? "its owner" : "their owners"} or a superuser run DROP EXTENSION ${extensions.map((e) => e.name).join(", ")}, then run rebuild again (nothing changed)`,
+    );
+    this.target = target;
+    this.schema = schema;
+    this.extensions = extensions;
   }
 }
