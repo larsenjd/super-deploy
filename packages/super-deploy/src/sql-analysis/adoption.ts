@@ -49,7 +49,7 @@ import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 import { statementFacts } from "./references.ts";
 import { externalSchemasBoundAtCreate } from "./routine-bodies.ts";
 import type { RuleContext } from "./rule-types.ts";
-import { quoteIdentifier } from "./statement-names.ts";
+import { quoteIdentifier, quoteLiteral } from "./statement-names.ts";
 import {
   alterTableCommands,
   defElems,
@@ -426,7 +426,7 @@ function desiredText(sql: string): string {
 function extensionText(node: Json): string {
   const { name, version } = createExtension(node);
   const pinned =
-    version === undefined ? "" : ` VERSION '${version.replaceAll("'", "''")}'`;
+    version === undefined ? "" : ` VERSION ${quoteLiteral(version)}`;
   return `CREATE EXTENSION ${extensionSqlName(name)}${pinned};`;
 }
 

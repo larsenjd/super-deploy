@@ -129,14 +129,28 @@ export async function requireExtensionsDeployable(
   managedSchema: string,
   units: readonly ReplayUnit[],
 ): Promise<void> {
-  const [refusal] = await extensionRefusals(session, managedSchema, units);
+  requireNoExtensionRefusal(
+    target,
+    await extensionRefusals(session, managedSchema, units),
+  );
+}
+
+/**
+ * Throws the typed error of the first of `refusals` (`extensionRefusals`
+ * found earlier), naming `target`.
+ */
+export function requireNoExtensionRefusal(
+  target: string,
+  refusals: readonly ExtensionRefusal[],
+): void {
+  const [refusal] = refusals;
   if (refusal !== undefined) {
     throw extensionRefusalError(target, refusal);
   }
 }
 
 /** The typed error for `refusal` on `target`. */
-export function extensionRefusalError(
+function extensionRefusalError(
   target: string,
   refusal: ExtensionRefusal,
 ): SuperDeployError {

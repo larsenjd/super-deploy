@@ -216,7 +216,7 @@ export {
   type RuleViolation,
   SqlRuleViolationError,
 } from "./rules.ts";
-export { quoteIdentifier } from "./statement-names.ts";
+export { quoteIdentifier, quoteLiteral } from "./statement-names.ts";
 export {
   type SupportedExtension,
   supportedExtensionVersions,

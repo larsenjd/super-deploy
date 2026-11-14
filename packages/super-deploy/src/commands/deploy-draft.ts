@@ -32,7 +32,7 @@ import {
   ensureManagedSchemaInTransaction,
   inDeployTransaction,
 } from "../deploy/engine.ts";
-import { extensionRefusalError } from "../deploy/extension-preflight.ts";
+import { requireNoExtensionRefusal } from "../deploy/extension-preflight.ts";
 import { recordDeployedDraft } from "../deploy/history.ts";
 import { pendingMigrations } from "../deploy/pending.ts";
 import {
@@ -155,10 +155,7 @@ export async function deployDraft(
       });
       // Each extension refusal has its typed error (as deploy's, before its
       // other pre-flight refusals).
-      const [extensionRefusal] = findings.extensions;
-      if (extensionRefusal !== undefined) {
-        throw extensionRefusalError(target, extensionRefusal);
-      }
+      requireNoExtensionRefusal(target, findings.extensions);
       if (refusesDeployment(findings)) {
         throw new PreflightFailedError(target, findings);
       }

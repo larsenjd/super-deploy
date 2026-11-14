@@ -35,6 +35,7 @@ import {
   compareExtensionVersions,
   parseSqlFile,
   quoteIdentifier,
+  quoteLiteral,
 } from "../sql-analysis/index.ts";
 import type { Differ, PlannedStatement } from "./types.ts";
 
@@ -106,10 +107,6 @@ function versionChanges(
     const to = after.get(name);
     return to === undefined || to === from ? [] : [{ name, from, to }];
   });
-}
-
-function quoteLiteral(text: string): string {
-  return `'${text.replaceAll("'", "''")}'`;
 }
 
 /** `draft` refused: the desired schema lowers an extension's version. */
