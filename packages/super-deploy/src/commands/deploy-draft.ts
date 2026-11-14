@@ -107,7 +107,7 @@ interface Plan {
  * SqlRuleViolationError for the draft's files; UndraftedChangesError when
  * the desired schema changed since the draft was generated; the extension
  * pre-flight's errors (ExtensionVersionUnavailableError,
- * ExtensionCreateNotPermittedError, ExtensionInstalledElsewhereError) when
+ * ExtensionCreateNotPermittedError, ExtensionAlreadyInstalledError) when
  * the target can't run the draft's extension statements; PreflightFailedError when a
  * role or external schema is missing, the deploy role doesn't own the
  * managed schema or something in it, the recorded history doesn't match the

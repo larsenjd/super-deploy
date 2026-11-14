@@ -31,6 +31,10 @@
 import type { Session } from "../adapters/types.ts";
 import type { ResolvedTarget } from "../config/config.ts";
 import { errorReason, SuperDeployError } from "../errors.ts";
+import {
+  type InstalledExtension,
+  installedExtensions,
+} from "../rehearsal/extension-availability.ts";
 import { quoteIdentifier } from "../sql-analysis/index.ts";
 import {
   managedSchemaNotOwned,
@@ -61,13 +65,8 @@ export async function requireWipeable(
   if (notOwned !== undefined) {
     throw new NotOwnedError(target, [notOwned], "rebuild");
   }
-  const { rows: surviving } = await session.query<SurvivingExtension>(
-    `SELECT e.extname AS name, n.nspname AS schema, pg_catalog.pg_get_userbyid(e.extowner) AS owner
-       FROM pg_catalog.pg_extension e
-       JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
-      WHERE n.nspname <> $1 AND NOT (e.extname = 'plpgsql' AND n.nspname = 'pg_catalog')
-      ORDER BY e.extname COLLATE "C"`,
-    [schema],
+  const surviving = (await installedExtensions(session)).filter(
+    (extension) => extension.schema !== schema,
   );
   if (surviving.length > 0) {
     throw new ExtensionSurvivesWipeError(target, schema, surviving);
@@ -420,14 +419,6 @@ export class CannotWipeError extends SuperDeployError {
   }
 }
 
-/** An extension outside the managed schema, which the wipe leaves. */
-export interface SurvivingExtension {
-  readonly name: string;
-  /** The schema it lives in. */
-  readonly schema: string;
-  readonly owner: string;
-}
-
 /**
  * rebuild refused before asking: an extension lives outside the managed
  * schema, so it would survive the wipe as drift no recorded migration
@@ -440,12 +431,12 @@ export class ExtensionSurvivesWipeError extends SuperDeployError {
   /** The managed schema the wipe empties. */
   readonly schema: string;
   /** Each extension outside it, by name; never empty. */
-  readonly extensions: readonly SurvivingExtension[];
+  readonly extensions: readonly InstalledExtension[];
 
   constructor(
     target: string,
     schema: string,
-    extensions: readonly SurvivingExtension[],
+    extensions: readonly InstalledExtension[],
   ) {
     const one = extensions.length === 1;
     const listed = extensions

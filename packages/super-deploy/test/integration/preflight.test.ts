@@ -7,8 +7,8 @@ import {
   deploy,
   discardDraft,
   draft,
+  ExtensionAlreadyInstalledError,
   ExtensionCreateNotPermittedError,
-  ExtensionInstalledElsewhereError,
   ForeignHistorySchemaError,
   finalize,
   HistorySchemaNotCreatableError,
@@ -667,7 +667,7 @@ create table users (id bigint constraint users_pkey primary key, email citext no
     });
   });
 
-  test("refuses a migration creating an extension the target already has in another schema, naming that schema and its owner", async () => {
+  test("refuses a migration creating an extension the target already has in another schema, naming that schema and its owner, and saying to drop it", async () => {
     const { project, dir, database } = await deployProject(
       server,
       { "customers.sql": customers },
@@ -682,36 +682,33 @@ extensions: { citext: ["1.8"] },`,
     await server.query("create extension citext schema public", [], database);
     await dir.write("data-model/desired-schema/users.sql", users);
     await finalizeMigration(project, "add users");
-    const message =
-      "00002-add-users creates extension citext, but the target already has it in schema public, owned by super_deploy: move it with ALTER EXTENSION citext SET SCHEMA, or drop it";
-    expect(
-      (await status(project, { target: "dev" })).preflight.extensions,
-    ).toEqual([
-      {
-        kind: "installed-elsewhere",
-        extension: "citext",
-        unit: "00002-add-users",
-        schema: "public",
-        owner: "super_deploy",
-        message,
-      },
-    ]);
+    const installed = {
+      name: "citext",
+      schema: "public",
+      owner: "super_deploy",
+    };
+    const [finding] = (await status(project, { target: "dev" })).preflight
+      .extensions;
+    expect(finding).toMatchObject({
+      kind: "already-installed",
+      unit: "00002-add-users",
+      installed,
+    });
+    expect(finding?.message).toContain("schema public");
+    expect(finding?.message).toContain("drop it");
+    expect(finding?.message).not.toContain("SET SCHEMA");
     const attempts = await attemptLog(server, database);
     const refusal = await deploy(project, { target: "dev" }).catch(
       (error: unknown) => error,
     );
 
-    expect(refusal).toBeInstanceOf(ExtensionInstalledElsewhereError);
+    expect(refusal).toBeInstanceOf(ExtensionAlreadyInstalledError);
     expect(refusal).toMatchObject({
-      code: "extension-installed-elsewhere",
+      code: "extension-already-installed",
       target: "dev",
-      extension: "citext",
-      schema: "public",
-      owner: "super_deploy",
+      unit: "00002-add-users",
+      installed,
     });
-    expect((refusal as Error).message).toBe(
-      `Target dev failed the extension pre-flight: ${message}`,
-    );
     expect(await attemptLog(server, database)).toEqual(attempts);
     expect(
       await server.query(
@@ -720,6 +717,62 @@ extensions: { citext: ["1.8"] },`,
         database,
       ),
     ).toEqual([{ users: null }]);
+  });
+
+  test("refuses a migration creating an extension the target already has in the managed schema", async () => {
+    const { project, dir, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { settings: `extensions: { citext: ["1.8"] },` },
+    );
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    await asDeployRole(
+      server,
+      database,
+      "create extension citext schema public version '1.8'",
+    );
+    await dir.write("data-model/desired-schema/users.sql", users);
+    await finalizeMigration(project, "add users");
+
+    const [finding] = (await status(project, { target: "dev" })).preflight
+      .extensions;
+
+    expect(finding).toMatchObject({
+      kind: "already-installed",
+      unit: "00002-add-users",
+      installed: {
+        name: "citext",
+        schema: "public",
+        owner: embeddedDeployRole,
+      },
+    });
+    expect(finding?.message).toContain("the managed schema public");
+    expect(finding?.message).toContain("drop it");
+  });
+
+  test("refuses nothing for an extension that a pending migration drops before another creates it again", async () => {
+    const { project, dir, database } = await deployProject(
+      server,
+      { "users.sql": users },
+      { settings: `extensions: { citext: ["1.8"] },` },
+    );
+    await finalizeMigration(project, "add users");
+    await deploy(project, { target: "dev" });
+    await dir.write(
+      "data-model/desired-schema/users.sql",
+      "create table users (id bigint constraint users_pkey primary key);\n",
+    );
+    await draft(project, { name: "remove citext" });
+    await finalize(project, { acknowledgeDestructive: true });
+    await dir.write("data-model/desired-schema/users.sql", users);
+    await finalizeMigration(project, "add citext again");
+
+    expect(
+      (await status(project, { target: "dev" })).preflight.extensions,
+    ).toEqual([]);
+    await deploy(project, { target: "dev" });
+    expect(await extensions(database)).toEqual(["citext"]);
   });
 });
 

@@ -9,12 +9,14 @@
 //   (b) when anything creates an extension, the deploy role has CREATE on the
 //       database (no check otherwise, so targets need no more than before).
 //       `missingCreateExtensions` is also what rebuild checks its replay with
-//   (c) no extension that would be created already exists in another schema:
-//       extension names are database-wide, so CREATE EXTENSION would fail.
-//       The way out names where it is and who owns it, and says to move it
-//       with ALTER EXTENSION ... SET SCHEMA or drop it (the ticket's wording)
-// The versions come from the units' SQL itself, not the config: finalized
-// migrations replay as recorded (ADR-0009).
+//   (c) no extension that would be created already exists, in any schema,
+//       unless an earlier statement of the units drops it: CREATE EXTENSION
+//       would fail. The way out names where it is and who owns it, and says
+//       to drop it. Moving it wouldn't help: extension names are unique in a
+//       database. In the managed schema it is drift `deploy` refuses anyway,
+//       but `deploy-draft` doesn't check drift
+// The statements come from the units' SQL itself, not the config: finalized
+// migrations replay as recorded (ADR-0009, rehearsal/extension-availability.ts).
 //
 // Each finding carries its one-line message, and each kind has its typed
 // error. `status` lists the findings with the other pre-flight refusals
@@ -25,13 +27,15 @@
 
 import type { Session } from "../adapters/types.ts";
 import { joined, SuperDeployError } from "../errors.ts";
-import type { ReplayUnit } from "../rehearsal/replay.ts";
 import {
-  compareExtensionVersions,
-  type ExtensionVersionStatement,
-  extensionVersionStatements,
-  parseSqlFile,
-} from "../sql-analysis/index.ts";
+  type InstalledExtension,
+  installedExtensions,
+  offeredVersions,
+  type UnitExtensionChange,
+  unavailableVersions,
+  unitExtensionChanges,
+} from "../rehearsal/extension-availability.ts";
+import type { ReplayUnit } from "../rehearsal/replay.ts";
 import { missingCreateOnDatabase } from "./target.ts";
 
 /** (a) The target doesn't offer a version a unit installs or updates to. */
@@ -59,15 +63,13 @@ export interface ExtensionCreateNotPermitted {
   readonly message: string;
 }
 
-/** (c) An extension a unit creates is already installed in another schema. */
-export interface ExtensionInstalledElsewhere {
-  readonly kind: "installed-elsewhere";
-  readonly extension: string;
+/** (c) An extension a unit creates is already installed. */
+export interface ExtensionAlreadyInstalled {
+  readonly kind: "already-installed";
   /** The first unit creating it. */
   readonly unit: string;
-  /** The schema it is installed in now. */
-  readonly schema: string;
-  readonly owner: string;
+  /** The extension as the target has it now. */
+  readonly installed: InstalledExtension;
   readonly message: string;
 }
 
@@ -75,12 +77,7 @@ export interface ExtensionInstalledElsewhere {
 export type ExtensionRefusal =
   | ExtensionVersionUnavailable
   | ExtensionCreateNotPermitted
-  | ExtensionInstalledElsewhere;
-
-/** An extension statement of a unit. */
-interface UnitExtensionStatement extends ExtensionVersionStatement {
-  readonly unit: string;
-}
+  | ExtensionAlreadyInstalled;
 
 /**
  * Every reason the target on `session` can't run the extension statements
@@ -91,19 +88,19 @@ export async function extensionRefusals(
   managedSchema: string,
   units: readonly ReplayUnit[],
 ): Promise<ExtensionRefusal[]> {
-  const statements = await unitExtensionStatements(units);
-  if (statements.length === 0) {
+  const changes = await unitExtensionChanges(units);
+  if (changes.length === 0) {
     return [];
   }
-  const created = createdExtensions(statements);
+  const created = createdExtensions(changes);
   const missingCreate = await createNotPermitted(
     session,
     created.map(({ name }) => name),
   );
   return [
-    ...(await versionsUnavailable(session, statements)),
+    ...(await versionsUnavailable(session, changes)),
     ...(missingCreate === undefined ? [] : [missingCreate]),
-    ...(await installedElsewhere(session, managedSchema, created)),
+    ...(await alreadyInstalled(session, managedSchema, changes)),
   ];
 }
 
@@ -115,7 +112,7 @@ export async function missingCreateExtensions(
   session: Session,
   units: readonly ReplayUnit[],
 ): Promise<ExtensionCreateNotPermitted | undefined> {
-  const created = createdExtensions(await unitExtensionStatements(units));
+  const created = createdExtensions(await unitExtensionChanges(units));
   return createNotPermitted(
     session,
     created.map(({ name }) => name),
@@ -148,79 +145,39 @@ export function extensionRefusalError(
       return new ExtensionVersionUnavailableError(target, refusal);
     case "create-not-permitted":
       return new ExtensionCreateNotPermittedError(target, refusal);
-    case "installed-elsewhere":
-      return new ExtensionInstalledElsewhereError(target, refusal);
+    case "already-installed":
+      return new ExtensionAlreadyInstalledError(target, refusal);
   }
 }
 
-/** Each extension statement naming a version in `units`' files, in run order. */
-async function unitExtensionStatements(
-  units: readonly ReplayUnit[],
-): Promise<UnitExtensionStatement[]> {
-  const found: UnitExtensionStatement[] = [];
-  for (const unit of units) {
-    for (const { file, sql } of unit.files) {
-      // Every file passed the deploy-time rules, so it parses.
-      const parsed = await parseSqlFile({ path: file, text: sql });
-      for (const statement of extensionVersionStatements(
-        parsed.ok ? parsed.statements : [],
-      )) {
-        found.push({ ...statement, unit: unit.label });
-      }
-    }
-  }
-  return found;
-}
-
-/** Each extension `statements` create, with the first unit creating it. */
+/** Each extension `changes` create, with the first unit creating it. */
 function createdExtensions(
-  statements: readonly UnitExtensionStatement[],
+  changes: readonly UnitExtensionChange[],
 ): { readonly name: string; readonly unit: string }[] {
   const created = new Map<string, string>();
-  for (const { name, unit, creates } of statements) {
-    if (creates && !created.has(name)) {
+  for (const { name, unit, change } of changes) {
+    if (change === "create" && !created.has(name)) {
       created.set(name, unit);
     }
   }
   return [...created].map(([name, unit]) => ({ name, unit }));
 }
 
-/** (a): each version `statements` name that the target doesn't offer, once. */
+/** (a): each version `changes` name that the target doesn't offer, once. */
 async function versionsUnavailable(
   session: Session,
-  statements: readonly UnitExtensionStatement[],
+  changes: readonly UnitExtensionChange[],
 ): Promise<ExtensionVersionUnavailable[]> {
-  const { rows } = await session.query<{ name: string; version: string }>(
-    "SELECT name, version FROM pg_catalog.pg_available_extension_versions WHERE name = ANY($1)",
-    [statements.map(({ name }) => name)],
-  );
-  const refusals: ExtensionVersionUnavailable[] = [];
-  for (const { name, version, unit, creates } of statements) {
-    if (
-      version === undefined ||
-      rows.some((row) => row.name === name && row.version === version) ||
-      refusals.some((r) => r.extension === name && r.version === version)
-    ) {
-      continue;
-    }
-    const available = rows
-      .filter((row) => row.name === name)
-      .map((row) => row.version)
-      .sort(compareExtensionVersions);
-    const offers =
-      available.length === 0
-        ? `it doesn't offer ${name}`
-        : `it offers ${name} ${available.join(", ")}`;
-    refusals.push({
+  return (await unavailableVersions(session, changes)).map(
+    ({ name, version, unit, change, available }) => ({
       kind: "version-unavailable",
       extension: name,
       version,
       unit,
       available,
-      message: `the target can't install ${name} ${version}, which ${unit} ${creates ? "installs" : "updates to"}: ${offers}`,
-    });
-  }
-  return refusals;
+      message: `the target can't install ${name} ${version}, which ${unit} ${change === "create" ? "installs" : "updates to"}: ${offeredVersions(name, available)}`,
+    }),
+  );
 }
 
 /** (b): when `extensions` isn't empty and the deploy role lacks CREATE on the database. */
@@ -259,41 +216,45 @@ export function createExtensionMessage(
   return `the deploy role ${missing.role} needs CREATE on database ${missing.database} to create ${what} (a DBA runs: ${missing.fix})`;
 }
 
-/** (c): each extension `created` names that is installed outside `managedSchema`. */
-async function installedElsewhere(
+/**
+ * (c): each extension `changes` create that the target already has, unless
+ * an earlier change drops it first.
+ */
+async function alreadyInstalled(
   session: Session,
   managedSchema: string,
-  created: readonly { readonly name: string; readonly unit: string }[],
-): Promise<ExtensionInstalledElsewhere[]> {
-  if (created.length === 0) {
+  changes: readonly UnitExtensionChange[],
+): Promise<ExtensionAlreadyInstalled[]> {
+  if (!changes.some(({ change }) => change === "create")) {
     return [];
   }
-  const { rows } = await session.query<{
-    name: string;
-    schema: string;
-    owner: string;
-  }>(
-    `SELECT e.extname AS name, n.nspname AS schema, pg_catalog.pg_get_userbyid(e.extowner) AS owner
-       FROM pg_catalog.pg_extension e
-       JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
-      WHERE e.extname = ANY($1) AND n.nspname <> $2`,
-    [created.map(({ name }) => name), managedSchema],
+  const present = new Map(
+    (await installedExtensions(session)).map((e) => [e.name, e]),
   );
-  return created.flatMap(({ name, unit }) => {
-    const row = rows.find((r) => r.name === name);
-    return row === undefined
-      ? []
-      : [
-          {
-            kind: "installed-elsewhere",
-            extension: name,
-            unit,
-            schema: row.schema,
-            owner: row.owner,
-            message: `${unit} creates extension ${name}, but the target already has it in schema ${row.schema}, owned by ${row.owner}: move it with ALTER EXTENSION ${name} SET SCHEMA, or drop it`,
-          },
-        ];
-  });
+  const refusals: ExtensionAlreadyInstalled[] = [];
+  for (const { name, unit, change } of changes) {
+    if (change === "update") {
+      continue;
+    }
+    // Once created or dropped, it is the units' own: refused once at most.
+    const installed = present.get(name);
+    present.delete(name);
+    if (change === "drop" || installed === undefined) {
+      continue;
+    }
+    const managed = installed.schema === managedSchema;
+    const where = `${managed ? "the managed schema" : "schema"} ${installed.schema}`;
+    const why = managed
+      ? ""
+      : " (moving it doesn't help: extension names are unique in a database)";
+    refusals.push({
+      kind: "already-installed",
+      unit,
+      installed,
+      message: `${unit} creates extension ${name}, but the target already has it in ${where}, owned by ${installed.owner}: drop it, so that ${unit} installs it${why}`,
+    });
+  }
+  return refusals;
 }
 
 /**
@@ -346,24 +307,20 @@ export class ExtensionCreateNotPermittedError extends SuperDeployError {
 
 /**
  * A command refused a target before changing anything: an extension what
- * would be deployed creates is already installed in another schema. Nothing
- * was written, and no attempt was logged.
+ * would be deployed creates is already installed, in the managed schema or
+ * another one. Nothing was written, and no attempt was logged.
  */
-export class ExtensionInstalledElsewhereError extends SuperDeployError {
-  readonly code = "extension-installed-elsewhere";
+export class ExtensionAlreadyInstalledError extends SuperDeployError {
+  readonly code = "extension-already-installed";
   readonly target: string;
-  readonly extension: string;
   readonly unit: string;
-  readonly schema: string;
-  readonly owner: string;
+  readonly installed: InstalledExtension;
 
-  constructor(target: string, refusal: ExtensionInstalledElsewhere) {
+  constructor(target: string, refusal: ExtensionAlreadyInstalled) {
     super(refusedMessage(target, refusal));
     this.target = target;
-    this.extension = refusal.extension;
     this.unit = refusal.unit;
-    this.schema = refusal.schema;
-    this.owner = refusal.owner;
+    this.installed = refusal.installed;
   }
 }
 

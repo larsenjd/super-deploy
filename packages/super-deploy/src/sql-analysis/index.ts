@@ -59,9 +59,9 @@ export {
 } from "./destructive.ts";
 export {
   compareExtensionVersions,
-  type ExtensionVersionStatement,
+  type ExtensionChange,
+  extensionChanges,
   extensionElsewhereFinding,
-  extensionVersionStatements,
   isSupportedExtension,
   pinnedExtensions,
   unsupportedExtensionFinding,

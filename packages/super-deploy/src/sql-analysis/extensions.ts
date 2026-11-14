@@ -15,7 +15,13 @@ import {
   supportedExtensionObjects,
   supportedExtensionVersions,
 } from "./supported-extensions.ts";
-import { defElemString, defElems, type Json, unwrap } from "./syntax-tree.ts";
+import {
+  defElemString,
+  defElems,
+  type Json,
+  stringList,
+  unwrap,
+} from "./syntax-tree.ts";
 
 /** What a `CREATE EXTENSION` statement says, from its syntax tree. */
 export interface CreateExtension {
@@ -60,38 +66,54 @@ export function pinnedExtensions(
 }
 
 /**
- * An extension statement that names a version: a `CREATE EXTENSION`
- * (`creates`, its `VERSION` if given) or an `ALTER EXTENSION ... UPDATE TO`.
+ * An extension statement a deployment runs: a `CREATE EXTENSION` (its
+ * `VERSION` if given), an `ALTER EXTENSION ... UPDATE TO` or a
+ * `DROP EXTENSION` (one per extension it names, without a version).
  */
-export interface ExtensionVersionStatement {
+export interface ExtensionChange {
   readonly name: string;
   readonly version: string | undefined;
-  readonly creates: boolean;
+  readonly change: "create" | "update" | "drop";
 }
 
 /**
- * Each `CREATE EXTENSION` and `ALTER EXTENSION ... UPDATE TO` in
- * `statements` other than plpgsql's, in statement order: what a target must
- * be able to install for them to run.
+ * Each `CREATE EXTENSION`, `ALTER EXTENSION ... UPDATE TO` and
+ * `DROP EXTENSION` in `statements` other than plpgsql's, in statement order:
+ * what a target must be able to install for them to run, and which
+ * extensions they drop first.
  */
-export function extensionVersionStatements(
+export function extensionChanges(
   statements: readonly ParsedStatement[],
-): ExtensionVersionStatement[] {
-  return statements.flatMap((statement) => {
+): ExtensionChange[] {
+  return statements.flatMap((statement): ExtensionChange[] => {
     const create = unwrap(statement.node, "CreateExtensionStmt");
     const alter = unwrap(statement.node, "AlterExtensionStmt");
-    const found =
+    const drop = unwrap(statement.node, "DropStmt");
+    const found: ExtensionChange[] =
       create !== undefined
-        ? { ...createExtension(create), creates: true }
+        ? [{ ...versionOf(create), change: "create" }]
         : alter !== undefined
-          ? { ...createExtension(alter), creates: false }
-          : undefined;
-    return found === undefined ||
-      found.name === "plpgsql" ||
-      (!found.creates && found.version === undefined)
-      ? []
-      : [{ name: found.name, version: found.version, creates: found.creates }];
+          ? [{ ...versionOf(alter), change: "update" }]
+          : drop?.removeType === "OBJECT_EXTENSION"
+            ? stringList(drop.objects).map((name) => ({
+                name,
+                version: undefined,
+                change: "drop",
+              }))
+            : [];
+    return found.filter(
+      ({ name, version, change }) =>
+        name !== "plpgsql" && (change !== "update" || version !== undefined),
+    );
   });
+}
+
+function versionOf(node: Json): {
+  name: string;
+  version: string | undefined;
+} {
+  const { name, version } = createExtension(node);
+  return { name, version };
 }
 
 /**

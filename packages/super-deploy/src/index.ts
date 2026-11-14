@@ -139,10 +139,10 @@ export {
 } from "./config/config.ts";
 export { CommitOutcomeUnknownError } from "./deploy/engine.ts";
 export {
+  type ExtensionAlreadyInstalled,
+  ExtensionAlreadyInstalledError,
   type ExtensionCreateNotPermitted,
   ExtensionCreateNotPermittedError,
-  type ExtensionInstalledElsewhere,
-  ExtensionInstalledElsewhereError,
   type ExtensionRefusal,
   type ExtensionVersionUnavailable,
   ExtensionVersionUnavailableError,
@@ -197,7 +197,6 @@ export {
 export {
   CannotWipeError,
   ExtensionSurvivesWipeError,
-  type SurvivingExtension,
   WipeDropFailedError,
   WipeFailedError,
 } from "./deploy/wipe.ts";
@@ -236,6 +235,7 @@ export {
   DestructiveNotAcknowledgedError,
   OverwriteNotAcknowledgedError,
 } from "./questions.ts";
+export type { InstalledExtension } from "./rehearsal/extension-availability.ts";
 export { OrderDependenceError } from "./rehearsal/order-independence.ts";
 export type {
   FileRollback,
