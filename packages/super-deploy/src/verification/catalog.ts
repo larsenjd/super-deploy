@@ -15,6 +15,14 @@
 // their values are built by position (ROW(...), '(a,b)'), so an attribute's
 // position among the live ones is part of the type (pg-delta doesn't diff
 // it). So a column's comment names the column, never its attnum (objsubid).
+// Extensions are read across the whole database, not only the managed
+// schema: each is one fact, its name, schema and version (`extension`), and
+// any extension in a target's database is compared, wherever it lives, but
+// plpgsql in pg_catalog. Its members (pg_depend deptype `e`: functions,
+// types, operators, an extension's views and their columns...) never appear
+// in any kind, so drift, rehearsal differences and adoption name an
+// extension once, never its members one by one (ADR-0009).
+//
 // Ownership, grants (ACLs on objects, columns and the managed schema),
 // policies and row-level security flags are never read: they are set up on
 // targets outside super-deploy (ADR-0006), so they are never drift and a
@@ -50,6 +58,17 @@ const address = (classTable: string, oid: string, sub = "0") =>
   `'${classTable}'::regclass, ${oid}, ${sub}`;
 
 /**
+ * True unless the object (its class, as a regclass or a table's name, and
+ * oid) is a member of an extension (pg_depend deptype `e`): members go with
+ * their extension, the one fact the `extension` query reads.
+ */
+const notExtensionMember = (classOf: string, oid: string) => {
+  const classId = /^pg_\w+$/.test(classOf) ? `'${classOf}'::regclass` : classOf;
+  return `not exists (select 1 from pg_depend member
+      where member.classid = ${classId} and member.objid = ${oid} and member.deptype = 'e')`;
+};
+
+/**
  * Each query selects the object it describes (its class, object and
  * sub-object ids, as for pg_describe_object) and `line`; `$1` is the managed
  * schema.
@@ -63,7 +82,8 @@ const queries: Readonly<Record<string, string>> = {
       || ' partkey=' || coalesce(case when c.relkind = 'p' then pg_get_partkeydef(c.oid) end, '-')
       || ' bound=' || coalesce(pg_get_expr(c.relpartbound, c.oid), '-')
     from pg_class c join pg_namespace n on n.oid = c.relnamespace left join pg_am am on am.oid = c.relam
-    where n.nspname = $1 and c.relkind in ('r','v','m','S','c','p','f')`,
+    where n.nspname = $1 and c.relkind in ('r','v','m','S','c','p','f')
+      and ${notExtensionMember("pg_class", "c.oid")}`,
   column: `
     select ${address("pg_class", "a.attrelid", "a.attnum")},
       c.relname || '.' || a.attname || ' ' || format_type(a.atttypid, a.atttypmod)
@@ -75,44 +95,49 @@ const queries: Readonly<Record<string, string>> = {
       || case when c.relkind = 'c' then ' position=' || row_number() over (partition by a.attrelid order by a.attnum) else '' end
     from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
     left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
-    where n.nspname = $1 and a.attnum > 0 and not a.attisdropped and c.relkind in ('r','v','m','c','p','f')`,
+    where n.nspname = $1 and a.attnum > 0 and not a.attisdropped and c.relkind in ('r','v','m','c','p','f')
+      and ${notExtensionMember("pg_class", "c.oid")}`,
   constraint: `
     select ${address("pg_constraint", "k.oid")},
       coalesce(c.relname, t.typname) || ' ' || k.conname || ' ' || k.contype::text || ' ' || pg_get_constraintdef(k.oid)
       || ' deferrable=' || k.condeferrable || ' deferred=' || k.condeferred || ' validated=' || k.convalidated
     from pg_constraint k join pg_namespace n on n.oid = k.connamespace
     left join pg_class c on c.oid = k.conrelid left join pg_type t on t.oid = k.contypid
-    where n.nspname = $1`,
+    where n.nspname = $1 and ${notExtensionMember("pg_constraint", "k.oid")}
+      and ${notExtensionMember("pg_class", "k.conrelid")} and ${notExtensionMember("pg_type", "k.contypid")}`,
   index: `
     select ${address("pg_class", "i.indexrelid")}, pg_get_indexdef(i.indexrelid)
       || ' valid=' || i.indisvalid || ' clustered=' || i.indisclustered || ' replident=' || i.indisreplident
     from pg_index i join pg_class c on c.oid = i.indexrelid join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = $1`,
+    where n.nspname = $1 and ${notExtensionMember("pg_class", "i.indexrelid")}
+      and ${notExtensionMember("pg_class", "i.indrelid")}`,
   view: `
     select ${address("pg_class", "c.oid")}, c.relkind::text || ' ' || c.relname || ' ' || pg_get_viewdef(c.oid, true)
     from pg_class c join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = $1 and c.relkind in ('v','m')`,
+    where n.nspname = $1 and c.relkind in ('v','m') and ${notExtensionMember("pg_class", "c.oid")}`,
   sequence: `
     select ${address("pg_class", "s.seqrelid")},
       c.relname || ' ' || format_type(s.seqtypid, null) || ' start=' || s.seqstart || ' inc=' || s.seqincrement
       || ' min=' || s.seqmin || ' max=' || s.seqmax || ' cache=' || s.seqcache || ' cycle=' || s.seqcycle
     from pg_sequence s join pg_class c on c.oid = s.seqrelid join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = $1`,
+    where n.nspname = $1 and ${notExtensionMember("pg_class", "s.seqrelid")}`,
   routine: `
     select ${address("pg_proc", "p.oid")}, pg_get_functiondef(p.oid)
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = $1 and p.prokind in ('f','p')`,
+    where n.nspname = $1 and p.prokind in ('f','p') and ${notExtensionMember("pg_proc", "p.oid")}`,
   trigger: `
     select ${address("pg_trigger", "t.oid")}, pg_get_triggerdef(t.oid) || ' enabled=' || t.tgenabled::text
     from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = $1 and not t.tgisinternal`,
+    where n.nspname = $1 and not t.tgisinternal and ${notExtensionMember("pg_trigger", "t.oid")}
+      and ${notExtensionMember("pg_class", "t.tgrelid")}`,
   type: `
     select ${address("pg_type", "t.oid")},
       t.typtype::text || ' ' || t.typname || ' base=' || coalesce(format_type(t.typbasetype, t.typtypmod), '-')
       || ' notnull=' || t.typnotnull || ' default=' || coalesce(t.typdefault, '-')
     from pg_type t join pg_namespace n on n.oid = t.typnamespace
     where n.nspname = $1 and t.typtype in ('d','c','e','r')
-      and not exists (select 1 from pg_class c where c.reltype = t.oid and c.relkind <> 'c')`,
+      and not exists (select 1 from pg_class c where c.reltype = t.oid and c.relkind <> 'c')
+      and ${notExtensionMember("pg_type", "t.oid")}`,
   comment: `
     select d.classoid, d.objoid, d.objsubid,
       d.classoid::regclass || ' ' || coalesce(
@@ -128,15 +153,14 @@ const queries: Readonly<Record<string, string>> = {
     from pg_description d
     where d.classoid in ('pg_class'::regclass, 'pg_proc'::regclass, 'pg_constraint'::regclass,
                          'pg_type'::regclass, 'pg_trigger'::regclass)
+      and ${notExtensionMember("d.classoid", "d.objoid")}
       and exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.oid = d.objoid and n.nspname = $1
                   union all select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where p.oid = d.objoid and n.nspname = $1
                   union all select 1 from pg_constraint k join pg_namespace n on n.oid = k.connamespace where k.oid = d.objoid and n.nspname = $1
                   union all select 1 from pg_type t join pg_namespace n on n.oid = t.typnamespace where t.oid = d.objoid and n.nspname = $1
                   union all select 1 from pg_trigger g join pg_class c on c.oid = g.tgrelid join pg_namespace n on n.oid = c.relnamespace where g.oid = d.objoid and n.nspname = $1)`,
   // Everything else a schema can hold. Desired schemas can't create these,
-  // so rehearsals never have any; on a target they are drift. Members of an
-  // extension in the schema (pg_depend deptype 'e': its functions, types,
-  // operators...) go with their extension: only it is listed.
+  // so rehearsals never have any; on a target they are drift.
   other: `
     select o.class, o.obj, 0, o.line
     from (
@@ -152,9 +176,7 @@ const queries: Readonly<Record<string, string>> = {
       union all
       select 'pg_statistic_ext'::regclass, x.oid, pg_get_statisticsobjdef(x.oid)
       from pg_statistic_ext x join pg_namespace n on n.oid = x.stxnamespace where n.nspname = $1
-      union all
-      select 'pg_extension'::regclass, e.oid, e.extname || ' ' || e.extversion
-      from pg_extension e join pg_namespace n on n.oid = e.extnamespace where n.nspname = $1
+
       union all
       select 'pg_publication_rel'::regclass, pr.oid, ${describe("pg_publication_rel", "pr.oid")}
       from pg_publication_rel pr join pg_class c on c.oid = pr.prrelid join pg_namespace n on n.oid = c.relnamespace where n.nspname = $1
@@ -175,24 +197,28 @@ const queries: Readonly<Record<string, string>> = {
       join pg_namespace n on n.oid = m.ns
       where n.nspname = $1
     ) o(class, obj, line)
-    where not exists (
-      select 1 from pg_depend d
-      join pg_extension e on e.oid = d.refobjid
-      join pg_namespace n on n.oid = e.extnamespace
-      where d.classid = o.class and d.objid = o.obj and d.deptype = 'e'
-        and d.refclassid = 'pg_extension'::regclass and n.nspname = $1)`,
+    where ${notExtensionMember("o.class", "o.obj")}`,
+  // Every extension in the database, wherever it lives, as one fact: its
+  // members are in no other kind. plpgsql, which every database has, is left
+  // out; `$1` is unused.
+  extension: `
+    select ${address("pg_extension", "e.oid")},
+      e.extname || ' schema=' || n.nspname || ' version=' || e.extversion
+    from pg_extension e join pg_namespace n on n.oid = e.extnamespace
+    where $1::text is not null and not (e.extname = 'plpgsql' and n.nspname = 'pg_catalog')`,
 };
 
 const bindingQueries: Readonly<Record<string, string>> = {
   // User objects only (OIDs from FirstNormalObjectId); a rehearsal database holds nothing else.
   depends: `
-    select classid, objid, objsubid,
-      pg_describe_object(classid, objid, objsubid) || ' -> ' || pg_describe_object(refclassid, refobjid, refobjsubid)
-      || ' [' || deptype::text || ']'
-    from pg_depend
-    where objid >= 16384 and deptype in ('n', 'a') and $1::text is not null
-      and pg_describe_object(classid, objid, objsubid) not like '%pg_toast%'
-      and pg_describe_object(refclassid, refobjid, refobjsubid) not like '%pg_toast%'`,
+    select d.classid, d.objid, d.objsubid,
+      pg_describe_object(d.classid, d.objid, d.objsubid) || ' -> ' || pg_describe_object(d.refclassid, d.refobjid, d.refobjsubid)
+      || ' [' || d.deptype::text || ']'
+    from pg_depend d
+    where d.objid >= 16384 and d.deptype in ('n', 'a') and $1::text is not null
+      and ${notExtensionMember("d.classid", "d.objid")}
+      and pg_describe_object(d.classid, d.objid, d.objsubid) not like '%pg_toast%'
+      and pg_describe_object(d.refclassid, d.refobjid, d.refobjsubid) not like '%pg_toast%'`,
   foreignKeyIndex: `
     select ${address("pg_constraint", "k.oid")},
       k.conrelid::regclass::text || '.' || k.conname || ' uses index ' || k.conindid::regclass::text
@@ -240,7 +266,10 @@ function readSettings(schema: string): string[] {
   ];
 }
 
-/** Every fact about `schema`, sorted by `kind: line`. */
+/**
+ * Every fact about `schema`, and every extension in the database but
+ * plpgsql, sorted by `kind: line`.
+ */
 export async function catalogFacts(
   session: Session,
   schema: string,

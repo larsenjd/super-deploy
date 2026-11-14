@@ -216,6 +216,33 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
     ]);
   });
 
+  test("refuses without asking a target with an extension installed by hand, naming the extension once", async () => {
+    const { dir, database } = await pendingProject();
+    // Migration 2 applied by hand, and an extension no migration creates.
+    await asDeployRole(
+      server,
+      database,
+      `create table orders (id bigint primary key, customer_id bigint not null, note text);
+       create extension citext;`,
+    );
+
+    const terminal = spawnTerminal(["mark", "--target", "dev"], {
+      cwd: dir.root,
+    });
+
+    const shown = await terminal.waitFor(
+      "Error: Target dev does not match a replica of its migrations up to 00002-add-orders: extension citext (only on the target). Nothing was recorded",
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(shown).toMatch(
+      /^ {2}extension citext:\r?\n {4}only on the target: extension: citext schema=public version=1\.8\r?\n/m,
+    );
+    expect(shown).not.toContain("Type YES");
+    expect(await recordedMigrations(database)).toEqual([
+      { number: 1, recorded_how: "deployed", recovery: null, attempt: 1 },
+    ]);
+  });
+
   test("refuses without asking when the hand-applied objects belong to a role the deploy role isn't a member of, until it owns them", async () => {
     const deployer = roleName("deployer");
     const database = targetDatabaseName();
