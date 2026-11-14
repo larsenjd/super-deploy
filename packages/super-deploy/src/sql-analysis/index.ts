@@ -58,9 +58,13 @@ export {
   type LockWarningKind,
 } from "./destructive.ts";
 export {
+  compareExtensionVersions,
   type ExtensionVersionStatement,
+  extensionElsewhereFinding,
   extensionVersionStatements,
+  isSupportedExtension,
   pinnedExtensions,
+  unsupportedExtensionFinding,
 } from "./extensions.ts";
 export {
   alternativeOrder,

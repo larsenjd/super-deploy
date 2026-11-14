@@ -200,7 +200,7 @@ export {
   WipeFailedError,
 } from "./deploy/wipe.ts";
 export type { PlannedStatement } from "./differ/index.ts";
-export { DifferError } from "./differ/index.ts";
+export { DifferError, ExtensionDowngradeError } from "./differ/index.ts";
 export {
   type ErrorCode,
   type SessionEnding,

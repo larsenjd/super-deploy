@@ -8,6 +8,7 @@
 
 import type { ParsedStatement } from "./parse.ts";
 import type { RuleId } from "./rule-catalogue.ts";
+import { quoteIdentifier } from "./statement-names.ts";
 import {
   type ExtensionObjects,
   type SupportedExtension,
@@ -93,9 +94,28 @@ export function extensionVersionStatements(
   });
 }
 
+/**
+ * Orders extension versions as dotted numbers, `1.10` after `1.9`: negative
+ * when `a` is the lower. Every supported extension's versions are.
+ */
+export function compareExtensionVersions(a: string, b: string): number {
+  return a.localeCompare(b, "en", { numeric: true });
+}
+
 /** True for one of the 17 supported extensions. */
 export function isSupportedExtension(name: string): name is SupportedExtension {
   return Object.hasOwn(supportedExtensionVersions, name);
+}
+
+/**
+ * An extension's name as SQL writes it: bare for a supported extension
+ * whose name is a plain identifier (none is a keyword), else quoted
+ * (`"uuid-ossp"`).
+ */
+export function extensionSqlName(name: string): string {
+  return isSupportedExtension(name) && /^[a-z_][a-z0-9_]*$/.test(name)
+    ? name
+    : quoteIdentifier(name);
 }
 
 /** The supported extensions' names, comma-separated, for messages. */
@@ -118,6 +138,24 @@ export function extensionObjects(
   return Object.hasOwn(versions, version) ? versions[version] : undefined;
 }
 
+/**
+ * The names of the functions the listed extensions provide at any version
+ * listed for them: what deploy-time SQL may call besides pg_catalog's.
+ */
+export function listedExtensionFunctions(
+  extensions: Readonly<Record<string, readonly string[]>>,
+): Set<string> {
+  const names = new Set<string>();
+  for (const [name, versions] of Object.entries(extensions)) {
+    for (const version of versions) {
+      for (const routine of extensionObjects(name, version)?.functions ?? []) {
+        names.add(routine.name);
+      }
+    }
+  }
+  return names;
+}
+
 /** A refusal of an extension statement, by a rule of the catalogue. */
 export interface ExtensionFinding {
   readonly rule: RuleId;
@@ -129,6 +167,21 @@ export function unsupportedExtensionFinding(name: string): ExtensionFinding {
   return {
     rule: "unsupported-extension",
     message: `${name} is not a supported extension: supported extensions are ${supportedExtensionList()}`,
+  };
+}
+
+/**
+ * A supported extension a database holds in `schema`, outside the managed
+ * schema, where every extension lives.
+ */
+export function extensionElsewhereFinding(
+  name: string,
+  schema: string,
+  managedSchema: string,
+): ExtensionFinding {
+  return {
+    rule: "extension-outside-managed-schema",
+    message: `${name} is in schema ${schema}, outside the managed schema ${managedSchema}, where extensions live: move it there (ALTER EXTENSION ${extensionSqlName(name)} SET SCHEMA ${quoteIdentifier(managedSchema)}) or drop it`,
   };
 }
 

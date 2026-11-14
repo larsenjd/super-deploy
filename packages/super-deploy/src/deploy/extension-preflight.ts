@@ -26,8 +26,8 @@
 import type { Session } from "../adapters/types.ts";
 import { joined, SuperDeployError } from "../errors.ts";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
-import { compareVersions } from "../rehearsal/throwaway.ts";
 import {
+  compareExtensionVersions,
   type ExtensionVersionStatement,
   extensionVersionStatements,
   parseSqlFile,
@@ -195,7 +195,7 @@ async function versionsUnavailable(
     [statements.map(({ name }) => name)],
   );
   const refusals: ExtensionVersionUnavailable[] = [];
-  for (const { name, version, unit } of statements) {
+  for (const { name, version, unit, creates } of statements) {
     if (
       version === undefined ||
       rows.some((row) => row.name === name && row.version === version) ||
@@ -206,7 +206,7 @@ async function versionsUnavailable(
     const available = rows
       .filter((row) => row.name === name)
       .map((row) => row.version)
-      .sort(compareVersions);
+      .sort(compareExtensionVersions);
     const offers =
       available.length === 0
         ? `it doesn't offer ${name}`
@@ -217,7 +217,7 @@ async function versionsUnavailable(
       version,
       unit,
       available,
-      message: `the target can't install ${name} ${version}, which ${unit} installs: ${offers}`,
+      message: `the target can't install ${name} ${version}, which ${unit} ${creates ? "installs" : "updates to"}: ${offers}`,
     });
   }
   return refusals;

@@ -18,6 +18,7 @@ import { AdapterError } from "../adapters/types.ts";
 import { errorReason, SuperDeployError } from "../errors.ts";
 import type { ParsedStatement } from "../sql-analysis/index.ts";
 import {
+  compareExtensionVersions,
   externalSchemasBoundAtCreate,
   isAlreadyInstalled,
   pinnedExtensions,
@@ -318,7 +319,7 @@ export class RehearsalExtensionVersionError extends SuperDeployError {
     version: string,
     available: readonly string[],
   ) {
-    const offered = [...available].sort(compareVersions);
+    const offered = [...available].sort(compareExtensionVersions);
     super(
       `The rehearsal server can't install ${extension} ${version}: ${offered.length === 0 ? `it doesn't offer ${extension}` : `it offers ${extension} ${offered.join(", ")}`}. A rehearsal installs exactly the version the desired schema pins, so use a rehearsal server that offers ${extension} ${version}`,
     );
@@ -326,11 +327,6 @@ export class RehearsalExtensionVersionError extends SuperDeployError {
     this.version = version;
     this.available = offered;
   }
-}
-
-/** Orders versions such as `1.10` after `1.9`. */
-export function compareVersions(a: string, b: string): number {
-  return a.localeCompare(b, "en", { numeric: true });
 }
 
 /**

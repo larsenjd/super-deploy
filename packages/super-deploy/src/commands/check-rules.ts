@@ -4,6 +4,7 @@
 // snapshots in a rule context come from the snapshot reader
 // (store/snapshots.ts), which its callers use.
 import { posix } from "node:path";
+import type { ResolvedConfig } from "../config/config.ts";
 import type { ReplayUnit } from "../rehearsal/replay.ts";
 import {
   analyseMigration,
@@ -14,16 +15,20 @@ import {
   type MigrationAnalysis,
   type ParsedStatement,
   parseSqlFile,
+  type RuleContext,
   type RuleViolation,
   type SqlFile,
   SqlRuleViolationError,
 } from "../sql-analysis/index.ts";
 import { deployTimeFileKinds } from "../store/migrations.ts";
 
-export interface MigrationRuleContext {
-  readonly managedSchema: string;
-  /** Schemas PL/pgSQL bodies may reference. */
-  readonly externalSchemas: readonly string[];
+/**
+ * `extensions` are the extensions whose functions scripts may call: the
+ * config's for a draft (`configuredRules`), every version the tool knows
+ * (`supportedExtensionVersions`) for a finalized migration, which keeps
+ * replaying after its extension leaves the config (ADR-0009).
+ */
+export interface MigrationRuleContext extends RuleContext {
   /**
    * The desired schemas on either side of the migration (the previous
    * migration's snapshot and its own, or the current desired schema for the
@@ -39,6 +44,15 @@ export interface MigrationRuleContext {
 }
 
 type DesiredSchema = readonly SqlFile[] | readonly ParsedStatement[];
+
+/** The rule context a project's config gives its desired schema and draft. */
+export function configuredRules(config: ResolvedConfig): RuleContext {
+  return {
+    managedSchema: config.managedSchema,
+    externalSchemas: config.externalSchemas,
+    extensions: config.extensions,
+  };
+}
 
 /** Every rule violation in a migration's or the draft's deploy-time files, in the order they run. */
 export async function checkReplayUnit(
@@ -63,6 +77,7 @@ export async function analyseReplayUnit(
   return analyseMigration(files, {
     managedSchema: context.managedSchema,
     externalSchemas: context.externalSchemas,
+    extensions: context.extensions,
     identityColumns: await identityColumnsIn(context.schemas),
     ...(context.previous === undefined
       ? {}

@@ -41,6 +41,7 @@ import {
   type RuleViolation,
   type SqlFile,
   SqlRuleViolationError,
+  supportedExtensionVersions,
 } from "../sql-analysis/index.ts";
 import {
   readDesiredSchema,
@@ -318,7 +319,13 @@ async function ruleProblems(
       const { migration } = step;
       const before = step.before.sqlFiles;
       const own = step.after.sqlFiles;
-      const context = { ...rules, schemas: [before, own] };
+      // A finalized migration's scripts may call any supported extension's
+      // functions: it keeps replaying after its extension leaves the config.
+      const context = {
+        ...rules,
+        extensions: supportedExtensionVersions,
+        schemas: [before, own],
+      };
       collect(
         await analyseReplayUnit(
           seededFiles(

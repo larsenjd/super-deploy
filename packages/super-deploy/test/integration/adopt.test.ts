@@ -259,9 +259,87 @@ describe("adopt", () => {
     }
   });
 
-  test("refuses an extension once, not each of its functions, types and operators", async () => {
+  test("writes a supported extension the config lists at its installed version as CREATE EXTENSION ... VERSION, with nothing for its members", async () => {
+    const { dir, project } = await adoptableProject(
+      `
+      create schema app;
+      create extension citext schema app version '1.8';
+      create table app.users (id bigint primary key, email app.citext not null);
+    `,
+      'managedSchema: "app", extensions: { citext: ["1.8"] },',
+    );
+    try {
+      const result = await adopt(project, { target: "prod" });
+
+      expect(result.files).toEqual([
+        "data-model/desired-schema/extensions.sql",
+        "data-model/desired-schema/tables.sql",
+      ]);
+      const extensions = await readFile(
+        dir.path("data-model/desired-schema/extensions.sql"),
+        "utf8",
+      );
+      expect(
+        extensions.split("\n").filter((line) => !line.startsWith("--")),
+      ).toEqual(["", "CREATE EXTENSION citext VERSION '1.8';", ""]);
+      expect(
+        await readFile(
+          dir.path("data-model/desired-schema/tables.sql"),
+          "utf8",
+        ),
+      ).toMatch(/email"? app\.citext NOT NULL/);
+      expect((await status(project, { target: "prod" })).drift).toEqual([]);
+      expect((await draft(project, { name: "no change" })).statements).toEqual(
+        [],
+      );
+    } finally {
+      await project.close();
+    }
+  });
+
+  test.each([
+    {
+      config: "",
+      rule: "extension-not-listed",
+      reason:
+        'citext is not listed in the config\'s extensions: add it, e.g. extensions: { citext: ["1.8"] }',
+    },
+    {
+      config: 'extensions: { citext: ["1.6"] },',
+      rule: "extension-version-not-listed",
+      reason:
+        "citext 1.8 is not listed in the config's extensions: it lists 1.6",
+    },
+  ])(
+    "refuses a supported extension once when the config doesn't list its installed version ($rule)",
+    async ({ config, rule, reason }) => {
+      const { dir, project } = await adoptableProject(
+        `
+      create schema app;
+      create extension citext schema app version '1.8';
+      create table app.users (id bigint primary key, email app.citext not null);
+    `,
+        `managedSchema: "app", ${config}`,
+      );
+      try {
+        const error = await adopt(project, { target: "prod" }).catch(
+          (e: unknown) => e,
+        );
+
+        expect(error).toBeInstanceOf(AdoptUnsupportedError);
+        expect((error as AdoptUnsupportedError).objects).toEqual([
+          { object: "extension citext", rule, reason },
+        ]);
+        expect(dir.exists("data-model/desired-schema")).toBe(false);
+      } finally {
+        await project.close();
+      }
+    },
+  );
+
+  test("refuses an extension that isn't supported once, not each of its functions, views and their columns", async () => {
     const { project } = await adoptableProject(`
-      create extension citext;
+      create extension pg_stat_statements;
       create table t (id bigint primary key);
     `);
     try {
@@ -272,44 +350,60 @@ describe("adopt", () => {
       expect(error).toBeInstanceOf(AdoptUnsupportedError);
       expect((error as AdoptUnsupportedError).objects).toEqual([
         {
-          object: "extension citext",
-          rule: "unsupported-object",
-          reason: "Extensions other than plpgsql are not supported in V1",
+          object: "extension pg_stat_statements",
+          rule: "unsupported-extension",
+          reason: expect.stringMatching(
+            /^pg_stat_statements is not a supported extension: supported extensions are btree_gin, .*uuid-ossp$/,
+          ),
         },
       ]);
       expect((error as AdoptUnsupportedError).message).toContain(
-        "has 1 thing V1 doesn't support: extension citext.",
+        "has 1 thing V1 doesn't support: extension pg_stat_statements.",
       );
     } finally {
       await project.close();
     }
   });
 
-  test("refuses an extension outside the managed schema once too", async () => {
-    const { project } = await adoptableProject(
-      `
-      create extension pg_stat_statements schema public;
+  test.each([
+    {
+      extension: "citext",
+      rule: "extension-outside-managed-schema",
+      reason:
+        'citext is in schema public, outside the managed schema app, where extensions live: move it there (ALTER EXTENSION citext SET SCHEMA "app") or drop it',
+    },
+    {
+      extension: "pg_stat_statements",
+      rule: "unsupported-extension",
+      reason: expect.stringContaining(
+        "pg_stat_statements is not a supported extension",
+      ),
+    },
+  ])(
+    "refuses $extension outside the managed schema once, with the test it fails",
+    async ({ extension, rule, reason }) => {
+      const { project } = await adoptableProject(
+        `
+      create extension ${extension} schema public;
       create schema app;
       create table app.t (id bigint primary key);
     `,
-      'managedSchema: "app",',
-    );
-    try {
-      const error = await adopt(project, { target: "prod" }).catch(
-        (e: unknown) => e,
+        `managedSchema: "app", extensions: { citext: ["1.8"] },`,
       );
+      try {
+        const error = await adopt(project, { target: "prod" }).catch(
+          (e: unknown) => e,
+        );
 
-      expect(error).toBeInstanceOf(AdoptUnsupportedError);
-      expect((error as AdoptUnsupportedError).objects).toEqual([
-        expect.objectContaining({
-          object: "extension pg_stat_statements",
-          rule: "unsupported-object",
-        }),
-      ]);
-    } finally {
-      await project.close();
-    }
-  });
+        expect(error).toBeInstanceOf(AdoptUnsupportedError);
+        expect((error as AdoptUnsupportedError).objects).toEqual([
+          { object: `extension ${extension}`, rule, reason },
+        ]);
+      } finally {
+        await project.close();
+      }
+    },
+  );
 
   test("refuses a serial column once, naming the column, not its sequence", async () => {
     const { project } = await adoptableProject(`

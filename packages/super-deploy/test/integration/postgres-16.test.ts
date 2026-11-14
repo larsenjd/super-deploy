@@ -198,4 +198,45 @@ create table users (id bigint constraint users_pkey primary key, email citext no
       await project.close();
     }
   });
+
+  test("refuses up front an UPDATE TO version the target doesn't offer", async () => {
+    const legacy = await legacyServer.createDatabase();
+    const users = (
+      version: string,
+    ) => `create extension citext version '${version}';
+create table users (id bigint constraint users_pkey primary key, email citext not null);
+`;
+    const dir = await createTestProject({
+      config: config(
+        16,
+        `legacy: { adapter: postgresTarget({ connectionString: ${JSON.stringify(legacyServer.connectionString(legacy))} }) },`,
+        `extensions: { citext: ["1.6", "1.8"] },`,
+      ),
+      files: { "data-model/desired-schema/users.sql": users("1.6") },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await finalizeMigration(project, "add users");
+      await deploy(project, { target: "legacy" });
+      await dir.write("data-model/desired-schema/users.sql", users("1.8"));
+      await finalizeMigration(project, "raise citext");
+
+      const refusal = await deploy(project, { target: "legacy" }).catch(
+        (error: unknown) => error,
+      );
+
+      expect(refusal).toBeInstanceOf(ExtensionVersionUnavailableError);
+      expect((refusal as Error).message).toBe(
+        "Target legacy failed the extension pre-flight: the target can't install citext 1.8, which 00002-raise-citext updates to: it offers citext 1.4, 1.5, 1.6",
+      );
+      expect(
+        await legacyServer.query(
+          legacy,
+          "select extversion from pg_extension where extname = 'citext'",
+        ),
+      ).toEqual([{ extversion: "1.6" }]);
+    } finally {
+      await project.close();
+    }
+  });
 });
