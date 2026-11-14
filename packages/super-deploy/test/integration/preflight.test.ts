@@ -482,6 +482,49 @@ describe("the deploy role owns the managed schema", () => {
     }
     expect(await notOwned()).toEqual([]);
   });
+  test("refuses an extension in the managed schema another role created, with a fix that creates it again as the deploy role", async () => {
+    const { project, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { settings: `extensions: { citext: ["1.8"] },` },
+    );
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    // A DBA's installation, as the superuser.
+    await server.query(
+      "create extension citext schema public version '1.8'",
+      [],
+      database,
+    );
+    const notOwned = [
+      {
+        object: "extension citext",
+        owner: "super_deploy",
+        fix: `DROP EXTENSION citext; SET ROLE ${embeddedDeployRole}; CREATE EXTENSION citext SCHEMA public VERSION '1.8'; RESET ROLE`,
+      },
+    ];
+
+    expect(
+      (await status(project, { target: "dev" })).preflight.notOwned,
+    ).toEqual(notOwned);
+    const refusal = await deploy(project, { target: "dev" }).catch(
+      (error: unknown) => error,
+    );
+    expect(refusal).toBeInstanceOf(PreflightFailedError);
+    expect(refusal).toMatchObject({ findings: { notOwned } });
+
+    await server.query(notOwned[0]?.fix ?? "", [], database);
+    expect(
+      (await status(project, { target: "dev" })).preflight.notOwned,
+    ).toEqual([]);
+    expect(
+      await server.query(
+        "select extversion as version, pg_get_userbyid(extowner) as owner from pg_extension where extname = 'citext'",
+        [],
+        database,
+      ),
+    ).toEqual([{ version: "1.8", owner: embeddedDeployRole }]);
+  });
 });
 
 describe("the deploy role can create the history schema", () => {

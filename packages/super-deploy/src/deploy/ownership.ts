@@ -24,11 +24,14 @@
 // it and can't be given away alone: a table's indexes (never listed), a serial
 // sequence (its `a` dependency on the table), anything with an internal (`i`)
 // dependency (identity sequences, row types, arrays, multiranges, a range's
-// constructors) and an extension's members (`e`). Each object comes with the ALTER ... OWNER TO that
-// gives it to the deploy role, its names quoted and schema-qualified. What
-// `pg_database_owner` owns (`public`) gets ALTER DATABASE ... OWNER TO
-// instead, as the README advises: re-owning `public` would break
-// PostgreSQL's convention that the database's owner owns it.
+// constructors) and an extension's members (`e`). Each object comes with the
+// ALTER ... OWNER TO that gives it to the deploy role, its names quoted and
+// schema-qualified. What `pg_database_owner` owns (`public`) gets ALTER
+// DATABASE ... OWNER TO instead, as the README advises: re-owning `public`
+// would break PostgreSQL's convention that the database's owner owns it. An
+// extension has no OWNER TO: its fix drops it and creates it again, at the
+// same version, with SET ROLE to the deploy role (`recreatedExtension`), and
+// fails, changing nothing, while anything uses it.
 //
 // `rebuild` judges with the same test what its wipe can drop
 // (`objectsNotDroppable`), which is less than ownership: the schema's owner
@@ -38,11 +41,11 @@
 // and the extension's owner.
 //
 // A deployment updates and drops supported extensions (ADR-0009), which only
-// an extension's owner may do. The deploy role can because it owns each
-// extension it created: the migration that creates one runs as the deploy
-// role, and drift refuses any extension the migrations didn't create.
-// Extensions themselves aren't in the ownership check, and their members
-// (owned by PostgreSQL's bootstrap superuser) never are.
+// an extension's owner may do. The migration that creates one runs as the
+// deploy role, so it owns each extension it created. An extension in the
+// managed schema someone else created (a DBA's, or one on a target `mark` or
+// `adopt` took over) is in the ownership check like any other object. Its
+// members (owned by PostgreSQL's bootstrap superuser) never are.
 
 import type { Session } from "../adapters/types.ts";
 import { plural, SuperDeployError } from "../errors.ts";
@@ -140,7 +143,10 @@ const ownedObjectsQuery = `
     FROM pg_catalog.pg_ts_config g JOIN s ON s.oid = g.cfgnamespace
   UNION ALL
   SELECT 'pg_ts_dict'::regclass, y.oid, 'TEXT SEARCH DICTIONARY', pg_catalog.format('%I.%I', s.nspname, y.dictname), y.dictowner
-    FROM pg_catalog.pg_ts_dict y JOIN s ON s.oid = y.dictnamespace`;
+    FROM pg_catalog.pg_ts_dict y JOIN s ON s.oid = y.dictnamespace
+  UNION ALL
+  SELECT 'pg_extension'::regclass, e.oid, 'EXTENSION', pg_catalog.quote_ident(e.extname), e.extowner
+    FROM pg_catalog.pg_extension e JOIN s ON s.oid = e.extnamespace`;
 
 /**
  * The managed schema (first) and every object in it (sorted) whose owner
@@ -176,6 +182,8 @@ export async function objectsNotOwnedAt(
     database: string;
     database_owner: string;
     deploy_role: string;
+    schema: string;
+    version: string | null;
   }>(
     `WITH s AS (SELECT oid, nspname, nspowner FROM pg_catalog.pg_namespace WHERE nspname = $1),
      owned AS (${ownedObjectsQuery}),
@@ -184,7 +192,10 @@ export async function objectsNotOwnedAt(
      SELECT owned.class::oid::text AS class, owned.oid::text AS oid, kind, owned.name,
             pg_catalog.pg_get_userbyid(owned.owner) AS owner,
             db.name AS database, db.owner AS database_owner,
-            pg_catalog.quote_ident(current_user) AS deploy_role
+            pg_catalog.quote_ident(current_user) AS deploy_role,
+            pg_catalog.quote_ident($1) AS schema,
+            (SELECT pg_catalog.quote_literal(e.extversion) FROM pg_catalog.pg_extension e
+              WHERE owned.class = 'pg_extension'::regclass AND e.oid = owned.oid) AS version
        FROM owned, db
       WHERE NOT pg_catalog.pg_has_role(current_user, owned.owner, 'USAGE')
         AND NOT EXISTS (SELECT FROM pg_catalog.pg_depend d
@@ -202,6 +213,8 @@ export async function objectsNotOwnedAt(
       database,
       database_owner,
       deploy_role,
+      schema,
+      version,
     }) => ({
       notOwned:
         owner === databaseOwnerRole
@@ -213,12 +226,31 @@ export async function objectsNotOwnedAt(
           : {
               object: `${kind.toLowerCase()} ${name}`,
               owner,
-              fix: `ALTER ${kind} ${name} OWNER TO ${deploy_role}`,
+              fix:
+                version === null
+                  ? `ALTER ${kind} ${name} OWNER TO ${deploy_role}`
+                  : recreatedExtension(name, schema, version, deploy_role),
             },
       address: { class: classId, obj: oid, sub: 0 },
       kind,
     }),
   );
+}
+
+/**
+ * The fix for an extension the deploy role doesn't own. PostgreSQL has no
+ * ALTER EXTENSION ... OWNER TO, so the superuser running the fix script
+ * drops it and creates it again acting as the deploy role, at the same
+ * version and in the same schema. The drop fails while anything uses the
+ * extension, changing nothing.
+ */
+function recreatedExtension(
+  name: string,
+  schema: string,
+  version: string,
+  deployRole: string,
+): string {
+  return `DROP EXTENSION ${name}; SET ROLE ${deployRole}; CREATE EXTENSION ${name} SCHEMA ${schema} VERSION ${version}; RESET ROLE`;
 }
 
 /**

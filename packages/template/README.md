@@ -280,7 +280,7 @@ Scripts and seed data never create, alter or drop an extension (`[deploy-time-st
 - **The deploy role has `CREATE` on the database**, whenever a migration creates an extension. The refusal names the `GRANT` a DBA runs: see [Permissions](#permissions). `rebuild` checks this too.
 - **The extension isn't already installed in another schema.** The refusal names that schema and the extension's owner.
 
-The deploy role owns each extension a migration creates, which is what lets later migrations update or drop it.
+The deploy role owns each extension a migration creates, which is what lets later migrations update or drop it. An extension in the managed schema that another role created is refused like any other object the deploy role doesn't own (`status`, `deploy`, `deploy-draft`, `mark` and `adopt`). PostgreSQL can't change an extension's owner, so the printed fix drops the extension and creates it again as the deploy role, at the same version. PostgreSQL refuses that drop while anything uses the extension, and nothing changes.
 
 **Every extension in a target's database must be managed.** Any extension the target's recorded migrations didn't create is [drift](#drift), wherever it lives and whoever installed it, except `plpgsql`. So is a supported extension at another version than its migrations installed, such as after a hand-run `ALTER EXTENSION … UPDATE`. `status` lists each one once, with its schema and version, never its functions and types one by one. Drift blocks `deploy` and `mark`. `deploy-draft` doesn't check drift, but `rebuild` refuses before asking while an extension outside the managed schema exists, because it would survive the wipe.
 
