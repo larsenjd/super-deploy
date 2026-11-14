@@ -85,6 +85,13 @@ comment on table t is 'tee';`),
     ).toEqual([]);
   });
 
+  test("DROP EXTENSION is not destructive in itself: the drops of its users before it are", async () => {
+    expect(
+      await destructiveKinds(`ALTER TABLE "public"."t" DROP COLUMN "note";
+DROP EXTENSION "citext";`),
+    ).toEqual(["drop-column"]);
+  });
+
   test.each([
     ["drop view v", "drop"],
     ["drop materialized view mv", "drop"],

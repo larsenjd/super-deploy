@@ -57,7 +57,7 @@ export {
   type LockWarning,
   type LockWarningKind,
 } from "./destructive.ts";
-export { pinnedExtensions } from "./extensions.ts";
+export { compareExtensionVersions, pinnedExtensions } from "./extensions.ts";
 export {
   alternativeOrder,
   type OrderingOptions,

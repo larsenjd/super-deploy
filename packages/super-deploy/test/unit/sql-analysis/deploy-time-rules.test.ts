@@ -65,6 +65,10 @@ describe("supported extensions in a schema change", () => {
   test.each([
     ["CREATE EXTENSION citext VERSION '1.8';"],
     [`CREATE EXTENSION "uuid-ossp" SCHEMA "public" VERSION '1.1';`],
+    ["ALTER EXTENSION citext UPDATE TO '1.8';"],
+    [`ALTER EXTENSION "uuid-ossp" UPDATE TO '1.1';`],
+    ["DROP EXTENSION citext;"],
+    [`DROP EXTENSION IF EXISTS "uuid-ossp", pgcrypto;`],
   ])("accepted: %s", async (sql) => {
     expect(await check("schema-change", sql)).toEqual([]);
   });
@@ -96,6 +100,41 @@ describe("supported extensions in a schema change", () => {
       "COMMENT ON EXTENSION citext IS 'x';",
       "extension-comment",
       "COMMENT ON EXTENSION is not allowed: each extension keeps the comment its install script writes",
+    ],
+    [
+      "ALTER EXTENSION citext UPDATE;",
+      "extension-without-version",
+      "ALTER EXTENSION citext UPDATE needs TO '<version>': a schema change installs exactly the version the desired schema pins",
+    ],
+    [
+      "ALTER EXTENSION earthdistance UPDATE TO '1.2';",
+      "unsupported-extension",
+      expect.stringMatching(/^earthdistance is not a supported extension: /),
+    ],
+    [
+      "DROP EXTENSION citext CASCADE;",
+      "extension-cascade",
+      "DROP EXTENSION ... CASCADE is not allowed: drop each object that uses the extension with a statement of its own first",
+    ],
+    [
+      "DROP EXTENSION citext, earthdistance;",
+      "unsupported-extension",
+      expect.stringMatching(/^earthdistance is not a supported extension: /),
+    ],
+    [
+      "ALTER EXTENSION citext ADD FUNCTION f();",
+      "unsupported-object",
+      "ALTER EXTENSION ... ADD is not supported: an extension holds only the objects its install script creates",
+    ],
+    [
+      "ALTER EXTENSION citext DROP FUNCTION f();",
+      "unsupported-object",
+      "ALTER EXTENSION ... DROP is not supported: an extension holds only the objects its install script creates",
+    ],
+    [
+      "ALTER EXTENSION citext SET SCHEMA other;",
+      "unsupported-object",
+      "ALTER EXTENSION ... SET SCHEMA is not supported: extensions live in the managed schema",
     ],
   ])("refused: %s", async (sql, rule, message) => {
     expect(

@@ -232,7 +232,10 @@ type StatementClass =
   | "data"
   | "temporary"
   | "maintenance"
-  /** A supported extension's `CREATE EXTENSION ... VERSION` (ADR-0009). */
+  /**
+   * A supported extension's `CREATE EXTENSION ... VERSION`, `ALTER EXTENSION
+   * ... UPDATE TO` or `DROP EXTENSION` without `CASCADE` (ADR-0009).
+   */
   | "extension";
 
 type Classification =
@@ -334,8 +337,6 @@ const unsupported: Record<string, string> = {
     "enums are not supported; use a lookup table or a CHECK constraint",
   AlterEnumStmt:
     "enums are not supported; a new enum value cannot be used until commit",
-  AlterExtensionStmt: "extensions other than plpgsql are not supported",
-  AlterExtensionContentsStmt: "extensions other than plpgsql are not supported",
   CreatePLangStmt: "languages other than sql and plpgsql are not supported",
   CreateFdwStmt: "foreign data wrappers are not supported",
   AlterFdwStmt: "foreign data wrappers are not supported",
@@ -561,6 +562,10 @@ function classify(statement: ParsedStatement): Classification {
         )
       : { class: "extension" };
   }
+  const extensionChange = extensionChangeClassification(type, body);
+  if (extensionChange !== undefined) {
+    return extensionChange;
+  }
   const privileges = privilegeRefusal(statement);
   if (privileges !== undefined) {
     return { refused: privileges };
@@ -642,6 +647,59 @@ function classify(statement: ParsedStatement): Classification {
     "deploy-time-statement",
     `${name} is not allowed in deploy-time SQL`,
   );
+}
+
+/**
+ * A schema change may update a supported extension to the version the
+ * desired schema pins, or drop one whose users it dropped first (ADR-0009).
+ * Undefined for a statement that doesn't change an extension.
+ */
+function extensionChangeClassification(
+  type: string,
+  body: Json,
+): Classification | undefined {
+  if (type === "AlterExtensionStmt") {
+    const { name, version } = createExtension(body);
+    if (!isSupportedExtension(name)) {
+      return { refused: unsupportedExtensionFinding(name) };
+    }
+    return version === undefined
+      ? refuse(
+          "extension-without-version",
+          `ALTER EXTENSION ${name} UPDATE needs TO '<version>': a schema change installs exactly the version the desired schema pins`,
+        )
+      : { class: "extension" };
+  }
+  if (type === "AlterExtensionContentsStmt") {
+    return refuse(
+      "unsupported-object",
+      `ALTER EXTENSION ... ${body.action === 1 ? "ADD" : "DROP"} is not supported: an extension holds only the objects its install script creates`,
+    );
+  }
+  if (
+    type === "AlterObjectSchemaStmt" &&
+    body.objectType === "OBJECT_EXTENSION"
+  ) {
+    return refuse(
+      "unsupported-object",
+      "ALTER EXTENSION ... SET SCHEMA is not supported: extensions live in the managed schema",
+    );
+  }
+  if (type !== "DropStmt" || body.removeType !== "OBJECT_EXTENSION") {
+    return undefined;
+  }
+  if (body.behavior === "DROP_CASCADE") {
+    return refuse(
+      "extension-cascade",
+      "DROP EXTENSION ... CASCADE is not allowed: drop each object that uses the extension with a statement of its own first",
+    );
+  }
+  const unsupportedName = stringList(body.objects).find(
+    (name) => !isSupportedExtension(name),
+  );
+  return unsupportedName === undefined
+    ? { class: "extension" }
+    : { refused: unsupportedExtensionFinding(unsupportedName) };
 }
 
 function wrongKind(
@@ -819,7 +877,10 @@ function detailFindings(
   }
   if (type === "DropStmt") {
     const drop = body as DropStmt;
-    if (!managedObjectTypes.has(drop.removeType ?? "")) {
+    if (
+      !managedObjectTypes.has(drop.removeType ?? "") &&
+      drop.removeType !== "OBJECT_EXTENSION"
+    ) {
       unsupportedFeature(
         `DROP ${objectTypeKeyword(drop.removeType)} is not supported: super-deploy manages only the objects in its schema`,
       );
