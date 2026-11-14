@@ -4,12 +4,13 @@
 import {
   adopt,
   deploy,
+  ExtensionVersionUnavailableError,
   loadProject,
   status,
   UnsupportedServerError,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { targetDatabaseName } from "../support/deploy.ts";
+import { finalizeMigration, targetDatabaseName } from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 import {
   type Postgres16Server,
@@ -29,8 +30,12 @@ afterAll(async () => {
   await Promise.all([server?.stop(), legacyServer?.stop()]);
 });
 
-/** A config for `postgresVersion`, rehearsing on the test server, with `targets` spliced in. */
-function config(postgresVersion: number, targets: string): string {
+/** A config for `postgresVersion`, rehearsing on the test server, with `targets` and `settings` spliced in. */
+function config(
+  postgresVersion: number,
+  targets: string,
+  settings = "",
+): string {
   return `import { defineConfig, postgresTarget } from "super-deploy";
 import { embeddedPostgres } from "super-deploy/embedded-postgres";
 
@@ -40,6 +45,7 @@ export default defineConfig({
   postgresVersion: ${postgresVersion},
   rehearsal: postgres.rehearsal,
   targets: { ${targets} },
+  ${settings}
 });
 `;
 }
@@ -129,6 +135,65 @@ describe("postgresVersion 16", () => {
       expect((error as Error).message).toMatch(
         /^Target dev is PostgreSQL 18\.\d+, but postgresVersion is 16$/,
       );
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("refuses up front a pinned extension version the target doesn't offer: status reports it, deploy changes nothing", async () => {
+    // PostgreSQL 16's citext stops at 1.6.
+    const legacy = await legacyServer.createDatabase();
+    const dir = await createTestProject({
+      config: config(
+        16,
+        `legacy: { adapter: postgresTarget({ connectionString: ${JSON.stringify(legacyServer.connectionString(legacy))} }) },`,
+        `extensions: { citext: ["1.8"] },`,
+      ),
+      files: {
+        "data-model/desired-schema/users.sql": `create extension citext version '1.8';
+create table users (id bigint constraint users_pkey primary key, email citext not null);
+`,
+      },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await finalizeMigration(project, "add users");
+      const message =
+        "the target can't install citext 1.8, which 00001-add-users installs: it offers citext 1.4, 1.5, 1.6";
+
+      const report = await status(project, { target: "legacy" });
+      expect(report.preflight.extensions).toEqual([
+        {
+          kind: "version-unavailable",
+          extension: "citext",
+          version: "1.8",
+          unit: "00001-add-users",
+          available: ["1.4", "1.5", "1.6"],
+          message,
+        },
+      ]);
+      const refusal = await deploy(project, { target: "legacy" }).catch(
+        (error: unknown) => error,
+      );
+
+      expect(refusal).toBeInstanceOf(ExtensionVersionUnavailableError);
+      expect(refusal).toMatchObject({
+        code: "extension-version-unavailable",
+        target: "legacy",
+        extension: "citext",
+        version: "1.8",
+        available: ["1.4", "1.5", "1.6"],
+      });
+      expect((refusal as Error).message).toBe(
+        `Target legacy failed the extension pre-flight: ${message}`,
+      );
+      // Nothing changed: no history schema (so no attempt), no extension.
+      expect(
+        await legacyServer.query(
+          legacy,
+          "select nspname from pg_namespace where nspname = 'deployment_history' union all select extname from pg_extension where extname = 'citext'",
+        ),
+      ).toEqual([]);
     } finally {
       await project.close();
     }

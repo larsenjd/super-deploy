@@ -32,6 +32,7 @@ import {
   ensureManagedSchemaInTransaction,
   inDeployTransaction,
 } from "../deploy/engine.ts";
+import { extensionRefusalError } from "../deploy/extension-preflight.ts";
 import { recordDeployedDraft } from "../deploy/history.ts";
 import { pendingMigrations } from "../deploy/pending.ts";
 import {
@@ -104,7 +105,10 @@ interface Plan {
  *
  * Refuses before asking: TargetNotDisposableError; NoDraftError;
  * SqlRuleViolationError for the draft's files; UndraftedChangesError when
- * the desired schema changed since the draft was generated; PreflightFailedError when a
+ * the desired schema changed since the draft was generated; the extension
+ * pre-flight's errors (ExtensionVersionUnavailableError,
+ * ExtensionCreateNotPermittedError, ExtensionInstalledElsewhereError) when
+ * the target can't run the draft's extension statements; PreflightFailedError when a
  * role or external schema is missing, the deploy role doesn't own the
  * managed schema or something in it, the recorded history doesn't match the
  * repo, or the target already holds a draft; TargetBehindError when it has
@@ -149,6 +153,12 @@ export async function deployDraft(
         recorded: view.recorded,
         units,
       });
+      // Each extension refusal has its typed error (as deploy's, before its
+      // other pre-flight refusals).
+      const [extensionRefusal] = findings.extensions;
+      if (extensionRefusal !== undefined) {
+        throw extensionRefusalError(target, extensionRefusal);
+      }
       if (refusesDeployment(findings)) {
         throw new PreflightFailedError(target, findings);
       }

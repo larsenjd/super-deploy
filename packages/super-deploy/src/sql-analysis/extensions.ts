@@ -58,6 +58,41 @@ export function pinnedExtensions(
   });
 }
 
+/**
+ * An extension statement that names a version: a `CREATE EXTENSION`
+ * (`creates`, its `VERSION` if given) or an `ALTER EXTENSION ... UPDATE TO`.
+ */
+export interface ExtensionVersionStatement {
+  readonly name: string;
+  readonly version: string | undefined;
+  readonly creates: boolean;
+}
+
+/**
+ * Each `CREATE EXTENSION` and `ALTER EXTENSION ... UPDATE TO` in
+ * `statements` other than plpgsql's, in statement order: what a target must
+ * be able to install for them to run.
+ */
+export function extensionVersionStatements(
+  statements: readonly ParsedStatement[],
+): ExtensionVersionStatement[] {
+  return statements.flatMap((statement) => {
+    const create = unwrap(statement.node, "CreateExtensionStmt");
+    const alter = unwrap(statement.node, "AlterExtensionStmt");
+    const found =
+      create !== undefined
+        ? { ...createExtension(create), creates: true }
+        : alter !== undefined
+          ? { ...createExtension(alter), creates: false }
+          : undefined;
+    return found === undefined ||
+      found.name === "plpgsql" ||
+      (!found.creates && found.version === undefined)
+      ? []
+      : [{ name: found.name, version: found.version, creates: found.creates }];
+  });
+}
+
 /** True for one of the 17 supported extensions. */
 export function isSupportedExtension(name: string): name is SupportedExtension {
   return Object.hasOwn(supportedExtensionVersions, name);

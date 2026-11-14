@@ -230,6 +230,31 @@ export async function targetDatabaseRequest(
   }
 }
 
+/** The deploy role lacks CREATE on the target's database, and the statement that grants it. */
+export interface MissingCreateOnDatabase {
+  /** The deploy role (the session's current role). */
+  readonly role: string;
+  readonly database: string;
+  /** e.g. `GRANT CREATE ON DATABASE shop TO deployer`. */
+  readonly fix: string;
+}
+
+/**
+ * Whether the session's current role lacks CREATE on the database, which it
+ * needs to create a schema or an extension. Undefined when it has it.
+ * Read-only.
+ */
+export async function missingCreateOnDatabase(
+  session: Session,
+): Promise<MissingCreateOnDatabase | undefined> {
+  const { rows } = await session.query<MissingCreateOnDatabase>(
+    `SELECT current_user AS role, pg_catalog.current_database() AS database,
+            pg_catalog.format('GRANT CREATE ON DATABASE %I TO %I', pg_catalog.current_database(), current_user) AS fix
+      WHERE NOT pg_catalog.has_database_privilege(current_user, pg_catalog.current_database(), 'CREATE')`,
+  );
+  return rows[0];
+}
+
 /** A command named a target that isn't in the config. */
 export class UnknownTargetError extends SuperDeployError {
   readonly code = "unknown-target";

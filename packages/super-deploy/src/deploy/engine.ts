@@ -11,7 +11,9 @@
 //      that name super-deploy can't use (ForeignHistorySchemaError), and a
 //      deploy role without CREATE on the database, are refused first, naming
 //      the fix (HistorySchemaNotCreatableError; nothing logged: there is
-//      nowhere to log it yet)
+//      nowhere to log it yet). The command's own `beforeAttempt` checks
+//      run after those refusals and before the schema is created (deploy's
+//      extension pre-flight), so they too change and log nothing
 //   4. settle earlier attempts whose outcome was never recorded
 //      (`settleAttempts`: a lost COMMIT, a command that died)
 //   5. open a running attempt
@@ -84,6 +86,20 @@ import {
 } from "./session-ended.ts";
 import { connectTarget, resolveTarget, targetTimeouts } from "./target.ts";
 
+/** The command an attempt records, and what it checks before the attempt opens. */
+export interface LockedCommand extends AttemptCommand {
+  /**
+   * Read-only checks on the attempt-log session after the history schema's
+   * (step 3's refusals) and before it is created: a refusal thrown here
+   * changes nothing on the target and logs no attempt. Runs before the lock
+   * is taken, so the body checks again under it.
+   */
+  readonly beforeAttempt?: (
+    log: Session,
+    target: ResolvedTarget,
+  ) => Promise<void>;
+}
+
 /** What a command body gets: the target, its two sessions and its attempt. */
 export interface LockedTarget {
   readonly target: ResolvedTarget;
@@ -112,9 +128,10 @@ export function outcomeOf(
 export async function withLockedTarget<T>(
   project: Project,
   targetName: string,
-  command: AttemptCommand,
+  lockedCommand: LockedCommand,
   body: (locked: LockedTarget) => Promise<T>,
 ): Promise<T> {
+  const { beforeAttempt, ...command } = lockedCommand;
   const { historySchema } = project.config;
   const { signal } = project;
   const target = resolveTarget(project, targetName);
@@ -129,6 +146,7 @@ export async function withLockedTarget<T>(
         commandSession,
         historySchema,
         { ...command, target: target.name },
+        async () => beforeAttempt?.(log, target),
       ).catch(async (error: unknown) => {
         throw await targetFailure(error, target, () =>
           rolledBack(log, historySchema, command, target),
@@ -200,8 +218,10 @@ async function openLockedAttempt(
   commandSession: Session,
   historySchema: string,
   start: Omit<AttemptStart, "backendPid">,
+  beforeAttempt: () => Promise<void>,
 ): Promise<{ attempt: Attempt; backendPid: number | undefined }> {
   await requireHistorySchemaUsable(log, start.target, historySchema);
+  await beforeAttempt();
   await ensureHistorySchema(log, historySchema);
   await settleAttempts(log, historySchema);
   const { rows } = await commandSession.query<{ pid: number }>(

@@ -344,7 +344,7 @@ flowchart LR
 
 | What | How |
 | --- | --- |
-| **The deploy role** | It owns, or inherits from the owner of, the managed schema and everything in it, and needs `CREATE` on the database for the first deployment. Otherwise a DBA pre-creates both schemas: `create schema deployment_history authorization deploy_role`. For `public`, make the deploy role the database owner. |
+| **The deploy role** | It owns, or inherits from the owner of, the managed schema and everything in it, and needs `CREATE` on the database for the first deployment. Otherwise a DBA pre-creates both schemas: `create schema deployment_history authorization deploy_role`. For `public`, make the deploy role the database owner. It also needs `CREATE` on the database whenever a migration creates an extension: `status`, `deploy` and `deploy-draft` check it up front and name the `GRANT` to run. |
 | **App roles** | Create them and grant `CONNECT`. super-deploy never creates roles. |
 | **Grants** | Use default privileges, so new objects are granted automatically (see below). |
 | **External schemas** | Create them and grant your app roles access. On `dev`, use the superuser URL. |

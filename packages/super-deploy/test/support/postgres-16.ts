@@ -15,6 +15,11 @@ export interface Postgres16Server {
   connectionString(database: string): string;
   /** Creates an empty database, runs `sql` in it, and returns its name. */
   createDatabase(sql?: string): Promise<string>;
+  /** Runs `sql` in `database` as the superuser and returns its rows. */
+  query<T extends object = Record<string, unknown>>(
+    database: string,
+    sql: string,
+  ): Promise<T[]>;
   stop(): Promise<void>;
 }
 
@@ -43,21 +48,29 @@ export async function startPostgres16(): Promise<Postgres16Server> {
   const connectionString = (database: string) =>
     `postgres://postgres:${password}@127.0.0.1:${port}/${database}`;
 
+  async function query<T extends object>(
+    database: string,
+    sql: string,
+  ): Promise<T[]> {
+    const client = new pg.Client({
+      connectionString: connectionString(database),
+    });
+    await client.connect();
+    try {
+      return (await client.query<T>(sql)).rows;
+    } finally {
+      await client.end();
+    }
+  }
+
   return {
     connectionString,
+    query,
     async createDatabase(sql = "") {
       const name = `pg16_${process.pid}_${++databaseCounter}`;
       await server.createDatabase(name);
       if (sql !== "") {
-        const client = new pg.Client({
-          connectionString: connectionString(name),
-        });
-        await client.connect();
-        try {
-          await client.query(sql);
-        } finally {
-          await client.end();
-        }
+        await query(name, sql);
       }
       return name;
     },

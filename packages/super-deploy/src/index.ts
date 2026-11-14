@@ -138,6 +138,15 @@ export {
   type TargetConfig,
 } from "./config/config.ts";
 export { CommitOutcomeUnknownError } from "./deploy/engine.ts";
+export {
+  type ExtensionCreateNotPermitted,
+  ExtensionCreateNotPermittedError,
+  type ExtensionInstalledElsewhere,
+  ExtensionInstalledElsewhereError,
+  type ExtensionRefusal,
+  type ExtensionVersionUnavailable,
+  ExtensionVersionUnavailableError,
+} from "./deploy/extension-preflight.ts";
 export type {
   AttemptOutcome,
   AttemptRecord,

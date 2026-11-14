@@ -554,6 +554,46 @@ unix("deploy-draft", () => {
     expect(await again.exited).toBe(0);
   });
 
+  test("refuses, without asking or recording an attempt, a draft creating an extension while the deploy role lacks CREATE on the database, naming the GRANT", async () => {
+    const { config, database } = deployConfig(server, {
+      settings: `extensions: { citext: ["1.8"] },`,
+    });
+    const dir = await customersDeployed(config);
+    await server.query(
+      `update deployment_history.settings set disposable = true;
+       revoke create on database ${database} from ${embeddedDeployRole};`,
+      [],
+      database,
+    );
+    await dir.write(
+      "data-model/desired-schema/users.sql",
+      `create extension citext version '1.8';
+create table users (id bigint constraint users_pkey primary key, email citext not null);
+`,
+    );
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await draft(project, { name: "add users" });
+    } finally {
+      await project.close();
+    }
+    const attempts = await attemptLog(server, database);
+
+    const terminal = spawnTerminal(["deploy-draft", "--target", "dev"], {
+      cwd: dir.root,
+    });
+
+    await terminal.waitFor(
+      `Target dev failed the extension pre-flight: the deploy role ${embeddedDeployRole} needs CREATE on database ${database} to create extension citext (a DBA runs: GRANT CREATE ON DATABASE ${database} TO ${embeddedDeployRole})`,
+    );
+    expect(await terminal.exited).toBe(1);
+    expect(terminal.screen).not.toContain("Type YES");
+    expect(await attemptLog(server, database)).toEqual(attempts);
+    expect(
+      await server.query("select to_regclass('users') as users", [], database),
+    ).toEqual([{ users: null }]);
+  });
+
   test("a failing draft rolls back entirely: the attempt failed and the target holds no draft", async () => {
     const { dir, database } = await deployedProject();
     await requireCityDraft(dir);

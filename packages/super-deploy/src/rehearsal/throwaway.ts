@@ -329,7 +329,7 @@ export class RehearsalExtensionVersionError extends SuperDeployError {
 }
 
 /** Orders versions such as `1.10` after `1.9`. */
-function compareVersions(a: string, b: string): number {
+export function compareVersions(a: string, b: string): number {
   return a.localeCompare(b, "en", { numeric: true });
 }
 

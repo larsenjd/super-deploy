@@ -1,6 +1,8 @@
 // `deploy --target X`: apply every pending migration to the target in one
 // transaction, after rehearsing them on a throwaway database that matches the
-// target's locale. Sequence (spec "Deployment engine"): open attempt → lock →
+// target's locale. Sequence (spec "Deployment engine"): extension pre-flight
+// (deploy/extension-preflight.ts: refused before the attempt opens, so
+// nothing is logged) → open attempt → lock →
 // pre-flight (deploy/preflight.ts) → drift check → rehearse the pending
 // migrations on the drift replica and require a match with the newest
 // snapshot → one transaction on the target → close attempt. Pre-flight and
@@ -11,7 +13,9 @@
 // before the attempt opens, so a diff that doesn't apply leaves the target
 // untouched.
 
+import type { Session } from "../adapters/types.ts";
 import { applyMigrations, withLockedTarget } from "../deploy/engine.ts";
+import { requireExtensionsDeployable } from "../deploy/extension-preflight.ts";
 import { readRecordedMigrations } from "../deploy/history.ts";
 import { pendingMigrations } from "../deploy/pending.ts";
 import {
@@ -93,19 +97,35 @@ export async function deploy(
   // doesn't apply is refused first.
   const snapshot = await readSnapshot(root, migrations);
 
+  // Each pending migration runs its newest variant.
+  const pendingOn = async (session: Session) => {
+    const recorded = await readRecordedMigrations(
+      session,
+      config.historySchema,
+    );
+    const pending = pendingMigrations(deployable, recorded).map(
+      (migration) => ({ ...migration, ...newestVariant(migration) }),
+    );
+    return { recorded, pending };
+  };
+
   return withLockedTarget(
     project,
     options.target,
-    { command: "deploy" },
+    {
+      command: "deploy",
+      async beforeAttempt(log, target) {
+        const { pending } = await pendingOn(log);
+        await requireExtensionsDeployable(
+          log,
+          target.name,
+          config.managedSchema,
+          pending.map((migration) => migration.unit),
+        );
+      },
+    },
     async ({ target, session, attempt }) => {
-      const recorded = await readRecordedMigrations(
-        session,
-        config.historySchema,
-      );
-      // Each pending migration runs its newest variant.
-      const pending = pendingMigrations(deployable, recorded).map(
-        (migration) => ({ ...migration, ...newestVariant(migration) }),
-      );
+      const { recorded, pending } = await pendingOn(session);
       const findings = await preflightChecks(session, project, {
         targetName: target.name,
         migrations,

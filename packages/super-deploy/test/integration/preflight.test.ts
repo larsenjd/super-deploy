@@ -7,6 +7,8 @@ import {
   deploy,
   discardDraft,
   draft,
+  ExtensionCreateNotPermittedError,
+  ExtensionInstalledElsewhereError,
   ForeignHistorySchemaError,
   finalize,
   HistorySchemaNotCreatableError,
@@ -19,6 +21,7 @@ import {
   asDeployerPreamble,
   asDeployRole,
   asSuperuser,
+  attemptLog,
   deployProject,
   embeddedDeployRole,
   finalizeMigration,
@@ -104,6 +107,7 @@ describe("deploy pre-flight", () => {
       foreignHistorySchema: undefined,
       historySchemaNotCreatable: undefined,
       notOwned: [],
+      extensions: [],
       historyMismatches: [],
       warnings: [],
     });
@@ -544,6 +548,135 @@ describe("the deploy role can create the history schema", () => {
     await expect(deploy(project, { target: "dev" })).resolves.toMatchObject({
       deployed: [{ folder: "00002-add-orders" }],
     });
+  });
+});
+
+describe("the extension pre-flight", () => {
+  const users = `create extension citext version '1.8';
+create table users (id bigint constraint users_pkey primary key, email citext not null);
+`;
+
+  /** The extensions in `database` but plpgsql, by name. */
+  async function extensions(database: string): Promise<string[]> {
+    const rows = await server.query<{ extname: string }>(
+      "select extname from pg_extension where extname <> 'plpgsql' order by 1",
+      [],
+      database,
+    );
+    return rows.map((row) => row.extname);
+  }
+
+  test("refuses a migration creating an extension while the deploy role lacks CREATE on the database, naming the GRANT, and needs no CREATE when nothing creates one", async () => {
+    const { project, dir, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { settings: `extensions: { citext: ["1.8"] },` },
+    );
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    await server.query(
+      `revoke create on database ${database} from ${embeddedDeployRole}`,
+    );
+    await dir.write("data-model/desired-schema/orders.sql", orders);
+    await finalizeMigration(project, "add orders");
+    expect(
+      (await status(project, { target: "dev" })).preflight.extensions,
+    ).toEqual([]);
+    await deploy(project, { target: "dev" });
+
+    await dir.write("data-model/desired-schema/users.sql", users);
+    await finalizeMigration(project, "add users");
+    const fix = `GRANT CREATE ON DATABASE ${database} TO ${embeddedDeployRole}`;
+    const message = `the deploy role ${embeddedDeployRole} needs CREATE on database ${database} to create extension citext (a DBA runs: ${fix})`;
+    expect(
+      (await status(project, { target: "dev" })).preflight.extensions,
+    ).toEqual([
+      {
+        kind: "create-not-permitted",
+        extensions: ["citext"],
+        role: embeddedDeployRole,
+        database,
+        fix,
+        message,
+      },
+    ]);
+    const attempts = await attemptLog(server, database);
+    const refusal = await deploy(project, { target: "dev" }).catch(
+      (error: unknown) => error,
+    );
+
+    expect(refusal).toBeInstanceOf(ExtensionCreateNotPermittedError);
+    expect(refusal).toMatchObject({
+      code: "extension-create-not-permitted",
+      target: "dev",
+      extensions: ["citext"],
+      fix,
+    });
+    expect((refusal as Error).message).toBe(
+      `Target dev failed the extension pre-flight: ${message}`,
+    );
+    expect(await attemptLog(server, database)).toEqual(attempts);
+    expect(await extensions(database)).toEqual([]);
+
+    await server.query(fix);
+    await expect(deploy(project, { target: "dev" })).resolves.toMatchObject({
+      deployed: [{ folder: "00003-add-users" }],
+    });
+  });
+
+  test("refuses a migration creating an extension the target already has in another schema, naming that schema and its owner", async () => {
+    const { project, dir, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      {
+        settings: `managedSchema: "app",
+extensions: { citext: ["1.8"] },`,
+      },
+    );
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    // A DBA's earlier installation.
+    await server.query("create extension citext schema public", [], database);
+    await dir.write("data-model/desired-schema/users.sql", users);
+    await finalizeMigration(project, "add users");
+    const message =
+      "00002-add-users creates extension citext, but the target already has it in schema public, owned by super_deploy: move it with ALTER EXTENSION citext SET SCHEMA, or drop it";
+    expect(
+      (await status(project, { target: "dev" })).preflight.extensions,
+    ).toEqual([
+      {
+        kind: "installed-elsewhere",
+        extension: "citext",
+        unit: "00002-add-users",
+        schema: "public",
+        owner: "super_deploy",
+        message,
+      },
+    ]);
+    const attempts = await attemptLog(server, database);
+    const refusal = await deploy(project, { target: "dev" }).catch(
+      (error: unknown) => error,
+    );
+
+    expect(refusal).toBeInstanceOf(ExtensionInstalledElsewhereError);
+    expect(refusal).toMatchObject({
+      code: "extension-installed-elsewhere",
+      target: "dev",
+      extension: "citext",
+      schema: "public",
+      owner: "super_deploy",
+    });
+    expect((refusal as Error).message).toBe(
+      `Target dev failed the extension pre-flight: ${message}`,
+    );
+    expect(await attemptLog(server, database)).toEqual(attempts);
+    expect(
+      await server.query(
+        "select to_regclass('app.users') as users",
+        [],
+        database,
+      ),
+    ).toEqual([{ users: null }]);
   });
 });
 

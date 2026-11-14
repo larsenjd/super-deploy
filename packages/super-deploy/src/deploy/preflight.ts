@@ -13,6 +13,9 @@
 //     lists it with the others, and `adopt` in its one refusal
 //   - the deploy role owns the managed schema and everything in it, or is a
 //     member of their owner (deploy/ownership.ts)
+//   - the target can run the extension statements of what would be deployed
+//     (deploy/extension-preflight.ts). deploy and deploy-draft check them
+//     before this, so their typed errors refuse without logging an attempt
 //   - the deploy role is not superuser and holds none of the predefined roles
 //     that reach outside the database (a warning, never a refusal)
 //   - the objects the pending migrations (or draft) drop and create again
@@ -47,6 +50,10 @@ import {
   recoveryFolderName,
 } from "../store/migrations.ts";
 import {
+  type ExtensionRefusal,
+  extensionRefusals,
+} from "./extension-preflight.ts";
+import {
   type DeployedDraft,
   historyTablesExist,
   type RecordedMigration,
@@ -61,6 +68,10 @@ import {
 } from "./ownership.ts";
 import { lastRecordedNumber } from "./pending.ts";
 import { recreatedPrivilegeWarnings } from "./recreated-privileges.ts";
+import {
+  type MissingCreateOnDatabase,
+  missingCreateOnDatabase,
+} from "./target.ts";
 
 /** One way the target's recorded history disagrees with the repo. */
 export interface HistoryMismatch {
@@ -105,6 +116,11 @@ export interface PreflightFindings {
    * schema yet. Refuses a deployment.
    */
   readonly notOwned: readonly NotOwnedObject[];
+  /**
+   * Why the target can't run the extension statements of what would be
+   * deployed (deploy/extension-preflight.ts). Refuses a deployment.
+   */
+  readonly extensions: readonly ExtensionRefusal[];
   /** Recorded migrations that don't match the repo, by number. Refuses a deployment. */
   readonly historyMismatches: readonly HistoryMismatch[];
   /**
@@ -116,13 +132,8 @@ export interface PreflightFindings {
 }
 
 /** The target has no history schema, and the deploy role lacks CREATE on its database to create one. */
-export interface HistorySchemaNotCreatable {
-  /** The deploy role (the session's current role). */
-  readonly role: string;
-  readonly database: string;
+export interface HistorySchemaNotCreatable extends MissingCreateOnDatabase {
   readonly historySchema: string;
-  /** The statement that lets the deploy role create it, e.g. `GRANT CREATE ON DATABASE shop TO deployer`. */
-  readonly fix: string;
 }
 
 /**
@@ -181,6 +192,11 @@ export async function preflightChecks(
       project.config.historySchema,
     ),
     notOwned: await objectsNotOwned(session, project.config.managedSchema),
+    extensions: await extensionRefusals(
+      session,
+      project.config.managedSchema,
+      input.units,
+    ),
     historyMismatches: historyMismatches(
       input.migrations,
       input.recorded,
@@ -205,7 +221,7 @@ export async function preflightChecks(
 
 /**
  * Each reason the findings refuse a deployment, as a line for people:
- * the history schema, ownership, then history mismatches. Empty when they don't refuse (warnings never do).
+ * the history schema, ownership, extensions, then history mismatches. Empty when they don't refuse (warnings never do).
  */
 export function preflightRefusals(findings: PreflightFindings): string[] {
   return [
@@ -216,6 +232,7 @@ export function preflightRefusals(findings: PreflightFindings): string[] {
       ? []
       : [historySchemaNotCreatableMessage(findings.historySchemaNotCreatable)]),
     ...findings.notOwned.map(notOwnedMessage),
+    ...findings.extensions.map((refusal) => refusal.message),
     ...findings.historyMismatches.map((mismatch) => mismatch.message),
   ];
 }
@@ -234,19 +251,15 @@ export async function historySchemaNotCreatable(
   session: Session,
   historySchema: string,
 ): Promise<HistorySchemaNotCreatable | undefined> {
-  const { rows } = await session.query<{
-    role: string;
-    database: string;
-    fix: string;
-  }>(
-    `SELECT current_user AS role, pg_catalog.current_database() AS database,
-            pg_catalog.format('GRANT CREATE ON DATABASE %I TO %I', pg_catalog.current_database(), current_user) AS fix
-      WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_namespace WHERE nspname = $1)
-        AND NOT pg_catalog.has_database_privilege(current_user, pg_catalog.current_database(), 'CREATE')`,
+  const { rows } = await session.query(
+    "SELECT FROM pg_catalog.pg_namespace WHERE nspname = $1",
     [historySchema],
   );
-  const [row] = rows;
-  return row === undefined ? undefined : { ...row, historySchema };
+  if (rows.length > 0) {
+    return undefined;
+  }
+  const missing = await missingCreateOnDatabase(session);
+  return missing === undefined ? undefined : { ...missing, historySchema };
 }
 
 /** The refusal's line: what the deploy role needs, and the fix. */
