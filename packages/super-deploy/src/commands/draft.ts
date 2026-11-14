@@ -72,6 +72,7 @@ import {
 } from "../store/migrations.ts";
 import { readSnapshot } from "../store/snapshots.ts";
 import {
+  configuredRules,
   type MigrationRuleContext,
   refuseRuleViolations,
 } from "./check-rules.ts";
@@ -137,18 +138,12 @@ export async function draft(
   const { statements, overrides, unqualifiedNames } =
     await desiredSchemaAnalysis(
       asSqlFiles(project.root, paths.desiredSchema, files),
-      {
-        managedSchema: config.managedSchema,
-        externalSchemas: config.externalSchemas,
-        extensions: config.extensions,
-      },
+      configuredRules(config),
     );
   const finalized = await verifiedMigrations(project.root, paths);
   const migrations = await readMigrationUnits(project.root, finalized);
   const rules: MigrationRuleContext = {
-    managedSchema: config.managedSchema,
-    externalSchemas: config.externalSchemas,
-    extensions: config.extensions,
+    ...configuredRules(config),
     schemas: [
       (await readSnapshot(project.root, finalized)).sqlFiles,
       statements,

@@ -74,7 +74,7 @@ import {
   readSnapshots,
   snapshotsAround,
 } from "../store/snapshots.ts";
-import { analyseReplayUnit } from "./check-rules.ts";
+import { analyseReplayUnit, configuredRules } from "./check-rules.ts";
 import { RecoverySchemaChangeEditedError } from "./recovery.ts";
 import { requireOriginalSchemaChange } from "./rehearse.ts";
 
@@ -297,11 +297,7 @@ async function ruleProblems(
   const violations: RuleViolation[] = [];
   const overrides: Override[] = [];
   const problems: ValidationProblem[] = [];
-  const rules = {
-    managedSchema: config.managedSchema,
-    externalSchemas: config.externalSchemas,
-    extensions: config.extensions,
-  };
+  const rules = configuredRules(config);
   const collect = (
     analysis: {
       violations: readonly RuleViolation[];

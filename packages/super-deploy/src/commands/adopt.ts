@@ -202,6 +202,7 @@ import {
   type DriftedObject,
   driftBetween,
 } from "../verification/drift.ts";
+import { configuredRules } from "./check-rules.ts";
 import { draft } from "./draft.ts";
 import { finalize } from "./finalize.ts";
 
@@ -414,11 +415,7 @@ async function readTarget(
   { withOverrides }: { withOverrides: boolean },
 ): Promise<ReadTarget> {
   const { config } = project;
-  const context: RuleContext = {
-    managedSchema: config.managedSchema,
-    externalSchemas: config.externalSchemas,
-    extensions: config.extensions,
-  };
+  const context = configuredRules(config);
   const session = await connectTarget(target, project.signal);
   const close = await terminatedOnAbort(target, session, project.signal);
   try {
