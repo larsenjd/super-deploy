@@ -9,7 +9,7 @@ From `packages/super-deploy`:
 - While working, run the file at hand: `pnpm exec vitest run test/integration/deploy.test.ts`, plus `-t "<test name>"` for one test.
 - Vitest projects (`vitest.config.ts`, which also sets the timeouts): `unit` is `test/unit/**`, database-free (`pnpm test:unit`); `integration` is `test/integration/**`, real PostgreSQL 18 (`pnpm test:integration`). Its global setup (`test/support/build-once.ts`) builds `dist/` once per run for the CLI seam.
 - The full suite, `pnpm test`, runs once at the end of the work.
-- The pre-commit hook runs `pnpm precommit` at the root: Biome, `pnpm build`, then each package's `precommit`. The library's is Biome, `tsc` and the unit tests. The template's and the example's are Biome, `tsc` and `super-deploy validate --strict`; the example's then runs `scripts/rehearse-history.ts`, which starts embedded PostgreSQL. These use `dist/`, which the hook builds first, so they always check the code that would be published.
+- The pre-commit hook runs `pnpm precommit` at the root (`scripts/precommit-with-timeout.ts`, which stops it after five minutes): Biome, `pnpm build`, then each package's `precommit`. Biome's root config covers the library and the example through their nested configs. `packages/template` keeps a root config of its own, since `init` copies it into new projects, so format the template from inside it. The library's is Biome, `tsc` and the unit tests. The template's and the example's are Biome, `tsc` and `super-deploy validate --strict`; the example's then runs `scripts/rehearse-history.ts`, which starts embedded PostgreSQL. These use `dist/`, which the hook builds first, so they always check the code that would be published.
 
 ## Every test
 
