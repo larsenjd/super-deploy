@@ -350,7 +350,7 @@ flowchart LR
 
 | What | How |
 | --- | --- |
-| **The deploy role** | It owns, or inherits from the owner of, the managed schema and everything in it, and needs `CREATE` on the database for the first deployment. Otherwise a DBA pre-creates both schemas: `create schema deployment_history authorization deploy_role`. For `public`, make the deploy role the database owner. It also needs `CREATE` on the database whenever a migration creates an extension: `status`, `deploy` and `deploy-draft` check it up front and name the `GRANT` to run. |
+| **The deploy role** | It owns, or inherits from the owner of, the managed schema and everything in it, and needs `CREATE` on the database for the first deployment. Otherwise a DBA pre-creates both schemas: `create schema deployment_history authorization deploy_role`. For `public`, make the deploy role the database owner. It also needs `CREATE` on the database whenever a migration creates an extension: `status`, `deploy`, `deploy-draft` and `rebuild` check it up front and name the `GRANT` to run. |
 | **App roles** | Create them and grant `CONNECT`. super-deploy never creates roles. |
 | **Grants** | Use default privileges, so new objects are granted automatically (see below). |
 | **External schemas** | Create them and grant your app roles access. On `dev`, use the superuser URL. |
@@ -516,7 +516,7 @@ pnpm exec super-deploy disposable --target dev --set yes   # then type YES
 | --- | :---: | --- |
 | `disposable --target t --set yes\|no` | — | Sets the flag. Shows the table and row counts first. |
 | `deploy-draft --target t [--with-seed]` | ✅ | Runs the unfinalized draft on the target, with no rehearsal. The target then refuses `deploy` until `rebuild`. |
-| `rebuild --target t --to N` | ✅ | Drops everything in the managed schema, plus dependent objects in other schemas, and replays migrations 1 to N. `N` can be `0`. Keeps the flag and the attempt log. |
+| `rebuild --target t --to N` | ✅ | Drops everything in the managed schema, plus dependent objects in other schemas, and replays migrations 1 to N. `N` can be `0`. Keeps the flag and the attempt log. Refuses before asking when an extension lives outside the managed schema (it would survive the wipe as drift), or when the replay creates an extension and the deploy role lacks `CREATE` on the database. |
 | `mark --target t` | — | Records the next pending migration as deployed without running it. The target must match a replica exactly. Make the scripts' data changes by hand. |
 
 ```mermaid

@@ -196,6 +196,8 @@ export {
 } from "./deploy/target.ts";
 export {
   CannotWipeError,
+  ExtensionSurvivesWipeError,
+  type SurvivingExtension,
   WipeDropFailedError,
   WipeFailedError,
 } from "./deploy/wipe.ts";
