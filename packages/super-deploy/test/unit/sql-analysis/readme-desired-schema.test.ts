@@ -3,11 +3,13 @@
 // refused is refused, with the rule the README names. A rule that starts
 // refusing something new needs a row here and a line in the README. Its
 // "Extensions" section names every supported extension, so one added to the
-// generated list needs a README line too.
+// generated list needs a README line too, and says that scripts and seed
+// data refuse every extension statement, as the deploy-time rules do.
 import { readFile } from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 import {
   analyseDesiredSchema,
+  checkRules,
   SqlRuleViolationError,
   supportedExtensionVersions,
 } from "../../../src/sql-analysis/index.ts";
@@ -255,5 +257,27 @@ describe("the README's Extensions section", () => {
 
   test.each(names)("names %s", async (name) => {
     expect(await section("## Extensions")).toContain(`\`${name}\``);
+  });
+});
+
+describe("the README says scripts and seed data refuse extension statements", () => {
+  test.each([
+    ["pre-migration", "create extension citext version '1.8'"],
+    ["pre-migration", "create extension if not exists plpgsql"],
+    ["post-migration", "alter extension citext update to '1.8'"],
+    ["post-migration", "drop extension citext"],
+    ["seed-data", "create extension citext version '1.8'"],
+  ] as const)("%s: %s", async (kind, sql) => {
+    const violations = await checkRules(
+      { path: `${kind}.sql`, text: `${sql};\n` },
+      kind,
+      { extensions: { citext: ["1.8"] } },
+    );
+    expect(violations.map(({ rule }) => rule)).toEqual([
+      "deploy-time-statement",
+    ]);
+    expect(await section("## Extensions")).toContain(
+      "scripts and seed data never create, alter or drop an extension (`[deploy-time-statement]`)",
+    );
   });
 });
