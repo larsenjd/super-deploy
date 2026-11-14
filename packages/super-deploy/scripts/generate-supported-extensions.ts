@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
 import { embeddedPostgres } from "../src/adapters/embedded-postgres.ts";
+import { compareExtensionVersions } from "../src/sql-analysis/version-order.ts";
 
 /**
  * The supported set: trusted, offered by Aurora PostgreSQL 18.4, loadable on
@@ -83,7 +84,7 @@ export async function supportedExtensionsSource(
       const offered = rows
         .filter((row) => row.name === name)
         .map((row) => row.version)
-        .sort(compareVersions);
+        .sort(compareExtensionVersions);
       if (offered.length === 0) {
         throw new Error(`The server offers no version of ${name}`);
       }
@@ -234,19 +235,6 @@ function byNameAndMethod(
 /** Code-unit order, never the locale's, so output is the same everywhere. */
 function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
-}
-
-/** Dotted versions by number: 1.9 before 1.10. */
-export function compareVersions(a: string, b: string): number {
-  const left = a.split(".").map(Number);
-  const right = b.split(".").map(Number);
-  for (let i = 0; i < Math.max(left.length, right.length); i++) {
-    const difference = (left[i] ?? 0) - (right[i] ?? 0);
-    if (difference !== 0) {
-      return difference;
-    }
-  }
-  return compareText(a, b);
 }
 
 if (import.meta.main) {

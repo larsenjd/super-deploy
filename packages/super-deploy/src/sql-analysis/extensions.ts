@@ -116,13 +116,7 @@ function versionOf(node: Json): {
   return { name, version };
 }
 
-/**
- * Orders extension versions as dotted numbers, `1.10` after `1.9`: negative
- * when `a` is the lower. Every supported extension's versions are.
- */
-export function compareExtensionVersions(a: string, b: string): number {
-  return a.localeCompare(b, "en", { numeric: true });
-}
+export { compareExtensionVersions } from "./version-order.ts";
 
 /** True for one of the 17 supported extensions. */
 export function isSupportedExtension(name: string): name is SupportedExtension {

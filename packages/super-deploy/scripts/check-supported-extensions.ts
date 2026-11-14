@@ -39,7 +39,7 @@
 // (the default) allows all.
 import pg from "pg";
 import { supportedExtensionVersions } from "../src/sql-analysis/supported-extensions.ts";
-import { compareVersions } from "./generate-supported-extensions.ts";
+import { compareExtensionVersions } from "../src/sql-analysis/version-order.ts";
 
 export interface ExtensionReport {
   /** Whether every expected extension matches. */
@@ -115,15 +115,15 @@ function extensionProblems(
   );
   const unknown = offeredVersions
     .filter((version) => !expected.includes(version))
-    .sort(compareVersions);
+    .sort(compareExtensionVersions);
   const untrusted = offered
     .filter((row) => expected.includes(row.version) && !row.trusted)
     .map((row) => row.version)
-    .sort(compareVersions);
+    .sort(compareExtensionVersions);
   const problems: string[] = [];
   if (missing.length > 0 || unknown.length > 0) {
     problems.push(
-      `server offers ${offeredVersions.sort(compareVersions).join(", ")}`,
+      `server offers ${offeredVersions.sort(compareExtensionVersions).join(", ")}`,
     );
   }
   if (missing.length > 0) {
