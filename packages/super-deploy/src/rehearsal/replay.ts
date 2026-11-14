@@ -27,7 +27,11 @@ import {
   type FinalizedRecovery,
   schemaChangeFileName,
 } from "../store/migrations.ts";
-import { inPinnedTransaction, missingFromRehearsals } from "./throwaway.ts";
+import {
+  inPinnedTransaction,
+  missingFromRehearsals,
+  requireUnitExtensionVersions,
+} from "./throwaway.ts";
 
 /** The schemas a rehearsal replays in: the managed one, and the external ones it lacks. */
 export type RehearsalSchemas = Pick<
@@ -124,13 +128,16 @@ export async function readMigrationUnits(
 /**
  * Runs every unit's files in one transaction, committing only if all succeed.
  * Rehearsals only: deployments use runUnit. A file failing on something in
- * an external schema says rehearsals don't contain it (ticket 186).
+ * an external schema says rehearsals don't contain it (ticket 186). First
+ * refuses, with RehearsalExtensionVersionError, an extension version the
+ * units name that the rehearsal server doesn't offer (ADR-0009).
  */
 export async function replay(
   session: Session,
   units: readonly ReplayUnit[],
   schemas: RehearsalSchemas,
 ): Promise<void> {
+  await requireUnitExtensionVersions(session, units);
   try {
     await inPinnedTransaction(session, schemas.managedSchema, async () => {
       for (const unit of units) {

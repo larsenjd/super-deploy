@@ -6,7 +6,8 @@
 // fails naming what the server offers otherwise: a rehearsal never installs
 // another version (ADR-0009). Every rehearsal that compares with a desired
 // schema (draft, the draft rehearsal, finalize, deployment rehearsals) loads
-// one through here.
+// one through here. Replaying migrations checks the versions they name the
+// same way first (`requireUnitExtensionVersions`, rehearsal/replay.ts).
 
 import { inTransaction } from "../adapters/transaction.ts";
 import type {
@@ -18,12 +19,17 @@ import { AdapterError } from "../adapters/types.ts";
 import { errorReason, SuperDeployError } from "../errors.ts";
 import type { ParsedStatement } from "../sql-analysis/index.ts";
 import {
-  compareExtensionVersions,
   externalSchemasBoundAtCreate,
   isAlreadyInstalled,
   pinnedExtensions,
   quoteIdentifier,
 } from "../sql-analysis/index.ts";
+import {
+  offeredVersions,
+  unavailableVersions,
+  unitExtensionChanges,
+} from "./extension-availability.ts";
+import type { ReplayUnit } from "./replay.ts";
 
 /**
  * Drafts and draft rehearsals: UTF-8 with PostgreSQL 18's builtin `C.UTF-8`
@@ -177,21 +183,30 @@ async function requireExtensionVersions(
   session: Session,
   statements: readonly ParsedStatement[],
 ): Promise<void> {
-  const pinned = pinnedExtensions(statements);
-  if (pinned.length === 0) {
-    return;
-  }
-  const { rows } = await session.query<{ name: string; version: string }>(
-    "SELECT name, version FROM pg_catalog.pg_available_extension_versions WHERE name = ANY($1)",
-    [pinned.map(({ name }) => name)],
+  const [missing] = await unavailableVersions(
+    session,
+    pinnedExtensions(statements),
   );
-  for (const { name, version } of pinned) {
-    const offered = rows
-      .filter((row) => row.name === name)
-      .map((row) => row.version);
-    if (!offered.includes(version)) {
-      throw new RehearsalExtensionVersionError(name, version, offered);
-    }
+  if (missing !== undefined) {
+    throw new RehearsalExtensionVersionError(missing);
+  }
+}
+
+/**
+ * Throws RehearsalExtensionVersionError for the first version `units`
+ * install or update to that the rehearsal server can't install, naming the
+ * unit.
+ */
+export async function requireUnitExtensionVersions(
+  session: Session,
+  units: readonly ReplayUnit[],
+): Promise<void> {
+  const [missing] = await unavailableVersions(
+    session,
+    await unitExtensionChanges(units),
+  );
+  if (missing !== undefined) {
+    throw new RehearsalExtensionVersionError(missing);
   }
 }
 
@@ -305,27 +320,36 @@ export class DesiredSchemaLoadError extends SuperDeployError {
 
 /**
  * The rehearsal server can't install an extension at the version the desired
- * schema pins. Nothing falls back to another version.
+ * schema pins, or that a replayed migration installs or updates to. Nothing
+ * falls back to another version.
  */
 export class RehearsalExtensionVersionError extends SuperDeployError {
   readonly code = "rehearsal-extension-version-unavailable";
   readonly extension: string;
   readonly version: string;
+  /** The replayed unit naming the version (e.g. `00002-add-emails`); undefined for a desired schema. */
+  readonly unit: string | undefined;
   /** The versions of the extension the rehearsal server offers, oldest first. */
   readonly available: readonly string[];
 
-  constructor(
-    extension: string,
-    version: string,
-    available: readonly string[],
-  ) {
-    const offered = [...available].sort(compareExtensionVersions);
+  constructor(missing: {
+    readonly name: string;
+    readonly version: string;
+    readonly unit?: string;
+    readonly available: readonly string[];
+  }) {
+    const { name, version, unit, available } = missing;
+    const named =
+      unit === undefined
+        ? "the version the desired schema pins"
+        : "the version the SQL names";
     super(
-      `The rehearsal server can't install ${extension} ${version}: ${offered.length === 0 ? `it doesn't offer ${extension}` : `it offers ${extension} ${offered.join(", ")}`}. A rehearsal installs exactly the version the desired schema pins, so use a rehearsal server that offers ${extension} ${version}`,
+      `The rehearsal server can't install ${name} ${version}${unit === undefined ? "" : `, which ${unit} names`}: ${offeredVersions(name, available)}. A rehearsal installs exactly ${named}, so use a rehearsal server that offers ${name} ${version}`,
     );
-    this.extension = extension;
+    this.extension = name;
     this.version = version;
-    this.available = offered;
+    this.unit = unit;
+    this.available = available;
   }
 }
 

@@ -356,15 +356,13 @@ comment on extension citext is 'x';
   });
 });
 
-describe("a rehearsal", () => {
-  test("fails when its server can't install the pinned version, naming what it offers", async () => {
-    const { project } = await deployProject(
-      server,
-      { "users.sql": users },
-      {
-        settings: `extensions: { citext: ["1.8"] },`,
-        // A rehearsal server whose citext stops at 1.7.
-        rehearsal: `{
+/**
+ * A rehearsal adapter whose server's citext stops at 1.7 while `lacking`, a
+ * JavaScript condition, holds: its pg_available_extension_versions leaves
+ * 1.8 out, and installing 1.8 fails as PostgreSQL fails it.
+ */
+function rehearsalLackingCitext18(lacking: string): string {
+  return `{
   async createDatabase(request) {
     const database = await postgres.rehearsal.createDatabase(request);
     return {
@@ -373,12 +371,15 @@ describe("a rehearsal", () => {
       async connect() {
         const session = await database.connect();
         return {
-          execute: (sql) => session.execute(sql),
+          execute: (sql) =>
+            (${lacking}) && /citext.*'1\\.8'/is.test(sql)
+              ? Promise.reject(new Error('extension "citext" has no installation script nor update path for version "1.8"'))
+              : session.execute(sql),
           serverVersion: () => session.serverVersion(),
           close: () => session.close(),
           async query(sql, values) {
             const result = await session.query(sql, values);
-            return sql.includes("pg_available_extension_versions")
+            return (${lacking}) && sql.includes("pg_available_extension_versions")
               ? { rows: result.rows.filter((row) => row.version !== "1.8") }
               : result;
           },
@@ -386,7 +387,17 @@ describe("a rehearsal", () => {
       },
     };
   },
-}`,
+}`;
+}
+
+describe("a rehearsal", () => {
+  test("fails when its server can't install the pinned version, naming what it offers", async () => {
+    const { project } = await deployProject(
+      server,
+      { "users.sql": users },
+      {
+        settings: `extensions: { citext: ["1.8"] },`,
+        rehearsal: rehearsalLackingCitext18("true"),
       },
     );
 
@@ -400,8 +411,39 @@ describe("a rehearsal", () => {
       extension: "citext",
       version: "1.8",
       available: ["1.4", "1.5", "1.6", "1.7"],
-      message:
-        "The rehearsal server can't install citext 1.8: it offers citext 1.4, 1.5, 1.6, 1.7. A rehearsal installs exactly the version the desired schema pins, so use a rehearsal server that offers citext 1.8",
     });
+    expect((error as Error).message).toContain(
+      "can't install citext 1.8: it offers citext 1.4, 1.5, 1.6, 1.7",
+    );
+  });
+
+  test("of a deployment fails before replaying a migration whose version its server can't install, naming the migration", async () => {
+    const { project, database } = await deployProject(
+      server,
+      { "users.sql": users },
+      {
+        settings: `extensions: { citext: ["1.8"] },`,
+        rehearsal: rehearsalLackingCitext18("globalThis.lackCitext18"),
+      },
+    );
+    await finalizeMigration(project, "add users");
+    const lacking = globalThis as { lackCitext18?: boolean };
+    lacking.lackCitext18 = true;
+    try {
+      const error = await deploy(project, { target: "dev" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(RehearsalExtensionVersionError);
+      expect(error).toMatchObject({
+        extension: "citext",
+        version: "1.8",
+        unit: "00001-add-users",
+        available: ["1.4", "1.5", "1.6", "1.7"],
+      });
+      expect(await extensionsIn(database)).toEqual([]);
+    } finally {
+      delete lacking.lackCitext18;
+    }
   });
 });
