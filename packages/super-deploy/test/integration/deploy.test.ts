@@ -1069,6 +1069,7 @@ describe("status", () => {
       disposable: false,
       preflight: {
         notOwned: [],
+        extensions: [],
         historyMismatches: [],
         warnings: [],
       },
