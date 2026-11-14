@@ -12,8 +12,7 @@
       "**/*.jsonc",
       "**/*.ts",
       "*.code-workspace",
-      "!packages",
-      "!examples"
+      "!packages/template"
     ]
   },
   "formatter": {
