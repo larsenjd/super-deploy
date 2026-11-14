@@ -158,7 +158,7 @@ const definitions = {
   ],
   "extension-cascade": [
     "unsupported",
-    "CREATE EXTENSION ... CASCADE would install extensions the desired schema doesn't name",
+    "CASCADE on an extension would install or drop objects no statement names",
   ],
   "extension-comment": [
     "unsupported",

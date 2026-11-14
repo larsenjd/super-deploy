@@ -32,11 +32,17 @@
 //
 // `rebuild` judges with the same test what its wipe can drop
 // (`objectsNotDroppable`), which is less than ownership: the schema's owner
-// may drop anything in it but an extension. Extensions aren't in the
-// ownership check, since a deployment never alters or drops one. The wipe
-// drops only the extensions in the managed schema, so a member there of an
-// extension living elsewhere can't be dropped whoever owns it: it is listed
-// with its extension and the extension's owner.
+// may drop anything in it but an extension. The wipe drops only the
+// extensions in the managed schema, so a member there of an extension living
+// elsewhere can't be dropped whoever owns it: it is listed with its extension
+// and the extension's owner.
+//
+// A deployment updates and drops supported extensions (ADR-0009), which only
+// an extension's owner may do. The deploy role can because it owns each
+// extension it created: the migration that creates one runs as the deploy
+// role, and drift refuses any extension the migrations didn't create.
+// Extensions themselves aren't in the ownership check, and their members
+// (owned by PostgreSQL's bootstrap superuser) never are.
 
 import type { Session } from "../adapters/types.ts";
 import { plural, SuperDeployError } from "../errors.ts";

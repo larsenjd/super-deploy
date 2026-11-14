@@ -11,7 +11,10 @@
 // - dropping an object that holds no data and creating it again later in the
 //   same migration, as pg-delta does to change a view, index, function,
 //   trigger, type or constraint (a table or column dropped and created
-//   again has lost its rows, so that stays destructive). CASCADE always is.
+//   again has lost its rows, so that stays destructive). CASCADE always is;
+// - DROP EXTENSION (ADR-0009): the deploy-time rules refuse it with CASCADE,
+//   so everything that used the extension was dropped by statements of its
+//   own before it, and those carry the destructive warnings.
 //
 // A narrowing type change (`narrowingOf`) is destructive too, and its reason
 // says that values which don't fit are cut or rounded with no error: the
@@ -317,7 +320,10 @@ export class ChangeTracker {
         covered: false,
       });
     };
-    if (statement.nodeType === "DropStmt") {
+    if (
+      statement.nodeType === "DropStmt" &&
+      body.removeType !== "OBJECT_EXTENSION"
+    ) {
       const drop = body as DropStmt;
       const cascade = drop.behavior === "DROP_CASCADE";
       const type = drop.removeType ?? "";

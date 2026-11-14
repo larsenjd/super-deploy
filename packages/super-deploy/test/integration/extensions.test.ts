@@ -3,7 +3,9 @@
 import {
   deploy,
   draft,
+  ExtensionDowngradeError,
   finalize,
+  type Project,
   RehearsalExtensionVersionError,
   SqlRuleViolationError,
   status,
@@ -11,7 +13,11 @@ import {
   validate,
 } from "super-deploy";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { deployProject } from "../support/deploy.ts";
+import {
+  asDeployRole,
+  deployProject,
+  finalizeMigration,
+} from "../support/deploy.ts";
 import { startTestServer, type TestServer } from "../support/postgres.ts";
 
 let server: TestServer;
@@ -30,6 +36,14 @@ create table users (
 );
 `;
 
+/** A schema change's statements, without its header comment. */
+function statementsOf(schemaChange: string): string[] {
+  return schemaChange
+    .split(/\n\n+/)
+    .map((block) => block.trim())
+    .filter((block) => block !== "" && !block.startsWith("--"));
+}
+
 /** Each extension in `database`: its version, schema and owner. */
 async function extensionsIn(database: string) {
   return server.query(
@@ -42,6 +56,16 @@ async function extensionsIn(database: string) {
     [],
     database,
   );
+}
+
+/** `database` holds exactly `extensions`, and `status` reports no drift on it. */
+async function expectDeployedWithoutDrift(
+  project: Project,
+  database: string,
+  extensions: Awaited<ReturnType<typeof extensionsIn>>,
+) {
+  expect(await extensionsIn(database)).toEqual(extensions);
+  expect((await status(project, { target: "dev" })).drift).toEqual([]);
 }
 
 describe("a supported extension", () => {
@@ -59,10 +83,156 @@ describe("a supported extension", () => {
     await finalize(project);
     await deploy(project, { target: "dev" });
 
-    expect(await extensionsIn(database)).toEqual([
+    await expectDeployedWithoutDrift(project, database, [
       { name: "citext", version: "1.8", schema: "public", owner: "deployer" },
     ]);
-    expect((await status(project, { target: "dev" })).drift).toEqual([]);
+  });
+});
+
+describe("changing an extension's version", () => {
+  test("raising it drafts UPDATE TO first in the schema change, and deploys without drift", async () => {
+    const { dir, project, database } = await deployProject(
+      server,
+      { "users.sql": users.replace("'1.8'", "'1.6'") },
+      { settings: `extensions: { citext: ["1.6", "1.8"] },` },
+    );
+    await finalizeMigration(project, "add users");
+    await deploy(project, { target: "dev" });
+
+    await dir.write(
+      "data-model/desired-schema/users.sql",
+      users.replace("not null", "not null,\n  nickname citext"),
+    );
+    await draft(project, { name: "update citext" });
+    const schemaChange = await dir.read("data-model/draft/schema-change.sql");
+    expect(statementsOf(schemaChange)).toEqual([
+      `ALTER EXTENSION "citext" UPDATE TO '1.8';`,
+      expect.stringMatching(/^ALTER TABLE .* ADD COLUMN "nickname"/),
+    ]);
+    await finalize(project);
+    await deploy(project, { target: "dev" });
+
+    await expectDeployedWithoutDrift(project, database, [
+      { name: "citext", version: "1.8", schema: "public", owner: "deployer" },
+    ]);
+  });
+
+  test("by hand on a target is drift naming the version", async () => {
+    const { project, database } = await deployProject(
+      server,
+      { "users.sql": users.replace("'1.8'", "'1.6'") },
+      { settings: `extensions: { citext: ["1.6"] },` },
+    );
+    await finalizeMigration(project, "add users");
+    await deploy(project, { target: "dev" });
+    await asDeployRole(
+      server,
+      database,
+      "alter extension citext update to '1.8'",
+    );
+
+    expect((await status(project, { target: "dev" })).drift).toEqual([
+      {
+        object: "extension citext",
+        change: "changed",
+        differences: [
+          {
+            side: "target",
+            line: "extension: citext schema=public version=1.8",
+          },
+          {
+            side: "expected",
+            line: "extension: citext schema=public version=1.6",
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("lowering it is refused at draft, since PostgreSQL has no downgrade scripts", async () => {
+    const { dir, project } = await deployProject(
+      server,
+      { "users.sql": users },
+      { settings: `extensions: { citext: ["1.6", "1.8"] },` },
+    );
+    await finalizeMigration(project, "add users");
+
+    await dir.write(
+      "data-model/desired-schema/users.sql",
+      users.replace("'1.8'", "'1.6'"),
+    );
+    const error = await draft(project, { name: "lower citext" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(ExtensionDowngradeError);
+    expect(error).toMatchObject({
+      code: "extension-downgrade",
+      extension: "citext",
+      from: "1.8",
+      to: "1.6",
+      message:
+        "The desired schema lowers citext from 1.8 to 1.6, which PostgreSQL can't do: it has no downgrade scripts. Keep VERSION '1.8' or a higher one",
+    });
+    expect(dir.exists("data-model/draft/schema-change.sql")).toBe(false);
+  });
+});
+
+describe("removing an extension", () => {
+  test("drafts the drop of each column using it, then DROP EXTENSION without CASCADE, and deploys without drift", async () => {
+    const { dir, project, database } = await deployProject(
+      server,
+      { "users.sql": users },
+      { settings: `extensions: { citext: ["1.8"] },` },
+    );
+    await finalizeMigration(project, "add users");
+    await deploy(project, { target: "dev" });
+
+    await dir.write(
+      "data-model/desired-schema/users.sql",
+      `create table users (
+  id bigint constraint users_pkey primary key
+);
+`,
+    );
+    await draft(project, { name: "remove citext" });
+    expect(
+      statementsOf(await dir.read("data-model/draft/schema-change.sql")),
+    ).toEqual([
+      'ALTER TABLE "public"."users" DROP COLUMN "email";',
+      'DROP EXTENSION "citext";',
+    ]);
+    await finalize(project, { acknowledgeDestructive: true });
+    await deploy(project, { target: "dev" });
+
+    await expectDeployedWithoutDrift(project, database, []);
+  });
+
+  test("while a column still uses its type fails as an unknown reference", async () => {
+    const { dir, project } = await deployProject(
+      server,
+      { "users.sql": users },
+      { settings: `extensions: { citext: ["1.8"] },` },
+    );
+    await finalizeMigration(project, "add users");
+
+    await dir.write(
+      "data-model/desired-schema/users.sql",
+      users.replace("create extension citext version '1.8';\n", ""),
+    );
+    const error = await draft(project, { name: "remove citext" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(SqlRuleViolationError);
+    expect(
+      (error as SqlRuleViolationError).violations.map(({ rule, message }) => ({
+        rule,
+        message,
+      })),
+    ).toEqual([
+      { rule: "unknown-reference", message: expect.stringContaining("citext") },
+    ]);
   });
 });
 
