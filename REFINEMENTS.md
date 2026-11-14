@@ -4,7 +4,7 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 
 ## Calling functions and procedures in deploy-time SQL
 
-**V1:** Deploy-time SQL may not `CALL` procedures, run `DO` blocks, or call any function outside `pg_catalog`. Built-in functions are allowed except a denylist of ones with effects that escape the transaction (e.g. `setval`, `pg_notify`, advisory locks, `dblink*`, `lo_export`, signal/admin functions). Defining functions, procedures and triggers in the desired schema is allowed. Triggers firing from DML in scripts is accepted and documented.
+**V1:** Deploy-time SQL may not `CALL` procedures, run `DO` blocks, or call any function outside `pg_catalog` other than a supported extension's (ADR-0009). Built-in functions are allowed except a denylist of ones with effects that escape the transaction (e.g. `setval`, `pg_notify`, advisory locks, `dblink*`, `lo_export`, signal/admin functions). Defining functions, procedures and triggers in the desired schema is allowed. Triggers firing from DML in scripts is accepted and documented.
 
 **Why narrow:** A procedure that commits fails inside the deploy transaction (`invalid transaction termination`); a function can cause effects a rollback cannot undo. The parser cannot see inside routine bodies.
 
@@ -84,13 +84,20 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 
 ## Extensions
 
-**V1:** The desired schema may only use `plpgsql`, the one extension installed in every database. Every other `CREATE EXTENSION` is refused.
+**V1:** The desired schema may install only supported extensions (ADR-0009). These are 17 extensions shipped with PostgreSQL that are trusted, offered by Aurora PostgreSQL 18.4, load on every embedded-postgres platform and stay inside the transaction: `btree_gin`, `btree_gist`, `citext`, `cube`, `dict_int`, `fuzzystrmatch`, `hstore`, `intarray`, `isn`, `ltree`, `pg_trgm`, `pgcrypto`, `tablefunc`, `tsm_system_rows`, `tsm_system_time`, `unaccent` and `uuid-ossp`. Each one lives in the managed schema at a `VERSION` the project's config allows. Any other extension in a target's database is drift, wherever it lives, except `plpgsql`.
 
-**Why narrow:** Extension install scripts are code the parser cannot see, and some extensions escape the transaction (`dblink`, `postgres_fdw`, `file_fdw`, `adminpack`, `pg_stat_statements`, `pg_prewarm`). Rehearsals must also have the same extensions available as targets.
+**Why narrow:**
+- Extension install scripts are code the parser cannot see. Untrusted extensions need a superuser, which the deploy role isn't, and some escape the transaction (`dblink`, `postgres_fdw`, `pg_stat_statements`, `pg_prewarm`).
+- Rehearsals must install exactly the version a target gets.
+- An extension outside the managed schema would make a target's structure depend on something other than its recorded migrations.
 
-**Revisit when:** Projects need common extensions. First candidate: a fixed allowlist of extensions that ship with PostgreSQL and stay inside the transaction: `pgcrypto`, `citext`, `pg_trgm`, `btree_gist`, `btree_gin`, `hstore`, `ltree`, `uuid-ossp`, `intarray`, `unaccent`, `fuzzystrmatch`, `tablefunc`, `cube`, `earthdistance`. Then third-party extensions such as PostGIS and pgvector, which need a way to confirm the rehearsal server and target have the same version.
+**Revisit when:**
+- **Aurora's real versions are confirmed** on a live cluster. Add `lo`, `seg` and `tcn` if Aurora trusts them; AWS's list leaves them out.
+- **Targets carry monitoring extensions**, such as `pg_stat_statements`, in the application's database. Option: a config list of extensions that super-deploy ignores. They would have to live outside the managed schema and would never be touched.
+- **Projects need third-party extensions** such as PostGIS and pgvector. These need a way to make the rehearsal server offer the target's version, which embedded-postgres doesn't ship.
+- **Projects need `plperl` or `pltcl`.** embedded-postgres doesn't bundle their language libraries.
 
-**Research:** `.scratch/super-deploy/research/transactional-hazards.md` §2, open question 4.
+**Research:** `.scratch/extensions/research/supported-extensions.md`; `.scratch/super-deploy/research/transactional-hazards.md` §2, open question 4.
 
 ## Tolerating drift
 
@@ -122,7 +129,7 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 
 ## Object types refused in the desired schema
 
-**V1 refuses:** enums, partitioned tables, extensions other than `plpgsql`, rules (`CREATE RULE`), event triggers, foreign tables and foreign data wrappers, publications and subscriptions, custom casts, operators, aggregates (`CREATE AGGREGATE`), collations and text-search configurations, standalone sequences (identity sequences are allowed), `CREATE STATISTICS`, `serial`/`bigserial` columns, `NOT ENFORCED` constraints, and `VIRTUAL` generated columns.
+**V1 refuses:** enums, partitioned tables, extensions other than `plpgsql` and the supported extensions, rules (`CREATE RULE`), event triggers, foreign tables and foreign data wrappers, publications and subscriptions, custom casts, operators, aggregates (`CREATE AGGREGATE`), collations and text-search configurations, standalone sequences (identity sequences are allowed), `CREATE STATISTICS`, `serial`/`bigserial` columns, `NOT ENFORCED` constraints, and `VIRTUAL` generated columns.
 
 Also refused, though the spec's first list didn't name them: temporary tables and views; table inheritance and typed tables (`CREATE TABLE ... OF type`); range types and base types; procedural languages and routines in languages other than `sql` and `plpgsql`; routine options such as `WINDOW` and `SUPPORT`; view options other than `security_invoker`, `security_barrier` and `check_option`; custom conversions, transforms and access methods. Physical storage settings have their own entry below.
 

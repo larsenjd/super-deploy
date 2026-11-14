@@ -44,6 +44,10 @@ _Avoid_: Hotfix, patch, amended migration
 The comment `-- OVERRIDE SUPER-DEPLOY REFUSAL: <reason>` on the line before one statement, which overrides super-deploy's refusal of that statement for a risk rule. The reason is recorded and always shown to reviewers.
 _Avoid_: Dangerous command, escape hatch, suppression
 
+**Supported extension**:
+An extension that ships with PostgreSQL and that the desired schema may install into the managed schema.
+_Avoid_: Allowed extension, built-in extension, contrib
+
 ## Deploying
 
 **Target**:
@@ -51,7 +55,7 @@ A real, named database that receives deployments, such as `dev`, `qa` or `prod`.
 _Avoid_: Environment, server
 
 **Deploy role**:
-The one database role the system connects to a target as, and the only role it knows about. It owns the managed schema and everything in it.
+The one database role the system connects to a target as, and the only role it knows about. It owns the managed schema and everything in it, except the objects inside a supported extension: it owns the extension, but PostgreSQL gives the extension's objects to its own superuser.
 _Avoid_: Owner role, migration user, superuser
 
 **Disposable target**:
@@ -86,4 +90,4 @@ Replaying migrations on a throwaway database to prove they produce the desired s
 _Avoid_: Dry run, test run
 
 **Drift**:
-Any difference between a target's managed schema and the structure its recorded migrations should have produced.
+Any difference between a target's managed schema and the structure its recorded migrations should have produced. Any extension in the target's database that its recorded migrations did not create is drift too, wherever it lives, except `plpgsql`.
