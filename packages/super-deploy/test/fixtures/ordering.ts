@@ -820,6 +820,51 @@ comment on column public.cv_mv.id is 'materialized-view column';
     before: [["create extension fuzzystrmatch", "create view sounds"]],
   },
   {
+    name: "an index using an extension's operator class",
+    files: statements(
+      "create extension pg_trgm version '1.6'",
+      "create table docs (id int constraint docs_pkey primary key, title text not null)",
+      "create index docs_title_trgm on docs using gin (title gin_trgm_ops)",
+    ),
+    extensions: { pg_trgm: ["1.6"] },
+    before: [["create extension pg_trgm", "create index docs_title_trgm"]],
+  },
+  {
+    name: "an exclusion constraint using an extension's operator class",
+    files: statements(
+      "create extension btree_gist version '1.8'",
+      "create table bookings (room int not null, during tsrange not null, constraint bookings_no_overlap exclude using gist (room gist_int4_ops with =, during with &&))",
+    ),
+    extensions: { btree_gist: ["1.8"] },
+    before: [["create extension btree_gist", "create table bookings"]],
+  },
+  {
+    name: "a view using an extension's operator",
+    files: statements(
+      "create extension pg_trgm version '1.6'",
+      "create table words (word text constraint words_pkey primary key)",
+      "create view like_cat as select word from words where word % 'cat'",
+    ),
+    extensions: { pg_trgm: ["1.6"] },
+    before: [["create extension pg_trgm", "create view like_cat"]],
+  },
+  {
+    name: "built-in operator classes and operators beside an extension's",
+    files: statements(
+      "create extension pg_trgm version '1.6'",
+      "create table names (id int constraint names_pkey primary key, name text not null, tags int[] not null)",
+      "create index names_name_pattern on names (name text_pattern_ops)",
+      "create index names_tags on names using gin (tags array_ops) where id <> 0",
+      "create index names_name_trgm on names using gist (name gist_trgm_ops)",
+      "create view short_names as select name from names where length(name) < 5 and tags && array[1] order by name using <",
+    ),
+    extensions: { pg_trgm: ["1.6"] },
+    before: [
+      ["create table names", "create index names_name_pattern"],
+      ["create extension pg_trgm", "create index names_name_trgm"],
+    ],
+  },
+  {
     name: "C20a temporal primary key WITHOUT OVERLAPS (PG18)",
     files: statements(
       "create table room (id int4range, during tstzrange, constraint room_pk primary key (id, during without overlaps))",
@@ -1480,6 +1525,43 @@ create table people (name citext);
         line: 3,
         rule: "unknown-reference",
         message: ["table people references type citext"],
+      },
+    ],
+  },
+  {
+    name: "operator classes and operators no extension provides",
+    files: {
+      "a.sql": `create extension pg_trgm version '1.6';
+create table docs (id int constraint docs_pkey primary key, title text not null, room int not null);
+create index docs_title_trgm on docs using gin (title gin_trgm_ops);
+create index docs_room_gin on docs using gin (room int4_ops);
+create view odd_docs as select title from docs where title %%% 'x';
+alter table docs add constraint docs_room_ex exclude using gist (room gist_int4_ops with =);
+`,
+    },
+    extensions: { pg_trgm: ["1.6"] },
+    errors: [
+      {
+        file: "a.sql",
+        line: 4,
+        rule: "unknown-reference",
+        message: [
+          "index docs_room_gin references operator class int4_ops for gin, which the desired schema doesn't create and pg_catalog doesn't have",
+        ],
+      },
+      {
+        file: "a.sql",
+        line: 5,
+        rule: "unknown-reference",
+        message: ["view odd_docs references operator %%%"],
+      },
+      {
+        file: "a.sql",
+        line: 6,
+        rule: "unknown-reference",
+        message: [
+          "constraint docs_room_ex on docs references operator class gist_int4_ops for gist",
+        ],
       },
     ],
   },

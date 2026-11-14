@@ -64,6 +64,45 @@ describe("a supported extension", () => {
     ]);
     expect((await status(project, { target: "dev" })).drift).toEqual([]);
   });
+
+  test("provides the operator class of an index, in every load order", async () => {
+    // Draft and finalize load the desired schema in two orders and refuse a
+    // difference (the order-independence check), so the index needs its
+    // edge to pg_trgm in both.
+    const { project, database } = await deployProject(
+      server,
+      {
+        "docs.sql": `create extension pg_trgm version '1.6';
+
+create table docs (
+  id bigint constraint docs_pkey primary key,
+  title text not null
+);
+
+create index docs_title_trgm on docs using gin (title gin_trgm_ops);
+`,
+      },
+      { settings: `extensions: { pg_trgm: ["1.6"] },` },
+    );
+
+    await draft(project, { name: "add docs" });
+    await finalize(project);
+    await deploy(project, { target: "dev" });
+
+    expect(
+      await server.query(
+        "select indexdef from pg_indexes where indexname = 'docs_title_trgm'",
+        [],
+        database,
+      ),
+    ).toEqual([
+      {
+        indexdef:
+          "CREATE INDEX docs_title_trgm ON public.docs USING gin (title gin_trgm_ops)",
+      },
+    ]);
+    expect((await status(project, { target: "dev" })).drift).toEqual([]);
+  });
 });
 
 describe("the desired-schema rules for extensions", () => {

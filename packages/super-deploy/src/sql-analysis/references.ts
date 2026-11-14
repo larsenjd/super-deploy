@@ -7,21 +7,30 @@
 // function signatures and argument defaults, `BEGIN ATOMIC` /
 // `RETURN` bodies, `LANGUAGE sql` string bodies (validated at CREATE because
 // check_function_bodies is on), `%TYPE`, `'x'::regclass`-style literals and
-// `nextval('seq')`. PL/pgSQL bodies are late-bound and ignored.
+// `nextval('seq')`, plus the operators in those expressions (and in
+// exclusion constraints, `ORDER BY ... USING` and `x = ANY (subquery)`)
+// and the operator classes of index and exclusion-constraint elements.
+// PL/pgSQL bodies are late-bound and ignored.
 //
 // Names are keys in namespaces: `rel:` (anything in pg_class: tables, views,
 // indexes, sequences, composite types), `type:` (tables' and views' row
 // types, composite types, domains), `func:` (every overload of a name),
+// `op:` (every operator of a name: ordering can't see argument types),
+// `opclass:method.name` (an operator class of an index access method, since
+// btree_gin's `int4_ops` for gin is not pg_catalog's for btree),
 // `con:table.name`, `domcon:domain.name`, `trigger:table.name`, `ext:name`
 // (extensions, which routines in their language wait for), plus
 // `uniq:table` (every unique key of a table, which a foreign key to it waits
 // for).
 //
 // A supported extension's `CREATE EXTENSION ... VERSION` also provides the
-// `type:` and `func:` keys of what it installs at that version
-// (extensions.ts), so a column of type `citext` or a default calling
-// `gen_salt()` loads after it, and a name the pinned version lacks is an
-// unknown reference.
+// `type:`, `func:`, `op:` and `opclass:` keys of what it installs at that
+// version (extensions.ts), so a column of type `citext`, a default calling
+// `gen_salt()`, an index using `gin_trgm_ops` or a view using `%` loads
+// after it, and a name the pinned version lacks is an unknown reference. An
+// operator pg_catalog also has (`%`, `<->`) still orders after the extension
+// providing it: an extra edge from a `CREATE EXTENSION`, which references
+// nothing, can't make a cycle.
 import type { Node } from "@pgsql/types";
 import { parseSync } from "libpg-query";
 import { createExtension, extensionObjects } from "./extensions.ts";
@@ -49,6 +58,8 @@ export type ReferenceKind =
   | "relation"
   | "type"
   | "function"
+  | "operator"
+  | "operator class"
   | "constraint"
   | "trigger";
 
@@ -232,6 +243,31 @@ class Collector {
     this.add("function", names, "func");
   }
 
+  operator(names: unknown): void {
+    this.add("operator", strings(names), "op");
+  }
+
+  /** The operator classes of index elements (`IndexElem`s) of access method `method`. */
+  operatorClasses(elements: readonly unknown[], method: unknown): void {
+    const accessMethod = str(method) ?? "btree";
+    for (const element of elements) {
+      const names = strings(
+        isObject(element) && isObject(element.IndexElem)
+          ? element.IndexElem.opclass
+          : undefined,
+      );
+      const found = this.qualified(names);
+      if (found !== undefined) {
+        this.references.push({
+          kind: "operator class",
+          key: `opclass:${accessMethod}.${found.name}`,
+          name: `${names.join(".")} for ${accessMethod}`,
+          managedOnly: found.managedOnly,
+        });
+      }
+    }
+  }
+
   walk(node: unknown): void {
     if (Array.isArray(node)) {
       for (const item of node) {
@@ -275,6 +311,17 @@ class Collector {
           case "A_Indirection":
             this.indirection(value);
             break;
+          case "A_Expr":
+            if (operatorExpressions.has(str(value.kind) ?? "")) {
+              this.operator(value.name);
+            }
+            break;
+          case "SubLink":
+            this.operator(value.operName);
+            break;
+          case "SortBy":
+            this.operator(value.useOp);
+            break;
         }
       }
       this.walk(value);
@@ -316,6 +363,27 @@ class Collector {
   }
 
   private constraint(constraint: Json): void {
+    if (constraint.contype === "CONSTR_EXCLUSION") {
+      // Each element is a list of the index element and its operator's name.
+      const exclusions = (
+        Array.isArray(constraint.exclusions) ? constraint.exclusions : []
+      ).map((exclusion) =>
+        isObject(exclusion) && isObject(exclusion.List)
+          ? (exclusion.List.items as unknown[])
+          : [],
+      );
+      this.operatorClasses(
+        exclusions.map(([element]) => element),
+        constraint.access_method,
+      );
+      for (const [, operator] of exclusions) {
+        this.operator(
+          isObject(operator) && isObject(operator.List)
+            ? operator.List.items
+            : undefined,
+        );
+      }
+    }
     if (
       constraint.contype !== "CONSTR_FOREIGN" ||
       !isObject(constraint.pktable)
@@ -353,6 +421,20 @@ class Collector {
     }
   }
 }
+
+/** `A_Expr` kinds whose `name` is an operator (`BETWEEN` and its kin name keywords). */
+const operatorExpressions = new Set([
+  "AEXPR_OP",
+  "AEXPR_OP_ANY",
+  "AEXPR_OP_ALL",
+  "AEXPR_DISTINCT",
+  "AEXPR_NOT_DISTINCT",
+  "AEXPR_NULLIF",
+  "AEXPR_IN",
+  "AEXPR_LIKE",
+  "AEXPR_ILIKE",
+  "AEXPR_SIMILAR",
+]);
 
 function stringLiteral(node: unknown): string | undefined {
   if (!isObject(node) || !isObject(node.A_Const)) {
@@ -681,6 +763,14 @@ const extractors: Record<string, Extractor> = {
     for (const routine of new Set(objects?.functions.map(({ name }) => name))) {
       facts.provides.push(`func:${routine}`);
     }
+    for (const operator of new Set(
+      objects?.operators.map(({ name }) => name),
+    )) {
+      facts.provides.push(`op:${operator}`);
+    }
+    for (const { name, method } of objects?.operatorClasses ?? []) {
+      facts.provides.push(`opclass:${method}.${name}`);
+    }
     return true;
   },
 
@@ -852,6 +942,10 @@ const extractors: Record<string, Extractor> = {
       }
     }
     collector.walk(body.relation);
+    collector.operatorClasses(
+      Array.isArray(body.indexParams) ? body.indexParams : [],
+      body.accessMethod,
+    );
     collector.walk(body.indexParams);
     collector.walk(body.indexIncludingParams);
     collector.walk(body.whereClause);
@@ -1017,7 +1111,9 @@ export function unqualifiedReferences(tree: unknown): Reference[] {
   const collector = new Collector("");
   collector.walk(tree);
   dropCteReferences(collector);
-  return collector.references;
+  return collector.references.filter(({ kind }) =>
+    ["relation", "type", "function"].includes(kind),
+  );
 }
 
 /** Unqualified relation names that match a CTE in the statement refer to the CTE. */
