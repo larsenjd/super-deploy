@@ -121,7 +121,6 @@ const refusedObjects = {
   aggregates: () => v1("Custom aggregates"),
   rules: () => v1("Rules"),
   statistics: () => unsupported("CREATE STATISTICS is not supported in V1"),
-  extensions: () => v1("Extensions other than plpgsql"),
   publications: () => v1("Publications and subscriptions"),
   operators: () =>
     v1("Custom operators", " (nor operator classes and families)"),
@@ -220,7 +219,7 @@ function foreign(): RuleFinding {
 
 /**
  * Why V1 refuses an object a desired schema can't create at all, found in a
- * database (verification/catalog.ts, kinds `other` and `extension`):
+ * database (verification/catalog.ts, kind `other`):
  * `object` as pg_describe_object names it, `line` its catalog line (for
  * routines `<prokind> <signature>`). The same reasons the rules give for
  * the statements that would create it.
@@ -244,9 +243,6 @@ export function catalogObjectFinding(fact: {
   }
   if (startsWith("statistics object ")) {
     return refusedObjects.statistics();
-  }
-  if (startsWith("extension ")) {
-    return refusedObjects.extensions();
   }
   if (startsWith("publication ")) {
     return refusedObjects.publications();

@@ -60,7 +60,6 @@ describe("adopted desired schema", () => {
       await kept([
         'ALTER TABLE "app"."t" OWNER TO "o";',
         "ALTER FUNCTION app.f() OWNER TO o;",
-        'CREATE EXTENSION "pgcrypto" SCHEMA "app";',
         "COMMENT ON EXTENSION \"pgcrypto\" IS 'x';",
         'CREATE AGGREGATE "app"."agg"(integer) (SFUNC = int4pl, STYPE = integer);',
         "CREATE RULE r AS ON INSERT TO app.t DO INSTEAD NOTHING;",
@@ -68,6 +67,22 @@ describe("adopted desired schema", () => {
         "CREATE FUNCTION app.w() RETURNS integer LANGUAGE c WINDOW AS 'x', 'y';",
       ]),
     ).toEqual({});
+  });
+
+  test("writes the managed schema's extensions as CREATE EXTENSION ... VERSION, first, leaving out those elsewhere", async () => {
+    expect(
+      await kept([
+        'CREATE TABLE "app"."t" ("id" uuid NOT NULL);',
+        'CREATE EXTENSION "uuid-ossp" SCHEMA "app" VERSION \'1.1\';',
+        'CREATE EXTENSION "citext" SCHEMA "public" VERSION \'1.8\';',
+        'CREATE EXTENSION "pgcrypto" SCHEMA "app" VERSION \'1.4\';',
+      ]),
+    ).toEqual({
+      "extensions.sql":
+        "-- Adopted.\n\nCREATE EXTENSION \"uuid-ossp\" VERSION '1.1';\n\nCREATE EXTENSION pgcrypto VERSION '1.4';\n",
+      "tables.sql":
+        '-- Adopted.\n\nCREATE TABLE "app"."t" ("id" uuid NOT NULL);\n',
+    });
   });
 
   test("keeps what the rules must refuse, so they can say why", async () => {

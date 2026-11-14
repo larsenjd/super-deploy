@@ -8,6 +8,7 @@
 
 import type { ParsedStatement } from "./parse.ts";
 import type { RuleId } from "./rule-catalogue.ts";
+import { quoteIdentifier } from "./statement-names.ts";
 import {
   type ExtensionObjects,
   type SupportedExtension,
@@ -71,6 +72,17 @@ export function isSupportedExtension(name: string): name is SupportedExtension {
   return Object.hasOwn(supportedExtensionVersions, name);
 }
 
+/**
+ * An extension's name as SQL writes it: bare for a supported extension
+ * whose name is a plain identifier (none is a keyword), else quoted
+ * (`"uuid-ossp"`).
+ */
+export function extensionSqlName(name: string): string {
+  return isSupportedExtension(name) && /^[a-z_][a-z0-9_]*$/.test(name)
+    ? name
+    : quoteIdentifier(name);
+}
+
 /** The supported extensions' names, comma-separated, for messages. */
 export function supportedExtensionList(): string {
   return Object.keys(supportedExtensionVersions).join(", ");
@@ -120,6 +132,21 @@ export function unsupportedExtensionFinding(name: string): ExtensionFinding {
   return {
     rule: "unsupported-extension",
     message: `${name} is not a supported extension: supported extensions are ${supportedExtensionList()}`,
+  };
+}
+
+/**
+ * A supported extension a database holds in `schema`, outside the managed
+ * schema, where every extension lives.
+ */
+export function extensionElsewhereFinding(
+  name: string,
+  schema: string,
+  managedSchema: string,
+): ExtensionFinding {
+  return {
+    rule: "extension-outside-managed-schema",
+    message: `${name} is in schema ${schema}, outside the managed schema ${managedSchema}, where extensions live: move it there (ALTER EXTENSION ${extensionSqlName(name)} SET SCHEMA ${quoteIdentifier(managedSchema)}) or drop it`,
   };
 }
 

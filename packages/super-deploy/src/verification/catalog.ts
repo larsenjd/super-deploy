@@ -487,6 +487,27 @@ export function isVirtualGeneratedColumn(fact: CatalogFact): boolean {
   return fact.kind === "column" && fact.line.includes(" generated=v default=");
 }
 
+/**
+ * The extension an `extension` fact describes, with the schema it lives in,
+ * or undefined for another kind. Reads the `extension` query's line: the
+ * name, then ` schema=`, which ` version=` always follows.
+ */
+export function factExtension(
+  fact: CatalogFact,
+): { readonly name: string; readonly schema: string } | undefined {
+  if (fact.kind !== "extension") {
+    return undefined;
+  }
+  const schema = fact.line.indexOf(" schema=");
+  return {
+    name: fact.line.slice(0, schema),
+    schema: fact.line.slice(
+      schema + " schema=".length,
+      fact.line.lastIndexOf(" version="),
+    ),
+  };
+}
+
 /** One sorted line per object in `schema`, each prefixed with its kind. */
 export async function catalogSnapshot(
   session: Session,
