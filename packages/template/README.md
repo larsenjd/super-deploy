@@ -304,7 +304,11 @@ flowchart TD
 
 - Adopt before any draft or migration exists.
 - Adoption writes nothing while anything is refused. It lists every unsupported object, objects owned by another role, and a missing `CREATE` privilege. It ends with a fix script to run as a superuser.
-- Columns, defaults or `sql` functions that use another schema's types or functions are refused, even if that schema is listed in `externalSchemas`. A common case is `citext` or `pgcrypto` installed in `public`. Change them first, for example to `text` with a `CHECK` constraint, or to the built-in `gen_random_uuid()`.
+- A [supported extension](#supported) in the managed schema, at a version the config's `extensions` lists, is written as `CREATE EXTENSION citext VERSION '1.8';` in `desired-schema/extensions.sql`. Nothing is written for its functions, types and operators. Any other extension is refused once, saying why:
+  - it isn't a supported extension: drop it;
+  - the config doesn't list it at its installed version: add that version to `extensions`;
+  - it lives outside the managed schema: move it there with `ALTER EXTENSION <name> SET SCHEMA <managed schema>`, or drop it.
+- Columns, defaults or `sql` functions that use another schema's types or functions are refused, even if that schema is listed in `externalSchemas`. A common case is `citext` or `pgcrypto` installed in `public`: move the extension into the managed schema first.
 - Grants, policies and row-level security stay on the target and are left out of the desired schema. New targets don't get them.
 - A schema whose name isn't lowercase must be renamed first: `ALTER SCHEMA "MyApp" RENAME TO myapp`.
 

@@ -46,14 +46,16 @@
 //      history schema, if a schema of that name isn't one super-deploy can
 //      use, or if anything there is unsupported:
 //      objects a desired schema can't create at all (the catalog check's
-//      `other` kind; an extension, in whichever schema of the database,
-//      once for all its members; virtual
+//      `other` kind; an extension outside the managed schema, once for
+//      all its members, as not supported or as living elsewhere; virtual
 //      generated columns, which pg-delta renders STORED; serial columns,
 //      once each, though the differ renders a sequence and its OWNED BY;
 //      comments on view and materialized-view columns, which the differ
 //      doesn't generate, each with the COMMENT ... IS NULL removing it),
 //      every desired-schema rule (or ordering) violation in
-//      the generated files, every statement referencing a declared external
+//      the generated files (among them an extension in the managed schema
+//      that isn't supported or whose version the config doesn't list,
+//      refused by its CREATE EXTENSION), every statement referencing a declared external
 //      schema where PostgreSQL resolves it at CREATE (rehearsals don't
 //      contain external schemas, so it could never load), and, when those
 //      pass, every object the files don't reproduce exactly (loaded on a
@@ -154,8 +156,10 @@ import {
   type CatalogReference,
   catalogObjectFinding,
   desiredSchemaAnalysis,
+  extensionElsewhereFinding,
   externalSchemaReferences,
   isSequenceStatement,
+  isSupportedExtension,
   type OverrideCandidate,
   type OverrideNeeded,
   oneLine,
@@ -167,6 +171,7 @@ import {
   type SqlFile,
   SqlRuleViolationError,
   serialColumnFinding,
+  unsupportedExtensionFinding,
   viewColumnCommentFinding,
   virtualGeneratedColumnFinding,
   withOverrideMarkers,
@@ -186,6 +191,7 @@ import {
 import {
   type CatalogFact,
   catalogFacts,
+  factExtension,
   isVirtualGeneratedColumn,
   type ObjectAddress,
   objectNames,
@@ -523,7 +529,7 @@ async function readTargetOn(
     await catalogFacts(session, config.managedSchema, {
       settings: targetTimeouts(target),
     })
-  ).flatMap(unsupportedFact);
+  ).flatMap((fact) => unsupportedFact(fact, config.managedSchema));
   const serial = serialColumnFinding();
   found.push(
     ...serials.map(({ column }) => ({
@@ -810,20 +816,44 @@ function missingManagedSchema(
 
 /**
  * A target object the generated desired schema can't express, refused for
- * what it is: kinds `other` and `extension` (any extension in the database,
- * wherever it lives, once for all its members), and virtual generated
- * columns (pg-delta renders them STORED, so the rules never see them).
+ * what it is: kind `other`, an extension outside the managed schema (once
+ * for all its members), and virtual generated columns (pg-delta renders
+ * them STORED, so the rules never see them). An extension in the managed
+ * schema is written as its CREATE EXTENSION, which the rules check, once,
+ * against the supported set and the config.
  */
-function unsupportedFact(fact: CatalogFact): UnsupportedObject[] {
+function unsupportedFact(
+  fact: CatalogFact,
+  managedSchema: string,
+): UnsupportedObject[] {
+  const extension = factExtension(fact);
   const finding =
-    fact.kind === "other" || fact.kind === "extension"
-      ? catalogObjectFinding(fact)
-      : isVirtualGeneratedColumn(fact)
-        ? virtualGeneratedColumnFinding()
-        : undefined;
+    extension !== undefined
+      ? extensionElsewhere(extension, managedSchema)
+      : fact.kind === "other"
+        ? catalogObjectFinding(fact)
+        : isVirtualGeneratedColumn(fact)
+          ? virtualGeneratedColumnFinding()
+          : undefined;
   return finding === undefined
     ? []
     : [{ object: fact.object, rule: finding.rule, reason: finding.message }];
+}
+
+/**
+ * Why adoption refuses an extension outside the managed schema: it isn't
+ * supported, or it lives elsewhere. Undefined in the managed schema.
+ */
+function extensionElsewhere(
+  { name, schema }: { readonly name: string; readonly schema: string },
+  managedSchema: string,
+): { readonly rule: string; readonly message: string } | undefined {
+  if (schema === managedSchema) {
+    return undefined;
+  }
+  return isSupportedExtension(name)
+    ? extensionElsewhereFinding(name, schema, managedSchema)
+    : unsupportedExtensionFinding(name);
 }
 
 /**
