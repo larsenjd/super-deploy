@@ -1,5 +1,5 @@
 // Regenerates src/sql-analysis/pg-catalog-names.ts: the names PostgreSQL 18
-// has in pg_catalog, so ordering can tell a built-in reference from an
+// has in pg_catalog (operator classes as `<access method>.<name>`), so ordering can tell a built-in reference from an
 // unknown one without a database (SQL analysis is database-free), and
 // destructive analysis can tell a volatile default (a table rewrite) from a
 // stable one.
@@ -49,6 +49,12 @@ try {
   const relations = await names(
     "SELECT relname AS name FROM pg_class WHERE relnamespace = 'pg_catalog'::regnamespace",
   );
+  const operators = await names(
+    "SELECT DISTINCT oprname AS name FROM pg_operator WHERE oprnamespace = 'pg_catalog'::regnamespace",
+  );
+  const operatorClasses = await names(
+    "SELECT am.amname || '.' || c.opcname AS name FROM pg_opclass c JOIN pg_am am ON am.oid = c.opcmethod WHERE c.opcnamespace = 'pg_catalog'::regnamespace",
+  );
   await client.end();
 
   const list = (values: string[]) =>
@@ -61,10 +67,12 @@ export const pgCatalogFunctions: ReadonlySet<string> = new Set(${list(functions)
 export const pgCatalogVolatileFunctions: ReadonlySet<string> = new Set(${list(volatileFunctions)});
 export const pgCatalogTypes: ReadonlySet<string> = new Set(${list(types)});
 export const pgCatalogRelations: ReadonlySet<string> = new Set(${list(relations)});
+export const pgCatalogOperators: ReadonlySet<string> = new Set(${list(operators)});
+export const pgCatalogOperatorClasses: ReadonlySet<string> = new Set(${list(operatorClasses)});
 `,
   );
   console.log(
-    `PostgreSQL ${version}: ${functions.length} functions (${volatileFunctions.length} volatile), ${types.length} types, ${relations.length} relations`,
+    `PostgreSQL ${version}: ${functions.length} functions (${volatileFunctions.length} volatile), ${types.length} types, ${relations.length} relations, ${operators.length} operators, ${operatorClasses.length} operator classes`,
   );
 } finally {
   await server.stop();

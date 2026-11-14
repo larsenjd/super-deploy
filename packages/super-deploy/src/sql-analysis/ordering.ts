@@ -18,6 +18,8 @@ import {
 } from "./parse.ts";
 import {
   pgCatalogFunctions,
+  pgCatalogOperatorClasses,
+  pgCatalogOperators,
   pgCatalogRelations,
   pgCatalogTypes,
 } from "./pg-catalog-names.ts";
@@ -455,6 +457,10 @@ function builtIn(reference: Reference): boolean {
       return pgCatalogTypes.has(name);
     case "function":
       return pgCatalogFunctions.has(name);
+    case "operator":
+      return pgCatalogOperators.has(name);
+    case "operator class":
+      return pgCatalogOperatorClasses.has(name);
     default:
       return false;
   }
