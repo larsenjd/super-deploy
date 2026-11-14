@@ -105,15 +105,42 @@ describe("supported extensions in a schema change", () => {
       })),
     ).toEqual([{ rule, message }]);
   });
+});
 
-  test.each(["pre-migration", "post-migration", "seed-data"] as const)(
-    "refused in %s",
-    async (kind) => {
-      expect(
-        await rulesBroken(kind, "create extension citext version '1.8'"),
-      ).toEqual(["deploy-time-statement"]);
-    },
-  );
+describe("extensions in scripts and seed data", () => {
+  // Only the schema change touches extensions (ADR-0009), plpgsql included.
+  const statements = [
+    ["CREATE EXTENSION", "create extension citext version '1.8'"],
+    ["CREATE EXTENSION", "create extension citext"],
+    ["CREATE EXTENSION", "create extension earthdistance"],
+    ["CREATE EXTENSION", "create extension plpgsql"],
+    ["CREATE EXTENSION", "create extension if not exists plpgsql"],
+    ["ALTER EXTENSION", "alter extension citext update to '1.8'"],
+    ["ALTER EXTENSION", "alter extension citext add function f()"],
+    ["ALTER EXTENSION", "alter extension citext set schema other"],
+    ["DROP EXTENSION", "drop extension citext"],
+    ["DROP EXTENSION", "drop extension if exists citext cascade"],
+  ] as const;
+  const where = {
+    "pre-migration": "a pre-migration script",
+    "post-migration": "a post-migration script",
+    "seed-data": "seed data",
+  } as const;
+
+  test.each(
+    (["pre-migration", "post-migration", "seed-data"] as const).flatMap(
+      (kind) => statements.map(([name, sql]) => [kind, sql, name] as const),
+    ),
+  )("refused in %s: %s", async (kind, sql, name) => {
+    expect(
+      (await check(kind, sql)).map(({ rule, message }) => ({ rule, message })),
+    ).toEqual([
+      {
+        rule: "deploy-time-statement",
+        message: `${name} is not allowed in ${where[kind]}: extensions belong in the desired schema, and only a schema change creates, updates or drops one`,
+      },
+    ]);
+  });
 });
 
 describe("privileges, roles, ownership, row-level security and SECURITY DEFINER", () => {
@@ -732,9 +759,24 @@ const hazardFixtures: readonly Fixture[] = [
     "unsupported-object",
   ),
   // Without a handler, PostgreSQL's grammar reads it as CREATE EXTENSION plperlu.
-  refused("2.24", "create language plperlu", "unsupported-extension"),
-  refused("2.24", "create extension pg_cron", "unsupported-extension"),
-  allowed("2.24", "create extension if not exists plpgsql"),
+  refused(
+    "2.24",
+    "create language plperlu",
+    "unsupported-extension",
+    "schema-change",
+  ),
+  refused(
+    "2.24",
+    "create extension pg_cron",
+    "unsupported-extension",
+    "schema-change",
+  ),
+  // Only a schema change touches extensions, plpgsql included (ADR-0009).
+  refused(
+    "2.24",
+    "create extension if not exists plpgsql",
+    "deploy-time-statement",
+  ),
   refused("2.25", "create role reporting", "unsupported-object"),
   refused("2.25", "alter role reporting nologin", "unsupported-object"),
   refused(
@@ -907,7 +949,12 @@ const hazardFixtures: readonly Fixture[] = [
     "create event trigger audit on ddl_command_start execute function audit()",
     "unsupported-object",
   ),
-  refused("6.14", "create extension earthdistance", "unsupported-extension"),
+  refused(
+    "6.14",
+    "create extension earthdistance",
+    "unsupported-extension",
+    "schema-change",
+  ),
 
   // §7 Column-order dependence
   refused(
@@ -1342,9 +1389,69 @@ describe("function calls", () => {
     expect(await check("post-migration", sql)).toMatchObject([
       {
         rule: "user-function-call",
-        message: `${name} is not a built-in pg_catalog function; deploy-time SQL may not call user-defined functions`,
+        message: `${name} is not a built-in pg_catalog function or a function of an extension the config lists; deploy-time SQL may not call user-defined functions`,
       },
     ]);
+  });
+
+  describe("a supported extension's functions", () => {
+    const extensions = { pgcrypto: ["1.4"], pg_trgm: ["1.3", "1.6"] };
+    const checkWith = (
+      kind: DeployTimeKind,
+      sql: string,
+      listed: Record<string, readonly string[]> = extensions,
+    ) =>
+      checkRules({ path: paths[kind], text: sql }, kind, {
+        extensions: listed,
+      });
+
+    test.each([
+      [
+        "post-migration",
+        "update t set h = encode(digest(email, 'sha256'), 'hex')",
+      ],
+      ["post-migration", "update t set p = crypt(p, gen_salt('bf'))"],
+      ["post-migration", "update t set h = public.digest(email, 'sha1')"],
+      ["pre-migration", "delete from t where similarity(a, b) < 0.3"],
+      ["post-migration", "update t set s = strict_word_similarity(a, b)::text"],
+      [
+        "seed-data",
+        "insert into t (h) values (encode(digest('x', 'sha256'), 'hex'))",
+      ],
+    ] as const)(
+      "allowed at a version the config lists, in %s: %s",
+      async (kind, sql) => {
+        expect(await checkWith(kind, sql)).toEqual([]);
+      },
+    );
+
+    test.each([
+      [
+        "an extension the config doesn't list",
+        "update t set h = digest(email, 'sha256')",
+        { pg_trgm: ["1.6"] },
+        "digest()",
+      ],
+      [
+        "a function no listed version provides",
+        "update t set s = strict_word_similarity(a, b)::text",
+        { pg_trgm: ["1.3"] },
+        "strict_word_similarity()",
+      ],
+      [
+        "a routine of the desired schema",
+        "update t set a = normalise_name(a)",
+        extensions,
+        "normalise_name()",
+      ],
+    ])("refused: %s", async (_, sql, listed, name) => {
+      expect(await checkWith("post-migration", sql, listed)).toMatchObject([
+        {
+          rule: "user-function-call",
+          message: `${name} is not a built-in pg_catalog function or a function of an extension the config lists; deploy-time SQL may not call user-defined functions`,
+        },
+      ]);
+    });
   });
 
   test("allow user-defined functions in stored definitions, which the desired schema owns", async () => {

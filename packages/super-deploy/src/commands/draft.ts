@@ -144,6 +144,7 @@ export async function draft(
   const rules: MigrationRuleContext = {
     managedSchema: config.managedSchema,
     externalSchemas: config.externalSchemas,
+    extensions: config.extensions,
     schemas: [
       (await readSnapshot(project.root, finalized)).sqlFiles,
       statements,

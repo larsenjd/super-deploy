@@ -83,6 +83,24 @@ export function extensionObjects(
   return Object.hasOwn(versions, version) ? versions[version] : undefined;
 }
 
+/**
+ * The names of the functions the listed extensions provide at any version
+ * listed for them: what deploy-time SQL may call besides pg_catalog's.
+ */
+export function listedExtensionFunctions(
+  extensions: Readonly<Record<string, readonly string[]>>,
+): Set<string> {
+  const names = new Set<string>();
+  for (const [name, versions] of Object.entries(extensions)) {
+    for (const version of versions) {
+      for (const routine of extensionObjects(name, version)?.functions ?? []) {
+        names.add(routine.name);
+      }
+    }
+  }
+  return names;
+}
+
 /** A refusal of an extension statement, by a rule of the catalogue. */
 export interface ExtensionFinding {
   readonly rule: RuleId;

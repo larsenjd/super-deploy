@@ -203,6 +203,8 @@ flowchart LR
 | `desired-schema.diff` | This migration's change to the desired schema, in `git diff` format, so pull requests show it. Finalized migrations only. |
 | `recoveries/recovery-K/` | [Recoveries](#when-a-deploy-fails) of this migration. |
 
+Scripts may call built-in functions and those of a supported extension the config's `extensions` lists, such as `digest()` from `pgcrypto` in a backfill, but not your own functions and procedures (`[user-function-call]`). Scripts and seed data never create, alter or drop an extension, `plpgsql` included (`[deploy-time-statement]`): extensions belong in the desired schema, and only the schema change touches them.
+
 `draft` creates `seed-data.sql`, `pre-migration.sql` and `post-migration.sql` when it creates the draft, each holding only a header comment, ready to fill in. `recovery` copies them from the migration and creates any it lacks. One still holding only its header, or nothing, runs and loads nothing, as if it weren't there: leave it or delete it, and a later `draft` doesn't create it again.
 
 > [!WARNING]

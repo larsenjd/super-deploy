@@ -52,7 +52,7 @@ import {
   readSnapshots,
   snapshotsAround,
 } from "../store/snapshots.ts";
-import { refuseRuleViolations } from "./check-rules.ts";
+import { configuredRules, refuseRuleViolations } from "./check-rules.ts";
 import { RecoverySchemaChangeEditedError } from "./recovery.ts";
 
 export interface RehearseResult {
@@ -202,17 +202,12 @@ export async function checkDraft(
   const desiredSchema = await readDesiredSchemaFiles(root, paths.desiredSchema);
   const { statements, unqualifiedNames } = await desiredSchemaAnalysis(
     asSqlFiles(root, paths.desiredSchema, desiredSchema),
-    {
-      managedSchema: config.managedSchema,
-      externalSchemas: config.externalSchemas,
-      extensions: config.extensions,
-    },
+    configuredRules(config),
   );
   const seeded = await readSeededUnit(root, paths.draft, `draft ${draft.name}`);
   const previous = (await readSnapshot(root, migrations)).sqlFiles;
   const analysis = await refuseRuleViolations(seededFiles(seeded), {
-    managedSchema: config.managedSchema,
-    externalSchemas: config.externalSchemas,
+    ...configuredRules(config),
     schemas: [previous, statements],
     previous,
   });
@@ -307,8 +302,7 @@ export async function checkRecoveryDraft(
     `Recovery draft of ${migration.folder}`,
   );
   const analysis = await refuseRuleViolations(seededFiles(seeded), {
-    managedSchema: config.managedSchema,
-    externalSchemas: config.externalSchemas,
+    ...configuredRules(config),
     schemas: [before.sqlFiles, after.sqlFiles],
     previous: before.sqlFiles,
   });
