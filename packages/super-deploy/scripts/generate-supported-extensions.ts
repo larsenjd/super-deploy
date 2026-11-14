@@ -99,7 +99,7 @@ export async function supportedExtensionsSource(
     const lines: string[] = [];
     for (const version of offered) {
       const found = await installedObjects(connectionString, name, version);
-      lines.push(`${JSON.stringify(version)}: ${JSON.stringify(found)},`);
+      lines.push(`${JSON.stringify(version)}: ${objectsSource(found)},`);
     }
     objects.push(`${JSON.stringify(name)}: {\n${lines.join("\n")}\n},`);
   }
@@ -162,6 +162,20 @@ async function installedObjects(
     await admin.query(`DROP DATABASE IF EXISTS ${database}`);
     await admin.end();
   }
+}
+
+/**
+ * One extension version's members, one member per line, so a search or a diff of the generated file shows
+ * the members it matches rather than a whole version on one line.
+ */
+function objectsSource(found: Objects): string {
+  const kinds = Object.entries(found).map(([kind, members]) => {
+    const memberLines = (members as unknown[]).map(
+      (member) => `${JSON.stringify(member)},\n`,
+    );
+    return `${JSON.stringify(kind)}: [\n${memberLines.join("")}],\n`;
+  });
+  return `{\n${kinds.join("")}}`;
 }
 
 // Every query joins pg_depend for the extension's members (deptype 'e').

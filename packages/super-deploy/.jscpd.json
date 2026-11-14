@@ -2,5 +2,9 @@
   "minLines": 5,
   "ignorePattern": ["(?m)^import\\s[^;]*;"],
   "exitCode": 1,
-  "noTips": true
+  "noTips": true,
+  "ignore": [
+    "**/src/sql-analysis/supported-extensions.ts",
+    "**/src/sql-analysis/pg-catalog-names.ts"
+  ]
 }

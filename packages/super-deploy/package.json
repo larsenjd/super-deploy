@@ -46,7 +46,7 @@
     "format": "biome format --write",
     "format:file": "biome format --write --no-errors-on-unmatched",
     "lint": "biome check && pnpm run duplicates",
-    "duplicates": "jscpd src --min-tokens 30 && jscpd test --min-tokens 80",
+    "duplicates": "jscpd src scripts --min-tokens 30 && jscpd test --min-tokens 80",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
