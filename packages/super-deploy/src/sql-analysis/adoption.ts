@@ -13,8 +13,17 @@
 //   objects belong to whoever deploys them.
 // - for objects a desired schema can never create and the catalog check
 //   reports itself (aggregates, operators, rules, statistics objects,
-//   extensions, publications...; verification/catalog.ts `other`), so each
-//   is listed once with its reason (`unsupportedCatalogObject`).
+//   publications...; verification/catalog.ts `other`), so each is listed
+//   once with its reason (`unsupportedCatalogObject`).
+//
+// An extension in the managed schema becomes `CREATE EXTENSION <name>
+// VERSION '<v>';` in extensions.sql: the differ wrapper adds the target's
+// version (differ/extension-versions.ts), and the SCHEMA it names goes,
+// since every extension lives in the managed schema. The rules then refuse
+// one that isn't supported or whose version the config doesn't list, like
+// a hand-written one. The differ generates nothing for its members.
+// One in another schema is left out like any object there: adoption
+// refuses it from the catalog check (commands/adopt.ts).
 //
 // The differ never generates grants, default privileges, policies or
 // row-level security (differ/pg-delta.ts): they stay on the target.
@@ -34,6 +43,7 @@
 // by object (`adoptedObject`), rather than at the first statement the
 // throwaway database refuses.
 import { foldTableAlters, type KeptStatement } from "./adoption-folding.ts";
+import { createExtension, extensionSqlName } from "./extensions.ts";
 import { overrideObject } from "./overrides.ts";
 import { type ParsedStatement, parseSqlFile, type SqlFile } from "./parse.ts";
 import { statementFacts } from "./references.ts";
@@ -61,6 +71,7 @@ export interface AdoptedFile {
 
 /** The file each kind of statement goes to, in the order files are listed. */
 const fileOf: Readonly<Record<string, string>> = {
+  CreateExtensionStmt: "extensions.sql",
   CreateStmt: "tables.sql",
   CreateForeignTableStmt: "tables.sql",
   AlterTableStmt: "tables.sql",
@@ -92,7 +103,6 @@ const catalogObjectStatements = new Set([
   "CreateOpFamilyStmt",
   "AlterOpFamilyStmt",
   "CreateConversionStmt",
-  "CreateExtensionStmt",
   "AlterExtensionStmt",
   "AlterExtensionContentsStmt",
   "CreatePublicationStmt",
@@ -153,9 +163,14 @@ export async function adoptedDesiredSchema(
     }
   }
   const files = new Map<string, string[]>();
-  for (const { sql, file } of foldTableAlters(kept, options.columnOrder)) {
+  for (const { sql, file, type, node } of foldTableAlters(
+    kept,
+    options.columnOrder,
+  )) {
     const texts = files.get(file) ?? [];
-    texts.push(desiredText(sql));
+    texts.push(
+      type === "CreateExtensionStmt" ? extensionText(node) : desiredText(sql),
+    );
     files.set(file, texts);
   }
   const order = [...new Set([...Object.values(fileOf), otherFile])];
@@ -407,6 +422,14 @@ function desiredText(sql: string): string {
   return text.endsWith(";") ? text : `${text};`;
 }
 
+/** `CREATE EXTENSION <name> VERSION '<v>';`, its SCHEMA left out. */
+function extensionText(node: Json): string {
+  const { name, version } = createExtension(node);
+  const pinned =
+    version === undefined ? "" : ` VERSION '${version.replaceAll("'", "''")}'`;
+  return `CREATE EXTENSION ${extensionSqlName(name)}${pinned};`;
+}
+
 function isOwnershipChange(type: string, node: Json): boolean {
   if (type === "AlterOwnerStmt") {
     return true;
@@ -464,6 +487,8 @@ function ownSchema(type: string, node: Json): string | null | undefined {
     case "CreateEnumStmt":
     case "CreateRangeStmt":
       return schemaQualifier(stringList(node.typeName), 2);
+    case "CreateExtensionStmt":
+      return createExtension(node).schema;
     case "CommentStmt":
       return objectSchema(
         node.object,

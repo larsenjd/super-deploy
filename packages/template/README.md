@@ -203,6 +203,8 @@ flowchart LR
 | `desired-schema.diff` | This migration's change to the desired schema, in `git diff` format, so pull requests show it. Finalized migrations only. |
 | `recoveries/recovery-K/` | [Recoveries](#when-a-deploy-fails) of this migration. |
 
+Scripts may call built-in functions and those of a supported extension the config's `extensions` lists, such as `digest()` from `pgcrypto` in a backfill, but not your own functions and procedures (`[user-function-call]`). Scripts and seed data never create, alter or drop an extension, `plpgsql` included (`[deploy-time-statement]`): extensions belong in the desired schema, and only the schema change touches them.
+
 `draft` creates `seed-data.sql`, `pre-migration.sql` and `post-migration.sql` when it creates the draft, each holding only a header comment, ready to fill in. `recovery` copies them from the migration and creates any it lacks. One still holding only its header, or nothing, runs and loads nothing, as if it weren't there: leave it or delete it, and a later `draft` doesn't create it again.
 
 > [!WARNING]
@@ -304,7 +306,11 @@ flowchart TD
 
 - Adopt before any draft or migration exists.
 - Adoption writes nothing while anything is refused. It lists every unsupported object, objects owned by another role, and a missing `CREATE` privilege. It ends with a fix script to run as a superuser.
-- Columns, defaults or `sql` functions that use another schema's types or functions are refused, even if that schema is listed in `externalSchemas`. A common case is `citext` or `pgcrypto` installed in `public`. Change them first, for example to `text` with a `CHECK` constraint, or to the built-in `gen_random_uuid()`.
+- A [supported extension](#supported) in the managed schema, at a version the config's `extensions` lists, is written as `CREATE EXTENSION citext VERSION '1.8';` in `desired-schema/extensions.sql`. Nothing is written for its functions, types and operators. Any other extension is refused once, saying why:
+  - it isn't a supported extension: drop it;
+  - the config doesn't list it at its installed version: add that version to `extensions`;
+  - it lives outside the managed schema: move it there with `ALTER EXTENSION <name> SET SCHEMA <managed schema>`, or drop it.
+- Columns, defaults or `sql` functions that use another schema's types or functions are refused, even if that schema is listed in `externalSchemas`. A common case is `citext` or `pgcrypto` installed in `public`: move the extension into the managed schema first.
 - Grants, policies and row-level security stay on the target and are left out of the desired schema. New targets don't get them.
 - A schema whose name isn't lowercase must be renamed first: `ALTER SCHEMA "MyApp" RENAME TO myapp`.
 

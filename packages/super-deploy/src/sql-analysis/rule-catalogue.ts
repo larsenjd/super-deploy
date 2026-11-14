@@ -98,7 +98,7 @@ const definitions = {
   "catalog-write": ["scope", "pg_catalog may be read, never changed"],
   "user-function-call": [
     "scope",
-    "Deploy-time SQL may call only built-in pg_catalog functions",
+    "Deploy-time SQL may call only built-in pg_catalog functions and the functions of extensions the config lists",
   ],
   // Column order and identity columns.
   "insert-without-columns": [
@@ -158,7 +158,7 @@ const definitions = {
   ],
   "extension-cascade": [
     "unsupported",
-    "CREATE EXTENSION ... CASCADE would install extensions the desired schema doesn't name",
+    "CASCADE on an extension would install or drop objects no statement names",
   ],
   "extension-comment": [
     "unsupported",

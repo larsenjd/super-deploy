@@ -4,7 +4,7 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 
 ## Calling functions and procedures in deploy-time SQL
 
-**V1:** Deploy-time SQL may not `CALL` procedures, run `DO` blocks, or call any function outside `pg_catalog` other than a supported extension's (ADR-0009). Built-in functions are allowed except a denylist of ones with effects that escape the transaction (e.g. `setval`, `pg_notify`, advisory locks, `dblink*`, `lo_export`, signal/admin functions). Defining functions, procedures and triggers in the desired schema is allowed. Triggers firing from DML in scripts is accepted and documented.
+**V1:** Deploy-time SQL may not `CALL` procedures, run `DO` blocks, or call any function outside `pg_catalog` other than those of a supported extension the config lists, at a version it lists (ADR-0009). Built-in functions are allowed except a denylist of ones with effects that escape the transaction (e.g. `setval`, `pg_notify`, advisory locks, `dblink*`, `lo_export`, signal/admin functions). Defining functions, procedures and triggers in the desired schema is allowed. Triggers firing from DML in scripts is accepted and documented.
 
 **Why narrow:** A procedure that commits fails inside the deploy transaction (`invalid transaction termination`); a function can cause effects a rollback cannot undo. The parser cannot see inside routine bodies.
 

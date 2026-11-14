@@ -8,13 +8,16 @@
 //    temporary tables, maintenance) or refused with the reason; each kind of
 //    file allows only some classes. Unknown statement types are refused, and
 //    so are privileges, roles, ownership, row-level security and SECURITY
-//    DEFINER in every kind of file (privileges.ts, ADR-0006).
+//    DEFINER in every kind of file (privileges.ts, ADR-0006). Scripts and
+//    seed data may contain no CREATE, ALTER or DROP EXTENSION at all, plpgsql
+//    included: only the schema change touches extensions (ADR-0009).
 // 2. Statement details: ALTER TABLE subcommands, DROP and RENAME object
 //    types, function languages, temporary-table lifetime and unsupported
 //    features.
 // 3. Expressions, walked over the whole statement except routine bodies:
-//    function calls, schema references, column-order constructs and
-//    identity columns. Routine bodies get the same body rules as the
+//    function calls (pg_catalog's, and the functions of the extensions
+//    `RuleContext.extensions` lists at a listed version, by name), schema
+//    references, column-order constructs and identity columns. Routine bodies get the same body rules as the
 //    desired schema (routine-bodies.ts).
 //
 // A migration's files are analysed in the order they run, so state (the
@@ -52,6 +55,7 @@ import {
   extensionClauseFindings,
   extensionCommentFinding,
   isSupportedExtension,
+  listedExtensionFunctions,
   unsupportedExtensionFinding,
 } from "./extensions.ts";
 import {
@@ -131,6 +135,11 @@ interface MigrationState {
   readonly managedSchema: string;
   /** Schemas PL/pgSQL bodies may reference. */
   readonly externalSchemas: readonly string[];
+  /**
+   * Functions scripts may call besides pg_catalog's: those of the
+   * extensions `RuleContext.extensions` lists, at a listed version.
+   */
+  readonly extensionFunctions: ReadonlySet<string>;
   readonly identity: Map<string, Set<string>>;
   /** Temporary tables created so far in this migration. */
   readonly temporary: Set<string>;
@@ -144,6 +153,7 @@ export async function analyseMigration(
   const state: MigrationState = {
     managedSchema: options.managedSchema ?? "public",
     externalSchemas: options.externalSchemas ?? [],
+    extensionFunctions: listedExtensionFunctions(options.extensions ?? {}),
     identity: copyIdentity(options.identityColumns),
     temporary: new Set(),
   };
@@ -193,6 +203,7 @@ export function identityColumnsOf(
   const state: MigrationState = {
     managedSchema: "",
     externalSchemas: [],
+    extensionFunctions: new Set(),
     identity: new Map(),
     temporary: new Set(),
   };
@@ -221,7 +232,10 @@ type StatementClass =
   | "data"
   | "temporary"
   | "maintenance"
-  /** A supported extension's `CREATE EXTENSION ... VERSION` (ADR-0009). */
+  /**
+   * A supported extension's `CREATE EXTENSION ... VERSION`, `ALTER EXTENSION
+   * ... UPDATE TO` or `DROP EXTENSION` without `CASCADE` (ADR-0009).
+   */
   | "extension";
 
 type Classification =
@@ -323,8 +337,6 @@ const unsupported: Record<string, string> = {
     "enums are not supported; use a lookup table or a CHECK constraint",
   AlterEnumStmt:
     "enums are not supported; a new enum value cannot be used until commit",
-  AlterExtensionStmt: "extensions other than plpgsql are not supported",
-  AlterExtensionContentsStmt: "extensions other than plpgsql are not supported",
   CreatePLangStmt: "languages other than sql and plpgsql are not supported",
   CreateFdwStmt: "foreign data wrappers are not supported",
   AlterFdwStmt: "foreign data wrappers are not supported",
@@ -550,6 +562,10 @@ function classify(statement: ParsedStatement): Classification {
         )
       : { class: "extension" };
   }
+  const extensionChange = extensionChangeClassification(type, body);
+  if (extensionChange !== undefined) {
+    return extensionChange;
+  }
   const privileges = privilegeRefusal(statement);
   if (privileges !== undefined) {
     return { refused: privileges };
@@ -633,6 +649,59 @@ function classify(statement: ParsedStatement): Classification {
   );
 }
 
+/**
+ * A schema change may update a supported extension to the version the
+ * desired schema pins, or drop one whose users it dropped first (ADR-0009).
+ * Undefined for a statement that doesn't change an extension.
+ */
+function extensionChangeClassification(
+  type: string,
+  body: Json,
+): Classification | undefined {
+  if (type === "AlterExtensionStmt") {
+    const { name, version } = createExtension(body);
+    if (!isSupportedExtension(name)) {
+      return { refused: unsupportedExtensionFinding(name) };
+    }
+    return version === undefined
+      ? refuse(
+          "extension-without-version",
+          `ALTER EXTENSION ${name} UPDATE needs TO '<version>': a schema change installs exactly the version the desired schema pins`,
+        )
+      : { class: "extension" };
+  }
+  if (type === "AlterExtensionContentsStmt") {
+    return refuse(
+      "unsupported-object",
+      `ALTER EXTENSION ... ${body.action === 1 ? "ADD" : "DROP"} is not supported: an extension holds only the objects its install script creates`,
+    );
+  }
+  if (
+    type === "AlterObjectSchemaStmt" &&
+    body.objectType === "OBJECT_EXTENSION"
+  ) {
+    return refuse(
+      "unsupported-object",
+      "ALTER EXTENSION ... SET SCHEMA is not supported: extensions live in the managed schema",
+    );
+  }
+  if (type !== "DropStmt" || body.removeType !== "OBJECT_EXTENSION") {
+    return undefined;
+  }
+  if (body.behavior === "DROP_CASCADE") {
+    return refuse(
+      "extension-cascade",
+      "DROP EXTENSION ... CASCADE is not allowed: drop each object that uses the extension with a statement of its own first",
+    );
+  }
+  const unsupportedName = stringList(body.objects).find(
+    (name) => !isSupportedExtension(name),
+  );
+  return unsupportedName === undefined
+    ? { class: "extension" }
+    : { refused: unsupportedExtensionFinding(unsupportedName) };
+}
+
 function wrongKind(
   statement: ParsedStatement,
   kind: DeployTimeKind,
@@ -645,8 +714,6 @@ function wrongKind(
     why = "seed data may contain only INSERT statements with a column list";
   } else if (kind === "schema-change") {
     why = "a generated schema change contains only DDL and comments";
-  } else if (statementClass === "extension") {
-    why = "only a schema change creates an extension, from the desired schema";
   } else if (statementClass === "comment") {
     why = "comments belong in the desired schema";
   } else {
@@ -810,7 +877,10 @@ function detailFindings(
   }
   if (type === "DropStmt") {
     const drop = body as DropStmt;
-    if (!managedObjectTypes.has(drop.removeType ?? "")) {
+    if (
+      !managedObjectTypes.has(drop.removeType ?? "") &&
+      drop.removeType !== "OBJECT_EXTENSION"
+    ) {
       unsupportedFeature(
         `DROP ${objectTypeKeyword(drop.removeType)} is not supported: super-deploy manages only the objects in its schema`,
       );
@@ -1082,12 +1152,15 @@ function functionCallFindings(
   const builtin =
     (schema === undefined || schema === "pg_catalog") &&
     pgCatalogFunctions.has(name);
-  return builtin
+  const extension =
+    (schema === undefined || schema === state.managedSchema) &&
+    state.extensionFunctions.has(name);
+  return builtin || extension
     ? []
     : [
         {
           rule: "user-function-call",
-          message: `${display} is not a built-in pg_catalog function; deploy-time SQL may not call user-defined functions`,
+          message: `${display} is not a built-in pg_catalog function or a function of an extension the config lists; deploy-time SQL may not call user-defined functions`,
         },
       ];
 }
@@ -1463,6 +1536,15 @@ function checkStatement(
   kind: DeployTimeKind,
   state: MigrationState,
 ): Finding[] {
+  const extension = extensionStatementName(statement);
+  if (extension !== undefined && kind !== "schema-change") {
+    return [
+      {
+        rule: "deploy-time-statement",
+        message: `${extension} is not allowed in ${kindNames[kind]}: extensions belong in the desired schema, and only a schema change creates, updates or drops one`,
+      },
+    ];
+  }
   const classification = classify(statement);
   if ("refused" in classification) {
     return [classification.refused];
@@ -1485,6 +1567,33 @@ function checkStatement(
     ...(kind === "schema-change" ? [] : scriptFindings(statement.node, state)),
     ...routineBodyFindings(statement, state),
   ];
+}
+
+/**
+ * `CREATE`, `ALTER` or `DROP EXTENSION`, for any extension, or undefined for
+ * any other statement. Scripts and seed data may contain none (ADR-0009).
+ */
+function extensionStatementName(
+  statement: ParsedStatement,
+): string | undefined {
+  const body = statementBody(statement);
+  switch (statement.nodeType) {
+    case "CreateExtensionStmt":
+      return "CREATE EXTENSION";
+    case "AlterExtensionStmt":
+    case "AlterExtensionContentsStmt":
+      return "ALTER EXTENSION";
+    case "AlterObjectSchemaStmt":
+      return body.objectType === "OBJECT_EXTENSION"
+        ? "ALTER EXTENSION"
+        : undefined;
+    case "DropStmt":
+      return body.removeType === "OBJECT_EXTENSION"
+        ? "DROP EXTENSION"
+        : undefined;
+    default:
+      return undefined;
+  }
 }
 
 /**
