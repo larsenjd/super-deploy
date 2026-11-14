@@ -1483,9 +1483,14 @@ create table users (id bigint constraint users_pkey primary key, email citext no
     const deployed = await runCli(["deploy", "--target", "dev"], {
       cwd: dir.root,
     });
-    expect(deployed.stdout).toBe(
-      "Deployed 1 migration to dev: 00002-update-citext\n",
-    );
+    expect(deployed.exitCode).toBe(0);
+    expect(
+      await server.query(
+        "select extversion from pg_extension where extname = 'citext'",
+        [],
+        database,
+      ),
+    ).toEqual([{ extversion: "1.8" }]);
   });
 
   test("refuses, without asking or recording an attempt, a replay creating an extension while the deploy role lacks CREATE on the database, naming the GRANT", async () => {

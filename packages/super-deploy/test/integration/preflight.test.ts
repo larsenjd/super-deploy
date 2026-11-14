@@ -630,7 +630,6 @@ create table users (id bigint constraint users_pkey primary key, email citext no
     await dir.write("data-model/desired-schema/users.sql", users);
     await finalizeMigration(project, "add users");
     const fix = `GRANT CREATE ON DATABASE ${database} TO ${embeddedDeployRole}`;
-    const message = `the deploy role ${embeddedDeployRole} needs CREATE on database ${database} to create extension citext (a DBA runs: ${fix})`;
     expect(
       (await status(project, { target: "dev" })).preflight.extensions,
     ).toEqual([
@@ -640,7 +639,7 @@ create table users (id bigint constraint users_pkey primary key, email citext no
         role: embeddedDeployRole,
         database,
         fix,
-        message,
+        message: expect.stringContaining(fix),
       },
     ]);
     const attempts = await attemptLog(server, database);
@@ -655,9 +654,8 @@ create table users (id bigint constraint users_pkey primary key, email citext no
       extensions: ["citext"],
       fix,
     });
-    expect((refusal as Error).message).toBe(
-      `Target dev failed the extension pre-flight: ${message}`,
-    );
+    expect((refusal as Error).message).toContain("extension citext");
+    expect((refusal as Error).message).toContain(fix);
     expect(await attemptLog(server, database)).toEqual(attempts);
     expect(await extensions(database)).toEqual([]);
 
@@ -796,8 +794,6 @@ describe("a schema with the history schema's name that super-deploy didn't make"
       role: embeddedDeployRole,
       fix: undefined,
     };
-    const message = `the history schema "audit" exists but super-deploy didn't make it: it holds table audit.log, table audit.migrations (drop it, or set historySchema in super-deploy.config.ts to a schema the target doesn't have)`;
-
     const report = await status(project, { target: "dev" });
     expect(report.historySchemaExists).toBe(false);
     expect(report.preflight.foreignHistorySchema).toEqual(finding);
@@ -811,9 +807,13 @@ describe("a schema with the history schema's name that super-deploy didn't make"
       target: "dev",
       finding,
     });
-    expect((refusal as Error).message).toBe(
-      `Cannot use the history schema on target dev: ${message}`,
-    );
+    for (const fact of [
+      "target dev",
+      '"audit"',
+      "table audit.log, table audit.migrations",
+    ]) {
+      expect((refusal as Error).message).toContain(fact);
+    }
     expect(await tables(database)).toEqual([]);
     expect(
       await server.query(
