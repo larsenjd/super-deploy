@@ -285,6 +285,32 @@ describe("adopt", () => {
     }
   });
 
+  test("refuses an extension outside the managed schema once too", async () => {
+    const { project } = await adoptableProject(
+      `
+      create extension pg_stat_statements schema public;
+      create schema app;
+      create table app.t (id bigint primary key);
+    `,
+      'managedSchema: "app",',
+    );
+    try {
+      const error = await adopt(project, { target: "prod" }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      expect((error as AdoptUnsupportedError).objects).toEqual([
+        expect.objectContaining({
+          object: "extension pg_stat_statements",
+          rule: "unsupported-object",
+        }),
+      ]);
+    } finally {
+      await project.close();
+    }
+  });
+
   test("refuses a serial column once, naming the column, not its sequence", async () => {
     const { project } = await adoptableProject(`
       create table items (id serial primary key, name text not null);

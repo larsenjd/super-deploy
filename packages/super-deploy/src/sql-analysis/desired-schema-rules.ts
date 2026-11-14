@@ -201,7 +201,7 @@ function foreign(): RuleFinding {
 
 /**
  * Why V1 refuses an object a desired schema can't create at all, found in a
- * database's managed schema (verification/catalog.ts, kind `other`):
+ * database (verification/catalog.ts, kinds `other` and `extension`):
  * `object` as pg_describe_object names it, `line` its catalog line (for
  * routines `<prokind> <signature>`). The same reasons the rules give for
  * the statements that would create it.

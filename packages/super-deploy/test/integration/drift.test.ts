@@ -152,6 +152,63 @@ create index orders_customer_idx on orders (customer_id);
     ]);
   });
 
+  test("reports an extension installed by hand in the managed schema once, never its functions, operators and types", async () => {
+    const { project, database } = await deployedProject();
+    await asDeployRole(server, database, "create extension citext");
+
+    const { drift } = await status(project, { target: "dev" });
+
+    expect(drift).toEqual([
+      {
+        object: "extension citext",
+        change: "extra",
+        differences: [
+          {
+            side: "target",
+            line: "extension: citext schema=public version=1.8",
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("reports an extension's views once too, never their columns", async () => {
+    const { project, database } = await deployedProject();
+    await server.query("create extension pg_stat_statements", [], database);
+
+    const { drift } = await status(project, { target: "dev" });
+
+    expect(drift?.map(({ object, change }) => ({ object, change }))).toEqual([
+      { object: "extension pg_stat_statements", change: "extra" },
+    ]);
+  });
+
+  test("reports an extension outside the managed schema by its schema and version", async () => {
+    const { project, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { settings: 'managedSchema: "app",' },
+    );
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    await server.query("create extension citext schema public", [], database);
+
+    const { drift } = await status(project, { target: "dev" });
+
+    expect(drift).toEqual([
+      {
+        object: "extension citext",
+        change: "extra",
+        differences: [
+          {
+            side: "target",
+            line: "extension: citext schema=public version=1.8",
+          },
+        ],
+      },
+    ]);
+  });
+
   test("is not checked when the recorded history doesn't match the project", async () => {
     const { project } = await deployedProject();
     await unfinalize(project, { acknowledgeOverwrite: true });
@@ -368,6 +425,44 @@ describe("deploy", () => {
         error: expect.stringContaining("has drifted"),
       },
     ]);
+  });
+
+  test("refuses a target with an extension a superuser installed outside the managed schema", async () => {
+    const { project, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      { settings: 'managedSchema: "app",' },
+    );
+    await finalizeMigration(project, "add customers");
+    await deploy(project, { target: "dev" });
+    await server.query(
+      "create extension pg_stat_statements schema public",
+      [],
+      database,
+    );
+
+    const error = await deploy(project, { target: "dev" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(DriftError);
+    expect(error).toMatchObject({
+      code: "target-drifted",
+      objects: [
+        {
+          object: "extension pg_stat_statements",
+          change: "extra",
+          differences: [
+            {
+              side: "target",
+              line: expect.stringMatching(
+                /^extension: pg_stat_statements schema=public version=\d+\.\d+$/,
+              ),
+            },
+          ],
+        },
+      ],
+    });
   });
 
   test("refuses a drifted target with nothing pending, saying to undo the change or capture it in a migration and mark it", async () => {

@@ -1,7 +1,10 @@
 // Drift: any structural difference between a target's managed schema and a
 // replica of what its recorded migrations should have produced (GLOSSARY).
 // No exceptions (REFINEMENTS "Tolerating drift"): an object added by hand is
-// drift even when a pending migration would create an identical one.
+// drift even when a pending migration would create an identical one. That
+// includes any extension in the target's database, wherever it lives (but
+// plpgsql): the catalog comparison reads extensions database-wide, as one
+// fact each (name, schema, version), and never their members.
 //
 // The comparison is our own pg_catalog comparison (verification/catalog.ts),
 // which never compares column order and normalises ownership. pg-delta isn't

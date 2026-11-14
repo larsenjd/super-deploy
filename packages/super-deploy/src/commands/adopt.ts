@@ -46,7 +46,8 @@
 //      history schema, if a schema of that name isn't one super-deploy can
 //      use, or if anything there is unsupported:
 //      objects a desired schema can't create at all (the catalog check's
-//      `other` kind, an extension once for all its members; virtual
+//      `other` kind; an extension, in whichever schema of the database,
+//      once for all its members; virtual
 //      generated columns, which pg-delta renders STORED; serial columns,
 //      once each, though the differ renders a sequence and its OWNED BY;
 //      comments on view and materialized-view columns, which the differ
@@ -808,12 +809,13 @@ function missingManagedSchema(
 
 /**
  * A target object the generated desired schema can't express, refused for
- * what it is: kind `other`, and virtual generated columns (pg-delta renders
- * them STORED, so the rules never see them).
+ * what it is: kinds `other` and `extension` (any extension in the database,
+ * wherever it lives, once for all its members), and virtual generated
+ * columns (pg-delta renders them STORED, so the rules never see them).
  */
 function unsupportedFact(fact: CatalogFact): UnsupportedObject[] {
   const finding =
-    fact.kind === "other"
+    fact.kind === "other" || fact.kind === "extension"
       ? catalogObjectFinding(fact)
       : isVirtualGeneratedColumn(fact)
         ? virtualGeneratedColumnFinding()
