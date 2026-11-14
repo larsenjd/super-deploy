@@ -11,18 +11,18 @@ No desired-schema behaviour changes yet: extensions other than `plpgsql` are sti
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The supported set is exactly the 17 in the spec, and the generated source lists, for each one, the installable versions in research file §1 (for example citext 1.4–1.8, pgcrypto 1.3–1.4).
-- [ ] The generated source holds each extension's types, functions (with argument types), operators, operator classes and operator families per version. Running the generation script again on the same embedded-postgres gives byte-identical output.
-- [ ] A config with `extensions: { citext: ["1.6", "1.8"] }` loads. With no `extensions` key, the default is empty and nothing behaves differently.
-- [ ] `resolveConfig` refuses:
+- [x] The supported set is exactly the 17 in the spec, and the generated source lists, for each one, the installable versions in research file §1 (for example citext 1.4–1.8, pgcrypto 1.3–1.4).
+- [x] The generated source holds each extension's types, functions (with argument types), operators, operator classes and operator families per version. Running the generation script again on the same embedded-postgres gives byte-identical output.
+- [x] A config with `extensions: { citext: ["1.6", "1.8"] }` loads. With no `extensions` key, the default is empty and nothing behaves differently.
+- [x] `resolveConfig` refuses:
   - an unsupported name, listing the supported names;
   - a version the tool doesn't know, with the message "citext 1.9 is not a supported version: supported versions are 1.4, 1.5, 1.6, 1.7, 1.8";
   - an empty version list;
   - a duplicated version.
 
   Each refusal is a typed error exported from the public API.
-- [ ] The check script, run in an integration test against the embedded PostgreSQL 18 test server, reports a pass for all 17 extensions.
-- [ ] Against a server that lacks a version or an extension, or doesn't trust one, the check script reports which extension, what was expected and what the server has. The test simulates this with an extension the tool doesn't support, or by comparing against a doctored expectation.
-- [ ] The check script's usage (how to run it with a connection string, and what each line of the report means) is in the header of the script, so ticket 11 can follow it without reading the code.
+- [x] The check script, run in an integration test against the embedded PostgreSQL 18 test server, reports a pass for all 17 extensions.
+- [x] Against a server that lacks a version or an extension, or doesn't trust one, the check script reports which extension, what was expected and what the server has. The test simulates this with an extension the tool doesn't support, or by comparing against a doctored expectation.
+- [x] The check script's usage (how to run it with a connection string, and what each line of the report means) is in the header of the script, so ticket 11 can follow it without reading the code.
