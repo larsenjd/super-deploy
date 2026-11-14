@@ -7,7 +7,7 @@ This project manages a PostgreSQL 18 schema with [super-deploy](https://github.c
 | | Sections |
 | --- | --- |
 | 🚀 **Start** | [How it works](#how-it-works) · [Getting started](#getting-started) ([inside another Git repo](#a-project-inside-another-git-repository)) · [Commands](#commands) · [Connecting to dev](#connecting-to-dev) |
-| ✏️ **Write** | [What the desired schema supports](#what-the-desired-schema-supports) ([supported](#supported) · [refused](#refused) · [rules](#rules-for-writing-it)) · [Draft and migration files](#the-files-of-a-draft-and-a-migration) |
+| ✏️ **Write** | [What the desired schema supports](#what-the-desired-schema-supports) ([supported](#supported) · [refused](#refused) · [rules](#rules-for-writing-it)) · [Extensions](#extensions) ([declaring](#declaring-an-extension) · [versions](#changing-an-extensions-version) · [removing](#removing-an-extension) · [on targets](#extensions-on-targets)) · [Draft and migration files](#the-files-of-a-draft-and-a-migration) |
 | ⚙️ **Configure** | [Configuration](#configuration) ([project settings](#project-settings) · [targets](#targets) · [adding a real target](#adding-a-real-target)) · [Permissions](#permissions) ([per-target setup](#what-each-target-needs-set-up-outside-super-deploy)) |
 | 📥 **Adopt** | [Adopting an existing database](#adopting-an-existing-database) ([from older PostgreSQL](#adopting-from-an-older-postgresql) · [starting over](#starting-an-adoption-over)) |
 | 🧪 **[Recipes](#recipes)** | [Renaming a column](#renaming-a-column) · [Reordering a composite type](#reordering-a-composite-types-attributes) · [Retyping a generated column's source](#changing-the-type-of-a-column-a-generated-column-uses) · [Column order](#column-order) · [Seed data](#seed-data) · [Destructive changes](#destructive-changes) · [Overriding a refusal](#overriding-a-refusal) |
@@ -130,14 +130,14 @@ Refused statements are listed as `<file>:<line>: <reason> [<rule>]`. "Not suppor
 - **Functions and procedures** in `sql` or `plpgsql`, and **triggers**.
 - **Domains** and **composite types**.
 - **`COMMENT ON`** any of the above, except view columns.
-- **Supported extensions** the config's `extensions` lists, at a pinned version: `create extension citext version '1.8';`. Columns, defaults, indexes and routines use their types and functions unqualified. Also `CREATE EXTENSION plpgsql`.
+- **[Supported extensions](#extensions)** the config's `extensions` lists, at a pinned version: `create extension citext version '1.8';`. Columns, defaults, indexes and routines use their types, functions, operators and operator classes unqualified. Also `CREATE EXTENSION plpgsql`.
 
 ### Refused
 
 | Refused | Use instead |
 | --- | --- |
 | Enums | A lookup table with a foreign key, or a `CHECK` constraint |
-| Extensions that aren't supported extensions, such as `earthdistance` or `pg_stat_statements` | A supported extension, or built-ins such as `gen_random_uuid()` and `uuidv7()` |
+| Extensions that aren't supported extensions, such as `earthdistance`, `pg_stat_statements`, PostGIS or pgvector. [Supported extensions](#extensions) ship with PostgreSQL and are trusted, so the deploy role can install them without being a superuser; Aurora PostgreSQL 18.4 offers them; rehearsals load them on every platform; and they install inside the deploy transaction | A supported extension, or built-ins such as `gen_random_uuid()` and `uuidv7()` |
 | Standalone sequences and `serial` columns (`bigserial`, `smallserial`, `serial8`, …) | `bigint generated always as identity` |
 | Partitioned tables and partitions (`PARTITION OF`) | — |
 | Virtual generated columns | Add `STORED` |
@@ -185,6 +185,112 @@ Refused statements are listed as `<file>:<line>: <reason> [<rule>]`. "Not suppor
 >
 > `validate --strict` fails on routines that do none of these.
 
+## Extensions
+
+The desired schema may install any of the 17 supported extensions, at a version you pin:
+
+| Extension | Versions | Gives you |
+| --- | --- | --- |
+| `btree_gin` | 1.0–1.3 | GIN indexes over scalar columns |
+| `btree_gist` | 1.2–1.8 | GiST over scalar columns, such as exclusion constraints on ranges and ids |
+| `citext` | 1.4–1.8 | Case-insensitive text, such as emails |
+| `cube` | 1.2–1.5 | Multi-dimensional points and boxes |
+| `dict_int` | 1.0 | A text-search dictionary for integers |
+| `fuzzystrmatch` | 1.1, 1.2 | `levenshtein()`, `soundex()`, `metaphone()` |
+| `hstore` | 1.4–1.8 | Key/value columns |
+| `intarray` | 1.2–1.5 | Integer-array operators and indexes |
+| `isn` | 1.1–1.3 | ISBN, ISSN, EAN and UPC types |
+| `ltree` | 1.1–1.3 | Hierarchical label paths |
+| `pg_trgm` | 1.3–1.6 | Trigram similarity, and fuzzy-search indexes with `gin_trgm_ops` |
+| `pgcrypto` | 1.3, 1.4 | Hashing and encryption: `digest()`, `crypt()`, `gen_salt()` |
+| `tablefunc` | 1.0 | `crosstab()` |
+| `tsm_system_rows` | 1.0 | `TABLESAMPLE system_rows` |
+| `tsm_system_time` | 1.0 | `TABLESAMPLE system_time` |
+| `unaccent` | 1.1 | `unaccent()`, and a text-search dictionary that removes accents |
+| `uuid-ossp` | 1.1 | `uuid_generate_v4()` and friends |
+
+The versions are those super-deploy knows: the ones its rehearsal PostgreSQL 18 can install. Each extension here ships with PostgreSQL and passes four tests: it is trusted, so the deploy role can install it without being a superuser; Aurora PostgreSQL 18.4 offers it; rehearsals load it on every platform; and it installs inside the deploy transaction. Every other extension is [refused](#refused).
+
+Each extension lives in the managed schema, and only the schema change creates, updates or drops one.
+
+### Declaring an extension
+
+List the extension and the versions the project may use in `super-deploy.config.ts`:
+
+```ts
+export default defineConfig({
+  // ...
+  extensions: { citext: ["1.8"], pg_trgm: ["1.6"], pgcrypto: ["1.4"] },
+});
+```
+
+The config is refused when it loads if a name isn't a supported extension, or a version isn't one super-deploy knows: the message lists what is. Without `extensions`, no extension but `plpgsql` is allowed.
+
+Then install it in the desired schema, with a `VERSION` the config lists, and use it unqualified:
+
+```sql
+create extension citext version '1.8';
+create extension pg_trgm version '1.6';
+create extension pgcrypto version '1.4';
+
+create table customers (
+  id bigint generated always as identity primary key,
+  email citext not null constraint customers_email_key unique,
+  name text not null,
+  password_hash text
+);
+create index customers_name_trgm on customers using gin (name gin_trgm_ops);
+```
+
+- **`VERSION` is required.** Without it, or with a version the config doesn't list for that extension, the statement is refused with the versions the config lists. The same `CREATE EXTENSION` installs different default versions on different servers, so a version is always pinned.
+- **An extension the config doesn't list** is refused with a message to add it to `extensions`.
+- `SCHEMA` may name only the managed schema, `CASCADE` is refused, and `IF NOT EXISTS` is fine. `COMMENT ON EXTENSION` is refused.
+- A type, function, operator or operator class the extension doesn't provide at the pinned version is refused as an unknown reference. File order doesn't matter: anything using an extension loads after its `CREATE EXTENSION`.
+
+`draft` writes `CREATE EXTENSION "citext" SCHEMA "public" VERSION '1.8';` into the schema change. Rehearsals install exactly that version or fail, naming the versions their server offers; they never fall back to another one.
+
+### Changing an extension's version
+
+To raise a version, list the new one in the config's `extensions` and change `VERSION` in the desired schema. `draft` writes `ALTER EXTENSION "citext" UPDATE TO '1.8';` first in the schema change, so later statements can use what the new version adds.
+
+Lowering a version is refused at `draft`: PostgreSQL ships no downgrade scripts.
+
+The config is checked against the desired schema only: finalized migrations keep replaying at the version they recorded, so the old version can leave the config at once.
+
+### Removing an extension
+
+Delete its `CREATE EXTENSION` and everything in the desired schema that uses it: while anything still does, `draft` refuses the use as an unknown reference. `draft` then writes a statement dropping each user, then `DROP EXTENSION` without `CASCADE`, so a reviewer sees everything that goes. Those drops are [destructive](#destructive-changes); the `DROP EXTENSION` itself isn't. Remove the extension from the config afterwards.
+
+### Calling extension functions in scripts
+
+Pre- and post-migration scripts may call the functions of an extension the config lists, for example in a backfill:
+
+```sql
+update customers set password_hash = crypt(password_hash, gen_salt('bf'))
+  where password_hash not like '$2a$%';
+```
+
+Scripts and seed data never create, alter or drop an extension (`[deploy-time-statement]`). Calling your own functions and procedures stays refused (`[user-function-call]`).
+
+### Extensions on targets
+
+`status`, `deploy` and `deploy-draft` check, before changing anything, that a target can run the extension statements of what they would deploy:
+
+- **The target offers the pinned version** in `pg_available_extension_versions`. Otherwise the refusal names the extension, the version and what the target offers. A server can offer fewer versions than super-deploy knows: PostgreSQL 16 stops at citext 1.6, and Aurora's versions may lag. Pin a version every target offers.
+- **The deploy role has `CREATE` on the database**, whenever a migration creates an extension. The refusal names the `GRANT` a DBA runs: see [Permissions](#permissions). `rebuild` checks this too.
+- **The extension isn't already installed in another schema.** The refusal names that schema and the extension's owner.
+
+The deploy role owns each extension a migration creates, which is what lets later migrations update or drop it.
+
+**Every extension in a target's database must be managed.** Any extension the target's recorded migrations didn't create is [drift](#drift), wherever it lives and whoever installed it, except `plpgsql`. So is a supported extension at another version than its migrations installed, such as after a hand-run `ALTER EXTENSION … UPDATE`. `status` lists each one once, with its schema and version, never its functions and types one by one. Drift blocks `deploy` and `mark`. `deploy-draft` doesn't check drift, but `rebuild` refuses before asking while an extension outside the managed schema exists, because it would survive the wipe.
+
+When a DBA has installed an extension by hand, such as `pg_stat_statements` for monitoring:
+
+- **The schema doesn't need it:** drop it from the target's database. super-deploy has no list of extensions to ignore, so a monitoring extension belongs in another database on the server.
+- **The schema needs it, and it's supported:** drop it, then declare it in the desired schema and deploy. The migration installs it at the pinned version, owned by the deploy role.
+
+When a database already uses extensions before super-deploy manages it, [adopt](#adopting-an-existing-database) it instead.
+
 ## The files of a draft and a migration
 
 A deployment runs these files in one transaction, in this order:
@@ -203,7 +309,7 @@ flowchart LR
 | `desired-schema.diff` | This migration's change to the desired schema, in `git diff` format, so pull requests show it. Finalized migrations only. |
 | `recoveries/recovery-K/` | [Recoveries](#when-a-deploy-fails) of this migration. |
 
-Scripts may call built-in functions and those of a supported extension the config's `extensions` lists, such as `digest()` from `pgcrypto` in a backfill, but not your own functions and procedures (`[user-function-call]`). Scripts and seed data never create, alter or drop an extension, `plpgsql` included (`[deploy-time-statement]`): extensions belong in the desired schema, and only the schema change touches them.
+Scripts may call built-in functions and those of a [supported extension](#calling-extension-functions-in-scripts) the config's `extensions` lists, such as `digest()` from `pgcrypto` in a backfill, but not your own functions and procedures (`[user-function-call]`). Scripts and seed data never create, alter or drop an extension, `plpgsql` included (`[deploy-time-statement]`): extensions belong in the desired schema, and only the schema change touches them.
 
 `draft` creates `seed-data.sql`, `pre-migration.sql` and `post-migration.sql` when it creates the draft, each holding only a header comment, ready to fill in. `recovery` copies them from the migration and creates any it lacks. One still holding only its header, or nothing, runs and loads nothing, as if it weren't there: leave it or delete it, and a later `draft` doesn't create it again.
 
@@ -234,6 +340,7 @@ Scripts may call built-in functions and those of a supported extension the confi
 | `historySchema` | `deployment_history` | Records migrations, attempts and the disposable flag. Must differ from `managedSchema`. |
 | `externalSchemas` | none | Schemas that PL/pgSQL bodies may read, such as `["auth"]`. The DBA sets them up; super-deploy doesn't check them. |
 | `directory` | `data-model` | Holds `desired-schema/`, `draft/` and `migrations/`. |
+| `extensions` | none | The [supported extensions](#extensions) the desired schema may install, each with the versions it may use, such as `{ citext: ["1.8"] }`. |
 
 Schema names are lowercase identifiers, and can't be system schemas.
 
@@ -306,7 +413,7 @@ flowchart TD
 
 - Adopt before any draft or migration exists.
 - Adoption writes nothing while anything is refused. It lists every unsupported object, objects owned by another role, and a missing `CREATE` privilege. It ends with a fix script to run as a superuser.
-- A [supported extension](#supported) in the managed schema, at a version the config's `extensions` lists, is written as `CREATE EXTENSION citext VERSION '1.8';` in `desired-schema/extensions.sql`. Nothing is written for its functions, types and operators. Any other extension is refused once, saying why:
+- A [supported extension](#extensions) in the managed schema, at a version the config's `extensions` lists, is written as `CREATE EXTENSION citext VERSION '1.8';` in `desired-schema/extensions.sql`. Nothing is written for its functions, types and operators. Any other extension is refused once, saying why:
   - it isn't a supported extension: drop it;
   - the config doesn't list it at its installed version: add that version to `extensions`;
   - it lives outside the managed schema: move it there with `ALTER EXTENSION <name> SET SCHEMA <managed schema>`, or drop it.
@@ -350,7 +457,7 @@ flowchart LR
 
 | What | How |
 | --- | --- |
-| **The deploy role** | It owns, or inherits from the owner of, the managed schema and everything in it, and needs `CREATE` on the database for the first deployment. Otherwise a DBA pre-creates both schemas: `create schema deployment_history authorization deploy_role`. For `public`, make the deploy role the database owner. It also needs `CREATE` on the database whenever a migration creates an extension: `status`, `deploy`, `deploy-draft` and `rebuild` check it up front and name the `GRANT` to run. |
+| **The deploy role** | It owns, or inherits from the owner of, the managed schema and everything in it, and needs `CREATE` on the database for the first deployment. Otherwise a DBA pre-creates both schemas: `create schema deployment_history authorization deploy_role`. For `public`, make the deploy role the database owner. It also needs `CREATE` on the database whenever a migration creates an [extension](#extensions-on-targets): `status`, `deploy`, `deploy-draft` and `rebuild` check it up front and name the `GRANT` to run, such as `GRANT CREATE ON DATABASE app TO deploy_role`. |
 | **App roles** | Create them and grant `CONNECT`. super-deploy never creates roles. |
 | **Grants** | Use default privileges, so new objects are granted automatically (see below). |
 | **External schemas** | Create them and grant your app roles access. On `dev`, use the superuser URL. |
@@ -473,7 +580,7 @@ flowchart TD
 
 ## Drift
 
-`deploy` builds a replica of what a target's recorded migrations should produce, and compares it with the target's managed schema. Any difference is drift, and `deploy` refuses until it is resolved. `status --target <t>` lists each difference.
+`deploy` builds a replica of what a target's recorded migrations should produce, and compares it with the target's managed schema and every extension in its database. Any difference is drift, and `deploy` and `mark` refuse until it is resolved. `status --target <t>` lists each difference. An extension a DBA installed by hand is drift wherever it lives: see [Extensions on targets](#extensions-on-targets).
 
 Not compared: grants, policies, RLS, ownership (checked separately) and column order.
 

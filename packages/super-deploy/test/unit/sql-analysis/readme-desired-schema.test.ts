@@ -1,19 +1,22 @@
 // The template README's "What the desired schema supports" section against
 // the desired-schema rules (SQL-analysis seam): each object kind it lists as
 // refused is refused, with the rule the README names. A rule that starts
-// refusing something new needs a row here and a line in the README.
+// refusing something new needs a row here and a line in the README. Its
+// "Extensions" section names every supported extension, so one added to the
+// generated list needs a README line too.
 import { readFile } from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 import {
   analyseDesiredSchema,
   SqlRuleViolationError,
+  supportedExtensionVersions,
 } from "../../../src/sql-analysis/index.ts";
 
 const readmePath = new URL("../../../../template/README.md", import.meta.url);
-const heading = "## What the desired schema supports";
+const supportsHeading = "## What the desired schema supports";
 
-/** The section's text, with line breaks folded so phrases match across them. */
-async function section(): Promise<string> {
+/** A section's text, with line breaks folded so phrases match across them. */
+async function section(heading = supportsHeading): Promise<string> {
   const readme = await readFile(readmePath, "utf8");
   const start = readme.indexOf(`\n${heading}\n`);
   expect(start, `README has no "${heading}" section`).toBeGreaterThan(-1);
@@ -57,6 +60,11 @@ describe("the README lists what the desired schema refuses", () => {
     [
       "extensions that aren't supported extensions",
       "create extension earthdistance version '1.2'",
+      "unsupported-extension",
+    ],
+    [
+      "trusted, so the deploy role can install them without being a superuser",
+      "create extension pg_stat_statements version '1.11'",
       "unsupported-extension",
     ],
     [
@@ -233,5 +241,19 @@ describe("the README lists what the desired schema refuses", () => {
   ])("%s", async (phrase, sql) => {
     expect(await refusals(sql)).toContain("unsupported-object");
     expect(await section()).toContain(phrase.toLowerCase());
+  });
+});
+
+describe("the README's Extensions section", () => {
+  const names = Object.keys(supportedExtensionVersions);
+
+  test("says how many supported extensions there are", async () => {
+    expect(await section("## Extensions")).toContain(
+      `the ${names.length} supported extensions`,
+    );
+  });
+
+  test.each(names)("names %s", async (name) => {
+    expect(await section("## Extensions")).toContain(`\`${name}\``);
   });
 });
