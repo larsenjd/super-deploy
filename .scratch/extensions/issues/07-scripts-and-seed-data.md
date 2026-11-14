@@ -8,9 +8,13 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Integration test: a post-migration script that backfills a column with `encode(digest(email, 'sha256'), 'hex')`, with pgcrypto in the desired schema and config, rehearses, finalizes and deploys. The target holds the backfilled values.
-- [ ] A script calling a function of a supported extension that the config doesn't list (or that the pinned version doesn't provide) is refused as `user-function-call`, as is a call to a routine the desired schema defines.
-- [ ] `CREATE EXTENSION`, `ALTER EXTENSION` and `DROP EXTENSION` in a pre-migration script, a post-migration script or seed data are refused with a message saying extensions belong in the desired schema. That includes `CREATE EXTENSION plpgsql` in a pre-migration script.
-- [ ] The README lines and README-coverage rows for these refusals are updated, as are REFINEMENTS "Calling functions and procedures in deploy-time SQL" (already mentions supported extensions) and any test asserting that `plpgsql` is allowed in pre-migration scripts.
+- [x] Integration test: a post-migration script that backfills a column with `encode(digest(email, 'sha256'), 'hex')`, with pgcrypto in the desired schema and config, rehearses, finalizes and deploys. The target holds the backfilled values.
+- [x] A script calling a function of a supported extension that the config doesn't list (or that the pinned version doesn't provide) is refused as `user-function-call`, as is a call to a routine the desired schema defines.
+- [x] `CREATE EXTENSION`, `ALTER EXTENSION` and `DROP EXTENSION` in a pre-migration script, a post-migration script or seed data are refused with a message saying extensions belong in the desired schema. That includes `CREATE EXTENSION plpgsql` in a pre-migration script.
+- [x] The README lines and README-coverage rows for these refusals are updated, as are REFINEMENTS "Calling functions and procedures in deploy-time SQL" (already mentions supported extensions) and any test asserting that `plpgsql` is allowed in pre-migration scripts.
+
+## Comments
+
+Extension statements in scripts/seed data are refused under the existing `deploy-time-statement` rule (no new rule id). No README-coverage test exists for deploy-time rules, so no coverage rows were added. Known limits: a function created in a pre-migration script still has its body checked with no extensions allowed; extension-function matching is by name only, like the pg_catalog check.
