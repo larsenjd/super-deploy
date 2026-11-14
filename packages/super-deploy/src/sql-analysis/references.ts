@@ -16,8 +16,15 @@
 // (extensions, which routines in their language wait for), plus
 // `uniq:table` (every unique key of a table, which a foreign key to it waits
 // for).
+//
+// A supported extension's `CREATE EXTENSION ... VERSION` also provides the
+// `type:` and `func:` keys of what it installs at that version
+// (extensions.ts), so a column of type `citext` or a default calling
+// `gen_salt()` loads after it, and a name the pinned version lacks is an
+// unknown reference.
 import type { Node } from "@pgsql/types";
 import { parseSync } from "libpg-query";
+import { createExtension, extensionObjects } from "./extensions.ts";
 import { generatedName } from "./generated-names.ts";
 import { isObject, type Json } from "./syntax-tree.ts";
 
@@ -666,6 +673,14 @@ const extractors: Record<string, Extractor> = {
     facts.kind = "extension";
     facts.identity = `extension ${str(body.extname) ?? "?"}`;
     facts.provides.push(`ext:${str(body.extname) ?? "?"}`);
+    const { name, version } = createExtension(body);
+    const objects = extensionObjects(name, version);
+    for (const type of objects?.types ?? []) {
+      facts.provides.push(`type:${type}`);
+    }
+    for (const routine of new Set(objects?.functions.map(({ name }) => name))) {
+      facts.provides.push(`func:${routine}`);
+    }
     return true;
   },
 

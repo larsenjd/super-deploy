@@ -2,14 +2,18 @@
 // is accepted, and every refused object type, clause and PL/pgSQL construct
 // is refused with its rule, line and a clear reason.
 import { describe, expect, test } from "vitest";
-import { checkRules } from "../../../src/sql-analysis/index.ts";
+import { checkRules, ruleDefinition } from "../../../src/sql-analysis/index.ts";
 import { orderingFixtures } from "../../fixtures/ordering.ts";
 
 const path = "data-model/desired-schema/schema.sql";
 
 async function violations(
   sql: string,
-  context?: { managedSchema?: string; externalSchemas?: readonly string[] },
+  context?: {
+    managedSchema?: string;
+    externalSchemas?: readonly string[];
+    extensions?: Readonly<Record<string, readonly string[]>>;
+  },
 ) {
   return checkRules({ path, text: sql }, "desired-schema", context);
 }
@@ -163,11 +167,6 @@ describe("refused object types", () => {
       "partition",
       "create table m_2026 partition of m for values from ('2026-01-01') to ('2027-01-01')",
       /^Partitioned tables are not supported in V1/,
-    ],
-    [
-      "extension other than plpgsql",
-      "create extension pgcrypto",
-      /^Extensions other than plpgsql are not supported in V1/,
     ],
     [
       "rule",
@@ -468,19 +467,9 @@ describe("refused statements and clauses", () => {
       /^CREATE SCHEMA is not allowed in the desired schema/,
     ],
     [
-      "CREATE EXTENSION IF NOT EXISTS other than plpgsql, refused as the extension",
-      "create extension if not exists pgcrypto",
-      /^Extensions other than plpgsql are not supported in V1/,
-    ],
-    [
       "COMMENT ON SCHEMA",
       "comment on schema public is 'x'",
       /^COMMENT ON SCHEMA is not allowed in the desired schema/,
-    ],
-    [
-      "COMMENT ON EXTENSION",
-      "comment on extension plpgsql is 'x'",
-      /^COMMENT ON EXTENSION is not allowed/,
     ],
     [
       "COMMENT ON SERVER, worded as in SQL",
@@ -727,6 +716,128 @@ describe("privileges, roles, ownership, row-level security and SECURITY DEFINER"
       );
       expect(found.map(({ rule }) => rule)).toContain("unsupported-object");
     });
+  });
+});
+
+describe("supported extensions", () => {
+  const extensions = { citext: ["1.7", "1.8"], pgcrypto: ["1.4"] };
+  const refusal = async (sql: string, context = {}) =>
+    (await violations(`${sql};`, { extensions, ...context })).map(
+      ({ rule, message }) => ({ rule, message }),
+    );
+
+  test.each<[string, string, { managedSchema?: string }?]>([
+    [
+      "with a VERSION the config lists",
+      "create extension citext version '1.8'",
+    ],
+    [
+      "IF NOT EXISTS changes nothing",
+      "create extension if not exists citext version '1.7'",
+    ],
+    [
+      "SCHEMA naming the managed schema",
+      "create extension pgcrypto with schema app version '1.4'",
+      { managedSchema: "app" },
+    ],
+    ["a quoted version", 'create extension citext version "1.8"'],
+  ])("accepted %s", async (_name, sql, context = {}) => {
+    expect(await refusal(sql, context)).toEqual([]);
+  });
+
+  test("an unsupported extension is refused with IF NOT EXISTS too", async () => {
+    expect(
+      await refusal("create extension if not exists earthdistance"),
+    ).toMatchObject([{ rule: "unsupported-extension" }]);
+  });
+
+  test("COMMENT ON EXTENSION plpgsql is refused too", async () => {
+    expect(await refusal("comment on extension plpgsql is 'x'")).toEqual([
+      expect.objectContaining({ rule: "extension-comment" }),
+    ]);
+  });
+
+  test("CREATE EXTENSION without VERSION is refused, naming the versions the config lists", async () => {
+    expect(await refusal("create extension citext")).toEqual([
+      {
+        rule: "extension-without-version",
+        message:
+          "CREATE EXTENSION citext needs a VERSION: the config lists 1.7, 1.8, e.g. create extension citext version '1.8'",
+      },
+    ]);
+  });
+
+  test("an unsupported extension is refused, listing the supported ones", async () => {
+    expect(
+      await refusal("create extension earthdistance version '1.2'"),
+    ).toEqual([
+      {
+        rule: "unsupported-extension",
+        message: expect.stringMatching(
+          /^earthdistance is not a supported extension: supported extensions are btree_gin, btree_gist, citext, .*, uuid-ossp$/,
+        ),
+      },
+    ]);
+  });
+
+  test("a supported extension the config doesn't list is refused, saying to add it to extensions", async () => {
+    expect(await refusal("create extension ltree version '1.3'")).toEqual([
+      {
+        rule: "extension-not-listed",
+        message:
+          'ltree is not listed in the config\'s extensions: add it, e.g. extensions: { ltree: ["1.3"] }',
+      },
+    ]);
+  });
+
+  test("a VERSION the config doesn't list is refused, naming the listed versions", async () => {
+    expect(await refusal("create extension citext version '1.6'")).toEqual([
+      {
+        rule: "extension-version-not-listed",
+        message:
+          "citext 1.6 is not listed in the config's extensions: it lists 1.7, 1.8",
+      },
+    ]);
+  });
+
+  test.each([
+    [
+      "SCHEMA naming another schema",
+      "create extension citext schema other version '1.8'",
+      "extension-outside-managed-schema",
+      "Extensions live in the managed schema public: leave SCHEMA other out",
+    ],
+    [
+      "CASCADE",
+      "create extension citext version '1.8' cascade",
+      "extension-cascade",
+      "CASCADE is not allowed: create every extension the desired schema needs with a CREATE EXTENSION of its own",
+    ],
+    [
+      "COMMENT ON EXTENSION",
+      "comment on extension citext is 'x'",
+      "extension-comment",
+      "COMMENT ON EXTENSION is not allowed: each extension keeps the comment its install script writes",
+    ],
+  ])("%s is refused", async (_name, sql, rule, message) => {
+    expect(await refusal(sql)).toEqual([{ rule, message }]);
+  });
+
+  test("the refusals are unsupported-object rules no marker overrides", () => {
+    for (const id of [
+      "unsupported-extension",
+      "extension-not-listed",
+      "extension-without-version",
+      "extension-version-not-listed",
+      "extension-outside-managed-schema",
+      "extension-cascade",
+      "extension-comment",
+    ]) {
+      expect(ruleDefinition(id)).toMatchObject({
+        category: "unsupported",
+        overridable: false,
+      });
+    }
   });
 });
 
@@ -1141,7 +1252,9 @@ describe("ordering fixtures", () => {
       const found = [];
       for (const [file, text] of Object.entries(fixture.files)) {
         found.push(
-          ...(await checkRules({ path: file, text }, "desired-schema")),
+          ...(await checkRules({ path: file, text }, "desired-schema", {
+            extensions: fixture.extensions ?? {},
+          })),
         );
       }
       expect(found.map((violation) => violation.rule)).toEqual(

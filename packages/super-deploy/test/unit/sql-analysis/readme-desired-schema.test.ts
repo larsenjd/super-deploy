@@ -27,9 +27,10 @@ async function section(): Promise<string> {
 /** The rule ids the desired schema refuses `sql` with (empty if accepted). */
 async function refusals(sql: string): Promise<string[]> {
   try {
-    await analyseDesiredSchema([
-      { path: "data-model/desired-schema/probe.sql", text: `${sql};\n` },
-    ]);
+    await analyseDesiredSchema(
+      [{ path: "data-model/desired-schema/probe.sql", text: `${sql};\n` }],
+      { extensions: { citext: ["1.8"] } },
+    );
     return [];
   } catch (error) {
     if (!(error instanceof SqlRuleViolationError)) {
@@ -53,7 +54,41 @@ describe("the README lists what the desired schema refuses", () => {
       "create table t (id serial constraint t_pkey primary key)",
       "unsupported-object",
     ],
-    ["`pgcrypto`", "create extension pgcrypto", "unsupported-object"],
+    [
+      "extensions that aren't supported extensions",
+      "create extension earthdistance version '1.2'",
+      "unsupported-extension",
+    ],
+    [
+      "the config's `extensions` lists",
+      "create extension ltree version '1.3'",
+      "extension-not-listed",
+    ],
+    [
+      "`create extension` pins a `version`",
+      "create extension citext",
+      "extension-without-version",
+    ],
+    [
+      "for an extension and version the config's `extensions` lists",
+      "create extension citext version '1.6'",
+      "extension-version-not-listed",
+    ],
+    [
+      "`schema` may name only it",
+      "create extension citext schema other version '1.8'",
+      "extension-outside-managed-schema",
+    ],
+    [
+      "and no `cascade`",
+      "create extension citext version '1.8' cascade",
+      "extension-cascade",
+    ],
+    [
+      "no `comment on extension`",
+      "comment on extension citext is 'x'",
+      "extension-comment",
+    ],
     [
       "name every index and constraint",
       "create table t (a int check (a > 0))",

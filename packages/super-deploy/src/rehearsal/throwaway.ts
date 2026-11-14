@@ -1,5 +1,12 @@
 // Throwaway databases from the rehearsal adapter: always PostgreSQL 18,
 // always dropped, with session settings pinned identically to deployments.
+//
+// Loading a desired schema first checks that the rehearsal server can install
+// every extension version it pins (pg_available_extension_versions), and
+// fails naming what the server offers otherwise: a rehearsal never installs
+// another version (ADR-0009). Every rehearsal that compares with a desired
+// schema (draft, the draft rehearsal, finalize, deployment rehearsals) loads
+// one through here.
 
 import { inTransaction } from "../adapters/transaction.ts";
 import type {
@@ -13,6 +20,7 @@ import type { ParsedStatement } from "../sql-analysis/index.ts";
 import {
   externalSchemasBoundAtCreate,
   isAlreadyInstalled,
+  pinnedExtensions,
   quoteIdentifier,
 } from "../sql-analysis/index.ts";
 
@@ -133,6 +141,7 @@ export async function loadDesiredSchema(
   managedSchema: string,
   externalSchemas: readonly string[] = [],
 ): Promise<void> {
+  await requireExtensionVersions(session, statements);
   await ensureManagedSchema(session, managedSchema);
   await inPinnedTransaction(session, managedSchema, async () => {
     for (const statement of statements) {
@@ -160,6 +169,29 @@ export async function loadDesiredSchema(
       }
     }
   });
+}
+
+/** Throws RehearsalExtensionVersionError for the first pinned version the server can't install. */
+async function requireExtensionVersions(
+  session: Session,
+  statements: readonly ParsedStatement[],
+): Promise<void> {
+  const pinned = pinnedExtensions(statements);
+  if (pinned.length === 0) {
+    return;
+  }
+  const { rows } = await session.query<{ name: string; version: string }>(
+    "SELECT name, version FROM pg_catalog.pg_available_extension_versions WHERE name = ANY($1)",
+    [pinned.map(({ name }) => name)],
+  );
+  for (const { name, version } of pinned) {
+    const offered = rows
+      .filter((row) => row.name === name)
+      .map((row) => row.version);
+    if (!offered.includes(version)) {
+      throw new RehearsalExtensionVersionError(name, version, offered);
+    }
+  }
 }
 
 function externalHint(
@@ -268,6 +300,37 @@ export class DesiredSchemaLoadError extends SuperDeployError {
     this.detail = detail;
     this.hint = hint;
   }
+}
+
+/**
+ * The rehearsal server can't install an extension at the version the desired
+ * schema pins. Nothing falls back to another version.
+ */
+export class RehearsalExtensionVersionError extends SuperDeployError {
+  readonly code = "rehearsal-extension-version-unavailable";
+  readonly extension: string;
+  readonly version: string;
+  /** The versions of the extension the rehearsal server offers, oldest first. */
+  readonly available: readonly string[];
+
+  constructor(
+    extension: string,
+    version: string,
+    available: readonly string[],
+  ) {
+    const offered = [...available].sort(compareVersions);
+    super(
+      `The rehearsal server can't install ${extension} ${version}: ${offered.length === 0 ? `it doesn't offer ${extension}` : `it offers ${extension} ${offered.join(", ")}`}. A rehearsal installs exactly the version the desired schema pins, so use a rehearsal server that offers ${extension} ${version}`,
+    );
+    this.extension = extension;
+    this.version = version;
+    this.available = offered;
+  }
+}
+
+/** Orders versions such as `1.10` after `1.9`. */
+function compareVersions(a: string, b: string): number {
+  return a.localeCompare(b, "en", { numeric: true });
 }
 
 /**

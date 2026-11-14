@@ -57,6 +57,7 @@ export {
   type LockWarning,
   type LockWarningKind,
 } from "./destructive.ts";
+export { pinnedExtensions } from "./extensions.ts";
 export {
   alternativeOrder,
   type OrderingOptions,
@@ -208,3 +209,7 @@ export {
   SqlRuleViolationError,
 } from "./rules.ts";
 export { quoteIdentifier } from "./statement-names.ts";
+export {
+  type SupportedExtension,
+  supportedExtensionVersions,
+} from "./supported-extensions.ts";

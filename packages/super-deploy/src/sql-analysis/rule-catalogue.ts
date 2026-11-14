@@ -135,6 +135,35 @@ const definitions = {
     "unsupported",
     "super-deploy V1 does not support this object type or feature",
   ],
+  // Supported extensions in the desired schema (ADR-0009).
+  "unsupported-extension": [
+    "unsupported",
+    "The extension is not one of the supported extensions",
+  ],
+  "extension-not-listed": [
+    "unsupported",
+    "The supported extension is not listed in the config's extensions",
+  ],
+  "extension-without-version": [
+    "unsupported",
+    "CREATE EXTENSION must pin a VERSION the config lists",
+  ],
+  "extension-version-not-listed": [
+    "unsupported",
+    "The extension's VERSION is not listed in the config's extensions",
+  ],
+  "extension-outside-managed-schema": [
+    "unsupported",
+    "Extensions live in the managed schema",
+  ],
+  "extension-cascade": [
+    "unsupported",
+    "CREATE EXTENSION ... CASCADE would install extensions the desired schema doesn't name",
+  ],
+  "extension-comment": [
+    "unsupported",
+    "Each extension keeps the comment its install script writes",
+  ],
   // Desired-schema ordering (ticket 09).
   "unnamed-index": ["ordering", "Every index needs an explicit name"],
   "unnamed-constraint": ["ordering", "Every constraint needs an explicit name"],

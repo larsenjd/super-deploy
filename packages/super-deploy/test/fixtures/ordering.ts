@@ -27,6 +27,8 @@ export interface OrderingFixture {
    * covers it; the API seam expects draft to refuse it before loading.
    */
   readonly refusedByRules?: readonly string[];
+  /** The config's `extensions`, for a fixture that creates a supported extension. */
+  readonly extensions?: Readonly<Record<string, readonly string[]>>;
   /** Expected errors, in order; when present, the fixture is refused. */
   readonly errors?: readonly ExpectedError[];
 }
@@ -791,6 +793,33 @@ comment on column public.cv_mv.id is 'materialized-view column';
     before: [["create extension", "create function pl_one"]],
   },
   {
+    name: "an extension's type in a column, unqualified and qualified",
+    files: statements(
+      "create extension citext version '1.8'",
+      "create table users (id int constraint users_pkey primary key, email citext not null, backup public.citext[])",
+    ),
+    extensions: { citext: ["1.8"] },
+    before: [["create extension citext", "create table users"]],
+  },
+  {
+    name: "a default calling an extension's function, beside a built-in",
+    files: statements(
+      "create extension pgcrypto version '1.4'",
+      "create table secrets (id uuid default gen_random_uuid() constraint secrets_pkey primary key, salt text default gen_salt('bf'), hash bytea default digest('x', 'sha256'))",
+    ),
+    extensions: { pgcrypto: ["1.4"] },
+    before: [["create extension pgcrypto", "create table secrets"]],
+  },
+  {
+    name: "a view calling an extension's function",
+    files: statements(
+      "create extension fuzzystrmatch version '1.2'",
+      "create view sounds as select soundex('Robert') as code, daitch_mokotoff('Robert') as codes",
+    ),
+    extensions: { fuzzystrmatch: ["1.2"] },
+    before: [["create extension fuzzystrmatch", "create view sounds"]],
+  },
+  {
     name: "C20a temporal primary key WITHOUT OVERLAPS (PG18)",
     files: statements(
       "create table room (id int4range, during tstzrange, constraint room_pk primary key (id, during without overlaps))",
@@ -1427,6 +1456,30 @@ create view v as select public.length('x') as l;
         message: [
           "function public.length, which the desired schema doesn't create",
         ],
+      },
+    ],
+  },
+  {
+    name: "a function the extension doesn't provide at its pinned version",
+    files: {
+      "a.sql": `create extension fuzzystrmatch version '1.1';
+create view sounds as select daitch_mokotoff('Robert') as codes;
+create table people (name citext);
+`,
+    },
+    extensions: { fuzzystrmatch: ["1.1"] },
+    errors: [
+      {
+        file: "a.sql",
+        line: 2,
+        rule: "unknown-reference",
+        message: ["view sounds references function daitch_mokotoff"],
+      },
+      {
+        file: "a.sql",
+        line: 3,
+        rule: "unknown-reference",
+        message: ["table people references type citext"],
       },
     ],
   },

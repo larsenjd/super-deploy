@@ -411,6 +411,7 @@ async function readTarget(
   const context: RuleContext = {
     managedSchema: config.managedSchema,
     externalSchemas: config.externalSchemas,
+    extensions: config.extensions,
   };
   const session = await connectTarget(target, project.signal);
   const close = await terminatedOnAbort(target, session, project.signal);

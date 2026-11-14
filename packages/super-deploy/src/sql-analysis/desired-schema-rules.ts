@@ -20,14 +20,33 @@
 // - `outside-managed-schema`, `undeclared-schema`: schema rules (schemas.ts).
 // - `denylisted-call`: a built-in whose effects escape the transaction.
 // - `plpgsql-dynamic-sql`: EXECUTE in a PL/pgSQL body.
+// - `unsupported-extension`, `extension-not-listed`,
+//   `extension-without-version`, `extension-version-not-listed`,
+//   `extension-outside-managed-schema`, `extension-cascade`,
+//   `extension-comment`: a `CREATE EXTENSION` other than plpgsql must name a
+//   supported extension the config lists, pin a `VERSION` the config lists
+//   for it, and live in the managed schema (ADR-0009). Only the desired
+//   schema is checked against the config: a finalized snapshot is analysed
+//   with every version the tool knows (`RuleContext.extensions`).
 
 import { denylistFindings } from "./denylist.ts";
+import {
+  createExtension,
+  extensionClauseFindings,
+  extensionCommentFinding,
+  isSupportedExtension,
+  unsupportedExtensionFinding,
+} from "./extensions.ts";
 import type { ParsedStatement } from "./parse.ts";
 import { privilegeRefusal } from "./privileges.ts";
 import { plpgsqlFindings, sqlBodyFindings } from "./routine-bodies.ts";
 import type { RuleContext, RuleFinding } from "./rule-types.ts";
 import { schemaFindings } from "./schemas.ts";
 import { objectTypeKeyword, statementName } from "./statement-names.ts";
+import {
+  type SupportedExtension,
+  supportedExtensionVersions,
+} from "./supported-extensions.ts";
 import {
   defElemString,
   defElems,
@@ -570,6 +589,9 @@ const commentTypes = new Set([
 ]);
 
 function checkComment(node: Json): RuleFinding[] {
+  if (node.objtype === "OBJECT_EXTENSION") {
+    return [extensionCommentFinding];
+  }
   return commentTypes.has(String(node.objtype))
     ? []
     : [
@@ -579,9 +601,13 @@ function checkComment(node: Json): RuleFinding[] {
       ];
 }
 
-function checkExtension(node: Json): RuleFinding[] {
+function checkExtension(
+  node: Json,
+  _statement: ParsedStatement,
+  context: RuleContext,
+): RuleFinding[] {
   if (node.extname !== "plpgsql") {
-    return [refusedObjects.extensions()];
+    return supportedExtensionFindings(node, context);
   }
   return list(node.options).length > 0
     ? [
@@ -590,6 +616,47 @@ function checkExtension(node: Json): RuleFinding[] {
         ),
       ]
     : [];
+}
+
+/**
+ * A supported extension's `CREATE EXTENSION`: the extension and its
+ * `VERSION` checked against the config, then its clauses.
+ */
+function supportedExtensionFindings(
+  node: Json,
+  context: RuleContext,
+): RuleFinding[] {
+  const statement = createExtension(node);
+  const { name, version } = statement;
+  const listed = context.extensions[name];
+  const pinned = (versions: readonly string[]) => versions.join(", ");
+  let refusal: RuleFinding | undefined;
+  if (!isSupportedExtension(name)) {
+    refusal = unsupportedExtensionFinding(name);
+  } else if (listed === undefined) {
+    refusal = {
+      rule: "extension-not-listed",
+      message: `${name} is not listed in the config's extensions: add it, e.g. extensions: { ${name}: ["${version ?? newestVersion(name)}"] }`,
+    };
+  } else if (version === undefined) {
+    refusal = {
+      rule: "extension-without-version",
+      message: `CREATE EXTENSION ${name} needs a VERSION: the config lists ${pinned(listed)}, e.g. create extension ${name} version '${listed.at(-1) ?? ""}'`,
+    };
+  } else if (!listed.includes(version)) {
+    refusal = {
+      rule: "extension-version-not-listed",
+      message: `${name} ${version} is not listed in the config's extensions: it lists ${pinned(listed)}`,
+    };
+  }
+  return [
+    ...(refusal === undefined ? [] : [refusal]),
+    ...extensionClauseFindings(statement, context.managedSchema),
+  ];
+}
+
+function newestVersion(name: SupportedExtension): string {
+  return supportedExtensionVersions[name].at(-1) ?? "";
 }
 
 /**

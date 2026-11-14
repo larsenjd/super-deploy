@@ -61,6 +61,61 @@ describe("generated schema changes", () => {
   });
 });
 
+describe("supported extensions in a schema change", () => {
+  test.each([
+    ["CREATE EXTENSION citext VERSION '1.8';"],
+    [`CREATE EXTENSION "uuid-ossp" SCHEMA "public" VERSION '1.1';`],
+  ])("accepted: %s", async (sql) => {
+    expect(await check("schema-change", sql)).toEqual([]);
+  });
+
+  test.each([
+    [
+      "CREATE EXTENSION citext;",
+      "extension-without-version",
+      "CREATE EXTENSION citext needs a VERSION: a schema change installs exactly the version the desired schema pins",
+    ],
+    [
+      "CREATE EXTENSION earthdistance VERSION '1.2';",
+      "unsupported-extension",
+      expect.stringMatching(
+        /^earthdistance is not a supported extension: supported extensions are btree_gin, .*, uuid-ossp$/,
+      ),
+    ],
+    [
+      "CREATE EXTENSION citext SCHEMA other VERSION '1.8';",
+      "extension-outside-managed-schema",
+      "Extensions live in the managed schema public: leave SCHEMA other out",
+    ],
+    [
+      "CREATE EXTENSION citext VERSION '1.8' CASCADE;",
+      "extension-cascade",
+      expect.stringMatching(/^CASCADE is not allowed/),
+    ],
+    [
+      "COMMENT ON EXTENSION citext IS 'x';",
+      "extension-comment",
+      "COMMENT ON EXTENSION is not allowed: each extension keeps the comment its install script writes",
+    ],
+  ])("refused: %s", async (sql, rule, message) => {
+    expect(
+      (await check("schema-change", sql)).map(({ rule, message }) => ({
+        rule,
+        message,
+      })),
+    ).toEqual([{ rule, message }]);
+  });
+
+  test.each(["pre-migration", "post-migration", "seed-data"] as const)(
+    "refused in %s",
+    async (kind) => {
+      expect(
+        await rulesBroken(kind, "create extension citext version '1.8'"),
+      ).toEqual(["deploy-time-statement"]);
+    },
+  );
+});
+
 describe("privileges, roles, ownership, row-level security and SECURITY DEFINER", () => {
   // Set up on targets outside super-deploy (ADR-0006), in every kind of file.
   const refused = [
@@ -676,8 +731,9 @@ const hazardFixtures: readonly Fixture[] = [
     "create function f() returns int language plpython3u as 'return 1'",
     "unsupported-object",
   ),
-  refused("2.24", "create language plperlu", "unsupported-object"),
-  refused("2.24", "create extension pg_cron", "unsupported-object"),
+  // Without a handler, PostgreSQL's grammar reads it as CREATE EXTENSION plperlu.
+  refused("2.24", "create language plperlu", "unsupported-extension"),
+  refused("2.24", "create extension pg_cron", "unsupported-extension"),
   allowed("2.24", "create extension if not exists plpgsql"),
   refused("2.25", "create role reporting", "unsupported-object"),
   refused("2.25", "alter role reporting nologin", "unsupported-object"),
@@ -851,7 +907,7 @@ const hazardFixtures: readonly Fixture[] = [
     "create event trigger audit on ddl_command_start execute function audit()",
     "unsupported-object",
   ),
-  refused("6.14", "create extension pgcrypto", "unsupported-object"),
+  refused("6.14", "create extension earthdistance", "unsupported-extension"),
 
   // §7 Column-order dependence
   refused(

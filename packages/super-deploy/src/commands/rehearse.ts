@@ -205,6 +205,7 @@ export async function checkDraft(
     {
       managedSchema: config.managedSchema,
       externalSchemas: config.externalSchemas,
+      extensions: config.extensions,
     },
   );
   const seeded = await readSeededUnit(root, paths.draft, `draft ${draft.name}`);

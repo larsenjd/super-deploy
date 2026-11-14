@@ -130,14 +130,14 @@ Refused statements are listed as `<file>:<line>: <reason> [<rule>]`. "Not suppor
 - **Functions and procedures** in `sql` or `plpgsql`, and **triggers**.
 - **Domains** and **composite types**.
 - **`COMMENT ON`** any of the above, except view columns.
-- `CREATE EXTENSION plpgsql`.
+- **Supported extensions** the config's `extensions` lists, at a pinned version: `create extension citext version '1.8';`. Columns, defaults, indexes and routines use their types and functions unqualified. Also `CREATE EXTENSION plpgsql`.
 
 ### Refused
 
 | Refused | Use instead |
 | --- | --- |
 | Enums | A lookup table with a foreign key, or a `CHECK` constraint |
-| Extensions other than `plpgsql`, such as `pgcrypto` | Built-ins, such as `gen_random_uuid()` and `uuidv7()` |
+| Extensions that aren't supported extensions, such as `earthdistance` or `pg_stat_statements` | A supported extension, or built-ins such as `gen_random_uuid()` and `uuidv7()` |
 | Standalone sequences and `serial` columns (`bigserial`, `smallserial`, `serial8`, …) | `bigint generated always as identity` |
 | Partitioned tables and partitions (`PARTITION OF`) | — |
 | Virtual generated columns | Add `STORED` |
@@ -170,6 +170,9 @@ Refused statements are listed as `<file>:<line>: <reason> [<rule>]`. "Not suppor
 | **No `CREATE SCHEMA`**: refer only to the managed schema and `pg_catalog` | super-deploy creates the one managed schema |
 | **Among `ALTER` statements, only `ALTER TABLE … ADD CONSTRAINT`**, and no `LIKE` | Declare everything else in `CREATE TABLE` |
 | **No `INSERT`, `UPDATE`, `DELETE`, `DO` or `SET`** | Data changes belong in a draft's scripts |
+| **`CREATE EXTENSION` pins a `VERSION`**, for an extension and version the config's `extensions` lists | Every rehearsal and target installs exactly that version |
+| **Extensions live in the managed schema**: `SCHEMA` may name only it, and no `CASCADE` | Every extension the desired schema needs is named, and lives where super-deploy manages it |
+| **No `COMMENT ON EXTENSION`** | Each extension keeps the comment its install script writes |
 | **No `CREATE INDEX CONCURRENTLY`** | It can't run inside a transaction |
 | **No `EXECUTE` or transaction-escaping built-ins** such as `pg_notify` | Unless an [override marker](#overriding-a-refusal) gives a reason |
 

@@ -299,6 +299,7 @@ async function ruleProblems(
   const rules = {
     managedSchema: config.managedSchema,
     externalSchemas: config.externalSchemas,
+    extensions: config.extensions,
   };
   const collect = (
     analysis: {

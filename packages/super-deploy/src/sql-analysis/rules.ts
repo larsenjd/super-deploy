@@ -32,6 +32,7 @@ export type FileKind = "desired-schema" | DeployTimeKind;
 const defaultContext: RuleContext = {
   managedSchema: "public",
   externalSchemas: [],
+  extensions: {},
 };
 
 export interface FileAnalysis {
@@ -70,6 +71,7 @@ export async function analyseFile(
   const resolved: RuleContext = {
     managedSchema: context.managedSchema ?? defaultContext.managedSchema,
     externalSchemas: context.externalSchemas ?? defaultContext.externalSchemas,
+    extensions: context.extensions ?? defaultContext.extensions,
   };
   return checkMarkedStatements(
     file,

@@ -241,6 +241,7 @@ export type {
 } from "./rehearsal/script-coverage.ts";
 export {
   DesiredSchemaLoadError,
+  RehearsalExtensionVersionError,
   UnsupportedServerError,
 } from "./rehearsal/throwaway.ts";
 export type {

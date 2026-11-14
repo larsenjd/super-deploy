@@ -48,6 +48,13 @@ import {
   type LockWarning,
 } from "./destructive.ts";
 import {
+  createExtension,
+  extensionClauseFindings,
+  extensionCommentFinding,
+  isSupportedExtension,
+  unsupportedExtensionFinding,
+} from "./extensions.ts";
+import {
   checkMarkedStatements,
   type Override,
   violationOf,
@@ -208,14 +215,21 @@ function copyIdentity(
 // ---------------------------------------------------------------------------
 // Layer 1: statements
 
-type StatementClass = "ddl" | "comment" | "data" | "temporary" | "maintenance";
+type StatementClass =
+  | "ddl"
+  | "comment"
+  | "data"
+  | "temporary"
+  | "maintenance"
+  /** A supported extension's `CREATE EXTENSION ... VERSION` (ADR-0009). */
+  | "extension";
 
 type Classification =
   | { readonly class: StatementClass }
   | { readonly refused: Finding };
 
 const allowedClasses: Record<DeployTimeKind, readonly StatementClass[]> = {
-  "schema-change": ["ddl", "comment"],
+  "schema-change": ["ddl", "comment", "extension"],
   "pre-migration": ["ddl", "data", "temporary", "maintenance"],
   "post-migration": ["data", "temporary", "maintenance"],
   "seed-data": ["data"],
@@ -522,12 +536,19 @@ function classify(statement: ParsedStatement): Classification {
     );
   }
   if (type === "CreateExtensionStmt") {
-    return body.extname === "plpgsql"
-      ? { class: "ddl" }
-      : refuse(
-          "unsupported-object",
-          `CREATE EXTENSION ${String(body.extname ?? "")} is not supported: extensions other than plpgsql run install scripts the rules cannot see`,
-        );
+    const { name, version } = createExtension(body);
+    if (name === "plpgsql") {
+      return { class: "ddl" };
+    }
+    if (!isSupportedExtension(name)) {
+      return { refused: unsupportedExtensionFinding(name) };
+    }
+    return version === undefined
+      ? refuse(
+          "extension-without-version",
+          `CREATE EXTENSION ${name} needs a VERSION: a schema change installs exactly the version the desired schema pins`,
+        )
+      : { class: "extension" };
   }
   const privileges = privilegeRefusal(statement);
   if (privileges !== undefined) {
@@ -624,6 +645,8 @@ function wrongKind(
     why = "seed data may contain only INSERT statements with a column list";
   } else if (kind === "schema-change") {
     why = "a generated schema change contains only DDL and comments";
+  } else if (statementClass === "extension") {
+    why = "only a schema change creates an extension, from the desired schema";
   } else if (statementClass === "comment") {
     why = "comments belong in the desired schema";
   } else {
@@ -801,7 +824,14 @@ function detailFindings(
       );
     }
   }
-  if (type === "CommentStmt") {
+  if (type === "CreateExtensionStmt" && body.extname !== "plpgsql") {
+    findings.push(
+      ...extensionClauseFindings(createExtension(body), state.managedSchema),
+    );
+  }
+  if (type === "CommentStmt" && body.objtype === "OBJECT_EXTENSION") {
+    findings.push(extensionCommentFinding);
+  } else if (type === "CommentStmt") {
     if (
       !managedObjectTypes.has(String(body.objtype ?? "")) &&
       body.objtype !== "OBJECT_SCHEMA"
@@ -1479,6 +1509,7 @@ function routineBodyFindings(
   const context: RuleContext = {
     managedSchema: state.managedSchema,
     externalSchemas: state.externalSchemas,
+    extensions: {},
   };
   const findings =
     language === "plpgsql"

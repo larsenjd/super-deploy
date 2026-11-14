@@ -30,7 +30,12 @@ describe("ordering fixtures in PostgreSQL 18", () => {
     "%s",
     async (_name, fixture) => {
       const dir = await createTestProject({
-        config: embeddedConfig(server),
+        config: embeddedConfig(
+          server,
+          fixture.extensions === undefined
+            ? ""
+            : `extensions: ${JSON.stringify(fixture.extensions)},`,
+        ),
         files: Object.fromEntries(
           Object.entries(fixture.files).map(([name, text]) => [
             `data-model/desired-schema/${name}`,

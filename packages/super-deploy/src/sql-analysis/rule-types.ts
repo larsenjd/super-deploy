@@ -6,6 +6,14 @@ export interface RuleContext {
   readonly managedSchema: string;
   /** Schemas PL/pgSQL bodies may reference. Default none. */
   readonly externalSchemas: readonly string[];
+  /**
+   * The supported extensions the desired schema may create, each with the
+   * versions it may pin: the config's `extensions`. Default none. A
+   * finalized snapshot is analysed with every version the tool knows
+   * (`supportedExtensionVersions`), since it replays whatever the config
+   * lists now (ADR-0009).
+   */
+  readonly extensions: Readonly<Record<string, readonly string[]>>;
 }
 
 export interface RuleFinding {

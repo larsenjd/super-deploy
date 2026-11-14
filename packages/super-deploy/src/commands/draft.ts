@@ -136,6 +136,7 @@ export async function draft(
       {
         managedSchema: config.managedSchema,
         externalSchemas: config.externalSchemas,
+        extensions: config.extensions,
       },
     );
   const finalized = await verifiedMigrations(project.root, paths);

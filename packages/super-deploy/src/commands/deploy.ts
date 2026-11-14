@@ -30,7 +30,10 @@ import {
   readMigrationsWithUnits,
   replicaUnits,
 } from "../rehearsal/replica.ts";
-import { analyseDesiredSchema } from "../sql-analysis/index.ts";
+import {
+  analyseDesiredSchema,
+  supportedExtensionVersions,
+} from "../sql-analysis/index.ts";
 import { verifiedMigrations } from "../store/integrity.ts";
 import { readSnapshot } from "../store/snapshots.ts";
 
@@ -134,9 +137,11 @@ export async function deploy(
           const newest = deployable.at(-1) as MigrationWithUnit;
           return {
             folder: newest.folder,
+            // A finalized snapshot replays whatever the config lists now.
             statements: await analyseDesiredSchema(snapshot.sqlFiles, {
               managedSchema: config.managedSchema,
               externalSchemas: config.externalSchemas,
+              extensions: supportedExtensionVersions,
             }),
           };
         },
