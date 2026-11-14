@@ -7,6 +7,7 @@ import {
   finalize,
   type Project,
   RehearsalExtensionVersionError,
+  RehearsalMismatchError,
   SqlRuleViolationError,
   status,
   ValidationFailedError,
@@ -175,6 +176,30 @@ describe("changing an extension's version", () => {
         "The desired schema lowers citext from 1.8 to 1.6, which PostgreSQL can't do: it has no downgrade scripts. Keep VERSION '1.8' or a higher one",
     });
     expect(dir.exists("data-model/draft/schema-change.sql")).toBe(false);
+  });
+  test("in a hand-edited schema change is a rehearsal mismatch naming both versions", async () => {
+    const { dir, project } = await deployProject(
+      server,
+      { "users.sql": users.replace("'1.8'", "'1.7'") },
+      { settings: `extensions: { citext: ["1.7", "1.8"] },` },
+    );
+    await draft(project, { name: "add users" });
+    const schemaChange = await dir.read("data-model/draft/schema-change.sql");
+    await dir.write(
+      "data-model/draft/schema-change.sql",
+      schemaChange.replace("VERSION '1.7'", "VERSION '1.8'"),
+    );
+
+    const error = await finalize(project).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RehearsalMismatchError);
+    const differences = (error as RehearsalMismatchError).differences;
+    expect(differences).toContainEqual(
+      expect.stringMatching(/citext .*version=1\.8/),
+    );
+    expect(differences).toContainEqual(
+      expect.stringMatching(/citext .*version=1\.7/),
+    );
   });
 });
 

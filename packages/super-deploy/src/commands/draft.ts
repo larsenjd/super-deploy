@@ -14,7 +14,11 @@
 // generated copy.
 
 import { posix } from "node:path";
-import { differ, type PlannedStatement } from "../differ/index.ts";
+import {
+  differ,
+  type PlannedStatement,
+  refuseExtensionDowngrades,
+} from "../differ/index.ts";
 import { SuperDeployError } from "../errors.ts";
 import { throwIfInterrupted } from "../interruption.ts";
 import type { Project } from "../project.ts";
@@ -198,6 +202,7 @@ export async function draft(
               [...migrations, ...beforeSchemaChange],
               config,
             );
+            await refuseExtensionDowngrades(source, desired);
             const statements = await differ.diff(source, desired);
             const toCover = await scriptCoverage(
               source,

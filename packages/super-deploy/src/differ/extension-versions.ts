@@ -7,8 +7,11 @@
 // - an `ALTER EXTENSION <name> UPDATE TO '<v>'` comes first for each
 //   extension whose version rose from the source side to the desired side,
 //   so later statements can use what the new version adds;
-// - an extension whose version fell is refused (`ExtensionDowngradeError`):
-//   PostgreSQL ships no downgrade scripts;
+// - an extension whose version fell gets no statement: PostgreSQL ships no
+//   downgrade scripts. `draft` refuses it first (`refuseExtensionDowngrades`,
+//   `ExtensionDowngradeError`); a rehearsal comparing structure reports it
+//   through the catalog comparison, which names both versions, as the
+//   rehearsal mismatch any other difference gives;
 // - each `COMMENT ON EXTENSION` is left out. The desired schema can't set an
 //   extension's comment, so it is the one the install script writes, which
 //   `CREATE EXTENSION` writes on the target too.
@@ -60,28 +63,49 @@ export function withExtensionVersions(differ: Differ): Differ {
 
 /**
  * `ALTER EXTENSION ... UPDATE TO` for each extension whose version rose
- * from `before` to `after`. Throws for one whose version fell.
+ * from `before` to `after`.
  */
 function versionUpdates(
   before: ReadonlyMap<string, string>,
   after: ReadonlyMap<string, string>,
 ): PlannedStatement[] {
-  const updates: PlannedStatement[] = [];
-  for (const [name, from] of before) {
-    const to = after.get(name);
-    if (to === undefined || to === from) {
-      continue;
-    }
-    if (compareExtensionVersions(to, from) < 0) {
-      throw new ExtensionDowngradeError(name, from, to);
-    }
-    updates.push({
+  return versionChanges(before, after)
+    .filter(({ from, to }) => compareExtensionVersions(to, from) > 0)
+    .map(({ name, to }) => ({
       sql: `ALTER EXTENSION ${quoteIdentifier(name)} UPDATE TO ${quoteLiteral(to)};`,
       destructive: false,
       rewritesTable: false,
-    });
+    }));
+}
+
+/**
+ * Throws ExtensionDowngradeError for the first extension whose version
+ * falls from `source` to `desired`. `draft` calls it before diffing: a
+ * lowered version is a refusal there, and a structural difference anywhere
+ * else.
+ */
+export async function refuseExtensionDowngrades(
+  source: Session,
+  desired: Session,
+): Promise<void> {
+  const lowered = versionChanges(
+    await installedVersions(source),
+    await installedVersions(desired),
+  ).find(({ from, to }) => compareExtensionVersions(to, from) < 0);
+  if (lowered !== undefined) {
+    throw new ExtensionDowngradeError(lowered.name, lowered.from, lowered.to);
   }
-  return updates;
+}
+
+/** Each extension installed on both sides at different versions. */
+function versionChanges(
+  before: ReadonlyMap<string, string>,
+  after: ReadonlyMap<string, string>,
+): { name: string; from: string; to: string }[] {
+  return [...before].flatMap(([name, from]) => {
+    const to = after.get(name);
+    return to === undefined || to === from ? [] : [{ name, from, to }];
+  });
 }
 
 function quoteLiteral(text: string): string {
