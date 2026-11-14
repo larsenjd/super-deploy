@@ -1,6 +1,14 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { ConfigError, loadProject, ProjectNotFoundError } from "super-deploy";
+import {
+  ConfigError,
+  ExtensionNotSupportedError,
+  ExtensionVersionDuplicatedError,
+  ExtensionVersionNotSupportedError,
+  ExtensionVersionsEmptyError,
+  loadProject,
+  ProjectNotFoundError,
+} from "super-deploy";
 import { describe, expect, test } from "vitest";
 import { createTestProject, embeddedConfig } from "../support/project.ts";
 
@@ -190,6 +198,108 @@ describe("loadProject", () => {
 
     expect(error.setting).toBe(setting);
     expect(error.message).toContain(`"${setting}"`);
+    expect(error.message).toContain(problem);
+  });
+
+  test("reads the supported extensions and versions a project may use", async () => {
+    const dir = await createTestProject({
+      config: configWith(
+        `postgresVersion: 18, extensions: { citext: ["1.6", "1.8"], "uuid-ossp": ["1.1"] },`,
+      ),
+    });
+
+    const project = await loadProject({ cwd: dir.root });
+
+    expect(project.config.extensions).toEqual({
+      citext: ["1.6", "1.8"],
+      "uuid-ossp": ["1.1"],
+    });
+  });
+
+  test("allows no extensions by default", async () => {
+    const dir = await createTestProject({
+      config: embeddedConfig(unusedServer),
+    });
+
+    const project = await loadProject({ cwd: dir.root });
+
+    expect(project.config.extensions).toEqual({});
+  });
+
+  test("refuses an extension that isn't supported, listing the supported ones", async () => {
+    const error = await loadError(
+      configWith(`postgresVersion: 18, extensions: { postgis: ["3.5"] },`),
+    );
+
+    expect(error).toBeInstanceOf(ExtensionNotSupportedError);
+    expect(error).toMatchObject({
+      code: "extension-not-supported",
+      setting: "extensions.postgis",
+    });
+    expect(error.message).toBe(
+      `Invalid setting "extensions.postgis" in super-deploy.config.ts: postgis is not a supported extension: supported extensions are btree_gin, btree_gist, citext, cube, dict_int, fuzzystrmatch, hstore, intarray, isn, ltree, pg_trgm, pgcrypto, tablefunc, tsm_system_rows, tsm_system_time, unaccent, uuid-ossp`,
+    );
+  });
+
+  test("refuses a version of a supported extension the tool doesn't know, naming those it does", async () => {
+    const error = await loadError(
+      configWith(
+        `postgresVersion: 18, extensions: { citext: ["1.8", "1.9"] },`,
+      ),
+    );
+
+    expect(error).toBeInstanceOf(ExtensionVersionNotSupportedError);
+    expect(error).toMatchObject({
+      code: "extension-version-not-supported",
+      setting: "extensions.citext",
+    });
+    expect(error.message).toBe(
+      `Invalid setting "extensions.citext" in super-deploy.config.ts: citext 1.9 is not a supported version: supported versions are 1.4, 1.5, 1.6, 1.7, 1.8`,
+    );
+  });
+
+  test("refuses an extension with no versions", async () => {
+    const error = await loadError(
+      configWith(`postgresVersion: 18, extensions: { pgcrypto: [] },`),
+    );
+
+    expect(error).toBeInstanceOf(ExtensionVersionsEmptyError);
+    expect(error).toMatchObject({
+      code: "extension-versions-empty",
+      setting: "extensions.pgcrypto",
+    });
+    expect(error.message).toBe(
+      `Invalid setting "extensions.pgcrypto" in super-deploy.config.ts: list at least one version of pgcrypto, from 1.3, 1.4`,
+    );
+  });
+
+  test("refuses a version listed twice", async () => {
+    const error = await loadError(
+      configWith(
+        `postgresVersion: 18, extensions: { pgcrypto: ["1.3", "1.4", "1.3"] },`,
+      ),
+    );
+
+    expect(error).toBeInstanceOf(ExtensionVersionDuplicatedError);
+    expect(error).toMatchObject({
+      code: "extension-version-duplicated",
+      setting: "extensions.pgcrypto",
+    });
+    expect(error.message).toBe(
+      `Invalid setting "extensions.pgcrypto" in super-deploy.config.ts: pgcrypto 1.3 is listed twice`,
+    );
+  });
+
+  test.each([
+    ['extensions: ["citext"],', "extensions", "must be an object"],
+    ['extensions: { citext: "1.8" },', "extensions.citext", "array"],
+    ["extensions: { citext: [1.8] },", "extensions.citext", "array"],
+  ])("refuses %s naming the setting", async (settings, setting, problem) => {
+    const error = await loadError(
+      configWith(`postgresVersion: 18, ${settings}`),
+    );
+
+    expect(error).toMatchObject({ code: "invalid-config", setting });
     expect(error.message).toContain(problem);
   });
 

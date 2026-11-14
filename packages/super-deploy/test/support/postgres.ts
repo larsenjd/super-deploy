@@ -33,6 +33,8 @@ import { onTestFinished, vi } from "vitest";
 export interface TestServer {
   /** The embedded server's data directory; pass it to `embeddedPostgres({ dataDir })`. */
   readonly dataDir: string;
+  /** A connection string to `database` (default `postgres`) as the server's superuser. */
+  connectionString(database?: string): Promise<string>;
   /** Runs one statement as the server's superuser in `database` (default `postgres`). */
   query<Row = Record<string, unknown>>(
     sql: string,
@@ -99,6 +101,7 @@ export async function startTestServer(): Promise<TestServer> {
 
   return {
     dataDir,
+    connectionString: (database) => server.connectionString(database),
     query,
     async databases() {
       const rows = await query<{ datname: string }>(

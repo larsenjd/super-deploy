@@ -4,6 +4,10 @@
 import { isAbsolute, normalize } from "node:path";
 import type { DeploymentAdapter, RehearsalAdapter } from "../adapters/types.ts";
 import { SuperDeployError } from "../errors.ts";
+import {
+  type SupportedExtension,
+  supportedExtensionVersions,
+} from "../sql-analysis/supported-extensions.ts";
 
 /** A duration: milliseconds as a number, or a string such as `"500ms"`, `"5s"`, `"2min"`. */
 export type Duration = number | string;
@@ -37,7 +41,17 @@ export interface SuperDeployConfig {
   externalSchemas?: readonly string[];
   /** The project directory, relative to the config file. Default `data-model`. */
   directory?: string;
+  /**
+   * The supported extensions the desired schema may install, each with the
+   * versions it may install (ADR-0009), e.g. `{ citext: ["1.8"] }`. Default none.
+   */
+  extensions?: ExtensionsConfig;
 }
+
+/** Supported extension names to the versions a project may use of each. */
+export type ExtensionsConfig = {
+  readonly [Name in SupportedExtension]?: readonly (typeof supportedExtensionVersions)[Name][number][];
+};
 
 /** Identity function that types a super-deploy.config.ts default export. */
 export function defineConfig(config: SuperDeployConfig): SuperDeployConfig {
@@ -78,6 +92,8 @@ export interface ResolvedConfig {
   readonly historySchema: string;
   readonly externalSchemas: readonly string[];
   readonly directory: string;
+  /** Each supported extension the project may use, with its versions; empty by default. */
+  readonly extensions: Readonly<Record<string, readonly string[]>>;
 }
 
 const settings = new Set([
@@ -88,6 +104,7 @@ const settings = new Set([
   "historySchema",
   "externalSchemas",
   "directory",
+  "extensions",
 ]);
 const targetSettings = new Set([
   "adapter",
@@ -171,6 +188,8 @@ export function resolveConfig(raw: unknown): ResolvedConfig {
     directory = raw.directory;
   }
 
+  const extensions = extensionsSetting(raw.extensions);
+
   const targets: Record<string, ResolvedTarget> = {};
   if (raw.targets !== undefined) {
     if (!isRecord(raw.targets)) {
@@ -220,7 +239,61 @@ export function resolveConfig(raw: unknown): ResolvedConfig {
     historySchema,
     externalSchemas,
     directory,
+    extensions,
   };
+}
+
+function extensionsSetting(
+  value: unknown,
+): Readonly<Record<string, readonly string[]>> {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw invalid(
+      "extensions",
+      `must be an object from supported extension names to lists of versions, got ${describe(value)}`,
+    );
+  }
+  const known: Readonly<Record<string, readonly string[]>> =
+    supportedExtensionVersions;
+  const extensions: Record<string, readonly string[]> = {};
+  for (const [name, versions] of Object.entries(value)) {
+    const setting = `extensions.${name}`;
+    const supported = Object.hasOwn(known, name) ? known[name] : undefined;
+    if (supported === undefined) {
+      throw new ExtensionNotSupportedError(name, setting);
+    }
+    if (
+      !Array.isArray(versions) ||
+      !versions.every((version) => typeof version === "string")
+    ) {
+      throw invalid(
+        setting,
+        `must be an array of version strings such as ["${supported.at(-1)}"], got ${describe(versions)}`,
+      );
+    }
+    if (versions.length === 0) {
+      throw new ExtensionVersionsEmptyError(name, supported, setting);
+    }
+    const listed = new Set<string>();
+    for (const version of versions) {
+      if (!supported.includes(version)) {
+        throw new ExtensionVersionNotSupportedError(
+          name,
+          version,
+          supported,
+          setting,
+        );
+      }
+      if (listed.has(version)) {
+        throw new ExtensionVersionDuplicatedError(name, version, setting);
+      }
+      listed.add(version);
+    }
+    extensions[name] = [...listed];
+  }
+  return extensions;
 }
 
 function schemaName(value: unknown, setting: string, fallback: string): string {
@@ -295,10 +368,11 @@ function rejectUnknown(
 }
 
 function invalid(setting: string, problem: string): ConfigError {
-  return new ConfigError(
-    `Invalid setting "${setting}" in super-deploy.config.ts: ${problem}`,
-    setting,
-  );
+  return new ConfigError(invalidMessage(setting, problem), setting);
+}
+
+function invalidMessage(setting: string, problem: string): string {
+  return `Invalid setting "${setting}" in super-deploy.config.ts: ${problem}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -317,12 +391,99 @@ function describe(value: unknown): string {
 
 /** The config file failed to load or a setting is invalid. */
 export class ConfigError extends SuperDeployError {
-  readonly code = "invalid-config";
+  // A subclass narrows `code` to one of its own (the extension errors below).
+  readonly code:
+    | "invalid-config"
+    | "extension-not-supported"
+    | "extension-version-not-supported"
+    | "extension-versions-empty"
+    | "extension-version-duplicated" = "invalid-config";
   /** Dotted path of the offending setting, e.g. `targets.dev.lockTimeout`. */
   readonly setting: string | undefined;
 
   constructor(message: string, setting?: string, options?: ErrorOptions) {
     super(message, options);
     this.setting = setting;
+  }
+}
+
+/** The config's `extensions` names an extension that isn't a supported extension. */
+export class ExtensionNotSupportedError extends ConfigError {
+  override readonly code = "extension-not-supported";
+  readonly extension: string;
+
+  constructor(extension: string, setting: string) {
+    super(
+      invalidMessage(
+        setting,
+        `${extension} is not a supported extension: supported extensions are ${Object.keys(supportedExtensionVersions).join(", ")}`,
+      ),
+      setting,
+    );
+    this.extension = extension;
+  }
+}
+
+/** The config's `extensions` lists a version of a supported extension the tool doesn't know. */
+export class ExtensionVersionNotSupportedError extends ConfigError {
+  override readonly code = "extension-version-not-supported";
+  readonly extension: string;
+  readonly version: string;
+  /** The versions the tool knows, oldest first. */
+  readonly supported: readonly string[];
+
+  constructor(
+    extension: string,
+    version: string,
+    supported: readonly string[],
+    setting: string,
+  ) {
+    super(
+      invalidMessage(
+        setting,
+        `${extension} ${version} is not a supported version: supported versions are ${supported.join(", ")}`,
+      ),
+      setting,
+    );
+    this.extension = extension;
+    this.version = version;
+    this.supported = supported;
+  }
+}
+
+/** The config's `extensions` gives a supported extension an empty list of versions. */
+export class ExtensionVersionsEmptyError extends ConfigError {
+  override readonly code = "extension-versions-empty";
+  readonly extension: string;
+
+  constructor(
+    extension: string,
+    supported: readonly string[],
+    setting: string,
+  ) {
+    super(
+      invalidMessage(
+        setting,
+        `list at least one version of ${extension}, from ${supported.join(", ")}`,
+      ),
+      setting,
+    );
+    this.extension = extension;
+  }
+}
+
+/** The config's `extensions` lists one version of an extension twice. */
+export class ExtensionVersionDuplicatedError extends ConfigError {
+  override readonly code = "extension-version-duplicated";
+  readonly extension: string;
+  readonly version: string;
+
+  constructor(extension: string, version: string, setting: string) {
+    super(
+      invalidMessage(setting, `${extension} ${version} is listed twice`),
+      setting,
+    );
+    this.extension = extension;
+    this.version = version;
   }
 }
