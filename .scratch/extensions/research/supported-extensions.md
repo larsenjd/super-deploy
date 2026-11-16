@@ -33,11 +33,11 @@ The 17 that pass, with the versions embedded-postgres 18.4 can install (from `pg
 | unaccent | 1.1 | 1.1 | 1.1 |
 | uuid-ossp | 1.1 | 1.1 | 1.1 |
 
-Every Aurora version AWS lists is installable on embedded-postgres.
+Every Aurora version AWS lists is installable on embedded-postgres. The AWS column turned out to be stale: on a real Aurora 18.4 cluster, each of the 17 offers exactly the embedded range (§6).
 
 ### Excluded, and why
 
-- **Trusted, but not on AWS's trusted list:** `lo`, `seg`, `tcn`. AWS's list may simply be incomplete, so these wait on the Aurora check (§6).
+- **Trusted, but not on AWS's trusted list:** `lo`, `seg`, `tcn`. AWS's list is incomplete: Aurora 18.4 trusts all three (§6). They are left out until a team needs them (REFINEMENTS "Extensions").
 - **Trusted, but their language library isn't bundled:** `plperl`, `pltcl`, `bool_plperl`, `jsonb_plperl` (libperl and libtcl are missing in embedded-postgres; see §3).
 - **Untrusted, so they need a superuser or `rds_superuser`:** everything else, including `earthdistance`, which the old REFINEMENTS candidate list named. Among these, the ones that also break the transaction or need preloading: `dblink`, `postgres_fdw`, `pg_stat_statements` (its functions need `shared_preload_libraries`), `pg_prewarm` (autoprewarm needs preloading).
 - **Not on Aurora 18.4:** `file_fdw`, `xml2`, `plpython3u`, `pageinspect`, `pg_surgery`, `pg_walinspect`, `pg_logicalinspect`.
@@ -86,7 +86,7 @@ Confirmed on embedded 18.4: the extension's owner was the installing role, and i
 
 **RDS and Aurora** (https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/PostgreSQL.Concepts.General.FeatureSupport.Extensions.html):
 
-- Most extensions need `rds_superuser`. Trusted extensions can be installed by any role with `CREATE` on the database. AWS's trusted list: bool_plperl, btree_gin, btree_gist, citext, cube, dict_int, fuzzystrmatch, hstore, intarray, isn, jsonb_plperl, ltree, pg_trgm, pgcrypto, plperl, plpgsql, pltcl, tablefunc, tsm_system_rows, tsm_system_time, unaccent, uuid-ossp. It is a subset of community's: `lo`, `seg`, `tcn` and `hstore_plperl` are missing from it.
+- Most extensions need `rds_superuser`. Trusted extensions can be installed by any role with `CREATE` on the database. AWS's trusted list: bool_plperl, btree_gin, btree_gist, citext, cube, dict_int, fuzzystrmatch, hstore, intarray, isn, jsonb_plperl, ltree, pg_trgm, pgcrypto, plperl, plpgsql, pltcl, tablefunc, tsm_system_rows, tsm_system_time, unaccent, uuid-ossp. It is a subset of community's: `lo`, `seg`, `tcn` and `hstore_plperl` are missing from it. The list is incomplete: Aurora 18.4 trusts `lo`, `seg` and `tcn` in practice (§6).
 - `rds.allowed_extensions` (default `*`, dynamic) can restrict what may be installed. A restricted extension fails with `permission denied to create extension ... HINT: This extension is not specified in "rds.allowed_extensions"`.
 - Delegated extensions (`rds_extension` role plus `rds.allowed_delegated_extensions`, empty by default) are a third route: https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora_delegated_ext.html.
 
@@ -94,19 +94,17 @@ Confirmed on embedded 18.4: the extension's owner was the installing role, and i
 
 `CREATE EXTENSION` runs inside a transaction block; extension scripts "are implicitly executed within a transaction block" (https://www.postgresql.org/docs/18/extend-extensions.html). None of the 17 supported extensions preloads, starts a worker, or depends on another extension.
 
-## 6. Unverified: Aurora's real versions
+## 6. Aurora's real versions
 
 Aurora PostgreSQL 18.4 was released on 2026-08-21 (patches 18.4.1–18.4.3 followed). AWS's version table (https://docs.aws.amazon.com/AmazonRDS/latest/AuroraPostgreSQLReleaseNotes/AuroraPostgreSQL.Extensions.html) lists Aurora 18 contrib versions that differ from community 18.4 for 12 extensions: amcheck, btree_gist, citext, fuzzystrmatch, isn, lo, pg_buffercache, pgcrypto, pg_freespacemap, pg_stat_statements, postgres_fdw, seg. Those Aurora 18 rows are identical to its 17.11 rows (even `seg` is listed at 1.0, while community has shipped 1.4 for years), and Aurora's 18.x release notes mention version changes only for third-party extensions. So the table was probably copied forward rather than updated.
 
-To settle it, on a real Aurora 18.4 cluster:
+It was. On 2026-11-14 a real Aurora 18.4 cluster (`rds.allowed_extensions` = `*`) gave, from `pg_available_extension_versions` (full report in `.scratch/extensions/issues/11-confirm-supported-set-on-aurora.md`):
 
-```sql
-select name, version, trusted, superuser
-from pg_available_extension_versions
-order by name, version;
-```
+- **All 17 supported extensions** are present, trusted at every version, and offer exactly the embedded-postgres 18.4 ranges in §1. `btree_gist`, `citext`, `fuzzystrmatch`, `isn` and `pgcrypto` offer the community versions, not the 17.11 ones AWS lists.
+- **`lo` 1.1–1.2, `seg` 1.1–1.4 and `tcn` 1.0** are present and trusted, though AWS's trusted list (§4) leaves them out.
+- **Not checked:** installing as a role without `rds_superuser`. The test install ran as a member of `rds_superuser`.
 
-That also shows whether `lo`, `seg` and `tcn` are trusted there.
+AWS's table is not a reliable source for Aurora's contrib versions. Check a cluster instead.
 
 ## 7. Where the code is affected today
 

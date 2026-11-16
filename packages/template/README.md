@@ -276,7 +276,7 @@ Scripts and seed data never create, alter or drop an extension (`[deploy-time-st
 
 `status`, `deploy` and `deploy-draft` check, before changing anything, that a target can run the extension statements of what they would deploy:
 
-- **The target offers the pinned version** in `pg_available_extension_versions`. Otherwise the refusal names the extension, the version and what the target offers. A server can offer fewer versions than super-deploy knows: PostgreSQL 16 stops at citext 1.6, and Aurora's versions may lag. Pin a version every target offers.
+- **The target offers the pinned version** in `pg_available_extension_versions`. Otherwise the refusal names the extension, the version and what the target offers. A server can offer fewer versions than super-deploy knows: PostgreSQL 16 stops at citext 1.6. Pin a version every target offers.
 - **The deploy role has `CREATE` on the database**, whenever a migration creates an extension. The refusal names the `GRANT` a DBA runs: see [Permissions](#permissions). `rebuild` checks this too.
 - **The extension isn't already installed**, in the managed schema or another one, unless an earlier migration drops it first. The refusal names its schema and owner, and says to drop it: extension names are unique in a database, so moving it doesn't help.
 

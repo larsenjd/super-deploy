@@ -201,7 +201,7 @@ The supported extensions are `btree_gin`, `btree_gist`, `citext`, `cube`, `dict_
 
 - **Extensions outside the supported set:**
   - Third-party extensions (PostGIS, pgvector, pg_partman), and any extension that isn't trusted or that needs `shared_preload_libraries`.
-  - `lo`, `seg` and `tcn`, until Aurora 18.4 is confirmed to trust them.
+  - `lo`, `seg` and `tcn`, until Aurora 18.4 is confirmed to trust them. Ticket 11 confirmed it; adding them is a later ticket.
   - `plperl` and `pltcl`, because embedded-postgres doesn't bundle their language libraries.
 - **Extensions outside the managed schema,** a dedicated extensions schema, or extensions in external schemas.
 - **A config list of extensions to ignore on targets** (for monitoring extensions such as `pg_stat_statements`). Recorded in REFINEMENTS.
@@ -211,6 +211,6 @@ The supported extensions are `btree_gin`, `btree_gist`, `citext`, `cube`, `dict_
 
 ## Further Notes
 
-- **Aurora versions are unconfirmed.** AWS's published Aurora 18 extension versions look stale: they differ from community 18.4 for 12 contrib extensions and match its 17.11 rows (research file §6). Nothing in this spec depends on which is right, because versions are pinned and checked against each target at pre-flight. If Aurora 18.4 really offers citext only up to 1.6, an Aurora project lists and pins `1.6`.
+- **Aurora versions were unconfirmed when this spec was written.** AWS's published Aurora 18 extension versions looked stale: they differ from community 18.4 for 12 contrib extensions and match its 17.11 rows (research file §6). Nothing in this spec depends on which is right, because versions are pinned and checked against each target at pre-flight. Ticket 11 later found the table stale: Aurora 18.4 offers exactly the versions the tool knows.
 - **Embedded-postgres versions limit the tool.** The versions the tool knows are the ones embedded-postgres 18.4 can install. Moving to a newer embedded-postgres means regenerating the object lists, which may add versions.
 - **Members aren't the deploy role's.** A trusted extension's member objects are owned by PostgreSQL's bootstrap superuser (`rdsadmin` on Aurora), not the deploy role. Nothing in super-deploy alters member objects, so this is only something not to trip over.

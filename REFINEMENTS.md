@@ -92,7 +92,7 @@ Decisions made deliberately narrow for V1, to reconsider or review once V1 ships
 - An extension outside the managed schema would make a target's structure depend on something other than its recorded migrations.
 
 **Revisit when:**
-- **Aurora's real versions are confirmed** on a live cluster. Add `lo`, `seg` and `tcn` if Aurora trusts them; AWS's list leaves them out.
+- **A team needs `lo`, `seg` or `tcn`.** Aurora PostgreSQL 18.4 trusts and offers all three, though AWS's trusted list leaves them out (ADR-0009). They were left out only for that list.
 - **Targets carry monitoring extensions**, such as `pg_stat_statements`, in the application's database. Option: a config list of extensions that super-deploy ignores. They would have to live outside the managed schema and would never be touched.
 - **Projects need third-party extensions** such as PostGIS and pgvector. These need a way to make the rehearsal server offer the target's version, which embedded-postgres doesn't ship.
 - **Projects need `plperl` or `pltcl`.** embedded-postgres doesn't bundle their language libraries.

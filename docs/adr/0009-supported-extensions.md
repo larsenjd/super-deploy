@@ -37,4 +37,7 @@ The version goes in the desired schema rather than only in the config because sn
 - **Ownership (ADR-0006).** The deploy role owns each extension, but PostgreSQL gives the members to its bootstrap superuser, and the deploy role can't alter them. The ownership checks already skip members. A deployment can now drop or update an extension, which the deploy role may do as the extension's owner.
 - **Older targets (ADR-0007) need no special case.** A target on an older PostgreSQL that lacks a pinned version is refused by the same pre-flight check.
 - **Adoption.** `adopt` writes `CREATE EXTENSION ... VERSION` for a supported extension in the managed schema at a version the config lists, and refuses any other extension.
-- **The set is tied to the Aurora 18.4 list.** AWS's published versions for Aurora 18 contrib extensions look stale, so the set and its versions are to be confirmed on a real cluster (`.scratch/extensions/research/supported-extensions.md` §6). `lo`, `seg` and `tcn` join if Aurora trusts them.
+- **The set is tied to Aurora 18.4, and a real cluster confirmed it** on 2026-11-14 (`.scratch/extensions/issues/11-confirm-supported-set-on-aurora.md`). All 17 are present and trusted there, at exactly the versions the tool knows.
+  - AWS's published versions for Aurora 18 contrib extensions are stale. When the set or PostgreSQL's version changes, check a cluster, not AWS's table (`.scratch/extensions/research/supported-extensions.md` §6).
+  - Installing as a role without `rds_superuser` wasn't tried on Aurora. That it works rests on every supported version reporting `trusted`.
+  - Aurora also trusts `lo`, `seg` and `tcn`, though AWS's list leaves them out. They stay out of the set until a team needs them (REFINEMENTS "Extensions").
