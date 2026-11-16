@@ -1,6 +1,6 @@
 # Supported extensions
 
-**Status:** resolved (ticket 11, ready-for-human, remains open and does not block)
+**Status:** resolved
 
 Decision and rejected alternatives: ADR-0009. Terms: **Supported extension**, **Drift** and **Deploy role** in `GLOSSARY.md`. Facts behind the decisions (installable versions, Aurora 18.4 and embedded-postgres per platform, ownership): `.scratch/extensions/research/supported-extensions.md`. What V1 still leaves out: REFINEMENTS "Extensions".
 
