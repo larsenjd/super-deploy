@@ -49,8 +49,8 @@ import {
  * Throws CannotWipeError when the managed schema holds something the deploy
  * role can't drop (naming the schema's owner too, if the deploy role doesn't
  * own it), NotOwnedError when the schema's owner is all that is wrong, and
- * ExtensionSurvivesWipeError when an extension lives outside it. Read-only,
- * for `rebuild` before it asks.
+ * ExtensionSurvivesWipeError when an extension lives outside it, for
+ * `rebuild` before it asks. Changes nothing (its extension test rolls back).
  */
 export async function requireWipeable(
   session: Session,

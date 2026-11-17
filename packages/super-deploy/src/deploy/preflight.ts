@@ -1,6 +1,8 @@
-// The deploy pre-flight: read-only checks on the target, after the lock and
-// before any rehearsal, that catch what would otherwise fail mid-transaction
-// or weaken safety (spec "Deployment engine"):
+// The deploy pre-flight: checks on the target that change nothing, after the
+// lock and before any rehearsal, that catch what would otherwise fail
+// mid-transaction or weaken safety (spec "Deployment engine"). They are
+// queries in autocommit, but for the ownership check's extension test, a
+// no-op ALTER EXTENSION in a transaction it always rolls back:
 //   - a schema with the history schema's name is super-deploy's, missing,
 //     or empty and the deploy role's (deploy/history.ts creates the tables
 //     in it); any other is refused by name, with what it holds or who owns
@@ -12,7 +14,8 @@
 //     attempt yet), so deploy never gets this far without it; `status`
 //     lists it with the others, and `adopt` in its one refusal
 //   - the deploy role owns the managed schema and everything in it, or is a
-//     member of their owner (deploy/ownership.ts)
+//     member of their owner, or (an extension) can update it, as on Aurora
+//     (deploy/ownership.ts)
 //   - the target can run the extension statements of what would be deployed
 //     (deploy/extension-preflight.ts). deploy and deploy-draft check them
 //     before this, so their typed errors refuse without logging an attempt
@@ -176,7 +179,11 @@ export interface PreflightInput {
   readonly units: readonly ReplayUnit[];
 }
 
-/** Runs every check on `session` (read-only queries, no transaction). */
+/**
+ * Runs every check on `session`, changing nothing: queries in autocommit, and
+ * the ownership check's extension test in a transaction of its own, rolled
+ * back (deploy/ownership.ts).
+ */
 export async function preflightChecks(
   session: Session,
   project: Pick<Project, "config" | "root" | "paths">,

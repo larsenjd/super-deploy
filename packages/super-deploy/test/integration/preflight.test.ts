@@ -20,10 +20,13 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   asDeployerPreamble,
   asDeployRole,
+  asHostAdministrator,
   asSuperuser,
   attemptLog,
+  createHostAdministrator,
   deployProject,
   embeddedDeployRole,
+  extensionsManagedAs,
   finalizeMigration,
   roleName,
   targetDatabaseName,
@@ -524,6 +527,72 @@ describe("the deploy role owns the managed schema", () => {
         database,
       ),
     ).toEqual([{ version: "1.8", owner: embeddedDeployRole }]);
+  });
+
+  test("passes an extension owned by a role the deploy role lacks the privileges of when the host lets the deploy role update it, as Aurora does, changing nothing", async () => {
+    const host = roleName("host");
+    const { project, dir, database } = await deployProject(
+      server,
+      { "extensions.sql": "create extension citext version '1.8';\n" },
+      {
+        settings: `extensions: { citext: ["1.8"] },`,
+        // `dev` is a host that runs extension statements as `host`; `plain`,
+        // the same database, one that doesn't.
+        adapter: extensionsManagedAs("real", host),
+        otherTargets: "plain: { adapter: real },",
+      },
+    );
+    await finalizeMigration(project, "add citext");
+    await deploy(project, { target: "dev" });
+    await createHostAdministrator(server, host);
+    // What the deployment created, as the host would have created it.
+    await asHostAdministrator(
+      server,
+      database,
+      host,
+      "drop extension citext; create extension citext schema public version '1.8'",
+    );
+    await dir.write("data-model/desired-schema/customers.sql", customers);
+    await finalizeMigration(project, "add customers");
+    const installed = () =>
+      server.query(
+        "select extversion as version, pg_get_userbyid(extowner) as owner from pg_extension where extname = 'citext'",
+        [],
+        database,
+      );
+
+    expect(
+      (await status(project, { target: "plain" })).preflight.notOwned,
+    ).toEqual([
+      {
+        object: "extension citext",
+        owner: host,
+        fix: `DROP EXTENSION citext; SET ROLE ${embeddedDeployRole}; CREATE EXTENSION citext SCHEMA public VERSION '1.8'; RESET ROLE`,
+      },
+    ]);
+    expect(
+      (await status(project, { target: "dev" })).preflight.notOwned,
+    ).toEqual([]);
+    await expect(deploy(project, { target: "dev" })).resolves.toMatchObject({
+      deployed: [{ folder: "00002-add-customers" }],
+    });
+    expect(await installed()).toEqual([{ version: "1.8", owner: host }]);
+    // The deployment ran as the deploy role, not as the host.
+    expect(
+      await server.query(
+        "select pg_get_userbyid(relowner) as owner from pg_class where relname = 'customers'",
+        [],
+        database,
+      ),
+    ).toEqual([{ owner: embeddedDeployRole }]);
+
+    // Any host passes it once the deploy role inherits its owner's privileges.
+    await server.query(
+      `grant ${host} to ${embeddedDeployRole} with inherit true`,
+    );
+    expect(
+      (await status(project, { target: "plain" })).preflight.notOwned,
+    ).toEqual([]);
   });
 });
 

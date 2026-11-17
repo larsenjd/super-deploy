@@ -111,6 +111,65 @@ export function asSuperuser(database: string): string {
 }`;
 }
 
+/**
+ * Creates `host` (a `roleName`), a superuser role standing in for the
+ * administrator role of Aurora and RDS, which owns what a `CREATE EXTENSION`
+ * from a member of their administrator role creates: a role whose privileges
+ * the deploy role `deployRole` doesn't have, though it may SET ROLE to it (a
+ * membership WITH INHERIT FALSE), for `extensionsManagedAs`. The deploy role
+ * must exist: the embedded one does once a target connected. Create what
+ * `host` owns with `asHostAdministrator`.
+ */
+export async function createHostAdministrator(
+  server: Pick<TestServer, "query">,
+  host: string,
+  deployRole = embeddedDeployRole,
+): Promise<void> {
+  await server.query(`create role ${host} superuser nologin`);
+  await server.query(`grant ${host} to ${deployRole} with inherit false`);
+}
+
+/** Runs `sql` (e.g. `create extension citext`) on `database` as `host`. */
+export async function asHostAdministrator(
+  server: Pick<TestServer, "query">,
+  database: string,
+  host: string,
+  sql: string,
+): Promise<void> {
+  await server.query(`set role ${host}; ${sql}; reset role`, [], database);
+}
+
+/**
+ * An adapter expression wrapping `adapter` (e.g. `real`) whose sessions run
+ * each ALTER EXTENSION and DROP EXTENSION statement as `host`, as Aurora and
+ * RDS run them for a member of their administrator role: the deploy role may
+ * update and drop the extensions `host` owns (`asHostAdministrator`) without
+ * having its privileges. The statement runs between SET ROLE and RESET ROLE;
+ * when it fails, the transaction it fails in takes the SET ROLE back.
+ */
+export function extensionsManagedAs(adapter: string, host: string): string {
+  return `{
+  async connect(options) {
+    const session = await (${adapter}).connect(options);
+    const asHost = (sql) =>
+      /^\\s*(ALTER|DROP)\\s+EXTENSION\\b/i.test(sql)
+        ? session.execute(\`SET ROLE ${host};\\n\${sql};\\nRESET ROLE\`)
+        : undefined;
+    return {
+      ...session,
+      async query(sql, values) {
+        const ran = asHost(sql);
+        return ran === undefined ? session.query(sql, values) : (await ran)[1];
+      },
+      async execute(sql) {
+        const ran = asHost(sql);
+        return ran === undefined ? session.execute(sql) : (await ran).slice(1, -1);
+      },
+    };
+  },
+}`;
+}
+
 /** A unique database name for one test's target. */
 export function targetDatabaseName(): string {
   return `target_${randomBytes(6).toString("hex")}`;

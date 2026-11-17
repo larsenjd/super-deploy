@@ -9,11 +9,14 @@ import { runCli } from "../support/cli.ts";
 import {
   asDeployerPreamble,
   asDeployRole,
+  asHostAdministrator,
   attemptLog,
+  createHostAdministrator,
   type DeployConfigOptions,
   deployConfig,
   deployProject,
   embeddedDeployRole,
+  extensionsManagedAs,
   finalizeMigration,
   roleName,
   targetDatabaseName,
@@ -290,6 +293,72 @@ describe.skipIf(process.platform === "win32")("mark at a terminal", () => {
       "Marked migration 00002-add-orders as deployed on target dev",
     );
     expect(await again.exited).toBe(0);
+  });
+
+  test("marks a migration whose extension, installed by hand, is owned by a role the deploy role lacks the privileges of only when the host lets the deploy role update it, as Aurora does", async () => {
+    const host = roleName("host");
+    const { dir, project, database } = await deployProject(
+      server,
+      { "customers.sql": customers },
+      {
+        settings: `extensions: { citext: ["1.8"] },`,
+        // `dev` is a host that runs extension statements as `host`; `plain`,
+        // the same database, one that doesn't.
+        adapter: extensionsManagedAs("real", host),
+        otherTargets: "plain: { adapter: real },",
+      },
+    );
+    try {
+      await finalizeMigration(project, "add customers");
+      await deploy(project, { target: "dev" });
+      await dir.write("data-model/desired-schema/orders.sql", orders);
+      await dir.write(
+        "data-model/desired-schema/extensions.sql",
+        "create extension citext version '1.8';\n",
+      );
+      await finalizeMigration(project, "add orders");
+    } finally {
+      await project.close();
+    }
+    await createHostAdministrator(server, host);
+    // Migration 2 applied by hand, its extension by the host.
+    await asDeployRole(server, database, orders);
+    await asHostAdministrator(
+      server,
+      database,
+      host,
+      "create extension citext",
+    );
+
+    const refused = spawnTerminal(["mark", "--target", "plain"], {
+      cwd: dir.root,
+    });
+    await refused.waitFor(
+      "Error: The deploy role on target plain doesn't own 1 object in the managed schema, listed above",
+    );
+    expect(refused.screen).toContain(`extension citext (owned by ${host})`);
+    expect(await refused.exited).toBe(1);
+
+    const terminal = spawnTerminal(["mark", "--target", "dev"], {
+      cwd: dir.root,
+    });
+    await terminal.waitFor("Type YES");
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor(
+      "Marked migration 00002-add-orders as deployed on target dev",
+    );
+    expect(await terminal.exited).toBe(0);
+    expect(await recordedMigrations(database)).toEqual([
+      { number: 1, recorded_how: "deployed", recovery: null, attempt: 1 },
+      { number: 2, recorded_how: "marked", recovery: null, attempt: 2 },
+    ]);
+    expect(
+      await server.query(
+        "select extversion, extowner::regrole::text as owner from pg_extension where extname = 'citext'",
+        [],
+        database,
+      ),
+    ).toEqual([{ extversion: "1.8", owner: host }]);
   });
 
   test("refuses when nothing is pending", async () => {

@@ -6,9 +6,10 @@
 // (in its one refusal, with everything unsupported) and both again under the
 // target lock, right before recording (deploy/mark.ts) refuse a managed schema,
 // or an object in it, whose owner the deploy role doesn't have the
-// privileges of. Refusals list each object with its owner, then the fixes
-// as a script a DBA can paste into psql (`notOwnedDetails`). Without the
-// check such a target fails with "must be owner" partway through a deploy.
+// privileges of (an extension: that it can't update either, below). Refusals
+// list each object with its owner, then the fixes as a script a DBA can
+// paste into psql (`notOwnedDetails`). Without the check such a target fails
+// with "must be owner" partway through a deploy.
 // `rebuild` before asking checks the managed schema alone
 // (`managedSchemaNotOwned`, QA 172): it drops what is in it, and what it
 // creates again is the deploy role's.
@@ -33,22 +34,38 @@
 // same version, with SET ROLE to the deploy role (`recreatedExtension`), and
 // fails, changing nothing, while anything uses it.
 //
-// `rebuild` judges with the same test what its wipe can drop
+// `rebuild` judges with the same tests what its wipe can drop
 // (`objectsNotDroppable`), which is less than ownership: the schema's owner
 // may drop anything in it but an extension. The wipe drops only the
 // extensions in the managed schema, so a member there of an extension living
 // elsewhere can't be dropped whoever owns it: it is listed with its extension
 // and the extension's owner.
 //
-// A deployment updates and drops supported extensions (ADR-0009), which only
-// an extension's owner may do. The migration that creates one runs as the
-// deploy role, so it owns each extension it created. An extension in the
-// managed schema someone else created (a DBA's, or one on a target `mark` or
-// `adopt` took over) is in the ownership check like any other object. Its
-// members (owned by PostgreSQL's bootstrap superuser) never are.
+// Extensions get a test of their own (ADR-0009). A deployment updates and
+// drops supported extensions, which only an extension's owner may do, but who
+// owns one depends on the host: on PostgreSQL the deploy role that created
+// it, while Aurora and RDS give an extension a member of their administrator
+// role creates to a role whose privileges it doesn't have, and still let it
+// update and drop the extension (extensions ticket 12). Nothing in the
+// catalogs says so, and no host's roles are named here. So an extension in
+// the managed schema whose owner fails the owner test above passes when the
+// deploy role can update it (`canUpdateExtension`): a no-op `ALTER EXTENSION
+// ... UPDATE TO` its installed version, rolled back, which gets past
+// PostgreSQL's ownership check, or the host's replacement for it, and
+// changes nothing else. Only "must be owner" fails it; any other error is
+// thrown. It stands in for DROP, which can't be tried safely: PostgreSQL
+// makes the same check for both. An extension whose owner passes the owner
+// test passes PostgreSQL's own check too, so it isn't tried: a target whose
+// deploy role owns its extensions sees no extra statement. The test runs in
+// a savepoint when the caller has a transaction open, else in a transaction
+// of its own, never a READ ONLY one (PostgreSQL refuses ALTER EXTENSION
+// there, so not in the drift check's). An extension that fails it is
+// reported like any other object, with its owner and the drop-and-recreate
+// fix. Its members (owned by PostgreSQL's bootstrap superuser) never are.
 
+import { rolledBack } from "../adapters/transaction.ts";
 import type { Session } from "../adapters/types.ts";
-import { plural, SuperDeployError } from "../errors.ts";
+import { plural, SuperDeployError, sqlStateOf } from "../errors.ts";
 import type { ObjectAddress } from "../verification/catalog.ts";
 
 /** A managed-schema object (or the managed schema) the deploy role doesn't own. */
@@ -150,7 +167,8 @@ const ownedObjectsQuery = `
 
 /**
  * The managed schema (first) and every object in it (sorted) whose owner
- * the session's current role doesn't have the privileges of. Read-only.
+ * the session's current role doesn't have the privileges of, but extensions
+ * it can update. Changes nothing (`canUpdateExtension` rolls back).
  */
 export async function objectsNotOwned(
   session: Session,
@@ -203,7 +221,7 @@ export async function objectsNotOwnedAt(
       ORDER BY kind <> 'SCHEMA', kind COLLATE "C", owned.name COLLATE "C"`,
     [managedSchema],
   );
-  return rows.map(
+  return (await withoutUpdatableExtensions(session, rows)).map(
     ({
       class: classId,
       oid,
@@ -267,7 +285,8 @@ const databaseOwnerRole = "pg_database_owner";
  * (rebuild refuses a managed schema it doesn't own on its own,
  * `managedSchemaNotOwned`). Members of an extension outside the managed
  * schema are listed too, whoever owns it: the wipe never drops that
- * extension. Read-only.
+ * extension. An extension the current role can update is droppable
+ * (`canUpdateExtension`, which rolls back). Changes nothing.
  */
 export async function objectsNotDroppable(
   session: Session,
@@ -278,6 +297,7 @@ export async function objectsNotDroppable(
     name: string;
     owner: string;
     extension: string | null;
+    version: string | null;
   }>(
     `WITH s AS (SELECT oid, nspname, nspowner FROM pg_catalog.pg_namespace WHERE nspname = $1),
      owned AS (${ownedObjectsQuery}),
@@ -290,24 +310,74 @@ export async function objectsNotDroppable(
          JOIN pg_catalog.pg_depend d ON d.classid = owned.class AND d.objid = owned.oid AND d.deptype = 'e'
          JOIN pg_catalog.pg_extension e ON d.refclassid = 'pg_extension'::regclass AND e.oid = d.refobjid
         WHERE owned.kind <> 'SCHEMA' AND e.extnamespace <> (SELECT oid FROM s))
-     SELECT kind, name, pg_catalog.pg_get_userbyid(owner) AS owner, extension FROM (
-       SELECT kind, name, owner, NULL AS extension
+     SELECT kind, name, pg_catalog.pg_get_userbyid(owner) AS owner, extension, version FROM (
+       SELECT kind, name, owner, NULL AS extension,
+              (SELECT pg_catalog.quote_literal(e.extversion) FROM pg_catalog.pg_extension e WHERE e.oid = dropped.oid) AS version
          FROM dropped
         WHERE NOT pg_catalog.pg_has_role(current_user, owner, 'USAGE')
           AND NOT EXISTS (SELECT FROM pg_catalog.pg_depend d
                            WHERE d.classid = dropped.class AND d.objid = dropped.oid AND d.deptype IN ('e', 'i'))
        UNION ALL
-       SELECT kind, name, owner, extension FROM members_elsewhere) undroppable
+       SELECT kind, name, owner, extension, NULL FROM members_elsewhere) undroppable
       ORDER BY kind COLLATE "C", name COLLATE "C"`,
     [managedSchema],
   );
-  return rows.map(({ kind, name, owner, extension }) => ({
-    object: `${kind.toLowerCase()} ${name}`,
-    name,
-    owner,
-    ...(extension === null ? {} : { extension }),
-  }));
+  return (await withoutUpdatableExtensions(session, rows)).map(
+    ({ kind, name, owner, extension }) => ({
+      object: `${kind.toLowerCase()} ${name}`,
+      name,
+      owner,
+      ...(extension === null ? {} : { extension }),
+    }),
+  );
 }
+
+/**
+ * `rows` without the extensions (the rows with a version) the session's
+ * current role can update (`canUpdateExtension`).
+ */
+async function withoutUpdatableExtensions<
+  Row extends { name: string; version: string | null },
+>(session: Session, rows: readonly Row[]): Promise<Row[]> {
+  const kept: Row[] = [];
+  for (const row of rows) {
+    if (
+      row.version === null ||
+      !(await canUpdateExtension(session, row.name, row.version))
+    ) {
+      kept.push(row);
+    }
+  }
+  return kept;
+}
+
+/**
+ * Whether the session's current role may update extension `name` (as SQL
+ * writes it, e.g. `citext`) and so drop it: whether a no-op `ALTER EXTENSION
+ * <name> UPDATE TO <version>`, `version` being the installed one as a quoted
+ * literal, gets past PostgreSQL's ownership check. It is rolled back either
+ * way (`rolledBack`). Only "must be owner" (`insufficient_privilege`) means
+ * no; any other error is thrown.
+ */
+async function canUpdateExtension(
+  session: Session,
+  name: string,
+  version: string,
+): Promise<boolean> {
+  return rolledBack(session, async () => {
+    try {
+      await session.query(`ALTER EXTENSION ${name} UPDATE TO ${version}`);
+      return true;
+    } catch (error) {
+      if (sqlStateOf(error) === insufficientPrivilege) {
+        return false;
+      }
+      throw error;
+    }
+  });
+}
+
+const insufficientPrivilege = "42501";
 
 /** One object's line in a refusal: what it is, who owns it, and the fix. */
 export function notOwnedMessage(notOwned: NotOwnedObject): string {

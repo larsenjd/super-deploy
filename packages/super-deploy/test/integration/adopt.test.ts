@@ -22,8 +22,11 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   asDeployerPreamble,
   asDeployRole,
+  asHostAdministrator,
   asSuperuser,
+  createHostAdministrator,
   deployProject,
+  extensionsManagedAs,
   finalizeMigration,
   roleName,
   testSession,
@@ -1420,6 +1423,60 @@ describe("adopt", () => {
       await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
         migration: { folder: "00001-adopt" },
       });
+    } finally {
+      await project.close();
+    }
+  });
+
+  test("adopts a target whose extension is owned by a role the deploy role lacks the privileges of when the host lets the deploy role update it, as Aurora does", async () => {
+    const deployer = roleName("adopt_deployer");
+    const host = roleName("host");
+    const prod = await server.createDatabase(`
+      create role ${deployer} login password 'deployer';
+      do $$ begin execute format('grant connect, create on database %I to ${deployer}', current_database()); end $$;
+      create schema app authorization ${deployer};
+    `);
+    await createHostAdministrator(server, host, deployer);
+    await asHostAdministrator(
+      server,
+      prod,
+      host,
+      "create extension citext schema app version '1.8'",
+    );
+    const { project } = await deployProject(
+      server,
+      {},
+      {
+        settings: 'managedSchema: "app", extensions: { citext: ["1.8"] },',
+        preamble: asDeployerPreamble(prod, deployer),
+        // `prod` is a host that runs extension statements as `host`;
+        // `plain`, the same database, one that doesn't.
+        otherTargets: `prod: { adapter: ${extensionsManagedAs("asDeployer", host)} }, plain: { adapter: asDeployer },`,
+      },
+    );
+    try {
+      const error = await adopt(project, { target: "plain" }).catch(
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(AdoptUnsupportedError);
+      expect((error as AdoptUnsupportedError).notOwned).toEqual([
+        {
+          object: "extension citext",
+          owner: host,
+          fix: `DROP EXTENSION citext; SET ROLE ${deployer}; CREATE EXTENSION citext SCHEMA app VERSION '1.8'; RESET ROLE`,
+        },
+      ]);
+
+      await expect(adopt(project, { target: "prod" })).resolves.toMatchObject({
+        migration: { folder: "00001-adopt" },
+      });
+      expect(
+        await server.query(
+          "select extversion as version, pg_get_userbyid(extowner) as owner from pg_extension where extname = 'citext'",
+          [],
+          prod,
+        ),
+      ).toEqual([{ version: "1.8", owner: host }]);
     } finally {
       await project.close();
     }

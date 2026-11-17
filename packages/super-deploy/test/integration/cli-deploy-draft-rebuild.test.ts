@@ -17,9 +17,12 @@ import { runCli } from "../support/cli.ts";
 import {
   asDeployerPreamble,
   asDeployRole,
+  asHostAdministrator,
   attemptLog,
+  createHostAdministrator,
   deployConfig,
   embeddedDeployRole,
+  extensionsManagedAs,
   roleName,
   targetDatabaseName,
   testSession,
@@ -1491,6 +1494,61 @@ create table users (id bigint constraint users_pkey primary key, email citext no
         database,
       ),
     ).toEqual([{ extversion: "1.8" }]);
+  });
+
+  test("wipes an extension owned by a role the deploy role lacks the privileges of when the host lets the deploy role update it, as Aurora does", async () => {
+    const host = roleName("host");
+    const { config, database } = deployConfig(server, {
+      settings: `extensions: { citext: ["1.8"] },`,
+      adapter: extensionsManagedAs("real", host),
+    });
+    const dir = await createTestProject({
+      config,
+      files: {
+        "data-model/desired-schema/extensions.sql":
+          "create extension citext version '1.8';\n",
+      },
+    });
+    const project = await loadProject({ cwd: dir.root });
+    try {
+      await draft(project, { name: "add citext" });
+      await finalize(project);
+      await deploy(project, { target: "dev" });
+    } finally {
+      await project.close();
+    }
+    await createHostAdministrator(server, host);
+    // What the deployment created, as the host would have created it.
+    await asHostAdministrator(
+      server,
+      database,
+      host,
+      "drop extension citext; create extension citext version '1.8'",
+    );
+    await server.query(
+      "update deployment_history.settings set disposable = true",
+      [],
+      database,
+    );
+
+    const terminal = spawnTerminal(
+      ["rebuild", "--target", "dev", "--to", "1"],
+      { cwd: dir.root },
+    );
+    await terminal.waitFor(
+      "Type YES to wipe target dev and replay migration 1",
+    );
+    terminal.type(`YES${keys.enter}`);
+    await terminal.waitFor("Rebuilt dev with 1 migration: 00001-add-citext");
+    expect(await terminal.exited).toBe(0);
+    // The wipe dropped it, and the replay created it again.
+    expect(
+      await server.query(
+        "select extversion, extowner::regrole::text as owner from pg_extension where extname = 'citext'",
+        [],
+        database,
+      ),
+    ).toEqual([{ extversion: "1.8", owner: embeddedDeployRole }]);
   });
 
   test("refuses, without asking or recording an attempt, a replay creating an extension while the deploy role lacks CREATE on the database, naming the GRANT", async () => {
