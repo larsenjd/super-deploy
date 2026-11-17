@@ -55,7 +55,7 @@ A real, named database that receives deployments, such as `dev`, `qa` or `prod`.
 _Avoid_: Environment, server
 
 **Deploy role**:
-The one database role the system connects to a target as, and the only role it knows about. It owns the managed schema and everything in it, except the objects inside a supported extension: it owns the extension, but PostgreSQL gives the extension's objects to its own superuser.
+The one database role the system connects to a target as, and the only role it knows about. A deployment creates everything as the deploy role, which owns the managed schema and all it creates there, except extensions. An extension's owner depends on the host: on PostgreSQL the deploy role owns it, while on Aurora and RDS a deploy role in `rds_superuser` gets extensions owned by `rdsadmin`. Either way, the deploy role must be able to update and drop every extension in the managed schema. The objects inside an extension always belong to PostgreSQL's own superuser.
 _Avoid_: Owner role, migration user, superuser
 
 **Disposable target**:
